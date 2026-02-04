@@ -866,18 +866,13 @@ with gr.Blocks(
             # Connect search button - updates checkboxes, results, AND state
             def search_and_update_state(query):
                 choices, results = search_huggingface_models(query)
-                # Return: choices for CheckboxGroup, results for Markdown, choices for State
-                # Also return empty list to clear selections when searching
-                return choices, results, choices
+                # Return new choices AND empty value list to clear selections
+                return gr.CheckboxGroup.update(choices=choices, value=[]), results, choices
 
             search_btn.click(
                 fn=search_and_update_state,
                 inputs=search_query,
                 outputs=[model_checkboxes, search_results, current_choices_state]
-            ).then(
-                # Clear selections after updating choices to avoid validation errors
-                fn=lambda: [],
-                outputs=model_checkboxes
             )
 
             # Connect model checkboxes to automatically fill the model_id field AND update counter
