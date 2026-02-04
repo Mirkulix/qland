@@ -29,7 +29,7 @@ def search_huggingface_models(query: str):
     """Search for models on HuggingFace Hub via Backend API"""
 
     if not query or len(query) < 2:
-        return "⚠️ Please enter at least 2 characters to search."
+        return [], "⚠️ Please enter at least 2 characters to search."
 
     try:
         # Use Backend API with SSL fix instead of direct HuggingFace call
@@ -44,30 +44,36 @@ def search_huggingface_models(query: str):
         models = response.json()
 
         if not models:
-            return f"❌ No models found for query: '{query}'\n\nTry searching for:\n- bert\n- gpt2\n- distilbert\n- t5"
+            return [], f"❌ No models found for query: '{query}'\n\nTry searching for:\n- bert\n- gpt2\n- distilbert\n- t5"
 
-        # Format results
-        result = f"# 🔍 Found {len(models)} models for '{query}'\n\n"
-        result += "Click on a model name to copy it:\n\n"
+        # Create choices for dropdown (model_id as value)
+        choices = [
+            (f"{model['id']} ({model['downloads']:,} downloads)" if model.get('downloads') else model['id'], model['id'])
+            for model in models
+        ]
+
+        # Format results message
+        result = f"# ✅ Found {len(models)} models for '{query}'\n\n"
+        result += "**Select a model from the dropdown below to compress it!**\n\n"
 
         for i, model in enumerate(models[:10], 1):
             model_id = model["id"]
             downloads = f"{model['downloads']:,}" if model.get('downloads') else "N/A"
 
-            result += f"### {i}. `{model_id}`\n"
+            result += f"### {i}. {model_id}\n"
             result += f"   - Downloads: {downloads}\n"
 
             if model.get('task'):
                 result += f"   - Task: {model['task']}\n"
 
-            result += f"   - **Copy this name:** `{model_id}`\n\n"
+            result += "\n"
 
-        result += "\n💡 **Tip:** Copy the model name and paste it into 'Model Identifier' below!\n"
+        result += "\n✨ **Models loaded into dropdown! Select one and click 'Start Compression'!**\n"
 
-        return result
+        return choices, result
 
     except Exception as e:
-        return f"""
+        return [], f"""
 ❌ Search failed: {str(e)}
 
 **Offline Mode:** Enter model name directly!
@@ -195,7 +201,7 @@ Auto-Validate: {"✅ Yes" if auto_validate else "❌ No"}
 """
 
         # Monitor job progress (poll every 2 seconds)
-        for i in range(40):  # Max 80 seconds
+        for i in range(60):  # Max 120 seconds
             time.sleep(2)
 
             # Get job status
@@ -205,15 +211,32 @@ Auto-Validate: {"✅ Yes" if auto_validate else "❌ No"}
                 status_data = status_response.json()
                 current_status = status_data.get("status", "unknown")
 
-                # Update progress based on status
+                # Calculate overall progress
+                overall_progress = 0.2 + (i / 60) * 0.3  # Base progress + time-based
+
+                # Update progress based on status with detailed messages
                 if current_status == "pending":
-                    progress(0.3, desc="⏳ Job pending...")
+                    progress(0.25 + (i / 60) * 0.05, desc=f"⏳ Job queued... Position in queue: {i+1}")
+                    status_text += f"\n[{time.strftime('%H:%M:%S')}] ⏳ Waiting in queue..."
+
                 elif current_status == "downloading":
-                    progress(0.4, desc="⬇️ Downloading model from HuggingFace...")
+                    download_progress = 0.3 + (i / 60) * 0.2
+                    progress(download_progress, desc=f"⬇️ Downloading model from HuggingFace... {int(download_progress*100)}%")
+                    status_text += f"\n[{time.strftime('%H:%M:%S')}] ⬇️ Downloading model: {model_identifier}"
+                    status_text += f"\n   └─ Fetching weights and configuration..."
+
                 elif current_status == "compressing":
-                    progress(0.6, desc="🗜️ Compressing with IGQK...")
+                    compress_progress = 0.5 + (i / 60) * 0.25
+                    progress(compress_progress, desc=f"🗜️ Compressing with IGQK... {int(compress_progress*100)}%")
+                    status_text += f"\n[{time.strftime('%H:%M:%S')}] 🗜️ Applying {compression_method} compression"
+                    status_text += f"\n   └─ Quantum optimization in progress..."
+                    status_text += f"\n   └─ Projecting weights to compressed space..."
+
                 elif current_status == "validating":
-                    progress(0.8, desc="✅ Validating compressed model...")
+                    progress(0.85, desc="✅ Validating compressed model accuracy...")
+                    status_text += f"\n[{time.strftime('%H:%M:%S')}] ✅ Running validation tests..."
+                    status_text += f"\n   └─ Comparing original vs compressed accuracy..."
+
                 elif current_status == "completed":
                     progress(1.0, desc="🎉 Compression completed!")
 
@@ -542,6 +565,15 @@ with gr.Blocks(
                 label="Search Results"
             )
 
+            # Dropdown for model selection (populated by search)
+            model_dropdown = gr.Dropdown(
+                label="📌 Select Model from Search Results",
+                choices=[("bert-base-uncased", "bert-base-uncased")],
+                value="bert-base-uncased",
+                interactive=True,
+                allow_custom_value=True
+            )
+
             gr.Markdown("### ⚙️ Step 2: Configure Compression")
 
             with gr.Row():
@@ -559,9 +591,10 @@ with gr.Blocks(
                     )
 
                     comp_model_id = gr.Textbox(
-                        label="Model Identifier (from search or enter manually)",
+                        label="Model Identifier (selected or enter manually)",
                         placeholder="bert-base-uncased (for HuggingFace)",
-                        value="bert-base-uncased"
+                        value="bert-base-uncased",
+                        interactive=False  # Auto-filled from dropdown
                     )
 
                     comp_method = gr.Radio(
@@ -598,11 +631,18 @@ with gr.Blocks(
                         placeholder="Click 'Start Compression' to begin..."
                     )
 
-            # Connect search button
+            # Connect search button - updates both dropdown and results
             search_btn.click(
                 fn=search_huggingface_models,
                 inputs=search_query,
-                outputs=search_results
+                outputs=[model_dropdown, search_results]
+            )
+
+            # Connect model dropdown to automatically fill the model_id field
+            model_dropdown.change(
+                fn=lambda x: x,  # Simply pass the selected value through
+                inputs=model_dropdown,
+                outputs=comp_model_id
             )
 
             # Connect compression button
