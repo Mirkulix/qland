@@ -10,6 +10,7 @@
 
 pub mod autograd;
 pub mod checkpoint;
+pub mod diagnostics;
 pub mod executor;
 pub mod mnist;
 pub mod profiler;
