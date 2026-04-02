@@ -10,4 +10,5 @@
 
 pub mod autograd;
 pub mod executor;
+pub mod mnist;
 pub mod training;

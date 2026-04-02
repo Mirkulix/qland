@@ -10,6 +10,7 @@
 pub mod aligned;
 pub mod aot;
 pub mod codegen;
+pub mod gpu;
 pub mod parser;
 pub mod optimize;
 pub mod simd;

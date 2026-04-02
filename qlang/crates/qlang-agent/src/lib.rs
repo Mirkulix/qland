@@ -16,4 +16,5 @@
 
 pub mod compose;
 pub mod emitter;
+pub mod packages;
 pub mod protocol;

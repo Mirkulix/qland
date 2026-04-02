@@ -62,3 +62,7 @@ path = "examples/train_model.rs"
 [[example]]
 name = "train_autograd"
 path = "examples/train_autograd.rs"
+
+[[example]]
+name = "train_mnist"
+path = "examples/train_mnist.rs"
