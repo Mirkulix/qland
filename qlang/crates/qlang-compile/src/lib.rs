@@ -19,3 +19,4 @@ pub mod simd;
 pub mod visualize;
 pub mod selfhost;
 pub mod lsp;
+pub mod onnx;
