@@ -15,6 +15,7 @@
 //! 4 decisions instead of 47 tokens. Each decision is valid by construction.
 
 pub mod compose;
+pub mod diff;
 pub mod emitter;
 pub mod packages;
 pub mod protocol;

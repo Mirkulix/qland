@@ -438,6 +438,11 @@ pub fn to_qlang_text(graph: &Graph) -> String {
     out
 }
 
+/// Format a TensorType as .qlang text.
+pub fn format_type_pub(tt: &TensorType) -> String {
+    format_type(tt)
+}
+
 fn format_type(tt: &TensorType) -> String {
     let dtype = match tt.dtype {
         Dtype::F16 => "f16",

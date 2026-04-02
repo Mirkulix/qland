@@ -18,12 +18,24 @@ use std::process;
 fn main() {
     let args: Vec<String> = env::args().collect();
 
-    if args.len() < 3 {
+    if args.len() < 2 {
         print_usage();
         process::exit(1);
     }
 
     let command = &args[1];
+
+    // Commands that don't need a file argument
+    if command == "repl" {
+        qlang_compile::repl::run_repl();
+        return;
+    }
+
+    if args.len() < 3 {
+        print_usage();
+        process::exit(1);
+    }
+
     let file_path = &args[2];
 
     // Handle parse command separately (reads .qlang text, not JSON)
@@ -82,6 +94,7 @@ fn print_usage() {
     eprintln!("  qlang-cli optimize <file.qlg.json> -o <output.json>   Optimize graph");
     eprintln!("  qlang-cli run      <file.qlg.json>                    Execute (interpreter)");
     eprintln!("  qlang-cli jit      <file.qlg.json>                    Execute (JIT/native)");
+    eprintln!("  qlang-cli repl                                         Interactive REPL");
     eprintln!("  qlang-cli parse    <file.qlang>                        Parse .qlang text file");
     eprintln!("  qlang-cli compile  <file.qlg.json> -o <output.o>      Compile to object file");
     eprintln!("  qlang-cli asm      <file.qlg.json>                    Show native assembly");
