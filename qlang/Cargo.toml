@@ -58,3 +58,7 @@ path = "examples/quantum_training.rs"
 [[example]]
 name = "train_model"
 path = "examples/train_model.rs"
+
+[[example]]
+name = "train_autograd"
+path = "examples/train_autograd.rs"

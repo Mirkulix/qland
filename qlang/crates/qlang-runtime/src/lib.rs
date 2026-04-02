@@ -8,5 +8,6 @@
 //! This is the interpreter backend (Phase 1).
 //! Phase 2 will add LLVM JIT compilation.
 
+pub mod autograd;
 pub mod executor;
 pub mod training;
