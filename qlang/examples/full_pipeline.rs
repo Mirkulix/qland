@@ -129,22 +129,27 @@ graph classifier {
     println!("━━━ [5/7] EXPORT to all compilation targets ━━━");
 
     // LLVM IR (element-wise ops only — matmul needs separate codegen)
-    // Build a simple graph for LLVM demo
-    let mut llvm_graph = qlang_core::graph::Graph::new("llvm_demo");
-    let la = llvm_graph.add_node(qlang_core::ops::Op::Input { name: "a".into() }, vec![], vec![qlang_core::tensor::TensorType::f32_vector(64)]);
-    let lb = llvm_graph.add_node(qlang_core::ops::Op::Input { name: "b".into() }, vec![], vec![qlang_core::tensor::TensorType::f32_vector(64)]);
-    let ladd = llvm_graph.add_node(qlang_core::ops::Op::Add, vec![qlang_core::tensor::TensorType::f32_vector(64); 2], vec![qlang_core::tensor::TensorType::f32_vector(64)]);
-    let lrelu = llvm_graph.add_node(qlang_core::ops::Op::Relu, vec![qlang_core::tensor::TensorType::f32_vector(64)], vec![qlang_core::tensor::TensorType::f32_vector(64)]);
-    let lout = llvm_graph.add_node(qlang_core::ops::Op::Output { name: "y".into() }, vec![qlang_core::tensor::TensorType::f32_vector(64)], vec![]);
-    llvm_graph.add_edge(la, 0, ladd, 0, qlang_core::tensor::TensorType::f32_vector(64));
-    llvm_graph.add_edge(lb, 0, ladd, 1, qlang_core::tensor::TensorType::f32_vector(64));
-    llvm_graph.add_edge(ladd, 0, lrelu, 0, qlang_core::tensor::TensorType::f32_vector(64));
-    llvm_graph.add_edge(lrelu, 0, lout, 0, qlang_core::tensor::TensorType::f32_vector(64));
+    #[cfg(feature = "llvm")]
+    {
+        // Build a simple graph for LLVM demo
+        let mut llvm_graph = qlang_core::graph::Graph::new("llvm_demo");
+        let la = llvm_graph.add_node(qlang_core::ops::Op::Input { name: "a".into() }, vec![], vec![qlang_core::tensor::TensorType::f32_vector(64)]);
+        let lb = llvm_graph.add_node(qlang_core::ops::Op::Input { name: "b".into() }, vec![], vec![qlang_core::tensor::TensorType::f32_vector(64)]);
+        let ladd = llvm_graph.add_node(qlang_core::ops::Op::Add, vec![qlang_core::tensor::TensorType::f32_vector(64); 2], vec![qlang_core::tensor::TensorType::f32_vector(64)]);
+        let lrelu = llvm_graph.add_node(qlang_core::ops::Op::Relu, vec![qlang_core::tensor::TensorType::f32_vector(64)], vec![qlang_core::tensor::TensorType::f32_vector(64)]);
+        let lout = llvm_graph.add_node(qlang_core::ops::Op::Output { name: "y".into() }, vec![qlang_core::tensor::TensorType::f32_vector(64)], vec![]);
+        llvm_graph.add_edge(la, 0, ladd, 0, qlang_core::tensor::TensorType::f32_vector(64));
+        llvm_graph.add_edge(lb, 0, ladd, 1, qlang_core::tensor::TensorType::f32_vector(64));
+        llvm_graph.add_edge(ladd, 0, lrelu, 0, qlang_core::tensor::TensorType::f32_vector(64));
+        llvm_graph.add_edge(lrelu, 0, lout, 0, qlang_core::tensor::TensorType::f32_vector(64));
 
-    let context = inkwell::context::Context::create();
-    let compiled = qlang_compile::codegen::compile_graph(&context, &llvm_graph,
-        inkwell::OptimizationLevel::Aggressive).unwrap();
-    println!("  LLVM IR:       {} bytes ✓", compiled.llvm_ir.len());
+        let context = inkwell::context::Context::create();
+        let compiled = qlang_compile::codegen::compile_graph(&context, &llvm_graph,
+            inkwell::OptimizationLevel::Aggressive).unwrap();
+        println!("  LLVM IR:       {} bytes ✓", compiled.llvm_ir.len());
+    }
+    #[cfg(not(feature = "llvm"))]
+    println!("  LLVM IR:       skipped (no LLVM)");
 
     // WebAssembly
     let wat = qlang_compile::wasm::to_wat(&graph);
@@ -158,15 +163,31 @@ graph classifier {
     println!("  GPU WGSL:      {} bytes ✓", wgsl.len());
     println!("  MatMul shader: {} bytes ✓", matmul_shader.len());
 
-    // Object file (using llvm_graph for element-wise ops)
-    match qlang_compile::aot::compile_to_object(&llvm_graph, "/tmp/qlang_graph.o",
-        inkwell::OptimizationLevel::Aggressive) {
-        Ok(aot) => {
-            println!("  Native .o:     {} bytes ({}) ✓", aot.file_size, aot.target_triple);
-            let _ = std::fs::remove_file("/tmp/qlang_graph.o");
+    // Object file (using a simple graph for element-wise ops)
+    #[cfg(feature = "llvm")]
+    {
+        let mut aot_graph = qlang_core::graph::Graph::new("aot_demo");
+        let aa = aot_graph.add_node(qlang_core::ops::Op::Input { name: "a".into() }, vec![], vec![qlang_core::tensor::TensorType::f32_vector(64)]);
+        let ab = aot_graph.add_node(qlang_core::ops::Op::Input { name: "b".into() }, vec![], vec![qlang_core::tensor::TensorType::f32_vector(64)]);
+        let aadd = aot_graph.add_node(qlang_core::ops::Op::Add, vec![qlang_core::tensor::TensorType::f32_vector(64); 2], vec![qlang_core::tensor::TensorType::f32_vector(64)]);
+        let arelu = aot_graph.add_node(qlang_core::ops::Op::Relu, vec![qlang_core::tensor::TensorType::f32_vector(64)], vec![qlang_core::tensor::TensorType::f32_vector(64)]);
+        let aout = aot_graph.add_node(qlang_core::ops::Op::Output { name: "y".into() }, vec![qlang_core::tensor::TensorType::f32_vector(64)], vec![]);
+        aot_graph.add_edge(aa, 0, aadd, 0, qlang_core::tensor::TensorType::f32_vector(64));
+        aot_graph.add_edge(ab, 0, aadd, 1, qlang_core::tensor::TensorType::f32_vector(64));
+        aot_graph.add_edge(aadd, 0, arelu, 0, qlang_core::tensor::TensorType::f32_vector(64));
+        aot_graph.add_edge(arelu, 0, aout, 0, qlang_core::tensor::TensorType::f32_vector(64));
+
+        match qlang_compile::aot::compile_to_object(&aot_graph, "/tmp/qlang_graph.o",
+            inkwell::OptimizationLevel::Aggressive) {
+            Ok(aot) => {
+                println!("  Native .o:     {} bytes ({}) ✓", aot.file_size, aot.target_triple);
+                let _ = std::fs::remove_file("/tmp/qlang_graph.o");
+            }
+            Err(e) => println!("  Native .o:     error: {e}"),
         }
-        Err(e) => println!("  Native .o:     error: {e}"),
     }
+    #[cfg(not(feature = "llvm"))]
+    println!("  Native .o:     skipped (no LLVM)");
 
     // Binary graph
     let binary = qlang_core::serial::to_binary(&graph).unwrap();

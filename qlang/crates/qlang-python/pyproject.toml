@@ -1,0 +1,20 @@
+[build-system]
+requires = ["maturin>=1.0,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "qlang"
+version = "0.1.0"
+description = "QLANG - Graph-based AI-to-AI Programming Language"
+requires-python = ">=3.8"
+license = {text = "MIT"}
+authors = [{name = "Aleksandar Barisic"}]
+keywords = ["ai", "ml", "compiler", "graph", "quantum"]
+classifiers = [
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+[tool.maturin]
+features = ["pyo3/extension-module"]

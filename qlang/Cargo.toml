@@ -22,7 +22,7 @@ description = "QLANG - Graph-based AI-to-AI programming language"
 
 [workspace.dependencies]
 qlang-core = { path = "crates/qlang-core" }
-qlang-compile = { path = "crates/qlang-compile" }
+qlang-compile = { path = "crates/qlang-compile", default-features = false }
 qlang-runtime = { path = "crates/qlang-runtime" }
 qlang-agent = { path = "crates/qlang-agent" }
 serde = { version = "1", features = ["derive"] }
@@ -34,7 +34,11 @@ qlang-core = { workspace = true }
 qlang-compile = { workspace = true }
 qlang-runtime = { workspace = true }
 qlang-agent = { workspace = true }
-inkwell = { version = "0.5", features = ["llvm18-0"] }
+inkwell = { version = "0.5", features = ["llvm18-0"], optional = true }
+
+[features]
+default = ["llvm"]
+llvm = ["inkwell", "qlang-compile/llvm"]
 
 [[example]]
 name = "hello_qlang"

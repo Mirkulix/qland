@@ -12,6 +12,18 @@
 use std::time::Instant;
 
 fn main() {
+    #[cfg(not(feature = "llvm"))]
+    {
+        eprintln!("LLVM not available. Build with: cargo run --example jit_compile --features llvm");
+        return;
+    }
+
+    #[cfg(feature = "llvm")]
+    run();
+}
+
+#[cfg(feature = "llvm")]
+fn run() {
     println!("=== QLANG JIT Compilation Demo ===\n");
 
     use inkwell::context::Context;

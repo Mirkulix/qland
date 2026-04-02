@@ -67,7 +67,12 @@ pub fn run_repl() {
             "ascii" | "a" => {
                 println!("{}", crate::visualize::to_ascii(&graph));
             }
-            "llvm" | "l" => show_llvm(&graph),
+            "llvm" | "l" => {
+                #[cfg(feature = "llvm")]
+                show_llvm(&graph);
+                #[cfg(not(feature = "llvm"))]
+                println!("LLVM not available. Build with: cargo build --features llvm");
+            }
             "gpu" | "g" => {
                 println!("{}", crate::gpu::to_wgsl(&graph));
             }
@@ -256,6 +261,7 @@ fn run_graph(
     }
 }
 
+#[cfg(feature = "llvm")]
 fn show_llvm(graph: &Graph) {
     use inkwell::context::Context;
     use inkwell::OptimizationLevel;

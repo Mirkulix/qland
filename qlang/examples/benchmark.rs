@@ -9,6 +9,18 @@
 use std::time::Instant;
 
 fn main() {
+    #[cfg(not(feature = "llvm"))]
+    {
+        eprintln!("LLVM not available. Build with: cargo run --example benchmark --features llvm");
+        return;
+    }
+
+    #[cfg(feature = "llvm")]
+    run();
+}
+
+#[cfg(feature = "llvm")]
+fn run() {
     println!("=== QLANG Performance Benchmark ===\n");
 
     use inkwell::context::Context;

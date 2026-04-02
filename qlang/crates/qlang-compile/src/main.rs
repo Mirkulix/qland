@@ -69,15 +69,47 @@ fn main() {
             cmd_optimize(graph, output);
         }
         "run" => cmd_run(&graph),
-        "jit" => cmd_jit(&graph),
+        "jit" => {
+            #[cfg(feature = "llvm")]
+            cmd_jit(&graph);
+            #[cfg(not(feature = "llvm"))]
+            {
+                eprintln!("LLVM not available. Build with: cargo build --features llvm");
+                process::exit(1);
+            }
+        }
         "dot" => cmd_dot(&graph),
         "ascii" => cmd_ascii(&graph),
-        "llvm-ir" => cmd_llvm_ir(&graph),
-        "compile" => {
-            let output = args.get(4).map(|s| s.as_str()).unwrap_or("/tmp/qlang_out.o");
-            cmd_compile(&graph, output);
+        "llvm-ir" => {
+            #[cfg(feature = "llvm")]
+            cmd_llvm_ir(&graph);
+            #[cfg(not(feature = "llvm"))]
+            {
+                eprintln!("LLVM not available. Build with: cargo build --features llvm");
+                process::exit(1);
+            }
         }
-        "asm" => cmd_asm(&graph),
+        "compile" => {
+            #[cfg(feature = "llvm")]
+            {
+                let output = args.get(4).map(|s| s.as_str()).unwrap_or("/tmp/qlang_out.o");
+                cmd_compile(&graph, output);
+            }
+            #[cfg(not(feature = "llvm"))]
+            {
+                eprintln!("LLVM not available. Build with: cargo build --features llvm");
+                process::exit(1);
+            }
+        }
+        "asm" => {
+            #[cfg(feature = "llvm")]
+            cmd_asm(&graph);
+            #[cfg(not(feature = "llvm"))]
+            {
+                eprintln!("LLVM not available. Build with: cargo build --features llvm");
+                process::exit(1);
+            }
+        }
         "wasm" => {
             println!("{}", qlang_compile::wasm::to_wat(&graph));
         }
@@ -212,6 +244,7 @@ fn cmd_run(graph: &qlang_core::graph::Graph) {
     }
 }
 
+#[cfg(feature = "llvm")]
 fn cmd_jit(graph: &qlang_core::graph::Graph) {
     use inkwell::context::Context;
     use inkwell::OptimizationLevel;
@@ -263,6 +296,7 @@ fn cmd_ascii(graph: &qlang_core::graph::Graph) {
     print!("{}", qlang_compile::visualize::to_ascii(graph));
 }
 
+#[cfg(feature = "llvm")]
 fn cmd_llvm_ir(graph: &qlang_core::graph::Graph) {
     use inkwell::context::Context;
     use inkwell::OptimizationLevel;
@@ -314,6 +348,7 @@ fn cmd_parse(file_path: &str) {
     }
 }
 
+#[cfg(feature = "llvm")]
 fn cmd_compile(graph: &qlang_core::graph::Graph, output: &str) {
     use inkwell::OptimizationLevel;
 
@@ -335,6 +370,7 @@ fn cmd_compile(graph: &qlang_core::graph::Graph, output: &str) {
     }
 }
 
+#[cfg(feature = "llvm")]
 fn cmd_asm(graph: &qlang_core::graph::Graph) {
     use inkwell::OptimizationLevel;
 

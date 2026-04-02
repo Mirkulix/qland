@@ -7,15 +7,20 @@
 //! The compiled code runs at the same speed as hand-written C/Rust —
 //! because it IS the same LLVM backend that C and Rust use.
 
+#[cfg(feature = "llvm")]
 pub mod aligned;
+#[cfg(feature = "llvm")]
 pub mod aot;
+#[cfg(feature = "llvm")]
 pub mod codegen;
 pub mod gpu;
+#[cfg(feature = "llvm")]
 pub mod matmul_jit;
 pub mod parser;
 pub mod repl;
 pub mod wasm;
 pub mod optimize;
+#[cfg(feature = "llvm")]
 pub mod simd;
 pub mod visualize;
 pub mod selfhost;
