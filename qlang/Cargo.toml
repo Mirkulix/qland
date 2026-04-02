@@ -10,6 +10,7 @@ members = [
     "crates/qlang-compile",
     "crates/qlang-runtime",
     "crates/qlang-agent",
+    "crates/qlang-python",
 ]
 resolver = "2"
 
