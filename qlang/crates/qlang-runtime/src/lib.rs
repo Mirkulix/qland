@@ -24,3 +24,4 @@ pub mod bench;
 pub mod stdlib;
 pub mod vm;
 pub mod linalg;
+pub mod fisher;

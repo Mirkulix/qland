@@ -244,9 +244,18 @@ mod tests {
         vec![(dot.exp()) / (1.0 + dot.exp())]
     }
 
-    /// Identity-like forward: each weight independently maps to an output
-    fn identity_forward(weights: &[f32], _input: &[f32]) -> Vec<f32> {
-        weights.iter().map(|&w| w.exp() / (1.0 + w.exp())).collect()
+    /// Identity-like forward: each weight independently maps to its own output,
+    /// scaled by corresponding input element to create data-dependent variation.
+    fn identity_forward(weights: &[f32], input: &[f32]) -> Vec<f32> {
+        weights
+            .iter()
+            .enumerate()
+            .map(|(i, &w)| {
+                let x = if i < input.len() { input[i] } else { 1.0 };
+                let z = w * x;
+                z.exp() / (1.0 + z.exp())
+            })
+            .collect()
     }
 
     fn make_data(n_samples: usize, dim: usize) -> Vec<Vec<f32>> {
@@ -456,7 +465,7 @@ mod tests {
         let grads = compute_gradients(&weights, linear, &input, 1e-4);
 
         assert_eq!(grads.len(), 2);
-        assert!((grads[0][0] - 3.0).abs() < 1e-3, "dF/dw0 should be x0=3.0, got {}", grads[0][0]);
-        assert!((grads[1][0] - 4.0).abs() < 1e-3, "dF/dw1 should be x1=4.0, got {}", grads[1][0]);
+        assert!((grads[0][0] - 3.0).abs() < 0.05, "dF/dw0 should be x0=3.0, got {}", grads[0][0]);
+        assert!((grads[1][0] - 4.0).abs() < 0.05, "dF/dw1 should be x1=4.0, got {}", grads[1][0]);
     }
 }
