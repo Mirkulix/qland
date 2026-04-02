@@ -1,0 +1,12 @@
+[package]
+name = "qlang-agent"
+version.workspace = true
+edition.workspace = true
+description = "QLANG agent interface - AI-to-AI graph communication"
+
+[dependencies]
+qlang-core = { workspace = true }
+qlang-runtime = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }

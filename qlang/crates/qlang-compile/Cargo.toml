@@ -1,0 +1,9 @@
+[package]
+name = "qlang-compile"
+version.workspace = true
+edition.workspace = true
+description = "QLANG graph compiler - Graph to machine code via LLVM"
+
+[dependencies]
+qlang-core = { workspace = true }
+thiserror = { workspace = true }

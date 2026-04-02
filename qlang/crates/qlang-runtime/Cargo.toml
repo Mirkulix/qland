@@ -1,0 +1,9 @@
+[package]
+name = "qlang-runtime"
+version.workspace = true
+edition.workspace = true
+description = "QLANG runtime - Graph executor and scheduler"
+
+[dependencies]
+qlang-core = { workspace = true }
+thiserror = { workspace = true }
