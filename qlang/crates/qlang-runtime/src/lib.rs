@@ -22,3 +22,4 @@ pub mod transformer;
 pub mod conv;
 pub mod bench;
 pub mod stdlib;
+pub mod vm;
