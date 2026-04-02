@@ -1,0 +1,103 @@
+name: QLANG CI
+
+on:
+  push:
+    branches: [ master, "claude/**" ]
+    paths: [ "qlang/**" ]
+  pull_request:
+    branches: [ master ]
+    paths: [ "qlang/**" ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install LLVM 18
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y llvm-18-dev libpolly-18-dev libzstd-dev
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            qlang/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('qlang/Cargo.lock') }}
+
+      - name: Build
+        working-directory: qlang
+        run: cargo build --workspace
+
+      - name: Test
+        working-directory: qlang
+        run: cargo test --workspace
+
+      - name: Test (release)
+        working-directory: qlang
+        run: cargo test --workspace --release
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Install LLVM 18
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y llvm-18-dev libpolly-18-dev libzstd-dev
+
+      - name: Check formatting
+        working-directory: qlang
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        working-directory: qlang
+        run: cargo clippy --workspace -- -D warnings
+        continue-on-error: true  # Don't fail on clippy warnings yet
+
+  examples:
+    name: Examples
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install LLVM 18
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y llvm-18-dev libpolly-18-dev libzstd-dev
+
+      - name: Build examples
+        working-directory: qlang
+        run: cargo build --examples --release
+
+      - name: Run hello_qlang
+        working-directory: qlang
+        run: cargo run --example hello_qlang --release
+
+      - name: Run train_autograd
+        working-directory: qlang
+        run: cargo run --example train_autograd --release
+
+      - name: Run benchmark
+        working-directory: qlang
+        run: cargo run --example benchmark --release

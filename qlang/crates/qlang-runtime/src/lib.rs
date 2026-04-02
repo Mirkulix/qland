@@ -20,3 +20,4 @@ pub mod scheduler;
 pub mod training;
 pub mod transformer;
 pub mod conv;
+pub mod bench;
