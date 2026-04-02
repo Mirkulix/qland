@@ -30,8 +30,10 @@ thiserror = "2"
 
 [dependencies]
 qlang-core = { workspace = true }
+qlang-compile = { workspace = true }
 qlang-runtime = { workspace = true }
 qlang-agent = { workspace = true }
+inkwell = { version = "0.5", features = ["llvm18-0"] }
 
 [[example]]
 name = "hello_qlang"
@@ -40,3 +42,7 @@ path = "examples/hello_qlang.rs"
 [[example]]
 name = "neural_network"
 path = "examples/neural_network.rs"
+
+[[example]]
+name = "jit_compile"
+path = "examples/jit_compile.rs"

@@ -8,6 +8,7 @@ description = "QLANG graph compiler - Graph to machine code via LLVM"
 qlang-core = { workspace = true }
 qlang-runtime = { workspace = true }
 thiserror = { workspace = true }
+inkwell = { version = "0.5", features = ["llvm18-0"] }
 
 [[bin]]
 name = "qlang-cli"

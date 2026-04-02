@@ -1,10 +1,14 @@
-//! QLANG CLI — Compile and execute QLANG graph files.
+//! QLANG CLI — Compile, visualize and execute QLANG graph files.
 //!
 //! Usage:
-//!   qlang-cli run <file.qlg.json>    Execute a graph from JSON file
-//!   qlang-cli info <file.qlg.json>   Show graph information
-//!   qlang-cli verify <file.qlg.json> Verify graph constraints
-//!   qlang-cli optimize <file.qlg.json> [-o output.qlg.json]  Optimize and save
+//!   qlang-cli info     <file.qlg.json>                    Show graph info
+//!   qlang-cli verify   <file.qlg.json>                    Verify constraints
+//!   qlang-cli optimize <file.qlg.json> -o <output.json>   Optimize graph
+//!   qlang-cli run      <file.qlg.json>                    Execute (interpreter)
+//!   qlang-cli jit      <file.qlg.json>                    Execute (JIT/native)
+//!   qlang-cli dot      <file.qlg.json>                    Output Graphviz DOT
+//!   qlang-cli ascii    <file.qlg.json>                    ASCII visualization
+//!   qlang-cli llvm-ir  <file.qlg.json>                    Show LLVM IR output
 
 use std::collections::HashMap;
 use std::env;
@@ -47,6 +51,10 @@ fn main() {
             cmd_optimize(graph, output);
         }
         "run" => cmd_run(&graph),
+        "jit" => cmd_jit(&graph),
+        "dot" => cmd_dot(&graph),
+        "ascii" => cmd_ascii(&graph),
+        "llvm-ir" => cmd_llvm_ir(&graph),
         _ => {
             eprintln!("Unknown command: {command}");
             print_usage();
@@ -56,13 +64,16 @@ fn main() {
 }
 
 fn print_usage() {
-    eprintln!("QLANG CLI v0.1");
-    eprintln!();
+    eprintln!("QLANG CLI v0.2 — Graph-based AI-to-AI programming language\n");
     eprintln!("Usage:");
     eprintln!("  qlang-cli info     <file.qlg.json>                    Show graph info");
     eprintln!("  qlang-cli verify   <file.qlg.json>                    Verify constraints");
     eprintln!("  qlang-cli optimize <file.qlg.json> -o <output.json>   Optimize graph");
-    eprintln!("  qlang-cli run      <file.qlg.json>                    Execute graph");
+    eprintln!("  qlang-cli run      <file.qlg.json>                    Execute (interpreter)");
+    eprintln!("  qlang-cli jit      <file.qlg.json>                    Execute (JIT/native)");
+    eprintln!("  qlang-cli dot      <file.qlg.json>                    Output Graphviz DOT");
+    eprintln!("  qlang-cli ascii    <file.qlg.json>                    ASCII visualization");
+    eprintln!("  qlang-cli llvm-ir  <file.qlg.json>                    Show LLVM IR output");
 }
 
 fn cmd_info(graph: &qlang_core::graph::Graph) {
@@ -79,7 +90,6 @@ fn cmd_info(graph: &qlang_core::graph::Graph) {
     println!("  Total edges: {}", graph.edges.len());
     println!("  Quantum ops: {}", quantum_ops.len());
 
-    // Binary size estimate
     if let Ok(binary) = qlang_core::serial::to_binary(graph) {
         println!("  Binary size: {} bytes", binary.len());
     }
@@ -115,7 +125,6 @@ fn cmd_optimize(mut graph: qlang_core::graph::Graph, output: Option<&str>) {
 }
 
 fn cmd_run(graph: &qlang_core::graph::Graph) {
-    // For CLI execution, create zero-filled inputs
     let mut inputs = HashMap::new();
     for node in graph.input_nodes() {
         if let qlang_core::ops::Op::Input { name } = &node.op {
@@ -130,7 +139,7 @@ fn cmd_run(graph: &qlang_core::graph::Graph) {
 
     match qlang_runtime::executor::execute(graph, inputs) {
         Ok(result) => {
-            println!("\nExecution complete:");
+            println!("\nExecution complete (interpreter):");
             println!("  Nodes executed: {}", result.stats.nodes_executed);
             println!("  Quantum ops:    {}", result.stats.quantum_ops);
             println!("  Total FLOPs:    {}", result.stats.total_flops);
@@ -150,6 +159,73 @@ fn cmd_run(graph: &qlang_core::graph::Graph) {
         }
         Err(e) => {
             eprintln!("Execution failed: {e}");
+            process::exit(1);
+        }
+    }
+}
+
+fn cmd_jit(graph: &qlang_core::graph::Graph) {
+    use inkwell::context::Context;
+    use inkwell::OptimizationLevel;
+
+    println!("JIT compiling graph '{}'...", graph.id);
+
+    let context = Context::create();
+    match qlang_compile::codegen::compile_graph(&context, graph, OptimizationLevel::Aggressive) {
+        Ok(compiled) => {
+            println!("  Compilation successful!");
+            println!("  LLVM IR size: {} bytes", compiled.llvm_ir.len());
+
+            // Determine input sizes from graph
+            let input_nodes = graph.input_nodes();
+            let n = input_nodes.first()
+                .and_then(|n| n.output_types.first())
+                .and_then(|t| t.shape.numel())
+                .unwrap_or(4);
+
+            let input_a = vec![0.0f32; n];
+            let input_b = vec![0.0f32; n];
+
+            println!("  Executing with {} zero-filled elements...", n);
+
+            match qlang_compile::codegen::execute_compiled(&compiled, &input_a, &input_b) {
+                Ok(result) => {
+                    println!("\n  JIT execution complete (native code):");
+                    if result.len() <= 20 {
+                        println!("    output: {:?}", result);
+                    } else {
+                        println!("    output: [{}, {}, ... {} total]", result[0], result[1], result.len());
+                    }
+                }
+                Err(e) => eprintln!("  JIT execution failed: {e}"),
+            }
+        }
+        Err(e) => {
+            eprintln!("  JIT compilation failed: {e}");
+            process::exit(1);
+        }
+    }
+}
+
+fn cmd_dot(graph: &qlang_core::graph::Graph) {
+    print!("{}", qlang_compile::visualize::to_dot(graph));
+}
+
+fn cmd_ascii(graph: &qlang_core::graph::Graph) {
+    print!("{}", qlang_compile::visualize::to_ascii(graph));
+}
+
+fn cmd_llvm_ir(graph: &qlang_core::graph::Graph) {
+    use inkwell::context::Context;
+    use inkwell::OptimizationLevel;
+
+    let context = Context::create();
+    match qlang_compile::codegen::compile_graph(&context, graph, OptimizationLevel::None) {
+        Ok(compiled) => {
+            println!("{}", compiled.llvm_ir);
+        }
+        Err(e) => {
+            eprintln!("Codegen failed: {e}");
             process::exit(1);
         }
     }

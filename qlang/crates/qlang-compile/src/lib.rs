@@ -1,14 +1,12 @@
-//! QLANG Compiler — Graph to machine code
+//! QLANG Compiler — Graph to machine code via LLVM
 //!
-//! Phase 1: Scaffold and IR representation
-//! Phase 2: LLVM IR code generation
-//! Phase 3: Direct machine code emission
+//! Compilation pipeline:
+//!   QLANG Graph → Optimize → Schedule → LLVM IR → Machine Code
 //!
-//! The compilation pipeline:
-//!   Graph → Optimize → Schedule → LLVM IR → Machine Code
-//!
-//! For now, this crate provides graph optimization passes.
-//! LLVM code generation will be added in Phase 2 when we integrate
-//! the `inkwell` crate (Rust LLVM bindings).
+//! Uses inkwell (Rust LLVM bindings) for native code generation.
+//! The compiled code runs at the same speed as hand-written C/Rust —
+//! because it IS the same LLVM backend that C and Rust use.
 
+pub mod codegen;
 pub mod optimize;
+pub mod visualize;
