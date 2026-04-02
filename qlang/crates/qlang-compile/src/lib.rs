@@ -11,6 +11,7 @@ pub mod aligned;
 pub mod aot;
 pub mod codegen;
 pub mod gpu;
+pub mod matmul_jit;
 pub mod parser;
 pub mod repl;
 pub mod wasm;

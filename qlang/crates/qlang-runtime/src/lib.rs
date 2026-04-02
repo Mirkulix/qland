@@ -10,10 +10,13 @@
 
 pub mod autograd;
 pub mod checkpoint;
+pub mod optimizers;
 pub mod diagnostics;
 pub mod executor;
+pub mod graph_train;
 pub mod mnist;
 pub mod profiler;
 pub mod scheduler;
 pub mod training;
 pub mod transformer;
+pub mod conv;
