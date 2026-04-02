@@ -23,3 +23,4 @@ pub mod conv;
 pub mod bench;
 pub mod stdlib;
 pub mod vm;
+pub mod linalg;
