@@ -41,24 +41,24 @@ fn main() {
         inputs: vec![
             OnnxValueInfo {
                 name: "input".to_string(),
-                elem_type: "float".to_string(),
+                elem_type: "FLOAT".to_string(),
                 shape: vec![OnnxDim::Dynamic("batch".to_string()), OnnxDim::Fixed(784)],
             },
             OnnxValueInfo {
                 name: "W1".to_string(),
-                elem_type: "float".to_string(),
+                elem_type: "FLOAT".to_string(),
                 shape: vec![OnnxDim::Fixed(784), OnnxDim::Fixed(128)],
             },
             OnnxValueInfo {
                 name: "W2".to_string(),
-                elem_type: "float".to_string(),
+                elem_type: "FLOAT".to_string(),
                 shape: vec![OnnxDim::Fixed(128), OnnxDim::Fixed(10)],
             },
         ],
         outputs: vec![
             OnnxValueInfo {
                 name: "probs".to_string(),
-                elem_type: "float".to_string(),
+                elem_type: "FLOAT".to_string(),
                 shape: vec![OnnxDim::Dynamic("batch".to_string()), OnnxDim::Fixed(10)],
             },
         ],
@@ -95,14 +95,14 @@ fn main() {
         initializers: vec![
             OnnxInitializer {
                 name: "W1".to_string(),
-                elem_type: "float".to_string(),
+                elem_type: "FLOAT".to_string(),
                 shape: vec![784, 128],
                 data_base64: None,
                 weights: None, // would contain actual weights in a real model
             },
             OnnxInitializer {
                 name: "W2".to_string(),
-                elem_type: "float".to_string(),
+                elem_type: "FLOAT".to_string(),
                 shape: vec![128, 10],
                 data_base64: None,
                 weights: None,
