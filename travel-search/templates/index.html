@@ -1,0 +1,654 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Travel Search - Hamburg nach Alicante</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0f172a;
+            color: #e2e8f0;
+            min-height: 100vh;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #1e40af, #7c3aed);
+            padding: 2rem;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 2rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .header p {
+            color: #c7d2fe;
+            font-size: 1.1rem;
+        }
+
+        .route-display {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 1rem;
+            margin-top: 1rem;
+            font-size: 1.3rem;
+            font-weight: 600;
+        }
+
+        .route-display .arrow { color: #fbbf24; font-size: 1.5rem; }
+
+        .container { max-width: 1400px; margin: 0 auto; padding: 1.5rem; }
+
+        /* === SUCHFORMULAR === */
+        .search-panel {
+            background: #1e293b;
+            border-radius: 16px;
+            padding: 1.5rem;
+            margin-bottom: 1.5rem;
+            border: 1px solid #334155;
+        }
+
+        .search-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 1rem;
+            margin-bottom: 1rem;
+        }
+
+        .form-group label {
+            display: block;
+            font-size: 0.85rem;
+            color: #94a3b8;
+            margin-bottom: 0.3rem;
+        }
+
+        .form-group input, .form-group select {
+            width: 100%;
+            padding: 0.6rem 0.8rem;
+            border: 1px solid #475569;
+            border-radius: 8px;
+            background: #0f172a;
+            color: #e2e8f0;
+            font-size: 1rem;
+        }
+
+        .form-group input:focus, .form-group select:focus {
+            outline: none;
+            border-color: #6366f1;
+            box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.2);
+        }
+
+        .btn-row { display: flex; gap: 1rem; flex-wrap: wrap; }
+
+        .btn {
+            padding: 0.7rem 2rem;
+            border: none;
+            border-radius: 8px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #6366f1, #8b5cf6);
+            color: white;
+        }
+
+        .btn-primary:hover { transform: translateY(-1px); box-shadow: 0 4px 15px rgba(99, 102, 241, 0.4); }
+        .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+
+        .btn-demo {
+            background: linear-gradient(135deg, #f59e0b, #d97706);
+            color: #1e293b;
+        }
+
+        .btn-demo:hover { transform: translateY(-1px); }
+
+        .btn-stop {
+            background: #ef4444;
+            color: white;
+        }
+
+        /* === FORTSCHRITT === */
+        .progress-panel {
+            background: #1e293b;
+            border-radius: 16px;
+            padding: 1.5rem;
+            margin-bottom: 1.5rem;
+            border: 1px solid #334155;
+            display: none;
+        }
+
+        .progress-panel.active { display: block; }
+
+        .progress-bar-bg {
+            width: 100%;
+            height: 12px;
+            background: #334155;
+            border-radius: 6px;
+            overflow: hidden;
+            margin: 0.8rem 0;
+        }
+
+        .progress-bar-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #6366f1, #8b5cf6, #a78bfa);
+            border-radius: 6px;
+            transition: width 0.3s;
+            width: 0%;
+        }
+
+        .progress-text {
+            display: flex;
+            justify-content: space-between;
+            color: #94a3b8;
+            font-size: 0.9rem;
+        }
+
+        .progress-current {
+            color: #a78bfa;
+            font-weight: 600;
+            font-size: 1rem;
+            margin-top: 0.5rem;
+        }
+
+        /* === ERGEBNIS-STATISTIK === */
+        .stats-row {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .stat-card {
+            background: #1e293b;
+            border-radius: 12px;
+            padding: 1.2rem;
+            border: 1px solid #334155;
+            text-align: center;
+        }
+
+        .stat-value {
+            font-size: 2rem;
+            font-weight: 700;
+            color: #6366f1;
+        }
+
+        .stat-value.green { color: #22c55e; }
+        .stat-value.yellow { color: #fbbf24; }
+
+        .stat-label {
+            font-size: 0.85rem;
+            color: #94a3b8;
+            margin-top: 0.3rem;
+        }
+
+        /* === ERGEBNIS-TABELLE === */
+        .results-panel {
+            background: #1e293b;
+            border-radius: 16px;
+            padding: 1.5rem;
+            border: 1px solid #334155;
+            overflow-x: auto;
+        }
+
+        .results-panel h2 { margin-bottom: 1rem; }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.9rem;
+        }
+
+        th {
+            background: #334155;
+            padding: 0.8rem;
+            text-align: left;
+            font-weight: 600;
+            color: #94a3b8;
+            text-transform: uppercase;
+            font-size: 0.75rem;
+            letter-spacing: 0.05em;
+            position: sticky;
+            top: 0;
+            cursor: pointer;
+        }
+
+        th:hover { color: #e2e8f0; }
+
+        td {
+            padding: 0.7rem 0.8rem;
+            border-bottom: 1px solid #1e293b;
+        }
+
+        tr { background: #0f172a; }
+        tr:hover { background: #1a2744; }
+
+        tr.rank-1 { background: linear-gradient(90deg, rgba(34, 197, 94, 0.15), transparent); }
+        tr.rank-2 { background: linear-gradient(90deg, rgba(34, 197, 94, 0.10), transparent); }
+        tr.rank-3 { background: linear-gradient(90deg, rgba(34, 197, 94, 0.05), transparent); }
+
+        .rank-badge {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            font-weight: 700;
+            font-size: 0.8rem;
+        }
+
+        .rank-1 .rank-badge { background: #22c55e; color: #0f172a; }
+        .rank-2 .rank-badge { background: #86efac; color: #0f172a; }
+        .rank-3 .rank-badge { background: #bbf7d0; color: #0f172a; }
+
+        .price-total {
+            font-weight: 700;
+            font-size: 1.1rem;
+            color: #22c55e;
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 0.15rem 0.5rem;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            font-weight: 600;
+        }
+
+        .badge-direct { background: #22c55e22; color: #22c55e; }
+        .badge-stop { background: #f59e0b22; color: #f59e0b; }
+        .badge-country { background: #6366f122; color: #a78bfa; }
+
+        .airline-tag {
+            display: inline-block;
+            padding: 0.2rem 0.6rem;
+            border-radius: 6px;
+            font-size: 0.8rem;
+            font-weight: 600;
+            background: #334155;
+        }
+
+        .airline-ryanair { background: #1a237e; color: #fdd835; }
+        .airline-eurowings { background: #7b1fa2; color: white; }
+        .airline-vueling { background: #fdd835; color: #1a1a1a; }
+        .airline-easyjet { background: #ff6d00; color: white; }
+        .airline-transavia { background: #00c853; color: white; }
+        .airline-lufthansa { background: #0d47a1; color: #fdd835; }
+
+        /* === FILTER === */
+        .filter-row {
+            display: flex;
+            gap: 0.5rem;
+            margin-bottom: 1rem;
+            flex-wrap: wrap;
+        }
+
+        .filter-chip {
+            padding: 0.4rem 1rem;
+            border-radius: 20px;
+            border: 1px solid #475569;
+            background: transparent;
+            color: #94a3b8;
+            cursor: pointer;
+            font-size: 0.85rem;
+            transition: all 0.2s;
+        }
+
+        .filter-chip.active { background: #6366f1; color: white; border-color: #6366f1; }
+        .filter-chip:hover { border-color: #6366f1; }
+
+        /* === KEIN ERGEBNIS === */
+        .empty-state {
+            text-align: center;
+            padding: 3rem;
+            color: #64748b;
+        }
+
+        .empty-state .icon { font-size: 3rem; margin-bottom: 1rem; }
+
+        /* === API KEY HINWEIS === */
+        .api-hint {
+            background: #1e293b;
+            border: 1px solid #f59e0b44;
+            border-radius: 12px;
+            padding: 1rem 1.5rem;
+            margin-bottom: 1.5rem;
+            color: #fbbf24;
+            font-size: 0.9rem;
+        }
+
+        .api-hint code {
+            background: #334155;
+            padding: 0.15rem 0.4rem;
+            border-radius: 4px;
+            font-size: 0.85rem;
+        }
+
+        /* === RESPONSIVE === */
+        @media (max-width: 768px) {
+            .header h1 { font-size: 1.4rem; }
+            .search-grid { grid-template-columns: 1fr 1fr; }
+            .stats-row { grid-template-columns: 1fr 1fr; }
+            table { font-size: 0.8rem; }
+            td, th { padding: 0.5rem; }
+        }
+    </style>
+</head>
+<body>
+
+<div class="header">
+    <h1>Travel Search</h1>
+    <p>Finde den guenstigsten Weg von Hamburg nach Alicante</p>
+    <div class="route-display">
+        <span>Hamburg</span>
+        <span class="arrow">---&gt;</span>
+        <span>Flughafen X</span>
+        <span class="arrow">---&gt;</span>
+        <span>Alicante (ALC)</span>
+    </div>
+</div>
+
+<div class="container">
+
+    <!-- API Hinweis -->
+    <div class="api-hint" id="apiHint">
+        <strong>Hinweis:</strong> Fuer Live-Daten brauchst du einen Apify API Token.
+        Erstelle eine <code>.env</code> Datei mit <code>APIFY_TOKEN=dein_token</code>.
+        Ohne Token kannst du den <strong>Demo-Modus</strong> nutzen (realistische Testdaten).
+    </div>
+
+    <!-- Suchformular -->
+    <div class="search-panel">
+        <div class="search-grid">
+            <div class="form-group">
+                <label>Abflugdatum</label>
+                <input type="date" id="date" value="2026-07-22">
+            </div>
+            <div class="form-group">
+                <label>Erwachsene</label>
+                <input type="number" id="adults" value="2" min="1" max="9">
+            </div>
+            <div class="form-group">
+                <label>Kinder</label>
+                <input type="number" id="children" value="1" min="0" max="9">
+            </div>
+            <div class="form-group">
+                <label>Max. Entfernung (km)</label>
+                <select id="maxDistance">
+                    <option value="500">500 km (nur nahegelegene)</option>
+                    <option value="800">800 km (DE + NL)</option>
+                    <option value="1200" selected>1200 km (DE + FR + NL)</option>
+                    <option value="1500">1500 km (alle)</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>Zielflughafen</label>
+                <select id="destination">
+                    <option value="ALC" selected>Alicante (ALC)</option>
+                    <option value="AGP">Malaga (AGP)</option>
+                    <option value="PMI">Palma de Mallorca (PMI)</option>
+                    <option value="BCN">Barcelona (BCN)</option>
+                </select>
+            </div>
+        </div>
+        <div class="btn-row">
+            <button class="btn btn-primary" id="btnSearch" onclick="startSearch(false)">
+                Suche starten (Apify Live)
+            </button>
+            <button class="btn btn-demo" id="btnDemo" onclick="startSearch(true)">
+                Demo-Modus (ohne API Key)
+            </button>
+        </div>
+    </div>
+
+    <!-- Fortschritt -->
+    <div class="progress-panel" id="progressPanel">
+        <div class="progress-text">
+            <span id="progressLabel">Suche laeuft...</span>
+            <span id="progressCount">0 / 0</span>
+        </div>
+        <div class="progress-bar-bg">
+            <div class="progress-bar-fill" id="progressBar"></div>
+        </div>
+        <div class="progress-current" id="progressCurrent"></div>
+    </div>
+
+    <!-- Statistik -->
+    <div class="stats-row" id="statsRow" style="display: none;">
+        <div class="stat-card">
+            <div class="stat-value green" id="statBestPrice">-</div>
+            <div class="stat-label">Guenstigster Gesamtpreis (3 Pers.)</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value" id="statBestAirport">-</div>
+            <div class="stat-label">Bester Flughafen</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value yellow" id="statBestAirline">-</div>
+            <div class="stat-label">Guenstigste Airline</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value" id="statCount">0</div>
+            <div class="stat-label">Verbindungen gefunden</div>
+        </div>
+    </div>
+
+    <!-- Filter -->
+    <div class="filter-row" id="filterRow" style="display: none;">
+        <button class="filter-chip active" onclick="filterResults('all', this)">Alle</button>
+        <button class="filter-chip" onclick="filterResults('direct', this)">Nur Direktfluege</button>
+        <button class="filter-chip" onclick="filterResults('DE', this)">Deutschland</button>
+        <button class="filter-chip" onclick="filterResults('FR', this)">Frankreich</button>
+        <button class="filter-chip" onclick="filterResults('NL', this)">Niederlande</button>
+        <button class="filter-chip" onclick="filterResults('BE', this)">Belgien</button>
+    </div>
+
+    <!-- Ergebnisse -->
+    <div class="results-panel" id="resultsPanel">
+        <h2>Ergebnisse <span id="resultCountLabel"></span></h2>
+        <div class="empty-state" id="emptyState">
+            <div class="icon">&#9992;</div>
+            <p>Starte eine Suche, um die guenstigsten Verbindungen zu finden.</p>
+        </div>
+        <div style="overflow-x: auto;">
+            <table id="resultsTable" style="display: none;">
+                <thead>
+                    <tr>
+                        <th onclick="sortTable('rank')">#</th>
+                        <th onclick="sortTable('total_cost')">Gesamt</th>
+                        <th onclick="sortTable('airport_name')">Flughafen</th>
+                        <th onclick="sortTable('country')">Land</th>
+                        <th onclick="sortTable('airline')">Airline</th>
+                        <th onclick="sortTable('flight_price_total')">Flugpreis</th>
+                        <th onclick="sortTable('train_cost_total')">Anreise Zug</th>
+                        <th onclick="sortTable('distance_km')">Entfernung</th>
+                        <th>Flug</th>
+                        <th>Abflug</th>
+                        <th>Info</th>
+                    </tr>
+                </thead>
+                <tbody id="resultsBody">
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+</div>
+
+<script>
+let allResults = [];
+let currentFilter = 'all';
+let pollInterval = null;
+
+function startSearch(demo) {
+    const params = {
+        date: document.getElementById('date').value,
+        adults: document.getElementById('adults').value,
+        children: document.getElementById('children').value,
+        max_distance: document.getElementById('maxDistance').value,
+        destination: document.getElementById('destination').value,
+        demo: demo ? 'true' : 'false',
+    };
+
+    document.getElementById('btnSearch').disabled = true;
+    document.getElementById('btnDemo').disabled = true;
+    document.getElementById('progressPanel').classList.add('active');
+    document.getElementById('statsRow').style.display = 'none';
+    document.getElementById('filterRow').style.display = 'none';
+    document.getElementById('resultsTable').style.display = 'none';
+    document.getElementById('emptyState').style.display = 'block';
+
+    fetch('/api/search', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(params),
+    })
+    .then(r => r.json())
+    .then(() => {
+        pollInterval = setInterval(pollStatus, 1000);
+    })
+    .catch(err => {
+        alert('Fehler: ' + err.message);
+        resetUI();
+    });
+}
+
+function pollStatus() {
+    fetch('/api/status')
+    .then(r => r.json())
+    .then(data => {
+        // Fortschritt aktualisieren
+        const pct = data.total > 0 ? (data.progress / data.total * 100) : 0;
+        document.getElementById('progressBar').style.width = pct + '%';
+        document.getElementById('progressCount').textContent = data.progress + ' / ' + data.total;
+        document.getElementById('progressCurrent').textContent =
+            data.running ? 'Suche: ' + data.current_airport : 'Suche abgeschlossen!';
+        document.getElementById('progressLabel').textContent =
+            data.running ? 'Suche laeuft... (' + data.result_count + ' Ergebnisse)' : 'Fertig!';
+
+        // Ergebnisse live anzeigen
+        if (data.results && data.results.length > 0) {
+            allResults = data.results;
+            renderResults();
+        }
+
+        // Fertig?
+        if (data.done) {
+            clearInterval(pollInterval);
+            document.getElementById('progressPanel').classList.remove('active');
+            resetUI();
+
+            // Alle Ergebnisse holen
+            fetch('/api/results')
+            .then(r => r.json())
+            .then(fullData => {
+                allResults = fullData.results;
+                renderResults();
+            });
+        }
+    });
+}
+
+function renderResults() {
+    let filtered = allResults;
+
+    if (currentFilter === 'direct') {
+        filtered = allResults.filter(r => r.direct_flight);
+    } else if (['DE', 'FR', 'NL', 'BE', 'LU'].includes(currentFilter)) {
+        filtered = allResults.filter(r => r.country === currentFilter);
+    }
+
+    if (filtered.length === 0) {
+        document.getElementById('emptyState').style.display = 'block';
+        document.getElementById('resultsTable').style.display = 'none';
+        return;
+    }
+
+    document.getElementById('emptyState').style.display = 'none';
+    document.getElementById('resultsTable').style.display = 'table';
+    document.getElementById('statsRow').style.display = 'grid';
+    document.getElementById('filterRow').style.display = 'flex';
+
+    // Statistik
+    const best = filtered[0];
+    document.getElementById('statBestPrice').textContent = best.total_cost.toFixed(0) + ' EUR';
+    document.getElementById('statBestAirport').textContent = best.airport_name + ' (' + best.airport_iata + ')';
+    document.getElementById('statBestAirline').textContent = best.airline;
+    document.getElementById('statCount').textContent = filtered.length;
+    document.getElementById('resultCountLabel').textContent = '(' + filtered.length + ')';
+
+    // Tabelle
+    const tbody = document.getElementById('resultsBody');
+    tbody.innerHTML = '';
+
+    filtered.forEach((r, idx) => {
+        const rank = idx + 1;
+        const tr = document.createElement('tr');
+        if (rank <= 3) tr.classList.add('rank-' + rank);
+
+        const airlineClass = getAirlineClass(r.airline);
+        const directBadge = r.direct_flight
+            ? '<span class="badge badge-direct">Direkt</span>'
+            : '<span class="badge badge-stop">' + r.stops + ' Stop(s)</span>';
+
+        const countryFlag = { 'DE': 'DE', 'FR': 'FR', 'NL': 'NL', 'BE': 'BE', 'LU': 'LU' }[r.country] || r.country;
+
+        tr.innerHTML = `
+            <td><span class="rank-badge">${rank}</span></td>
+            <td class="price-total">${r.total_cost.toFixed(0)} &euro;</td>
+            <td><strong>${r.airport_name}</strong><br><small>${r.airport_iata}</small></td>
+            <td><span class="badge badge-country">${countryFlag}</span></td>
+            <td><span class="airline-tag ${airlineClass}">${r.airline}</span></td>
+            <td>${r.flight_price_total.toFixed(0)} &euro;<br><small>${r.flight_price_pp.toFixed(0)} &euro;/P.</small></td>
+            <td>${r.train_cost_total.toFixed(0)} &euro;<br><small>${r.train_cost_pp.toFixed(0)} &euro;/P.</small></td>
+            <td>${r.distance_km} km<br><small>~${r.train_duration_h}h Zug</small></td>
+            <td>${directBadge}<br><small>${r.flight_duration}</small></td>
+            <td>${r.departure_time}</td>
+            <td><small>${r.note}</small></td>
+        `;
+        tbody.appendChild(tr);
+    });
+}
+
+function filterResults(filter, btn) {
+    currentFilter = filter;
+    document.querySelectorAll('.filter-chip').forEach(c => c.classList.remove('active'));
+    if (btn) btn.classList.add('active');
+    renderResults();
+}
+
+function getAirlineClass(airline) {
+    const name = airline.toLowerCase();
+    if (name.includes('ryanair')) return 'airline-ryanair';
+    if (name.includes('eurowings')) return 'airline-eurowings';
+    if (name.includes('vueling')) return 'airline-vueling';
+    if (name.includes('easyjet')) return 'airline-easyjet';
+    if (name.includes('transavia')) return 'airline-transavia';
+    if (name.includes('lufthansa')) return 'airline-lufthansa';
+    return '';
+}
+
+function sortTable(key) {
+    allResults.sort((a, b) => {
+        if (typeof a[key] === 'number') return a[key] - b[key];
+        return String(a[key]).localeCompare(String(b[key]));
+    });
+    renderResults();
+}
+
+function resetUI() {
+    document.getElementById('btnSearch').disabled = false;
+    document.getElementById('btnDemo').disabled = false;
+}
+</script>
+
+</body>
+</html>
