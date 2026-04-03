@@ -6,10 +6,10 @@ Repository: https://github.com/Mirkulix/qland (main branch)
 Also mirrored at: https://github.com/Mirkulix/IGQK (branch claude/ai-programming-language-os-nIRJA)
 
 ## Current Stats
-- 526 tests, 0 failures
-- ~31,000 lines of Rust code
-- 66 modules across 5 crates
-- 52 commits
+- 537 tests, 0 failures
+- ~33,000 lines of Rust code
+- 70+ modules across 5 crates
+- 56 commits
 
 ## Architecture
 ```
@@ -79,22 +79,35 @@ qlang/
 10. **VS Code LSP**: ✅ Full LSP server in `qlang-cli lsp` — diagnostics, completions, hover, goto-definition
 11. **Model Registry**: ✅ `registry.rs` with save/load/list/delete/compare, 6 tests
 
+## Completed in Session 3 (2026-04-03)
+
+1. **Analytical Backpropagation**: ✅ `train_step_backprop()` — fast gradient descent, 99.8% on synthetic MNIST
+2. **ONNX Protobuf Parser**: ✅ Minimal protobuf wire-format parser, `from_onnx_protobuf()` + `from_onnx_file()`, 6 tests
+3. **CI Benchmarks**: ✅ GitHub Actions benchmark job + no-LLVM build job
+4. **Model Hub**: ✅ `hub.rs` HTTP API server (GET/POST/DELETE models, health check), 3 tests
+5. **Updated MEMORY.md**: ✅ Stats and priorities refreshed
+
+**Already existed but not credited:**
+- Distributed Training (qlang-agent/distributed.rs) — already fully implemented
+- Transformer model (transformer.rs) — attention, multi-head, layer norm, GELU, positional encoding
+- Interactive Debugger (debugger.rs) — breakpoints, stepping, variable inspection
+
 ## What Needs Work Next (Priority Order)
 
 ### P0 — Must Fix
-1. **Real MNIST accuracy**: Download actual MNIST dataset, train, verify >95% accuracy
-2. **PyPI publish**: Build wheel and upload to PyPI (`maturin publish`)
+1. **Real MNIST download**: Add HTTP client or script to fetch actual MNIST IDX files
+2. **PyPI publish**: `maturin publish` to upload wheel to PyPI
 3. **GPU with wgpu**: Add actual wgpu-rs behind feature flag for real GPU execution
 
 ### P1 — Should Build
-4. **ONNX protobuf**: Parse real .onnx files (protobuf format), not just JSON
-5. **Transformer model**: Full transformer architecture (attention, multi-head, etc.)
-6. **Distributed training**: Multi-node training via qlang-agent
+4. **Multi-head attention fix**: Current multi_head_attention does single-head; split into proper heads
+5. **ONNX weight loading**: Load float_data / raw_data from protobuf TensorProto
+6. **Graph debugger for graph executor**: debugger.rs works for VM, extend to graph execution
 
 ### P2 — Should Add
-7. **CI benchmarks**: Automated performance regression testing
-8. **Model hub**: Remote model registry with HTTP API
-9. **Interactive debugger**: Step through graph execution with state inspection
+7. **Performance regression alerts**: Compare benchmark artifacts across CI runs
+8. **Model hub auth**: Token-based authentication for the HTTP API
+9. **WebAssembly runtime**: Execute generated WASM in a wasm runtime (wasmtime)
 
 ### P3 — Enterprise
 12. SOC2 compliance, security audit

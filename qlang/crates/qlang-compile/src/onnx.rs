@@ -121,6 +121,368 @@ impl From<io::Error> for ConversionError {
 }
 
 // ---------------------------------------------------------------------------
+// Minimal Protobuf wire-format parser (no external dependencies)
+// ---------------------------------------------------------------------------
+
+/// Protobuf wire types.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum WireType {
+    Varint,           // 0
+    Fixed64,          // 1
+    LengthDelimited,  // 2
+    Fixed32,          // 5
+}
+
+/// A raw protobuf field.
+#[derive(Debug, Clone)]
+struct ProtoField {
+    field_number: u32,
+    wire_type: WireType,
+    data: ProtoData,
+}
+
+#[derive(Debug, Clone)]
+enum ProtoData {
+    Varint(u64),
+    Fixed64(u64),
+    Fixed32(u32),
+    Bytes(Vec<u8>),
+}
+
+impl ProtoData {
+    fn as_u64(&self) -> u64 {
+        match self {
+            ProtoData::Varint(v) => *v,
+            ProtoData::Fixed64(v) => *v,
+            ProtoData::Fixed32(v) => *v as u64,
+            ProtoData::Bytes(_) => 0,
+        }
+    }
+
+    fn as_i64(&self) -> i64 {
+        self.as_u64() as i64
+    }
+
+    fn as_bytes(&self) -> &[u8] {
+        match self {
+            ProtoData::Bytes(b) => b,
+            _ => &[],
+        }
+    }
+
+    fn as_str(&self) -> &str {
+        std::str::from_utf8(self.as_bytes()).unwrap_or("")
+    }
+}
+
+/// Parse protobuf wire format from bytes.
+fn parse_protobuf(data: &[u8]) -> Vec<ProtoField> {
+    let mut fields = Vec::new();
+    let mut pos = 0;
+
+    while pos < data.len() {
+        let (tag, consumed) = match decode_varint(&data[pos..]) {
+            Some(v) => v,
+            None => break,
+        };
+        pos += consumed;
+
+        let field_number = (tag >> 3) as u32;
+        let wire_type = match tag & 0x07 {
+            0 => WireType::Varint,
+            1 => WireType::Fixed64,
+            2 => WireType::LengthDelimited,
+            5 => WireType::Fixed32,
+            _ => break, // Unknown wire type
+        };
+
+        let (proto_data, consumed) = match wire_type {
+            WireType::Varint => {
+                match decode_varint(&data[pos..]) {
+                    Some((val, c)) => (ProtoData::Varint(val), c),
+                    None => break,
+                }
+            }
+            WireType::Fixed64 => {
+                if pos + 8 > data.len() { break; }
+                let val = u64::from_le_bytes(data[pos..pos+8].try_into().unwrap());
+                (ProtoData::Fixed64(val), 8)
+            }
+            WireType::Fixed32 => {
+                if pos + 4 > data.len() { break; }
+                let val = u32::from_le_bytes(data[pos..pos+4].try_into().unwrap());
+                (ProtoData::Fixed32(val), 4)
+            }
+            WireType::LengthDelimited => {
+                match decode_varint(&data[pos..]) {
+                    Some((len, c)) => {
+                        let start = pos + c;
+                        let end = start + len as usize;
+                        if end > data.len() { break; }
+                        (ProtoData::Bytes(data[start..end].to_vec()), c + len as usize)
+                    }
+                    None => break,
+                }
+            }
+        };
+
+        pos += consumed;
+        fields.push(ProtoField { field_number, wire_type, data: proto_data });
+    }
+
+    fields
+}
+
+/// Decode a varint, return (value, bytes_consumed).
+fn decode_varint(data: &[u8]) -> Option<(u64, usize)> {
+    let mut result: u64 = 0;
+    let mut shift = 0;
+    for (i, &byte) in data.iter().enumerate() {
+        result |= ((byte & 0x7F) as u64) << shift;
+        if byte & 0x80 == 0 {
+            return Some((result, i + 1));
+        }
+        shift += 7;
+        if shift >= 64 { return None; }
+    }
+    None
+}
+
+/// Map ONNX protobuf TensorProto.DataType enum to element type string.
+fn onnx_data_type_to_str(dt: u64) -> &'static str {
+    match dt {
+        1 => "f32",    // FLOAT
+        2 => "u8",     // UINT8
+        3 => "i8",     // INT8
+        5 => "i16",    // INT16
+        6 => "i32",    // INT32
+        7 => "i64",    // INT64
+        9 => "bool",   // BOOL
+        10 => "f16",   // FLOAT16
+        11 => "f64",   // DOUBLE
+        16 => "bf16",  // BFLOAT16
+        _ => "f32",    // Default
+    }
+}
+
+/// Parse a real ONNX protobuf file (.onnx) into our OnnxGraph.
+///
+/// ONNX protobuf schema (simplified):
+///   ModelProto (field 7 = GraphProto)
+///   GraphProto:
+///     field 1 = node[] (NodeProto)
+///     field 2 = name (string)
+///     field 5 = initializer[] (TensorProto)
+///     field 11 = input[] (ValueInfoProto)
+///     field 12 = output[] (ValueInfoProto)
+///   NodeProto:
+///     field 1 = input[] (string)
+///     field 2 = output[] (string)
+///     field 3 = name (string)
+///     field 4 = op_type (string)
+///     field 5 = attribute[] (AttributeProto)
+///   TensorProto:
+///     field 1 = dims[] (int64)
+///     field 2 = data_type (int32)
+///     field 4 = float_data[] (float, packed)
+///     field 8 = name (string)
+///     field 13 = raw_data (bytes)
+///   ValueInfoProto:
+///     field 1 = name (string)
+///     field 2 = type (TypeProto)
+///   TypeProto:
+///     field 1 = tensor_type (Tensor)
+///   TypeProto.Tensor:
+///     field 1 = elem_type (int32)
+///     field 2 = shape (TensorShapeProto)
+///   TensorShapeProto:
+///     field 1 = dim[] (Dimension)
+///   TensorShapeProto.Dimension:
+///     field 1 = dim_value (int64)
+///     field 2 = dim_param (string)
+pub fn from_onnx_protobuf(data: &[u8]) -> Result<OnnxGraph, ConversionError> {
+    let model_fields = parse_protobuf(data);
+
+    // Find graph (field 7 in ModelProto)
+    let graph_data = model_fields.iter()
+        .find(|f| f.field_number == 7)
+        .ok_or_else(|| ConversionError::Io("No graph found in ONNX model".into()))?
+        .data.as_bytes();
+
+    let graph_fields = parse_protobuf(graph_data);
+
+    let graph_name = graph_fields.iter()
+        .find(|f| f.field_number == 2)
+        .map(|f| f.data.as_str().to_string())
+        .unwrap_or_else(|| "imported".into());
+
+    // Parse nodes (field 1)
+    let mut nodes = Vec::new();
+    for field in graph_fields.iter().filter(|f| f.field_number == 1) {
+        let node_fields = parse_protobuf(field.data.as_bytes());
+        let mut inputs = Vec::new();
+        let mut outputs = Vec::new();
+        let mut name = String::new();
+        let mut op_type = String::new();
+        let mut attributes = HashMap::new();
+
+        for nf in &node_fields {
+            match nf.field_number {
+                1 => inputs.push(nf.data.as_str().to_string()),
+                2 => outputs.push(nf.data.as_str().to_string()),
+                3 => name = nf.data.as_str().to_string(),
+                4 => op_type = nf.data.as_str().to_string(),
+                5 => {
+                    // Parse AttributeProto
+                    let attr_fields = parse_protobuf(nf.data.as_bytes());
+                    let attr_name = attr_fields.iter()
+                        .find(|f| f.field_number == 1)
+                        .map(|f| f.data.as_str().to_string())
+                        .unwrap_or_default();
+                    // field 2 = type, field 3 = f, field 4 = i, field 6 = ints
+                    let attr_type = attr_fields.iter()
+                        .find(|f| f.field_number == 2)
+                        .map(|f| f.data.as_u64())
+                        .unwrap_or(0);
+
+                    let attr_val = match attr_type {
+                        1 => { // FLOAT
+                            let f_val = attr_fields.iter()
+                                .find(|f| f.field_number == 4)
+                                .map(|f| f32::from_bits(f.data.as_u64() as u32))
+                                .unwrap_or(0.0);
+                            OnnxAttribute::Float(f_val as f64)
+                        }
+                        2 => { // INT
+                            let i_val = attr_fields.iter()
+                                .find(|f| f.field_number == 3)
+                                .map(|f| f.data.as_i64())
+                                .unwrap_or(0);
+                            OnnxAttribute::Int(i_val)
+                        }
+                        7 => { // INTS
+                            let ints: Vec<i64> = attr_fields.iter()
+                                .filter(|f| f.field_number == 8)
+                                .map(|f| f.data.as_i64())
+                                .collect();
+                            OnnxAttribute::Ints(ints)
+                        }
+                        _ => OnnxAttribute::Int(0),
+                    };
+
+                    if !attr_name.is_empty() {
+                        attributes.insert(attr_name, attr_val);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        nodes.push(OnnxNode { name, op_type, inputs, outputs, attributes });
+    }
+
+    // Parse inputs (field 11)
+    let mut onnx_inputs = Vec::new();
+    for field in graph_fields.iter().filter(|f| f.field_number == 11) {
+        if let Some(vi) = parse_value_info(field.data.as_bytes()) {
+            onnx_inputs.push(vi);
+        }
+    }
+
+    // Parse outputs (field 12)
+    let mut onnx_outputs = Vec::new();
+    for field in graph_fields.iter().filter(|f| f.field_number == 12) {
+        if let Some(vi) = parse_value_info(field.data.as_bytes()) {
+            onnx_outputs.push(vi);
+        }
+    }
+
+    // Parse initializers (field 5)
+    let mut initializers = Vec::new();
+    for field in graph_fields.iter().filter(|f| f.field_number == 5) {
+        let tensor_fields = parse_protobuf(field.data.as_bytes());
+        let name = tensor_fields.iter()
+            .find(|f| f.field_number == 8)
+            .map(|f| f.data.as_str().to_string())
+            .unwrap_or_default();
+        let data_type = tensor_fields.iter()
+            .find(|f| f.field_number == 2)
+            .map(|f| f.data.as_u64())
+            .unwrap_or(1);
+        let dims: Vec<usize> = tensor_fields.iter()
+            .filter(|f| f.field_number == 1)
+            .map(|f| f.data.as_u64() as usize)
+            .collect();
+
+        initializers.push(OnnxInitializer {
+            name,
+            elem_type: onnx_data_type_to_str(data_type).to_string(),
+            shape: dims,
+            data_base64: None,
+        });
+    }
+
+    Ok(OnnxGraph {
+        name: graph_name,
+        nodes,
+        inputs: onnx_inputs,
+        outputs: onnx_outputs,
+        initializers,
+    })
+}
+
+/// Parse a ValueInfoProto from protobuf bytes.
+fn parse_value_info(data: &[u8]) -> Option<OnnxValueInfo> {
+    let fields = parse_protobuf(data);
+    let name = fields.iter()
+        .find(|f| f.field_number == 1)?
+        .data.as_str().to_string();
+
+    // Parse type (field 2 -> TypeProto -> field 1 -> Tensor -> elem_type + shape)
+    let type_data = fields.iter()
+        .find(|f| f.field_number == 2)?
+        .data.as_bytes();
+    let type_fields = parse_protobuf(type_data);
+
+    let tensor_data = type_fields.iter()
+        .find(|f| f.field_number == 1)?
+        .data.as_bytes();
+    let tensor_fields = parse_protobuf(tensor_data);
+
+    let elem_type = tensor_fields.iter()
+        .find(|f| f.field_number == 1)
+        .map(|f| f.data.as_u64())
+        .unwrap_or(1);
+
+    let mut shape = Vec::new();
+    if let Some(shape_field) = tensor_fields.iter().find(|f| f.field_number == 2) {
+        let shape_fields = parse_protobuf(shape_field.data.as_bytes());
+        for dim_field in shape_fields.iter().filter(|f| f.field_number == 1) {
+            let dim_inner = parse_protobuf(dim_field.data.as_bytes());
+            if let Some(val) = dim_inner.iter().find(|f| f.field_number == 1) {
+                shape.push(OnnxDim::Fixed(val.data.as_u64() as usize));
+            } else if let Some(param) = dim_inner.iter().find(|f| f.field_number == 2) {
+                shape.push(OnnxDim::Dynamic(param.data.as_str().to_string()));
+            } else {
+                shape.push(OnnxDim::Dynamic("?".into()));
+            }
+        }
+    }
+
+    Some(OnnxValueInfo {
+        name,
+        elem_type: onnx_data_type_to_str(elem_type).to_string(),
+        shape,
+    })
+}
+
+/// Load an ONNX protobuf file and convert to our OnnxGraph.
+pub fn from_onnx_file(path: &Path) -> Result<OnnxGraph, ConversionError> {
+    let data = std::fs::read(path)?;
+    from_onnx_protobuf(&data)
+}
+
+// ---------------------------------------------------------------------------
 // Op mapping: QLANG Op <-> ONNX op_type string
 // ---------------------------------------------------------------------------
 
@@ -1121,5 +1483,75 @@ mod tests {
             Ok(())
         }).unwrap();
         assert_eq!(layer_count, 1); // one MatMul layer
+    }
+
+    #[test]
+    fn test_decode_varint() {
+        // 1 byte: 0x08 = 8
+        assert_eq!(decode_varint(&[0x08]), Some((8, 1)));
+        // 2 bytes: 300 = 0xAC 0x02
+        assert_eq!(decode_varint(&[0xAC, 0x02]), Some((300, 2)));
+        // Empty
+        assert_eq!(decode_varint(&[]), None);
+    }
+
+    #[test]
+    fn test_parse_protobuf_simple() {
+        // Encode: field 1, varint, value 42
+        // tag = (1 << 3) | 0 = 8, value = 42
+        let data = vec![0x08, 42];
+        let fields = parse_protobuf(&data);
+        assert_eq!(fields.len(), 1);
+        assert_eq!(fields[0].field_number, 1);
+        assert_eq!(fields[0].data.as_u64(), 42);
+    }
+
+    #[test]
+    fn test_parse_protobuf_string() {
+        // field 2, length-delimited (wire type 2), string "test"
+        // tag = (2 << 3) | 2 = 18, length = 4, data = "test"
+        let data = vec![0x12, 4, b't', b'e', b's', b't'];
+        let fields = parse_protobuf(&data);
+        assert_eq!(fields.len(), 1);
+        assert_eq!(fields[0].field_number, 2);
+        assert_eq!(fields[0].data.as_str(), "test");
+    }
+
+    #[test]
+    fn test_parse_protobuf_multiple_fields() {
+        // field 1, varint 10; field 2, string "hi"
+        let data = vec![0x08, 10, 0x12, 2, b'h', b'i'];
+        let fields = parse_protobuf(&data);
+        assert_eq!(fields.len(), 2);
+        assert_eq!(fields[0].data.as_u64(), 10);
+        assert_eq!(fields[1].data.as_str(), "hi");
+    }
+
+    #[test]
+    fn test_onnx_data_type_mapping() {
+        assert_eq!(onnx_data_type_to_str(1), "f32");
+        assert_eq!(onnx_data_type_to_str(7), "i64");
+        assert_eq!(onnx_data_type_to_str(10), "f16");
+        assert_eq!(onnx_data_type_to_str(11), "f64");
+    }
+
+    #[test]
+    fn test_from_onnx_protobuf_minimal() {
+        // Build a minimal ONNX model protobuf by hand:
+        // ModelProto { graph: GraphProto { name: "test", nodes: [] } }
+
+        // GraphProto: field 2 = "test"
+        let graph_name = vec![0x12, 4, b't', b'e', b's', b't'];
+
+        // ModelProto: field 7 = graph_name (length-delimited)
+        let mut model = vec![0x3A]; // (7 << 3) | 2 = 58 = 0x3A
+        model.push(graph_name.len() as u8);
+        model.extend_from_slice(&graph_name);
+
+        let result = from_onnx_protobuf(&model);
+        assert!(result.is_ok(), "Failed to parse minimal protobuf: {:?}", result.err());
+        let graph = result.unwrap();
+        assert_eq!(graph.name, "test");
+        assert!(graph.nodes.is_empty());
     }
 }

@@ -37,3 +37,4 @@ pub mod graph_ops;
 pub mod gpu_runtime;
 pub mod registry;
 pub mod parallel;
+pub mod hub;

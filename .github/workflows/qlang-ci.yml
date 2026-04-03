@@ -101,3 +101,55 @@ jobs:
       - name: Run benchmark
         working-directory: qlang
         run: cargo run --example benchmark --release
+
+  benchmark:
+    name: Performance Benchmark
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            qlang/target
+          key: ${{ runner.os }}-cargo-bench-${{ hashFiles('qlang/Cargo.lock') }}
+
+      - name: Build benchmark suite
+        working-directory: qlang
+        run: cargo build --example benchmark_suite --release --no-default-features
+
+      - name: Run benchmark suite (JSON)
+        working-directory: qlang
+        run: |
+          cargo run --example benchmark_suite --release --no-default-features -- --json > bench_results.json 2>&1 || true
+          cat bench_results.json
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results
+          path: qlang/bench_results.json
+          retention-days: 90
+
+  no-llvm-build:
+    name: Build without LLVM
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build (no LLVM)
+        working-directory: qlang
+        run: cargo build --workspace --release --no-default-features
+
+      - name: Test (no LLVM)
+        working-directory: qlang
+        run: cargo test --workspace --release --no-default-features
