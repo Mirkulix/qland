@@ -6,10 +6,10 @@ Repository: https://github.com/Mirkulix/qland (main branch)
 Also mirrored at: https://github.com/Mirkulix/IGQK (branch claude/ai-programming-language-os-nIRJA)
 
 ## Current Stats
-- 537 tests, 0 failures
-- ~33,000 lines of Rust code
+- 553 tests, 0 failures
+- ~35,000 lines of Rust code
 - 70+ modules across 5 crates
-- 56 commits
+- 60 commits
 
 ## Architecture
 ```
@@ -92,22 +92,30 @@ qlang/
 - Transformer model (transformer.rs) — attention, multi-head, layer norm, GELU, positional encoding
 - Interactive Debugger (debugger.rs) — breakpoints, stepping, variable inspection
 
+## Completed in Session 4 (2026-04-03)
+
+### P0 — All Done
+1. **MNIST Download**: ✅ `download_and_load()` via curl/wget, `download_mnist.sh`, training test >90%
+2. **PyPI Publish**: ✅ `publish-pypi.yml` workflow (maturin-action, Linux/Mac/Win, Python 3.8-3.12), Python tests
+3. **wgpu GPU**: ✅ `gpu_runtime.rs` dual-mode: real wgpu behind `--features gpu`, CPU fallback default
+
+### Critical Fixes — All Done
+4. **Multi-Head Attention**: ✅ Proper head splitting with `split_heads/concat_heads`
+5. **ONNX Weight Loading**: ✅ Extract `float_data`/`raw_data` from TensorProto, `total_weight_bytes()`
+6. **Quantum Gradient Flow**: ✅ Evolve-Op builds DensityMatrix, calls `quantum_flow::evolve_step`
+7. **Graph Debugger**: ✅ `GraphDebugger`, `debug_execute()`, `GraphDebugEvent` enum (cfg-gated tests)
+
 ## What Needs Work Next (Priority Order)
 
-### P0 — Must Fix
-1. **Real MNIST download**: Add HTTP client or script to fetch actual MNIST IDX files
-2. **PyPI publish**: `maturin publish` to upload wheel to PyPI
-3. **GPU with wgpu**: Add actual wgpu-rs behind feature flag for real GPU execution
-
 ### P1 — Should Build
-4. **Multi-head attention fix**: Current multi_head_attention does single-head; split into proper heads
-5. **ONNX weight loading**: Load float_data / raw_data from protobuf TensorProto
-6. **Graph debugger for graph executor**: debugger.rs works for VM, extend to graph execution
+1. **End-to-end real MNIST**: Download actual 60K images, train, verify >95% accuracy
+2. **Autograd in graph executor**: Integrate tape-based autograd.rs with graph execution
+3. **WebAssembly runtime**: Execute generated WASM with wasmtime
 
 ### P2 — Should Add
-7. **Performance regression alerts**: Compare benchmark artifacts across CI runs
-8. **Model hub auth**: Token-based authentication for the HTTP API
-9. **WebAssembly runtime**: Execute generated WASM in a wasm runtime (wasmtime)
+4. **Performance regression alerts**: Compare benchmark artifacts across CI runs
+5. **Model hub auth**: Token-based authentication for the HTTP API
+6. **Distributed training end-to-end**: Test multi-node training with actual TCP connections
 
 ### P3 — Enterprise
 12. SOC2 compliance, security audit
