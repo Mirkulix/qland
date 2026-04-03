@@ -196,6 +196,145 @@ impl MlpWeights {
         current_loss
     }
 
+    /// Train one step with analytical backpropagation (much faster than numerical).
+    ///
+    /// Computes gradients analytically through the network:
+    ///   Forward:  x → (W1·x + b1) → relu → (W2·h + b2) → softmax → probs
+    ///   Backward: dL/dprobs → dL/dW2,db2 → dL/dhidden → dL/dW1,db1
+    pub fn train_step_backprop(&mut self, x: &[f32], targets: &[u8], lr: f32) -> f32 {
+        let batch = targets.len();
+        if batch == 0 {
+            return 0.0;
+        }
+
+        // ---- Forward pass (save intermediates) ----
+        // Layer 1: pre_act1 = x @ W1 + b1, hidden = relu(pre_act1)
+        let mut pre_act1 = vec![0.0f32; batch * self.hidden_dim];
+        let mut hidden = vec![0.0f32; batch * self.hidden_dim];
+        for b in 0..batch {
+            for j in 0..self.hidden_dim {
+                let mut sum = self.b1[j];
+                for i in 0..self.input_dim {
+                    sum += x[b * self.input_dim + i] * self.w1[i * self.hidden_dim + j];
+                }
+                pre_act1[b * self.hidden_dim + j] = sum;
+                hidden[b * self.hidden_dim + j] = sum.max(0.0);
+            }
+        }
+
+        // Layer 2: logits = hidden @ W2 + b2
+        let mut logits = vec![0.0f32; batch * self.output_dim];
+        for b in 0..batch {
+            for j in 0..self.output_dim {
+                let mut sum = self.b2[j];
+                for i in 0..self.hidden_dim {
+                    sum += hidden[b * self.hidden_dim + i] * self.w2[i * self.output_dim + j];
+                }
+                logits[b * self.output_dim + j] = sum;
+            }
+        }
+
+        // Softmax
+        let mut probs = logits.clone();
+        for b in 0..batch {
+            let off = b * self.output_dim;
+            let max = probs[off..off + self.output_dim].iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+            let mut sum = 0.0f32;
+            for j in 0..self.output_dim {
+                probs[off + j] = (probs[off + j] - max).exp();
+                sum += probs[off + j];
+            }
+            for j in 0..self.output_dim {
+                probs[off + j] /= sum;
+            }
+        }
+
+        // Loss (cross-entropy)
+        let loss = self.loss(&probs, targets);
+
+        // ---- Backward pass ----
+        // dL/d_logits = probs - one_hot(targets)  (for softmax + cross-entropy)
+        let mut d_logits = probs.clone();
+        for b in 0..batch {
+            let t = targets[b] as usize;
+            d_logits[b * self.output_dim + t] -= 1.0;
+        }
+        // Average over batch
+        let inv_batch = 1.0 / batch as f32;
+        for v in d_logits.iter_mut() {
+            *v *= inv_batch;
+        }
+
+        // Gradients for W2 and b2
+        // dL/dW2 = hidden^T @ d_logits  (shape: [hidden_dim, output_dim])
+        let mut dw2 = vec![0.0f32; self.hidden_dim * self.output_dim];
+        let mut db2 = vec![0.0f32; self.output_dim];
+        for b in 0..batch {
+            for i in 0..self.hidden_dim {
+                for j in 0..self.output_dim {
+                    dw2[i * self.output_dim + j] +=
+                        hidden[b * self.hidden_dim + i] * d_logits[b * self.output_dim + j];
+                }
+            }
+            for j in 0..self.output_dim {
+                db2[j] += d_logits[b * self.output_dim + j];
+            }
+        }
+
+        // dL/d_hidden = d_logits @ W2^T  (shape: [batch, hidden_dim])
+        let mut d_hidden = vec![0.0f32; batch * self.hidden_dim];
+        for b in 0..batch {
+            for i in 0..self.hidden_dim {
+                let mut sum = 0.0f32;
+                for j in 0..self.output_dim {
+                    sum += d_logits[b * self.output_dim + j] * self.w2[i * self.output_dim + j];
+                }
+                d_hidden[b * self.hidden_dim + i] = sum;
+            }
+        }
+
+        // ReLU backward: zero out where pre_act1 <= 0
+        for b in 0..batch {
+            for j in 0..self.hidden_dim {
+                if pre_act1[b * self.hidden_dim + j] <= 0.0 {
+                    d_hidden[b * self.hidden_dim + j] = 0.0;
+                }
+            }
+        }
+
+        // Gradients for W1 and b1
+        // dL/dW1 = x^T @ d_hidden  (shape: [input_dim, hidden_dim])
+        let mut dw1 = vec![0.0f32; self.input_dim * self.hidden_dim];
+        let mut db1 = vec![0.0f32; self.hidden_dim];
+        for b in 0..batch {
+            for i in 0..self.input_dim {
+                for j in 0..self.hidden_dim {
+                    dw1[i * self.hidden_dim + j] +=
+                        x[b * self.input_dim + i] * d_hidden[b * self.hidden_dim + j];
+                }
+            }
+            for j in 0..self.hidden_dim {
+                db1[j] += d_hidden[b * self.hidden_dim + j];
+            }
+        }
+
+        // ---- Update weights ----
+        for i in 0..self.w1.len() {
+            self.w1[i] -= lr * dw1[i];
+        }
+        for i in 0..self.b1.len() {
+            self.b1[i] -= lr * db1[i];
+        }
+        for i in 0..self.w2.len() {
+            self.w2[i] -= lr * dw2[i];
+        }
+        for i in 0..self.b2.len() {
+            self.b2[i] -= lr * db2[i];
+        }
+
+        loss
+    }
+
     /// IGQK ternary compression of weights.
     pub fn compress_ternary(&self) -> MlpWeights {
         fn ternary(v: &[f32]) -> Vec<f32> {
@@ -327,5 +466,42 @@ mod tests {
         assert_eq!(images.len(), 100 * 64);
         assert_eq!(labels.len(), 100);
         assert!(labels.iter().all(|&l| l < 4));
+    }
+
+    #[test]
+    fn backprop_loss_decreases() {
+        let dim = 16;
+        let mut mlp = MlpWeights::new(dim, 8, 4);
+        let (images, labels) = generate_toy_dataset(20, dim);
+
+        let probs_before = mlp.forward(&images);
+        let loss_before = mlp.loss(&probs_before, &labels);
+
+        // Multiple backprop training steps
+        for _ in 0..10 {
+            mlp.train_step_backprop(&images, &labels, 0.1);
+        }
+
+        let probs_after = mlp.forward(&images);
+        let loss_after = mlp.loss(&probs_after, &labels);
+
+        assert!(loss_after < loss_before,
+            "Backprop loss didn't decrease: {loss_before} → {loss_after}");
+    }
+
+    #[test]
+    fn backprop_achieves_high_accuracy() {
+        let dim = 16;
+        let mut mlp = MlpWeights::new(dim, 16, 4);
+        let (images, labels) = generate_toy_dataset(40, dim);
+
+        // Train with backprop
+        for _ in 0..100 {
+            mlp.train_step_backprop(&images, &labels, 0.05);
+        }
+
+        let probs = mlp.forward(&images);
+        let acc = mlp.accuracy(&probs, &labels);
+        assert!(acc > 0.7, "Expected >70% accuracy, got {:.1}%", acc * 100.0);
     }
 }
