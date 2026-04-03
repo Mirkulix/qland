@@ -24,6 +24,7 @@
 use std::fmt;
 use std::fs;
 use std::path::Path;
+use std::process::Command;
 
 /// Errors that can occur during MNIST loading.
 #[derive(Debug)]
@@ -37,6 +38,8 @@ pub enum MnistError {
         data_dir: String,
         missing: Vec<String>,
     },
+    /// Download attempt failed.
+    DownloadFailed(String),
 }
 
 impl fmt::Display for MnistError {
@@ -59,6 +62,9 @@ impl fmt::Display for MnistError {
                 }
                 writeln!(f)?;
                 write!(f, "Then decompress with: gunzip *.gz")
+            }
+            MnistError::DownloadFailed(msg) => {
+                write!(f, "MNIST download failed: {msg}")
             }
         }
     }
@@ -118,7 +124,131 @@ pub fn download_mnist(data_dir: &str) -> Result<(), MnistError> {
     }
 }
 
+const MNIST_BASE_URL: &str = "https://storage.googleapis.com/cvdf-datasets/mnist";
+
+/// Download a single file using curl or wget (whichever is available).
+///
+/// Returns `Ok(())` on success. Handles HTTP redirects via curl `-L` or wget's
+/// built-in redirect following.
+fn download_file(url: &str, dest: &str) -> Result<(), MnistError> {
+    // Try curl first (most common on Linux/macOS)
+    let curl_result = Command::new("curl")
+        .args(["-fSL", "--retry", "3", "-o", dest, url])
+        .output();
+
+    match curl_result {
+        Ok(output) if output.status.success() => return Ok(()),
+        _ => {}
+    }
+
+    // Fall back to wget
+    let wget_result = Command::new("wget")
+        .args(["-q", "-O", dest, url])
+        .output();
+
+    match wget_result {
+        Ok(output) if output.status.success() => Ok(()),
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            Err(MnistError::DownloadFailed(format!(
+                "wget failed for {url}: {stderr}"
+            )))
+        }
+        Err(_) => Err(MnistError::DownloadFailed(
+            "Neither curl nor wget is available. Please install one of them \
+             or download MNIST files manually."
+                .to_string(),
+        )),
+    }
+}
+
+/// Decompress a .gz file in-place using gunzip or a gzip -d fallback.
+///
+/// After successful decompression the .gz file is removed (standard gunzip
+/// behaviour).
+fn decompress_gz(gz_path: &str) -> Result<(), MnistError> {
+    // Try gunzip
+    let result = Command::new("gunzip")
+        .arg("-f")
+        .arg(gz_path)
+        .output();
+
+    match result {
+        Ok(output) if output.status.success() => return Ok(()),
+        _ => {}
+    }
+
+    // Fall back to gzip -d
+    let result = Command::new("gzip")
+        .args(["-df", gz_path])
+        .output();
+
+    match result {
+        Ok(output) if output.status.success() => Ok(()),
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            Err(MnistError::DownloadFailed(format!(
+                "Failed to decompress {gz_path}: {stderr}"
+            )))
+        }
+        Err(_) => Err(MnistError::DownloadFailed(
+            "Neither gunzip nor gzip is available. Please decompress .gz files manually."
+                .to_string(),
+        )),
+    }
+}
+
+/// Download all 4 MNIST IDX files into `data_dir`, decompressing them.
+///
+/// Skips files that already exist (uncompressed). Uses `curl` or `wget` via
+/// subprocess for HTTP, and `gunzip`/`gzip` for decompression.
+pub fn download_mnist_files(data_dir: &str) -> Result<(), MnistError> {
+    let dir = Path::new(data_dir);
+    if !dir.exists() {
+        fs::create_dir_all(dir)?;
+    }
+
+    for name in &MNIST_FILES {
+        let dest = dir.join(name);
+        if dest.exists() {
+            continue;
+        }
+
+        let gz_name = format!("{name}.gz");
+        let gz_dest = dir.join(&gz_name);
+        let url = format!("{MNIST_BASE_URL}/{gz_name}");
+
+        eprintln!("Downloading {url} ...");
+        download_file(&url, gz_dest.to_str().unwrap_or(&gz_name))?;
+
+        eprintln!("Decompressing {gz_name} ...");
+        decompress_gz(gz_dest.to_str().unwrap_or(&gz_name))?;
+
+        // Verify the decompressed file exists
+        if !dest.exists() {
+            return Err(MnistError::DownloadFailed(format!(
+                "Decompressed file not found: {}",
+                dest.display()
+            )));
+        }
+    }
+
+    Ok(())
+}
+
 impl MnistData {
+    /// Download MNIST data (if not already present) and load it.
+    ///
+    /// This method:
+    /// 1. Checks if all IDX files exist in `data_dir`
+    /// 2. If not, downloads them from Google Storage using curl/wget
+    /// 3. Decompresses the .gz files
+    /// 4. Loads and returns the parsed dataset
+    pub fn download_and_load(data_dir: &str) -> Result<Self, MnistError> {
+        download_mnist_files(data_dir)?;
+        Self::load_from_dir(data_dir)
+    }
+
     /// Try to load real MNIST from IDX files in `data_dir`.
     ///
     /// Returns `Err` if any files are missing or malformed.
@@ -1140,5 +1270,254 @@ mod tests {
         assert!(msg.contains("/some/dir"));
         assert!(msg.contains("train-images-idx3-ubyte"));
         assert!(msg.contains("download"));
+
+        let err = MnistError::DownloadFailed("no curl".into());
+        let msg = format!("{err}");
+        assert!(msg.contains("no curl"));
+    }
+
+    #[test]
+    fn download_and_load_with_preexisting_files() {
+        // Simulate download_and_load by pre-creating IDX files in a temp dir.
+        // This tests the full flow without needing real network access.
+        let dir = "/tmp/qlang_test_download_and_load";
+        let _ = fs::remove_dir_all(dir);
+        fs::create_dir_all(dir).unwrap();
+
+        let n_train = 30u32;
+        let n_test = 10u32;
+        let rows = 28u32;
+        let cols = 28u32;
+        let img_size = (rows * cols) as usize;
+
+        let train_pixels: Vec<u8> = (0..n_train as usize * img_size)
+            .map(|i| ((i * 3) % 256) as u8)
+            .collect();
+        let train_labels: Vec<u8> = (0..n_train as usize).map(|i| (i % 10) as u8).collect();
+        let test_pixels: Vec<u8> = (0..n_test as usize * img_size)
+            .map(|i| ((i * 7 + 50) % 256) as u8)
+            .collect();
+        let test_labels: Vec<u8> = (0..n_test as usize).map(|i| (i % 10) as u8).collect();
+
+        fs::write(
+            format!("{dir}/train-images-idx3-ubyte"),
+            create_idx_images(&train_pixels, n_train, rows, cols),
+        )
+        .unwrap();
+        fs::write(
+            format!("{dir}/train-labels-idx1-ubyte"),
+            create_idx_labels(&train_labels, n_train),
+        )
+        .unwrap();
+        fs::write(
+            format!("{dir}/t10k-images-idx3-ubyte"),
+            create_idx_images(&test_pixels, n_test, rows, cols),
+        )
+        .unwrap();
+        fs::write(
+            format!("{dir}/t10k-labels-idx1-ubyte"),
+            create_idx_labels(&test_labels, n_test),
+        )
+        .unwrap();
+
+        // download_and_load should succeed because files already exist
+        let data = MnistData::download_and_load(dir).unwrap();
+        assert_eq!(data.n_train, 30);
+        assert_eq!(data.n_test, 10);
+        assert_eq!(data.image_size, 784);
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    /// End-to-end test: create synthetic IDX data, save to disk, load it back,
+    /// train a small MLP with `train_step_backprop()`, and verify accuracy > 90%.
+    #[test]
+    fn idx_roundtrip_train_and_verify_accuracy() {
+        use crate::training::MlpWeights;
+
+        let dir = "/tmp/qlang_test_idx_roundtrip_train";
+        let _ = fs::remove_dir_all(dir);
+        fs::create_dir_all(dir).unwrap();
+
+        // Generate synthetic images with distinct per-class patterns.
+        // We use 4 classes (0-3) and 8x8 images (64 pixels) to keep it fast.
+        let rows = 8u32;
+        let cols = 8u32;
+        let img_size = (rows * cols) as usize;
+        let n_classes = 4u8;
+        let n_train = 200u32;
+        let n_test = 40u32;
+
+        let mut rng_state: u32 = 12345;
+        let mut next_rand = || -> u32 {
+            rng_state ^= rng_state << 13;
+            rng_state ^= rng_state >> 17;
+            rng_state ^= rng_state << 5;
+            rng_state
+        };
+
+        // Create training data with clear patterns per class
+        let mut train_pixels = vec![0u8; n_train as usize * img_size];
+        let mut train_labels = vec![0u8; n_train as usize];
+
+        for i in 0..n_train as usize {
+            let label = (i % n_classes as usize) as u8;
+            train_labels[i] = label;
+            let offset = i * img_size;
+
+            match label {
+                0 => {
+                    // Horizontal bar in top half
+                    for c in 0..cols as usize {
+                        train_pixels[offset + 2 * cols as usize + c] = 200;
+                        train_pixels[offset + 3 * cols as usize + c] = 200;
+                    }
+                }
+                1 => {
+                    // Vertical bar on left side
+                    for r in 0..rows as usize {
+                        train_pixels[offset + r * cols as usize + 2] = 200;
+                        train_pixels[offset + r * cols as usize + 3] = 200;
+                    }
+                }
+                2 => {
+                    // Diagonal top-left to bottom-right
+                    for k in 0..rows.min(cols) as usize {
+                        train_pixels[offset + k * cols as usize + k] = 200;
+                    }
+                }
+                3 => {
+                    // Bottom-right quadrant filled
+                    for r in 4..rows as usize {
+                        for c in 4..cols as usize {
+                            train_pixels[offset + r * cols as usize + c] = 200;
+                        }
+                    }
+                }
+                _ => {}
+            }
+
+            // Small noise
+            for j in 0..img_size {
+                let noise = (next_rand() % 20) as u8;
+                train_pixels[offset + j] = train_pixels[offset + j].saturating_add(noise);
+            }
+        }
+
+        // Create test data with the same patterns
+        let mut test_pixels = vec![0u8; n_test as usize * img_size];
+        let mut test_labels = vec![0u8; n_test as usize];
+
+        for i in 0..n_test as usize {
+            let label = (i % n_classes as usize) as u8;
+            test_labels[i] = label;
+            let offset = i * img_size;
+
+            match label {
+                0 => {
+                    for c in 0..cols as usize {
+                        test_pixels[offset + 2 * cols as usize + c] = 200;
+                        test_pixels[offset + 3 * cols as usize + c] = 200;
+                    }
+                }
+                1 => {
+                    for r in 0..rows as usize {
+                        test_pixels[offset + r * cols as usize + 2] = 200;
+                        test_pixels[offset + r * cols as usize + 3] = 200;
+                    }
+                }
+                2 => {
+                    for k in 0..rows.min(cols) as usize {
+                        test_pixels[offset + k * cols as usize + k] = 200;
+                    }
+                }
+                3 => {
+                    for r in 4..rows as usize {
+                        for c in 4..cols as usize {
+                            test_pixels[offset + r * cols as usize + c] = 200;
+                        }
+                    }
+                }
+                _ => {}
+            }
+
+            for j in 0..img_size {
+                let noise = (next_rand() % 20) as u8;
+                test_pixels[offset + j] = test_pixels[offset + j].saturating_add(noise);
+            }
+        }
+
+        // Write IDX files to disk
+        fs::write(
+            format!("{dir}/train-images-idx3-ubyte"),
+            create_idx_images(&train_pixels, n_train, rows, cols),
+        )
+        .unwrap();
+        fs::write(
+            format!("{dir}/train-labels-idx1-ubyte"),
+            create_idx_labels(&train_labels, n_train),
+        )
+        .unwrap();
+        fs::write(
+            format!("{dir}/t10k-images-idx3-ubyte"),
+            create_idx_images(&test_pixels, n_test, rows, cols),
+        )
+        .unwrap();
+        fs::write(
+            format!("{dir}/t10k-labels-idx1-ubyte"),
+            create_idx_labels(&test_labels, n_test),
+        )
+        .unwrap();
+
+        // Load back from IDX files
+        let data = MnistData::load_from_dir(dir).unwrap();
+        assert_eq!(data.n_train, n_train as usize);
+        assert_eq!(data.n_test, n_test as usize);
+        assert_eq!(data.image_size, img_size);
+
+        // Train a small MLP using backprop
+        let mut mlp = MlpWeights::new(img_size, 32, n_classes as usize);
+
+        let batch_size = 40;
+        for epoch in 0..80 {
+            for batch_start in (0..data.n_train).step_by(batch_size) {
+                let (batch_images, batch_labels) = data.train_batch(batch_start, batch_size);
+                mlp.train_step_backprop(batch_images, batch_labels, 0.05);
+            }
+
+            if epoch % 20 == 0 {
+                let probs = mlp.forward(&data.train_images);
+                let acc = mlp.accuracy(&probs, &data.train_labels);
+                eprintln!("  epoch {epoch}: train_acc = {:.1}%", acc * 100.0);
+            }
+        }
+
+        // Evaluate on training set
+        let train_probs = mlp.forward(&data.train_images);
+        let train_acc = mlp.accuracy(&train_probs, &data.train_labels);
+
+        // Evaluate on test set
+        let test_probs = mlp.forward(&data.test_images);
+        let test_acc = mlp.accuracy(&test_probs, &data.test_labels);
+
+        eprintln!(
+            "  Final: train_acc = {:.1}%, test_acc = {:.1}%",
+            train_acc * 100.0,
+            test_acc * 100.0,
+        );
+
+        assert!(
+            train_acc > 0.90,
+            "Expected >90% train accuracy, got {:.1}%",
+            train_acc * 100.0
+        );
+        assert!(
+            test_acc > 0.90,
+            "Expected >90% test accuracy, got {:.1}%",
+            test_acc * 100.0
+        );
+
+        // Clean up
+        let _ = fs::remove_dir_all(dir);
     }
 }
