@@ -5,7 +5,9 @@
 //! - TensorType, Dtype, Shape (the type system)
 //! - QuantumState / DensityMatrix (probabilistic values)
 //! - Constraint, Proof (verification primitives)
+//! - Crypto: SHA-256 hashing, HMAC-SHA256 signatures (protocol security)
 
+pub mod crypto;
 pub mod errors;
 pub mod graph;
 pub mod ops;

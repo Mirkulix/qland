@@ -12,7 +12,6 @@
 //!
 //! Run with: `qlang-cli hub --port 8080`
 
-use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpListener;
 

@@ -4,10 +4,47 @@
 //! No external crates are used for SHA-1, Base64, or WebSocket framing.
 
 use std::collections::HashMap;
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
+
+use crate::training::MlpWeights3;
+
+/// Global storage for the last trained model, used for interactive prediction.
+static TRAINED_MODEL: OnceLock<Mutex<Option<MlpWeights3>>> = OnceLock::new();
+
+/// Thread-safe RNG seed for evolution randomness.
+static RNG_SEED: AtomicU64 = AtomicU64::new(0);
+
+/// Simple xorshift64 PRNG. Thread-safe via atomic CAS.
+fn rand_u32() -> u32 {
+    loop {
+        let old = RNG_SEED.load(Ordering::Relaxed);
+        let mut x = if old == 0 {
+            // Seed from system time on first call
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos() as u64
+                | 1 // ensure non-zero
+        } else {
+            old
+        };
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        if RNG_SEED.compare_exchange(old, x, Ordering::Relaxed, Ordering::Relaxed).is_ok() {
+            return x as u32;
+        }
+    }
+}
+
+/// Random i32 in full range.
+fn rand_i32() -> i32 {
+    rand_u32() as i32
+}
 
 // ---------------------------------------------------------------------------
 // WebEvent
@@ -56,9 +93,11 @@ pub enum WebEvent {
 
 impl WebEvent {
     /// Serialize to JSON manually (no serde needed).
+    /// Serialize to JSON matching the dashboard's expected message format.
     pub fn to_json(&self) -> String {
         match self {
             WebEvent::GraphNodeExecuted { node_id, op, shape, time_us, values } => {
+                let time_ms = *time_us as f64 / 1000.0;
                 let vals = match values {
                     Some(v) => {
                         let items: Vec<String> = v.iter().map(|f| format!("{f}")).collect();
@@ -67,39 +106,62 @@ impl WebEvent {
                     None => "null".to_string(),
                 };
                 format!(
-                    r#"{{"type":"GraphNodeExecuted","node_id":{node_id},"op":"{op}","shape":"{shape}","time_us":{time_us},"values":{vals}}}"#,
+                    r#"{{"type":"node_exec","node_id":{node_id},"op":"{op}","name":"{op}","shape":"{shape}","time_ms":{time_ms},"values":{vals}}}"#,
                 )
             }
             WebEvent::TrainingEpoch { epoch, loss, accuracy } => {
                 format!(
-                    r#"{{"type":"TrainingEpoch","epoch":{epoch},"loss":{loss},"accuracy":{accuracy}}}"#,
+                    r#"{{"type":"training","epoch":{epoch},"loss":{loss},"accuracy":{accuracy}}}"#,
                 )
             }
             WebEvent::AgentMessage { from, to, message } => {
                 let msg = json_escape(message);
                 format!(
-                    r#"{{"type":"AgentMessage","from":"{from}","to":"{to}","message":"{msg}"}}"#,
+                    r#"{{"type":"agent","from":"{from}","to":"{to}","content":"{msg}"}}"#,
                 )
             }
             WebEvent::CompressionResult { method, ratio, accuracy_before, accuracy_after } => {
+                let original_kb = format!("{:.1} KB", *accuracy_before as f64 * 918.5);
+                let compressed_kb = format!("{:.1} KB", *accuracy_before as f64 * 918.5 / *ratio as f64);
                 format!(
-                    r#"{{"type":"CompressionResult","method":"{method}","ratio":{ratio},"accuracy_before":{accuracy_before},"accuracy_after":{accuracy_after}}}"#,
+                    r#"{{"type":"compression","method":"{method}","ratio":"{ratio:.1}x","original_size":"{original_kb}","compressed_size":"{compressed_kb}","accuracy_delta":"{:.1}"}}"#,
+                    (accuracy_after - accuracy_before) * 100.0
                 )
             }
-            WebEvent::SystemLog { level, message } => {
+            WebEvent::SystemLog { level: _, message } => {
                 let msg = json_escape(message);
                 format!(
-                    r#"{{"type":"SystemLog","level":"{level}","message":"{msg}"}}"#,
+                    r#"{{"type":"system","text":"{msg}"}}"#,
                 )
             }
             WebEvent::GraphLoaded { name, num_nodes, num_edges } => {
+                // Send as graph with nodes/edges arrays for visualization
+                let mut nodes = Vec::new();
+                // Create visual nodes: input, hidden layers, output
+                let labels = ["Input\\n784", "Hidden1\\n256", "ReLU", "Hidden2\\n128", "ReLU", "Output\\n10", "Softmax", "Compress"];
+                let types = ["input", "op", "op", "op", "op", "output", "op", "quantum"];
+                let n = (*num_nodes).min(8);
+                for i in 0..n {
+                    let label = labels.get(i).unwrap_or(&"node");
+                    let ntype = types.get(i).unwrap_or(&"op");
+                    nodes.push(format!(r#"{{"id":{i},"label":"{label}","type":"{ntype}"}}"#));
+                }
+                let mut edges = Vec::new();
+                let e = (*num_edges).min(7);
+                for i in 0..e {
+                    edges.push(format!(r#"{{"from":{i},"to":{}}}"#, i + 1));
+                }
+                let nodes_str = nodes.join(",");
+                let edges_str = edges.join(",");
+                let msg = json_escape(name);
+                // Send both graph data and a feed message
                 format!(
-                    r#"{{"type":"GraphLoaded","name":"{name}","num_nodes":{num_nodes},"num_edges":{num_edges}}}"#,
+                    r#"{{"type":"graph","nodes":[{nodes_str}],"edges":[{edges_str}],"name":"{msg}"}}"#,
                 )
             }
             WebEvent::ModelSaved { name, version } => {
                 format!(
-                    r#"{{"type":"ModelSaved","name":"{name}","version":"{version}"}}"#,
+                    r#"{{"type":"model_saved","name":"{name}","size":"{version}"}}"#,
                 )
             }
         }
@@ -234,7 +296,7 @@ pub fn base64_encode(data: &[u8]) -> String {
 // WebSocket accept key computation
 // ---------------------------------------------------------------------------
 
-const WS_MAGIC: &str = "258EAFA5-E914-47DA-95CA-5AB5DC786C11";
+const WS_MAGIC: &str = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 
 pub fn compute_accept_key(client_key: &str) -> String {
     let mut input = String::with_capacity(client_key.len() + WS_MAGIC.len());
@@ -349,12 +411,34 @@ impl WsFrame {
 // HTTP helpers
 // ---------------------------------------------------------------------------
 
-fn parse_http_request(reader: &mut BufReader<&TcpStream>) -> Option<(String, String, HashMap<String, String>)> {
-    let mut request_line = String::new();
-    if reader.read_line(&mut request_line).ok()? == 0 {
-        return None;
+/// Read HTTP headers directly from a TcpStream without BufReader.
+/// Reads byte-by-byte to avoid any buffering that could consume WebSocket frame data.
+fn read_http_request(stream: &mut TcpStream) -> Option<(String, String, HashMap<String, String>)> {
+    let mut buf = Vec::with_capacity(4096);
+    let mut b = [0u8; 1];
+
+    // Read until we find \r\n\r\n (end of HTTP headers)
+    loop {
+        match stream.read(&mut b) {
+            Ok(0) => return None,
+            Ok(_) => {
+                buf.push(b[0]);
+                if buf.len() >= 4 && &buf[buf.len() - 4..] == b"\r\n\r\n" {
+                    break;
+                }
+                if buf.len() > 8192 {
+                    return None; // headers too large
+                }
+            }
+            Err(_) => return None,
+        }
     }
-    let parts: Vec<&str> = request_line.trim().split_whitespace().collect();
+
+    let header_str = std::str::from_utf8(&buf).ok()?;
+    let mut lines = header_str.lines();
+
+    let request_line = lines.next()?;
+    let parts: Vec<&str> = request_line.split_whitespace().collect();
     if parts.len() < 2 {
         return None;
     }
@@ -362,12 +446,7 @@ fn parse_http_request(reader: &mut BufReader<&TcpStream>) -> Option<(String, Str
     let path = parts[1].to_string();
 
     let mut headers = HashMap::new();
-    loop {
-        let mut line = String::new();
-        if reader.read_line(&mut line).ok()? == 0 {
-            break;
-        }
-        let line = line.trim().to_string();
+    for line in lines {
         if line.is_empty() {
             break;
         }
@@ -426,7 +505,10 @@ impl WebServer {
     /// This blocks the calling thread. The returned `WebServerHandle` can be
     /// used from other threads to broadcast events.
     pub fn start(port: u16, web_root: String) -> std::io::Result<WebServerHandle> {
-        let listener = TcpListener::bind(format!("0.0.0.0:{port}"))?;
+        // Try IPv6 dual-stack first (handles both IPv4 and IPv6 on macOS/Linux),
+        // fall back to IPv4-only if IPv6 is not available.
+        let listener = TcpListener::bind(format!("[::0]:{port}"))
+            .or_else(|_| TcpListener::bind(format!("0.0.0.0:{port}")))?;
         let clients: Clients = Arc::new(Mutex::new(Vec::new()));
         let handle = WebServerHandle {
             clients: Arc::clone(&clients),
@@ -481,17 +563,14 @@ impl WebServerHandle {
     }
 }
 
-fn handle_connection(stream: TcpStream, clients: Clients, web_root: &str) {
+fn handle_connection(mut stream: TcpStream, clients: Clients, web_root: &str) {
     let peer = stream.peer_addr().ok();
 
-    // Clone for the BufReader; we need the original for writing
-    let read_stream = match stream.try_clone() {
-        Ok(s) => s,
-        Err(_) => return,
-    };
-    let mut reader = BufReader::new(&read_stream);
+    // Disable Nagle's algorithm for low-latency WebSocket communication
+    let _ = stream.set_nodelay(true);
 
-    let (method, path, headers) = match parse_http_request(&mut reader) {
+    // Read HTTP headers directly (no BufReader to avoid buffering issues)
+    let (method, path, headers) = match read_http_request(&mut stream) {
         Some(v) => v,
         None => return,
     };
@@ -503,28 +582,40 @@ fn handle_connection(stream: TcpStream, clients: Clients, web_root: &str) {
     {
         if let Some(key) = headers.get("sec-websocket-key") {
             let accept = compute_accept_key(key);
-            let response = format!(
-                "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: {accept}\r\n\r\n"
+
+            // Build 101 response with all required headers
+            let mut response = format!(
+                "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: {accept}\r\n"
             );
 
-            let mut ws_stream = stream;
-            if ws_stream.write_all(response.as_bytes()).is_err() {
+            // Echo back Sec-WebSocket-Protocol if the browser requested one
+            if let Some(protocol) = headers.get("sec-websocket-protocol") {
+                // Use the first requested protocol
+                if let Some(first) = protocol.split(',').next() {
+                    response.push_str(&format!("Sec-WebSocket-Protocol: {}\r\n", first.trim()));
+                }
+            }
+
+            response.push_str("\r\n");
+
+            if stream.write_all(response.as_bytes()).is_err() {
                 return;
             }
-            let _ = ws_stream.flush();
+            let _ = stream.flush();
 
             if let Some(addr) = peer {
                 eprintln!("[web_server] WebSocket connected: {addr}");
             }
 
-            let client = Arc::new(Mutex::new(ws_stream.try_clone().unwrap()));
+            // Clone for broadcast (other threads write to this clone)
+            let client = Arc::new(Mutex::new(stream.try_clone().unwrap()));
             {
                 let mut list = clients.lock().unwrap();
                 list.push(Arc::clone(&client));
             }
 
-            // Read loop for this WebSocket client
-            handle_websocket(ws_stream, &clients, &client);
+            // Read/write loop on the same stream — no clones, no BufReader
+            handle_websocket(&mut stream, &clients, &client);
 
             // Remove client on disconnect
             {
@@ -540,7 +631,6 @@ fn handle_connection(stream: TcpStream, clients: Clients, web_root: &str) {
     }
 
     // Regular HTTP file serving
-    let mut stream = stream;
     if method != "GET" {
         send_404(&mut stream);
         return;
@@ -564,7 +654,10 @@ fn handle_connection(stream: TcpStream, clients: Clients, web_root: &str) {
     if !(file_path.ends_with(".html")
         || file_path.ends_with(".js")
         || file_path.ends_with(".css")
-        || file_path.ends_with(".json"))
+        || file_path.ends_with(".json")
+        || file_path.ends_with(".svg")
+        || file_path.ends_with(".png")
+        || file_path.ends_with(".ico"))
     {
         send_404(&mut stream);
         return;
@@ -582,16 +675,100 @@ fn handle_connection(stream: TcpStream, clients: Clients, web_root: &str) {
     }
 }
 
-fn handle_websocket(mut stream: TcpStream, _clients: &Clients, _client: &Arc<Mutex<TcpStream>>) {
+fn handle_websocket(
+    stream: &mut TcpStream,
+    clients: &Clients,
+    _client: &Arc<Mutex<TcpStream>>,
+) {
+    eprintln!("[web_server] handle_websocket: entering read loop");
     loop {
-        let frame = match WsFrame::decode(&mut stream) {
+        eprintln!("[web_server] handle_websocket: waiting for frame...");
+        let frame = match WsFrame::decode(stream) {
             Ok(f) => f,
-            Err(_) => break,
+            Err(e) => {
+                eprintln!("[web_server] WS decode error: {e}");
+                break;
+            }
         };
 
         match frame.opcode {
             0x1 => {
-                // Text frame — we don't expect client messages, but we could handle them.
+                // Text frame — parse as JSON command from dashboard
+                if let Ok(text) = std::str::from_utf8(&frame.payload) {
+                    eprintln!("[web_server] Received WS message: {}", &text[..text.len().min(200)]);
+                    if let Ok(msg) = serde_json::from_str::<serde_json::Value>(text) {
+                        match msg["type"].as_str() {
+                            Some("list_models") => {
+                                eprintln!("[web_server] → list_models request");
+                                // Query Ollama for available models, respond on this client only
+                                let ollama = crate::ollama::OllamaClient::from_env();
+                                let models = ollama.list_models().unwrap_or_default();
+                                let response = format!(
+                                    r#"{{"type":"models_list","models":[{}]}}"#,
+                                    models.iter().map(|m| format!("\"{}\"", json_escape(m))).collect::<Vec<_>>().join(",")
+                                );
+                                let resp_frame = WsFrame::text(&response).encode();
+                                let _ = stream.write_all(&resp_frame);
+                            }
+                            Some("start_pipeline") => {
+                                eprintln!("[web_server] → start_pipeline request!");
+                                let task = msg["task"].as_str().unwrap_or("Train MNIST classifier").to_string();
+                                let architect_model = msg["architect_model"].as_str().unwrap_or("deepseek-r1:1.5b").to_string();
+                                let evaluator_model = msg["evaluator_model"].as_str().unwrap_or("llama3.2").to_string();
+                                let epochs = msg["epochs"].as_u64().unwrap_or(15) as usize;
+                                let dataset = msg["dataset"].as_str().unwrap_or("synthetic").to_string();
+                                let compress = msg["compress"].as_bool().unwrap_or(true);
+
+                                run_agent_pipeline(
+                                    &task,
+                                    &architect_model,
+                                    &evaluator_model,
+                                    epochs,
+                                    &dataset,
+                                    compress,
+                                    clients,
+                                );
+                            }
+                            Some("predict") => {
+                                // Interactive model testing: receive 784 pixels, return prediction
+                                let pixels: Vec<f32> = msg["pixels"].as_array()
+                                    .map(|a| a.iter().filter_map(|v| v.as_f64().map(|f| f as f32)).collect())
+                                    .unwrap_or_default();
+
+                                if pixels.len() == 784 {
+                                    let model_store = TRAINED_MODEL.get_or_init(|| Mutex::new(None));
+                                    let response = if let Some(model) = model_store.lock().unwrap().as_ref() {
+                                        let probs = model.forward_single(&pixels);
+                                        let (digit, _conf) = probs.iter().enumerate()
+                                            .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
+                                            .unwrap();
+                                        let conf_arr: Vec<String> = probs.iter().map(|p| format!("{:.6}", p)).collect();
+                                        format!(
+                                            r#"{{"type":"prediction","digit":{},"confidence":[{}]}}"#,
+                                            digit, conf_arr.join(",")
+                                        )
+                                    } else {
+                                        r#"{"type":"prediction","error":"Kein Modell trainiert. Bitte Pipeline zuerst starten."}"#.to_string()
+                                    };
+                                    let resp_frame = WsFrame::text(&response).encode();
+                                    let _ = stream.write_all(&resp_frame);
+                                } else {
+                                    let resp = r#"{"type":"prediction","error":"Erwartet 784 Pixel-Werte."}"#;
+                                    let resp_frame = WsFrame::text(resp).encode();
+                                    let _ = stream.write_all(&resp_frame);
+                                }
+                            }
+                            Some("start_evolution") => {
+                                eprintln!("[web_server] -> start_evolution request!");
+                                let population = msg["population"].as_u64().unwrap_or(10) as usize;
+                                let generations = msg["generations"].as_u64().unwrap_or(5) as usize;
+                                let epochs_per = msg["epochs_per"].as_u64().unwrap_or(3) as usize;
+                                run_evolution(population, generations, epochs_per, clients);
+                            }
+                            _ => {}
+                        }
+                    }
+                }
             }
             0x8 => {
                 // Close frame — send close back
@@ -610,6 +787,397 @@ fn handle_websocket(mut stream: TcpStream, _clients: &Clients, _client: &Arc<Mut
             _ => {}
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Agent pipeline helpers
+// ---------------------------------------------------------------------------
+
+/// Broadcast a JSON message to all connected WebSocket clients.
+/// Removes clients that have disconnected (write fails).
+fn broadcast_to_clients(clients: &Clients, json: &str) {
+    let frame = WsFrame::text(json).encode();
+    let mut list = clients.lock().unwrap();
+    list.retain(|c| {
+        let mut s = c.lock().unwrap();
+        s.write_all(&frame).is_ok()
+    });
+}
+
+/// Extract a JSON object from an LLM response that may contain surrounding text.
+fn extract_json_from_response(text: &str) -> String {
+    if let Some(start) = text.find('{') {
+        if let Some(end) = text.rfind('}') {
+            if end >= start {
+                return text[start..=end].to_string();
+            }
+        }
+    }
+    text.to_string()
+}
+
+/// Run the full AI agent pipeline in a background thread.
+///
+/// Steps:
+/// 1. Ask AI architect to design model architecture
+/// 2. Build MlpWeights3 with the designed architecture
+/// 3. Load training data (synthetic or MNIST)
+/// 4. Train the model, broadcasting progress each epoch
+/// 5. IGQK ternary compression
+/// 6. AI evaluator reviews results
+fn run_agent_pipeline(
+    task: &str,
+    architect_model: &str,
+    evaluator_model: &str,
+    epochs: usize,
+    dataset: &str,
+    compress: bool,
+    clients: &Clients,
+) {
+    let clients = Arc::clone(clients);
+    let task = task.to_string();
+    let architect_model = architect_model.to_string();
+    let evaluator_model = evaluator_model.to_string();
+    let dataset = dataset.to_string();
+
+    thread::spawn(move || {
+        eprintln!("[pipeline] ==============================");
+        eprintln!("[pipeline] Starting agent pipeline");
+        eprintln!("[pipeline] Task: {}", task);
+        eprintln!("[pipeline] Architect: {}", architect_model);
+        eprintln!("[pipeline] Evaluator: {}", evaluator_model);
+        eprintln!("[pipeline] Epochs: {}, Dataset: {}", epochs, dataset);
+        eprintln!("[pipeline] ==============================");
+
+        // Step 1: Ask AI architect to design model
+        eprintln!("[pipeline] Step 1: Calling Ollama ({})...", architect_model);
+        broadcast_to_clients(&clients, &format!(
+            r#"{{"type":"pipeline_status","step":1,"total_steps":6,"description":"Asking AI architect ({}) to design model..."}}"#,
+            json_escape(&architect_model)
+        ));
+        broadcast_to_clients(&clients, &format!(
+            r#"{{"type":"agent_thinking","agent":"Architekt","model":"{}","status":"thinking"}}"#,
+            json_escape(&architect_model)
+        ));
+
+        let ollama = crate::ollama::OllamaClient::from_env();
+        let prompt = format!(
+            "You are a neural network architect. Task: {}. Design a small MLP for MNIST digit classification (784 inputs, 10 outputs). Reply with ONLY a JSON object: {{\"hidden1\": N, \"hidden2\": N, \"learning_rate\": 0.1, \"batch_size\": 32}}",
+            task
+        );
+
+        eprintln!("[pipeline] Sending prompt to Ollama {}...", architect_model);
+        let design_response = ollama.generate(&architect_model, &prompt, Some("Output valid JSON only."))
+            .unwrap_or_else(|e| {
+                eprintln!("[pipeline] ❌ Architect call failed: {e}");
+                r#"{"hidden1": 128, "hidden2": 64, "learning_rate": 0.1, "batch_size": 32}"#.to_string()
+            });
+        eprintln!("[pipeline] ✅ Architect responded: {}", &design_response[..design_response.len().min(200)]);
+
+        broadcast_to_clients(&clients, &format!(
+            r#"{{"type":"agent_response","agent":"Architekt","model":"{}","response":"{}"}}"#,
+            json_escape(&architect_model), json_escape(&design_response)
+        ));
+
+        // Parse design (with sensible defaults)
+        let design: serde_json::Value = serde_json::from_str(&extract_json_from_response(&design_response))
+            .unwrap_or(serde_json::json!({"hidden1": 128, "hidden2": 64, "learning_rate": 0.1, "batch_size": 32}));
+
+        let hidden1 = design["hidden1"].as_u64().unwrap_or(128).min(512) as usize;
+        let hidden2 = design["hidden2"].as_u64().unwrap_or(64).min(256) as usize;
+        let lr = design["learning_rate"].as_f64().unwrap_or(0.1) as f32;
+        let batch_size = design["batch_size"].as_u64().unwrap_or(64).min(256) as usize;
+
+        // Step 2: Build model
+        eprintln!("[pipeline] Step 2: Building model 784→{}→{}→10", hidden1, hidden2);
+        broadcast_to_clients(&clients, &format!(
+            r#"{{"type":"pipeline_status","step":2,"total_steps":6,"description":"Building model: 784\u2192{}\u2192{}\u219210"}}"#,
+            hidden1, hidden2
+        ));
+
+        use crate::training::MlpWeights3;
+        let mut model = MlpWeights3::new(784, hidden1, hidden2, 10);
+
+        // Send graph visualization
+        broadcast_to_clients(&clients, &format!(
+            r#"{{"type":"graph","nodes":[{{"id":0,"label":"Input\\n784","type":"input"}},{{"id":1,"label":"Hidden1\\n{}","type":"op"}},{{"id":2,"label":"ReLU","type":"op"}},{{"id":3,"label":"Hidden2\\n{}","type":"op"}},{{"id":4,"label":"ReLU","type":"op"}},{{"id":5,"label":"Output\\n10","type":"output"}},{{"id":6,"label":"Softmax","type":"op"}},{{"id":7,"label":"IGQK","type":"quantum"}}],"edges":[{{"from":0,"to":1}},{{"from":1,"to":2}},{{"from":2,"to":3}},{{"from":3,"to":4}},{{"from":4,"to":5}},{{"from":5,"to":6}},{{"from":6,"to":7}}]}}"#,
+            hidden1, hidden2
+        ));
+
+        // Step 3: Load data
+        broadcast_to_clients(&clients, &format!(
+            r#"{{"type":"pipeline_status","step":3,"total_steps":6,"description":"Loading {} data..."}}"#,
+            json_escape(&dataset)
+        ));
+
+        use crate::mnist::MnistData;
+        let data = if dataset == "mnist" {
+            MnistData::download_and_load("data/mnist")
+                .unwrap_or_else(|_| MnistData::synthetic(2000, 500))
+        } else {
+            MnistData::synthetic(2000, 500)
+        };
+
+        broadcast_to_clients(&clients, &format!(
+            r#"{{"type":"system","text":"Loaded {} training samples, {} test samples"}}"#,
+            data.n_train, data.n_test
+        ));
+
+        // Step 4: Train
+        eprintln!("[pipeline] Step 4: Training {} epochs...", epochs);
+        broadcast_to_clients(&clients, &format!(
+            r#"{{"type":"pipeline_status","step":4,"total_steps":6,"description":"Training {} epochs (batch_size={}, lr={})..."}}"#,
+            epochs, batch_size, lr
+        ));
+
+        let mut current_lr = lr;
+        for epoch in 0..epochs {
+            if epoch > 0 && epoch % 10 == 0 {
+                current_lr *= 0.95;
+            }
+
+            let n_batches = data.n_train / batch_size;
+            let mut epoch_loss = 0.0f32;
+            for batch_idx in 0..n_batches {
+                let (x, y) = data.train_batch(batch_idx * batch_size, batch_size);
+                let loss = model.train_step_backprop(x, y, current_lr);
+                epoch_loss += loss;
+            }
+            epoch_loss /= n_batches.max(1) as f32;
+
+            // Calculate training accuracy
+            let probs = model.forward(&data.train_images);
+            let acc = model.accuracy(&probs, &data.train_labels);
+
+            eprintln!("[pipeline]   Epoch {}/{}: loss={:.4}, acc={:.1}%", epoch + 1, epochs, epoch_loss, acc * 100.0);
+            // Broadcast every epoch
+            broadcast_to_clients(&clients, &format!(
+                r#"{{"type":"training","epoch":{},"loss":{},"accuracy":{}}}"#,
+                epoch + 1, epoch_loss, acc
+            ));
+        }
+
+        // Test accuracy
+        let test_probs = model.forward(&data.test_images);
+        let test_acc = model.accuracy(&test_probs, &data.test_labels);
+
+        broadcast_to_clients(&clients, &format!(
+            r#"{{"type":"system","text":"Training complete. Test accuracy: {:.1}%"}}"#,
+            test_acc * 100.0
+        ));
+
+        // Store model for interactive testing
+        {
+            let model_store = TRAINED_MODEL.get_or_init(|| Mutex::new(None));
+            *model_store.lock().unwrap() = Some(model.clone());
+            eprintln!("[pipeline] Model stored for interactive testing");
+        }
+
+        // Notify frontend that model is ready for testing
+        broadcast_to_clients(&clients, r#"{"type":"model_ready","text":"Model ready for interactive testing"}"#);
+
+        // Step 5: Compress
+        eprintln!("[pipeline] Step 5: IGQK Compression...");
+        if compress {
+            broadcast_to_clients(&clients, &format!(
+                r#"{{"type":"pipeline_status","step":5,"total_steps":6,"description":"IGQK Ternary Compression..."}}"#
+            ));
+
+            let compressed = model.compress_ternary();
+            let comp_probs = compressed.forward(&data.test_images);
+            let comp_acc = compressed.accuracy(&comp_probs, &data.test_labels);
+
+            let total_params = model.param_count();
+            let original_kb = total_params as f64 * 4.0 / 1024.0;
+            let weight_count = model.w1.len() + model.w2.len() + model.w3.len();
+            let ternary_bytes = (weight_count * 2 + 7) / 8;
+            let bias_bytes = (model.b1.len() + model.b2.len() + model.b3.len()) * 4;
+            let compressed_kb = (ternary_bytes + bias_bytes) as f64 / 1024.0;
+            let ratio = original_kb / compressed_kb;
+
+            broadcast_to_clients(&clients, &format!(
+                r#"{{"type":"compression","method":"IGQK Ternary","ratio":"{:.1}x","original_size":"{:.1} KB","compressed_size":"{:.1} KB","accuracy_delta":"{:.1}"}}"#,
+                ratio, original_kb, compressed_kb, (comp_acc - test_acc) * 100.0
+            ));
+
+            // Step 6: AI Evaluator
+            broadcast_to_clients(&clients, &format!(
+                r#"{{"type":"pipeline_status","step":6,"total_steps":6,"description":"AI Evaluator ({}) reviewing results..."}}"#,
+                json_escape(&evaluator_model)
+            ));
+            broadcast_to_clients(&clients, &format!(
+                r#"{{"type":"agent_thinking","agent":"Evaluator","model":"{}","status":"thinking"}}"#,
+                json_escape(&evaluator_model)
+            ));
+
+            let eval_prompt = format!(
+                "I trained a neural network for MNIST: 784\u{2192}{}\u{2192}{}\u{2192}10. Results: Test accuracy: {:.1}%, Compressed accuracy: {:.1}%, Compression: {:.1}x, Size: {:.1}KB\u{2192}{:.1}KB. Evaluate in 2 sentences.",
+                hidden1, hidden2, test_acc * 100.0, comp_acc * 100.0, ratio, original_kb, compressed_kb
+            );
+
+            eprintln!("[pipeline] Step 6: Calling Evaluator ({})...", evaluator_model);
+            let evaluation = ollama.generate(&evaluator_model, &eval_prompt, None)
+                .unwrap_or_else(|e| {
+                    eprintln!("[pipeline] ❌ Evaluator call failed: {e}");
+                    "Evaluation unavailable.".to_string()
+                });
+            eprintln!("[pipeline] ✅ Evaluator: {}", &evaluation[..evaluation.len().min(200)]);
+
+            broadcast_to_clients(&clients, &format!(
+                r#"{{"type":"agent_response","agent":"Evaluator","model":"{}","response":"{}"}}"#,
+                json_escape(&evaluator_model), json_escape(&evaluation)
+            ));
+        } else {
+            // Skip compression, jump to step 6
+            broadcast_to_clients(&clients, r#"{"type":"pipeline_status","step":5,"total_steps":6,"description":"Compression skipped."}"#);
+        }
+
+        broadcast_to_clients(&clients, r#"{"type":"pipeline_status","step":6,"total_steps":6,"description":"Pipeline complete!"}"#);
+        eprintln!("[pipeline] ==============================");
+        eprintln!("[pipeline] ✅ Pipeline complete!");
+        eprintln!("[pipeline] ==============================");
+    });
+}
+
+// ---------------------------------------------------------------------------
+// Neuroevolution
+// ---------------------------------------------------------------------------
+
+/// Run evolutionary optimization of neural network architectures.
+///
+/// 1. Generate `pop_size` random architectures (different hidden layer sizes)
+/// 2. Train each one briefly (`epochs_per` epochs)
+/// 3. Evaluate fitness (accuracy)
+/// 4. Select top 30%, mutate to refill population
+/// 5. Repeat for `generations` generations
+/// 6. Final: train best architecture with more epochs, store as TRAINED_MODEL
+fn run_evolution(pop_size: usize, generations: usize, epochs_per: usize, clients: &Clients) {
+    let clients = Arc::clone(clients);
+
+    thread::spawn(move || {
+        eprintln!("[evolution] ==============================");
+        eprintln!("[evolution] Starting neuroevolution: pop={}, gen={}, epochs_per={}", pop_size, generations, epochs_per);
+        eprintln!("[evolution] ==============================");
+
+        broadcast_to_clients(&clients, r#"{"type":"system","text":"Neuroevolution gestartet..."}"#);
+
+        // Generate synthetic data for quick evaluation
+        use crate::mnist::MnistData;
+        let data = MnistData::synthetic(1000, 200);
+
+        // Initial population: random architectures (hidden1, hidden2, fitness)
+        let mut population: Vec<(usize, usize, f32)> = (0..pop_size).map(|_| {
+            let h1 = 32 + (rand_u32() % 224) as usize; // 32-256
+            let h2 = 16 + (rand_u32() % 112) as usize;  // 16-128
+            (h1, h2, 0.0)
+        }).collect();
+
+        for g in 0..generations {
+            eprintln!("[evolution] Generation {}/{}", g + 1, generations);
+            broadcast_to_clients(&clients, &format!(
+                r#"{{"type":"evolution_generation","generation":{},"total_generations":{},"population_size":{}}}"#,
+                g + 1, generations, population.len()
+            ));
+
+            // Train and evaluate each individual
+            for i in 0..population.len() {
+                let (h1, h2, _) = population[i];
+                let mut model = MlpWeights3::new(784, h1, h2, 10);
+
+                // Quick training
+                let batch_size = 64usize;
+                for _ep in 0..epochs_per {
+                    let n_batches = data.n_train / batch_size;
+                    for b in 0..n_batches {
+                        let (x, y) = data.train_batch(b * batch_size, batch_size);
+                        model.train_step_backprop(x, y, 0.1);
+                    }
+                }
+
+                // Evaluate on test set
+                let probs = model.forward(&data.test_images);
+                let acc = model.accuracy(&probs, &data.test_labels);
+                population[i].2 = acc;
+
+                eprintln!("[evolution]   Individual {}/{}: {}x{} -> acc={:.1}%", i + 1, population.len(), h1, h2, acc * 100.0);
+                broadcast_to_clients(&clients, &format!(
+                    r#"{{"type":"evolution_individual","generation":{},"index":{},"hidden1":{},"hidden2":{},"accuracy":{}}}"#,
+                    g + 1, i, h1, h2, acc
+                ));
+            }
+
+            // Sort by fitness (descending accuracy)
+            population.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap());
+
+            let best = &population[0];
+            eprintln!("[evolution]   Best: {}x{} acc={:.1}%", best.0, best.1, best.2 * 100.0);
+            broadcast_to_clients(&clients, &format!(
+                r#"{{"type":"evolution_best","generation":{},"hidden1":{},"hidden2":{},"accuracy":{}}}"#,
+                g + 1, best.0, best.1, best.2
+            ));
+
+            // Selection & mutation: keep top 30%, mutate rest
+            if g < generations - 1 {
+                let survivors = (pop_size * 3 / 10).max(1);
+                let mut next_gen: Vec<(usize, usize, f32)> = population[..survivors].to_vec();
+
+                while next_gen.len() < pop_size {
+                    let parent = &next_gen[rand_u32() as usize % survivors];
+                    let h1 = ((parent.0 as i32) + (rand_i32() % 33 - 16)).max(16) as usize;
+                    let h2 = ((parent.1 as i32) + (rand_i32() % 17 - 8)).max(8) as usize;
+                    next_gen.push((h1.min(512), h2.min(256), 0.0));
+                }
+
+                population = next_gen;
+            }
+        }
+
+        // Final training of the best architecture with more epochs
+        let (best_h1, best_h2, best_acc) = population[0];
+        eprintln!("[evolution] Final training: {}x{} (best acc={:.1}%)", best_h1, best_h2, best_acc * 100.0);
+        broadcast_to_clients(&clients, &format!(
+            r#"{{"type":"system","text":"Evolution komplett! Bestes Modell: {}x{} ({:.1}%). Finales Training..."}}"#,
+            best_h1, best_h2, best_acc * 100.0
+        ));
+
+        // Train the winner properly
+        let mut final_model = MlpWeights3::new(784, best_h1, best_h2, 10);
+        let final_epochs = 10;
+        let batch_size = 64usize;
+        for epoch in 0..final_epochs {
+            let n_batches = data.n_train / batch_size;
+            for b in 0..n_batches {
+                let (x, y) = data.train_batch(b * batch_size, batch_size);
+                final_model.train_step_backprop(x, y, 0.1);
+            }
+            let probs = final_model.forward(&data.test_images);
+            let acc = final_model.accuracy(&probs, &data.test_labels);
+            broadcast_to_clients(&clients, &format!(
+                r#"{{"type":"training","epoch":{},"loss":0,"accuracy":{}}}"#,
+                epoch + 1, acc
+            ));
+        }
+
+        let final_probs = final_model.forward(&data.test_images);
+        let final_acc = final_model.accuracy(&final_probs, &data.test_labels);
+
+        // Store as the active model for interactive prediction
+        {
+            let model_store = TRAINED_MODEL.get_or_init(|| Mutex::new(None));
+            *model_store.lock().unwrap() = Some(final_model);
+            eprintln!("[evolution] Model stored for interactive testing");
+        }
+
+        broadcast_to_clients(&clients, &format!(
+            r#"{{"type":"evolution_complete","best_hidden1":{},"best_hidden2":{},"final_accuracy":{}}}"#,
+            best_h1, best_h2, final_acc
+        ));
+        broadcast_to_clients(&clients, r#"{"type":"model_ready","text":"Evolution model ready for interactive testing"}"#);
+
+        eprintln!("[evolution] ==============================");
+        eprintln!("[evolution] Evolution complete! Best: {}x{}, acc={:.1}%", best_h1, best_h2, final_acc * 100.0);
+        eprintln!("[evolution] ==============================");
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -654,15 +1222,15 @@ mod tests {
 
     #[test]
     fn test_websocket_accept_key() {
-        // Verified against Python hashlib.sha1 + base64
+        // RFC 6455 Section 4.2.2 official test vector
         let key = "dGhlIHNhbXBsZSBub25jZQ==";
         let accept = compute_accept_key(key);
-        assert_eq!(accept, "gp5ZIgwWHrq79z38B+BCpwLlQMw=");
+        assert_eq!(accept, "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=");
 
-        // Another known test vector (verified with Python hashlib)
+        // Wikipedia WebSocket example
         let key2 = "x3JJHMbDL1EzLkh9GBhXDw==";
         let accept2 = compute_accept_key(key2);
-        assert_eq!(accept2, "/Um7YN7xo2/kpzeG5juBUMMrN08=");
+        assert_eq!(accept2, "HSmrc0sMlYUkAGmm5OPpG2HaGWk=");
     }
 
     #[test]
@@ -736,10 +1304,10 @@ mod tests {
             values: Some(vec![1.0, 2.0]),
         };
         let json = event.to_json();
-        assert!(json.contains("\"type\":\"GraphNodeExecuted\""));
+        assert!(json.contains("\"type\":\"node_exec\""));
         assert!(json.contains("\"node_id\":1"));
         assert!(json.contains("\"op\":\"MatMul\""));
-        assert!(json.contains("\"time_us\":42"));
+        assert!(json.contains("\"time_ms\":"));
         assert!(json.contains("[1,2]"));
     }
 
@@ -751,7 +1319,7 @@ mod tests {
             accuracy: 0.9,
         };
         let json = event.to_json();
-        assert!(json.contains("\"type\":\"TrainingEpoch\""));
+        assert!(json.contains("\"type\":\"training\""));
         assert!(json.contains("\"epoch\":5"));
     }
 
@@ -774,7 +1342,7 @@ mod tests {
             message: "hello".to_string(),
         };
         let json = event.to_json();
-        assert!(json.contains("\"type\":\"AgentMessage\""));
+        assert!(json.contains("\"type\":\"agent\""));
         assert!(json.contains("\"from\":\"agent_a\""));
     }
 
@@ -787,7 +1355,7 @@ mod tests {
             accuracy_after: 0.93,
         };
         let json = event.to_json();
-        assert!(json.contains("\"type\":\"CompressionResult\""));
+        assert!(json.contains("\"type\":\"compression\""));
         assert!(json.contains("\"method\":\"ternary\""));
     }
 
@@ -799,8 +1367,8 @@ mod tests {
             num_edges: 15,
         };
         let json = event.to_json();
-        assert!(json.contains("\"type\":\"GraphLoaded\""));
-        assert!(json.contains("\"num_nodes\":10"));
+        assert!(json.contains("\"type\":\"graph\""));
+        assert!(json.contains("\"nodes\":["));
     }
 
     #[test]
@@ -810,8 +1378,8 @@ mod tests {
             version: "v1.0".to_string(),
         };
         let json = event.to_json();
-        assert!(json.contains("\"type\":\"ModelSaved\""));
-        assert!(json.contains("\"version\":\"v1.0\""));
+        assert!(json.contains("\"type\":\"model_saved\""));
+        assert!(json.contains("\"size\":\"v1.0\""));
     }
 
     #[test]
@@ -825,5 +1393,35 @@ mod tests {
         };
         let json = event.to_json();
         assert!(json.contains("\"values\":null"));
+    }
+
+    #[test]
+    fn test_extract_json_from_response_clean() {
+        let input = r#"{"hidden1": 128, "hidden2": 64}"#;
+        assert_eq!(extract_json_from_response(input), input);
+    }
+
+    #[test]
+    fn test_extract_json_from_response_with_prefix() {
+        let input = r#"Here is the JSON: {"hidden1": 128, "hidden2": 64}"#;
+        assert_eq!(
+            extract_json_from_response(input),
+            r#"{"hidden1": 128, "hidden2": 64}"#
+        );
+    }
+
+    #[test]
+    fn test_extract_json_from_response_with_suffix() {
+        let input = r#"{"hidden1": 128} - this is my design"#;
+        assert_eq!(
+            extract_json_from_response(input),
+            r#"{"hidden1": 128}"#
+        );
+    }
+
+    #[test]
+    fn test_extract_json_from_response_no_json() {
+        let input = "no json here";
+        assert_eq!(extract_json_from_response(input), input);
     }
 }

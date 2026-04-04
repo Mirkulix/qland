@@ -79,6 +79,12 @@ pub enum Op {
     /// Dropout (identity at inference, masks at training)
     Dropout { rate: f64 },
 
+    // === LLM / Ollama Operations ===
+    /// Generate text via local Ollama LLM
+    OllamaGenerate { model: String },
+    /// Chat completion via local Ollama LLM
+    OllamaChat { model: String },
+
     // === Control Flow ===
     /// Conditional: evaluates BOTH branches (quantum-style), selects based on predicate
     Cond,
@@ -112,7 +118,8 @@ impl Op {
             | Op::ToSparse { .. } | Op::Entropy | Op::Collapse
             | Op::ReduceSum { .. } | Op::ReduceMean { .. } | Op::ReduceMax { .. }
             | Op::Project { .. } | Op::LayerNorm { .. } | Op::Gelu
-            | Op::Dropout { .. } | Op::Embedding { .. } => 1,
+            | Op::Dropout { .. } | Op::Embedding { .. }
+            | Op::OllamaGenerate { .. } | Op::OllamaChat { .. } => 1,
             Op::Add | Op::Sub | Op::Mul | Op::Div | Op::MatMul
             | Op::Concat { .. } | Op::Entangle | Op::FisherMetric
             | Op::Residual => 2,
@@ -135,7 +142,8 @@ impl Op {
     /// Whether this operation is deterministic.
     pub fn is_deterministic(&self) -> bool {
         match self {
-            Op::Measure | Op::Collapse | Op::Superpose | Op::Dropout { .. } => false,
+            Op::Measure | Op::Collapse | Op::Superpose | Op::Dropout { .. }
+            | Op::OllamaGenerate { .. } | Op::OllamaChat { .. } => false,
             _ => true,
         }
     }
@@ -147,6 +155,14 @@ impl Op {
             Op::Superpose | Op::Evolve { .. } | Op::Measure | Op::Entangle
             | Op::Collapse | Op::Entropy | Op::ToTernary | Op::ToLowRank { .. }
             | Op::ToSparse { .. } | Op::FisherMetric | Op::Project { .. }
+        )
+    }
+
+    /// Whether this is an LLM inference operation.
+    pub fn is_llm(&self) -> bool {
+        matches!(
+            self,
+            Op::OllamaGenerate { .. } | Op::OllamaChat { .. }
         )
     }
 }
@@ -191,6 +207,8 @@ impl fmt::Display for Op {
             Op::Residual => write!(f, "residual"),
             Op::Gelu => write!(f, "gelu"),
             Op::Dropout { rate } => write!(f, "dropout(rate={rate})"),
+            Op::OllamaGenerate { model } => write!(f, "ollama_generate({model})"),
+            Op::OllamaChat { model } => write!(f, "ollama_chat({model})"),
             Op::Cond => write!(f, "cond"),
             Op::Scan { n_iterations } => write!(f, "scan(n={n_iterations})"),
             Op::SubGraph { graph_id } => write!(f, "subgraph({graph_id})"),

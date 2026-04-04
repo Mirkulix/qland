@@ -7,7 +7,6 @@
 //!   - IGQK compression state
 
 use qlang_core::graph::Graph;
-use qlang_core::serial;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 

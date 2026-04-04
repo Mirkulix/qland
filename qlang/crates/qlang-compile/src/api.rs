@@ -66,7 +66,7 @@ pub struct HttpResponse {
 
 impl HttpResponse {
     /// Construct a response with the given status.
-    fn new(status_code: u16, status_text: &str) -> Self {
+    pub fn new(status_code: u16, status_text: &str) -> Self {
         let mut headers = HashMap::new();
         headers.insert("Access-Control-Allow-Origin".into(), "*".into());
         headers.insert(
@@ -87,7 +87,7 @@ impl HttpResponse {
     }
 
     /// Serialize the response to bytes suitable for writing to a TCP stream.
-    fn to_bytes(&self) -> Vec<u8> {
+    pub fn to_bytes(&self) -> Vec<u8> {
         let mut buf = Vec::new();
         let status_line = format!(
             "HTTP/1.1 {} {}\r\n",

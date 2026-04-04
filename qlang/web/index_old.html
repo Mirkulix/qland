@@ -1,0 +1,1472 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>QLANG Dashboard</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg: #0d1117;
+  --card: #161b22;
+  --border: #30363d;
+  --text: #c9d1d9;
+  --text-muted: #8b949e;
+  --accent: #58a6ff;
+  --success: #3fb950;
+  --warning: #d29922;
+  --error: #f85149;
+  --purple: #bc8cff;
+  --orange: #f0883e;
+  --node-input: #58a6ff;
+  --node-op: #3fb950;
+  --node-output: #f0883e;
+  --node-quantum: #bc8cff;
+}
+
+html, body { height: 100%; background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif; font-size: 14px; overflow: hidden; }
+
+/* ---- Layout ---- */
+#app {
+  display: grid;
+  grid-template-rows: 48px 1fr 160px;
+  grid-template-columns: 320px 1fr 340px;
+  grid-template-areas:
+    "header header header"
+    "left   center right"
+    "bottom bottom bottom";
+  height: 100vh;
+  gap: 1px;
+  background: var(--border);
+}
+
+/* ---- Header ---- */
+#header {
+  grid-area: header;
+  background: var(--card);
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+  gap: 16px;
+  z-index: 10;
+}
+#header .logo { font-weight: 700; font-size: 18px; letter-spacing: 2px; color: var(--accent); }
+#header .logo span { color: var(--purple); }
+.conn-status { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-muted); }
+.conn-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--error); transition: background .3s; }
+.conn-dot.connected { background: var(--success); }
+
+/* Agent Studio Header Button */
+#agent-studio-btn {
+  background: linear-gradient(135deg, var(--purple), var(--accent));
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  padding: 10px 20px;
+  font-size: 15px;
+  font-weight: 700;
+  box-shadow: 0 0 12px rgba(188, 140, 255, 0.4);
+  animation: glow-pulse 2s ease-in-out infinite alternate;
+  cursor: pointer;
+  transition: opacity .15s, transform .1s;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+#agent-studio-btn:hover { opacity: 0.9; transform: translateY(-1px); box-shadow: 0 0 20px rgba(188, 140, 255, 0.6); }
+#agent-studio-btn:active { transform: translateY(0); }
+@keyframes glow-pulse { from { box-shadow: 0 0 8px rgba(188, 140, 255, 0.3); } to { box-shadow: 0 0 16px rgba(188, 140, 255, 0.6); } }
+
+.header-stats { margin-left: auto; display: flex; gap: 20px; font-size: 12px; color: var(--text-muted); }
+.header-stats .val { color: var(--text); font-weight: 600; }
+
+/* ---- Panels ---- */
+.panel { background: var(--card); overflow: hidden; display: flex; flex-direction: column; }
+.panel-title { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 1.2px; color: var(--text-muted); padding: 12px 14px 8px; flex-shrink: 0; }
+
+#left { grid-area: left; }
+#center { grid-area: center; }
+#right { grid-area: right; }
+#bottom { grid-area: bottom; }
+
+/* ---- Graph Panel ---- */
+#graph-svg { flex: 1; width: 100%; cursor: grab; }
+#graph-svg .node-circle { cursor: pointer; transition: r .15s, filter .15s; }
+#graph-svg .node-circle:hover { filter: brightness(1.3); }
+#graph-svg .node-circle.executing { animation: pulse-node .6s ease-in-out infinite alternate; }
+@keyframes pulse-node { from { r: 18; } to { r: 24; filter: brightness(1.5); } }
+#graph-svg .edge-line { stroke: var(--border); stroke-width: 2; }
+#graph-svg .node-label { fill: var(--text); font-size: 10px; text-anchor: middle; pointer-events: none; font-weight: 600; }
+#node-info { flex-shrink: 0; padding: 10px 14px; border-top: 1px solid var(--border); font-size: 12px; color: var(--text-muted); min-height: 60px; }
+#node-info .ni-title { color: var(--text); font-weight: 600; margin-bottom: 4px; }
+
+/* ---- Activity Feed ---- */
+#center { display: flex; flex-direction: column; }
+.feed-filters { display: flex; gap: 4px; padding: 0 14px 8px; flex-shrink: 0; }
+.feed-filters button {
+  background: var(--bg); border: 1px solid var(--border); color: var(--text-muted); border-radius: 12px;
+  padding: 3px 10px; font-size: 11px; cursor: pointer; transition: all .15s;
+}
+.feed-filters button:hover, .feed-filters button.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+#feed { flex: 1; overflow-y: auto; padding: 0 14px 8px; scroll-behavior: smooth; }
+#feed::-webkit-scrollbar { width: 6px; }
+#feed::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+.feed-item {
+  padding: 6px 0; border-bottom: 1px solid var(--border); display: flex; gap: 8px; align-items: flex-start;
+  animation: feed-in .25s ease-out;
+}
+@keyframes feed-in { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: translateY(0); } }
+.feed-dot { width: 6px; height: 6px; border-radius: 50%; margin-top: 5px; flex-shrink: 0; }
+.feed-dot.graph { background: var(--success); }
+.feed-dot.agent { background: var(--accent); }
+.feed-dot.training { background: var(--warning); }
+.feed-dot.system { background: var(--text-muted); }
+.feed-dot.error { background: var(--error); }
+.feed-time { font-size: 10px; color: var(--text-muted); flex-shrink: 0; width: 55px; }
+.feed-msg { font-size: 12px; color: var(--text); line-height: 1.4; }
+.feed-msg .tag { font-size: 10px; padding: 1px 5px; border-radius: 4px; margin-right: 4px; font-weight: 600; }
+.tag-graph { background: rgba(63,185,80,.15); color: var(--success); }
+.tag-agent { background: rgba(88,166,255,.15); color: var(--accent); }
+.tag-training { background: rgba(210,153,34,.15); color: var(--warning); }
+.tag-system { background: rgba(139,148,158,.15); color: var(--text-muted); }
+.tag-error { background: rgba(248,81,73,.15); color: var(--error); }
+
+/* ---- Metrics Panel ---- */
+#right { gap: 0; }
+.metric-section { padding: 10px 14px; border-bottom: 1px solid var(--border); }
+.metric-section h3 { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--text-muted); margin-bottom: 8px; }
+#train-canvas { width: 100%; height: 120px; display: block; }
+.metric-row { display: flex; justify-content: space-between; font-size: 12px; padding: 3px 0; }
+.metric-row .label { color: var(--text-muted); }
+.metric-row .value { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
+.metric-row .value.green { color: var(--success); }
+.metric-row .value.orange { color: var(--orange); }
+.metric-row .value.purple { color: var(--purple); }
+.model-list { max-height: 80px; overflow-y: auto; }
+.model-item { font-size: 11px; padding: 3px 0; color: var(--text-muted); display: flex; justify-content: space-between; }
+.model-item .name { color: var(--accent); }
+
+/* ---- REPL Panel ---- */
+#bottom {
+  display: flex; flex-direction: column; background: var(--card);
+}
+#repl-output {
+  flex: 1; overflow-y: auto; padding: 8px 14px; font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace; font-size: 12px;
+  color: var(--text-muted); white-space: pre-wrap; line-height: 1.5;
+}
+#repl-output::-webkit-scrollbar { width: 6px; }
+#repl-output::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+.repl-line-input { color: var(--accent); }
+.repl-line-ok { color: var(--success); }
+.repl-line-err { color: var(--error); }
+#repl-input-row {
+  display: flex; border-top: 1px solid var(--border); flex-shrink: 0;
+}
+#repl-input-row .prompt { padding: 8px 0 8px 14px; color: var(--purple); font-family: monospace; font-weight: 700; }
+#repl-input {
+  flex: 1; background: transparent; border: none; outline: none; color: var(--text);
+  font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace; font-size: 13px; padding: 8px;
+}
+#repl-input::placeholder { color: var(--text-muted); }
+#repl-send {
+  background: var(--accent); color: #fff; border: none; padding: 0 16px; cursor: pointer;
+  font-weight: 600; font-size: 12px; transition: background .15s;
+}
+#repl-send:hover { background: #79b8ff; }
+
+/* ---- Scrollbar global ---- */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+/* ---- Responsive ---- */
+@media (max-width: 1024px) {
+  #app {
+    grid-template-columns: 1fr;
+    grid-template-rows: 48px 250px 1fr 280px 160px;
+    grid-template-areas: "header" "left" "center" "right" "bottom";
+  }
+  #agent-studio-btn .btn-label { display: none; }
+}
+
+/* ========================================================
+   Agent Studio Modal
+   ======================================================== */
+#agent-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.65);
+  backdrop-filter: blur(4px);
+}
+#agent-overlay.open {
+  display: flex;
+  animation: overlay-in .2s ease-out;
+}
+@keyframes overlay-in { from { opacity: 0; } to { opacity: 1; } }
+
+#agent-panel {
+  width: 80vw;
+  max-width: 960px;
+  height: 80vh;
+  max-height: 720px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: panel-in .25s ease-out;
+  box-shadow: 0 24px 80px rgba(0,0,0,.5);
+}
+@keyframes panel-in {
+  from { opacity: 0; transform: scale(.96) translateY(12px); }
+  to   { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+/* Panel Header */
+.agent-header {
+  background: linear-gradient(135deg, rgba(188,140,255,.15), rgba(88,166,255,.15));
+  padding: 16px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.agent-header-title {
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.agent-header-title .icon { font-size: 22px; }
+.agent-header-title .txt {
+  background: linear-gradient(135deg, var(--purple), var(--accent));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+.agent-close {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all .15s;
+}
+.agent-close:hover { background: var(--error); color: #fff; border-color: var(--error); }
+
+/* Pipeline Progress */
+.pipeline-progress {
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  display: none;
+}
+.pipeline-progress.active { display: block; }
+.pipeline-progress-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+  display: flex;
+  justify-content: space-between;
+}
+.pipeline-progress-bar-bg {
+  width: 100%;
+  height: 8px;
+  background: var(--bg);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.pipeline-progress-bar-fill {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, var(--purple), var(--accent));
+  border-radius: 4px;
+  transition: width .4s ease;
+}
+.pipeline-step-desc {
+  font-size: 12px;
+  color: var(--text);
+  margin-top: 4px;
+}
+
+/* Panel Body */
+.agent-body {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+}
+
+/* Left Config */
+.agent-config {
+  width: 340px;
+  min-width: 300px;
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
+  flex-shrink: 0;
+  padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.config-section h4 {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+.config-section label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+.config-section label .lbl-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.config-section textarea,
+.config-section select,
+.config-section input[type="range"] {
+  width: 100%;
+}
+.config-section textarea {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  padding: 10px 12px;
+  font-family: inherit;
+  font-size: 13px;
+  resize: vertical;
+  min-height: 70px;
+  outline: none;
+  transition: border-color .15s;
+}
+.config-section textarea:focus { border-color: var(--accent); }
+.config-section textarea::placeholder { color: var(--text-muted); }
+
+.config-section select {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  padding: 7px 10px;
+  font-size: 12px;
+  outline: none;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%238b949e' viewBox='0 0 16 16'%3E%3Cpath d='M4.427 7.427l3.396 3.396a.25.25 0 00.354 0l3.396-3.396A.25.25 0 0011.396 7H4.604a.25.25 0 00-.177.427z'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  padding-right: 30px;
+}
+.config-section select:focus { border-color: var(--accent); }
+
+.config-section input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--bg);
+  outline: none;
+  margin-top: 2px;
+}
+.config-section input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--accent);
+  cursor: pointer;
+  border: 2px solid var(--card);
+}
+
+.config-checkbox {
+  flex-direction: row !important;
+  align-items: center !important;
+  gap: 8px !important;
+  cursor: pointer;
+}
+.config-checkbox input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.config-checkbox .check-label {
+  color: var(--text);
+  font-size: 12px;
+}
+
+.epoch-value {
+  color: var(--accent);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Start Button */
+#start-pipeline-btn {
+  width: 100%;
+  padding: 12px;
+  background: linear-gradient(135deg, var(--purple), var(--accent));
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: opacity .15s, transform .1s;
+  letter-spacing: 0.5px;
+  margin-top: auto;
+}
+#start-pipeline-btn:hover { opacity: 0.9; transform: translateY(-1px); }
+#start-pipeline-btn:active { transform: translateY(0); }
+#start-pipeline-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+}
+
+/* Not connected warning */
+.not-connected-warning {
+  display: none;
+  padding: 8px 12px;
+  background: rgba(248,81,73,.1);
+  border: 1px solid rgba(248,81,73,.3);
+  border-radius: 6px;
+  color: var(--error);
+  font-size: 11px;
+  text-align: center;
+}
+.not-connected-warning.visible { display: block; }
+
+/* Right: Agent Log */
+.agent-log-container {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.agent-log-header {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.agent-log-clear {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 10px;
+  cursor: pointer;
+  transition: all .15s;
+}
+.agent-log-clear:hover { background: var(--border); color: var(--text); }
+
+#agent-log {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px 16px;
+  scroll-behavior: smooth;
+}
+.agent-log-entry {
+  padding: 8px 0;
+  border-bottom: 1px solid rgba(48,54,61,.5);
+  animation: feed-in .25s ease-out;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.agent-log-entry:last-child { border-bottom: none; }
+.agent-log-role {
+  font-weight: 600;
+  margin-right: 6px;
+}
+.agent-log-role.architekt { color: var(--purple); }
+.agent-log-role.evaluator { color: var(--accent); }
+.agent-log-role.training { color: var(--warning); }
+.agent-log-role.compression { color: var(--success); }
+.agent-log-role.pipeline { color: var(--orange); }
+.agent-log-role.system { color: var(--text-muted); }
+.agent-log-model {
+  font-size: 10px;
+  color: var(--text-muted);
+  background: var(--bg);
+  padding: 1px 6px;
+  border-radius: 4px;
+  margin-left: 4px;
+  font-weight: 600;
+}
+.agent-log-text {
+  color: var(--text);
+  margin-top: 2px;
+}
+.agent-log-time {
+  font-size: 10px;
+  color: var(--text-muted);
+  float: right;
+}
+
+/* Agent log empty state */
+.agent-log-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--text-muted);
+  font-size: 13px;
+  text-align: center;
+  gap: 8px;
+  padding: 40px;
+}
+.agent-log-empty .empty-icon { font-size: 36px; opacity: 0.4; }
+.agent-log-empty .hint { font-size: 11px; opacity: 0.6; }
+
+/* Responsive for agent panel */
+@media (max-width: 768px) {
+  #agent-panel {
+    width: 95vw;
+    height: 90vh;
+  }
+  .agent-body {
+    flex-direction: column;
+  }
+  .agent-config {
+    width: 100%;
+    min-width: auto;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    max-height: 45%;
+  }
+}
+</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- Header -->
+  <div id="header">
+    <div class="logo">Q<span>LANG</span></div>
+    <div class="conn-status">
+      <div class="conn-dot" id="conn-dot"></div>
+      <span id="conn-label">Disconnected</span>
+    </div>
+    <button id="agent-studio-btn">
+      <span>&#129302;</span>
+      <span class="btn-label">Agent Studio</span>
+    </button>
+    <div class="header-stats">
+      <span>Nodes <span class="val" id="stat-nodes">0</span></span>
+      <span>FLOPs <span class="val" id="stat-flops">0</span></span>
+      <span>Mem <span class="val" id="stat-mem">0 MB</span></span>
+      <span>Uptime <span class="val" id="stat-uptime">0s</span></span>
+    </div>
+  </div>
+
+  <!-- Left: Graph -->
+  <div class="panel" id="left">
+    <div class="panel-title">Graph Visualizer</div>
+    <svg id="graph-svg" xmlns="http://www.w3.org/2000/svg"></svg>
+    <div id="node-info">Click a node to inspect</div>
+  </div>
+
+  <!-- Center: Activity Feed -->
+  <div class="panel" id="center">
+    <div class="panel-title">Activity Feed</div>
+    <div class="feed-filters">
+      <button class="active" data-filter="all">All</button>
+      <button data-filter="graph">Graph</button>
+      <button data-filter="agent">Agent</button>
+      <button data-filter="training">Training</button>
+      <button data-filter="system">System</button>
+    </div>
+    <div id="feed"></div>
+  </div>
+
+  <!-- Right: Metrics -->
+  <div class="panel" id="right">
+    <div class="panel-title">Metrics</div>
+    <div class="metric-section">
+      <h3>Training Progress</h3>
+      <canvas id="train-canvas"></canvas>
+    </div>
+    <div class="metric-section">
+      <h3>IGQK Compression</h3>
+      <div class="metric-row"><span class="label">Original</span><span class="value" id="m-orig">--</span></div>
+      <div class="metric-row"><span class="label">Compressed</span><span class="value green" id="m-comp">--</span></div>
+      <div class="metric-row"><span class="label">Ratio</span><span class="value orange" id="m-ratio">--</span></div>
+      <div class="metric-row"><span class="label">Accuracy Delta</span><span class="value purple" id="m-delta">--</span></div>
+    </div>
+    <div class="metric-section">
+      <h3>System Resources</h3>
+      <div class="metric-row"><span class="label">Nodes Executed</span><span class="value" id="m-nexec">0</span></div>
+      <div class="metric-row"><span class="label">Total FLOPs</span><span class="value" id="m-flops">0</span></div>
+      <div class="metric-row"><span class="label">Peak Memory</span><span class="value" id="m-peak">0 MB</span></div>
+    </div>
+    <div class="metric-section" style="flex:1; overflow:hidden;">
+      <h3>Model Registry</h3>
+      <div class="model-list" id="model-list"></div>
+    </div>
+  </div>
+
+  <!-- Bottom: REPL -->
+  <div class="panel" id="bottom">
+    <div class="panel-title">REPL</div>
+    <div id="repl-output">Welcome to QLANG REPL. Type .qlang code and press Enter.
+</div>
+    <div id="repl-input-row">
+      <span class="prompt">qlang&gt;</span>
+      <input id="repl-input" type="text" placeholder="graph G { x = input([784]) ... }" autocomplete="off" spellcheck="false">
+      <button id="repl-send">Run</button>
+    </div>
+  </div>
+
+</div>
+
+<!-- ============================================================
+     Agent Studio Modal Overlay
+     ============================================================ -->
+<div id="agent-overlay">
+  <div id="agent-panel">
+
+    <!-- Header -->
+    <div class="agent-header">
+      <div class="agent-header-title">
+        <span class="icon">&#129302;</span>
+        <span class="txt">QLANG Agent Studio</span>
+      </div>
+      <button class="agent-close" id="agent-close-btn" title="Close">&times;</button>
+    </div>
+
+    <!-- Pipeline Progress Bar -->
+    <div class="pipeline-progress" id="pipeline-progress">
+      <div class="pipeline-progress-label">
+        <span id="pipeline-step-label">Pipeline</span>
+        <span id="pipeline-step-counter">0/0</span>
+      </div>
+      <div class="pipeline-progress-bar-bg">
+        <div class="pipeline-progress-bar-fill" id="pipeline-bar-fill"></div>
+      </div>
+      <div class="pipeline-step-desc" id="pipeline-step-desc"></div>
+    </div>
+
+    <!-- Body: Config + Log -->
+    <div class="agent-body">
+
+      <!-- Left: Configuration -->
+      <div class="agent-config">
+
+        <!-- Not Connected Warning -->
+        <div class="not-connected-warning" id="agent-not-connected">
+          Not connected to WebSocket server. Connect first to run pipelines.
+        </div>
+
+        <!-- Task Input -->
+        <div class="config-section">
+          <h4>Task Description</h4>
+          <label>
+            <textarea id="agent-task" placeholder="Beschreibe was du bauen willst... z.B. 'Ein Modell das Spam erkennt'" rows="3"></textarea>
+          </label>
+        </div>
+
+        <!-- Model Selector -->
+        <div class="config-section">
+          <h4>Model Assignment</h4>
+          <label>
+            <span class="lbl-row"><span>Architekt</span><span style="font-size:10px;color:var(--purple);">designs the model</span></span>
+            <select id="agent-architect-model">
+              <option value="qwen3:4b" selected>qwen3:4b</option>
+              <option value="llama3.2">llama3.2</option>
+              <option value="deepseek-r1:1.5b">deepseek-r1:1.5b</option>
+              <option value="gemma3n:e2b">gemma3n:e2b</option>
+            </select>
+          </label>
+          <label>
+            <span class="lbl-row"><span>Evaluator</span><span style="font-size:10px;color:var(--accent);">reviews results</span></span>
+            <select id="agent-evaluator-model">
+              <option value="llama3.2" selected>llama3.2</option>
+              <option value="qwen3:4b">qwen3:4b</option>
+              <option value="deepseek-r1:1.5b">deepseek-r1:1.5b</option>
+              <option value="gemma3n:e2b">gemma3n:e2b</option>
+            </select>
+          </label>
+        </div>
+
+        <!-- Training Config -->
+        <div class="config-section">
+          <h4>Training Configuration</h4>
+          <label>
+            <span class="lbl-row"><span>Epochs</span><span class="epoch-value" id="epoch-display">15</span></span>
+            <input type="range" id="agent-epochs" min="5" max="50" value="15" step="1">
+          </label>
+          <label>
+            <span class="lbl-row"><span>Dataset</span></span>
+            <select id="agent-dataset">
+              <option value="mnist" selected>MNIST</option>
+              <option value="synthetic">Synthetic (quick)</option>
+            </select>
+          </label>
+          <label class="config-checkbox">
+            <input type="checkbox" id="agent-gpu" checked>
+            <span class="check-label">Use GPU (MLX)</span>
+          </label>
+          <label class="config-checkbox">
+            <input type="checkbox" id="agent-compress" checked>
+            <span class="check-label">Auto-compress (IGQK)</span>
+          </label>
+        </div>
+
+        <!-- Start Button -->
+        <button id="start-pipeline-btn">Start Agent Pipeline</button>
+
+      </div>
+
+      <!-- Right: Agent Activity Log -->
+      <div class="agent-log-container">
+        <div class="agent-log-header">
+          <span>Agent Activity</span>
+          <button class="agent-log-clear" id="agent-log-clear">Clear</button>
+        </div>
+        <div id="agent-log">
+          <div class="agent-log-empty" id="agent-log-empty">
+            <div class="empty-icon">&#129302;</div>
+            <div>No agent activity yet</div>
+            <div class="hint">Configure your pipeline and click "Start Agent Pipeline"</div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<script>
+// =========================================================================
+//  QLANG Dashboard — Pure JS, no dependencies
+// =========================================================================
+
+(function() {
+'use strict';
+
+// --------------- State ---------------
+var state = {
+  ws: null,
+  connected: false,
+  reconnectTimer: null,
+  filter: 'all',
+  feedItems: [],
+  graphNodes: [],
+  graphEdges: [],
+  trainData: { loss: [], accuracy: [] },
+  compression: {},
+  sysResources: { nodesExec: 0, flops: 0, peakMem: 0 },
+  models: [],
+  startTime: Date.now(),
+  executingNode: null,
+  // Agent Studio state
+  agentOpen: false,
+  pipelineRunning: false,
+  agentLogEntries: [],
+  availableModels: null,
+};
+
+// --------------- DOM refs ---------------
+var $connDot = document.getElementById('conn-dot');
+var $connLabel = document.getElementById('conn-label');
+var $feed = document.getElementById('feed');
+var $graphSvg = document.getElementById('graph-svg');
+var $nodeInfo = document.getElementById('node-info');
+var $trainCanvas = document.getElementById('train-canvas');
+var $replOutput = document.getElementById('repl-output');
+var $replInput = document.getElementById('repl-input');
+
+// Agent Studio DOM refs
+var $agentOverlay = document.getElementById('agent-overlay');
+var $agentStudioBtn = document.getElementById('agent-studio-btn');
+var $agentCloseBtn = document.getElementById('agent-close-btn');
+var $agentTask = document.getElementById('agent-task');
+var $architectModel = document.getElementById('agent-architect-model');
+var $evaluatorModel = document.getElementById('agent-evaluator-model');
+var $agentEpochs = document.getElementById('agent-epochs');
+var $epochDisplay = document.getElementById('epoch-display');
+var $agentDataset = document.getElementById('agent-dataset');
+var $agentGpu = document.getElementById('agent-gpu');
+var $agentCompress = document.getElementById('agent-compress');
+var $startPipelineBtn = document.getElementById('start-pipeline-btn');
+var $agentLog = document.getElementById('agent-log');
+var $agentLogEmpty = document.getElementById('agent-log-empty');
+var $agentLogClear = document.getElementById('agent-log-clear');
+var $pipelineProgress = document.getElementById('pipeline-progress');
+var $pipelineBarFill = document.getElementById('pipeline-bar-fill');
+var $pipelineStepLabel = document.getElementById('pipeline-step-label');
+var $pipelineStepCounter = document.getElementById('pipeline-step-counter');
+var $pipelineStepDesc = document.getElementById('pipeline-step-desc');
+var $agentNotConnected = document.getElementById('agent-not-connected');
+
+// --------------- WebSocket ---------------
+function wsConnect() {
+  if (state.ws && state.ws.readyState <= 1) return;
+  try {
+    var wsUrl = 'ws://' + window.location.host + '/ws';
+    state.ws = new WebSocket(wsUrl);
+  } catch(e) { scheduleReconnect(); return; }
+
+  state.ws.onopen = function() {
+    state.connected = true;
+    $connDot.classList.add('connected');
+    $connLabel.textContent = 'Connected';
+    addFeed('system', 'WebSocket connected to ' + window.location.host);
+    updateAgentConnectionState();
+    // Request available models from server
+    state.ws.send(JSON.stringify({ type: 'list_models' }));
+  };
+
+  state.ws.onclose = function() {
+    state.connected = false;
+    $connDot.classList.remove('connected');
+    $connLabel.textContent = 'Disconnected';
+    addFeed('system', 'WebSocket disconnected');
+    updateAgentConnectionState();
+    scheduleReconnect();
+  };
+
+  state.ws.onerror = function() {
+    state.connected = false;
+    $connDot.classList.remove('connected');
+    $connLabel.textContent = 'Error';
+    updateAgentConnectionState();
+  };
+
+  state.ws.onmessage = function(ev) {
+    try { handleMessage(JSON.parse(ev.data)); } catch(e) { console.warn('Bad msg', e); }
+  };
+}
+
+function scheduleReconnect() {
+  clearTimeout(state.reconnectTimer);
+  state.reconnectTimer = setTimeout(wsConnect, 3000);
+}
+
+// --------------- Message handler ---------------
+function handleMessage(msg) {
+  switch(msg.type) {
+    case 'graph':
+      state.graphNodes = msg.nodes || [];
+      state.graphEdges = msg.edges || [];
+      renderGraph();
+      addFeed('graph', 'Graph updated: ' + state.graphNodes.length + ' nodes, ' + state.graphEdges.length + ' edges');
+      break;
+    case 'node_exec':
+      state.executingNode = msg.node_id;
+      state.sysResources.nodesExec++;
+      renderGraph();
+      addFeed('graph', 'Executing node <b>' + (msg.name || msg.node_id) + '</b> (' + (msg.op || '?') + ') ' + (msg.time_ms ? msg.time_ms.toFixed(2) + 'ms' : ''));
+      setTimeout(function(){ state.executingNode = null; renderGraph(); }, 500);
+      break;
+    case 'training':
+      if (msg.epoch !== undefined) {
+        state.trainData.loss.push(msg.loss);
+        state.trainData.accuracy.push(msg.accuracy);
+        renderChart();
+        addFeed('training', 'Epoch ' + msg.epoch + ' | loss=' + msg.loss.toFixed(4) + ' acc=' + (msg.accuracy * 100).toFixed(1) + '%');
+        // Also log to agent panel if pipeline is active
+        if (state.pipelineRunning) {
+          addAgentLog('training', null, 'Epoch ' + msg.epoch + '/' + $agentEpochs.value + ', loss=' + msg.loss.toFixed(4) + ', acc=' + (msg.accuracy * 100).toFixed(1) + '%');
+        }
+      }
+      break;
+    case 'agent':
+      addFeed('agent', '<b>' + (msg.from || '?') + '</b> &rarr; <b>' + (msg.to || '?') + '</b>: ' + (msg.content || ''));
+      break;
+    case 'compression':
+      state.compression = msg;
+      renderCompression();
+      addFeed('training', 'IGQK compression: ' + msg.original_size + ' &rarr; ' + msg.compressed_size + ' (' + msg.ratio + 'x)');
+      if (state.pipelineRunning) {
+        addAgentLog('compression', null, msg.ratio + 'x (' + msg.original_size + ' &rarr; ' + msg.compressed_size + ')');
+      }
+      break;
+    case 'model_saved':
+      state.models.push({ name: msg.name, size: msg.size, time: new Date().toLocaleTimeString() });
+      renderModels();
+      addFeed('system', 'Model saved: ' + msg.name);
+      break;
+    case 'repl_result':
+      appendRepl(msg.output || '', msg.error ? 'err' : 'ok');
+      break;
+    case 'system':
+      if (msg.resources) {
+        Object.assign(state.sysResources, msg.resources);
+        renderResources();
+      }
+      if (msg.text) addFeed('system', msg.text);
+      break;
+    case 'error':
+      addFeed('error', msg.text || 'Unknown error');
+      if (state.pipelineRunning) {
+        addAgentLog('system', null, 'Error: ' + (msg.text || 'Unknown error'));
+      }
+      break;
+
+    // ---- Agent Studio event types ----
+    case 'agent_thinking':
+      addAgentLog(msg.agent || 'system', msg.model || null, msg.status === 'thinking' ? 'Thinking...' : msg.status === 'responding' ? 'Responding...' : msg.status === 'done' ? 'Done.' : (msg.status || ''));
+      addFeed('agent', (msg.agent || '?') + ' (' + (msg.model || '?') + '): ' + (msg.status || ''));
+      break;
+    case 'agent_response':
+      addAgentLog(msg.agent || 'system', msg.model || null, msg.response || '');
+      addFeed('agent', '<b>' + (msg.agent || '?') + '</b> (' + (msg.model || '?') + '): ' + (msg.response || ''));
+      break;
+    case 'pipeline_status':
+      updatePipelineProgress(msg.step, msg.total_steps, msg.description);
+      if (msg.step >= msg.total_steps) {
+        state.pipelineRunning = false;
+        $startPipelineBtn.disabled = false;
+        $startPipelineBtn.textContent = 'Start Agent Pipeline';
+        addAgentLog('pipeline', null, 'Pipeline complete.');
+      }
+      break;
+    case 'models_list':
+      populateModelSelectors(msg.models || []);
+      break;
+
+    default:
+      addFeed('system', 'Unknown message type: ' + msg.type);
+  }
+  renderHeaderStats();
+}
+
+// --------------- Activity Feed ---------------
+function addFeed(category, html) {
+  var item = { category: category, html: html, time: new Date() };
+  state.feedItems.push(item);
+  if (state.feedItems.length > 500) state.feedItems.shift();
+  if (state.filter === 'all' || state.filter === category) {
+    appendFeedDOM(item);
+  }
+}
+
+function appendFeedDOM(item) {
+  var div = document.createElement('div');
+  div.className = 'feed-item';
+  div.dataset.category = item.category;
+  var ts = item.time.toLocaleTimeString();
+  div.innerHTML =
+    '<div class="feed-dot ' + item.category + '"></div>' +
+    '<span class="feed-time">' + ts + '</span>' +
+    '<span class="feed-msg"><span class="tag tag-' + item.category + '">' + item.category + '</span>' + item.html + '</span>';
+  $feed.appendChild(div);
+  if ($feed.children.length > 300) $feed.removeChild($feed.firstChild);
+  $feed.scrollTop = $feed.scrollHeight;
+}
+
+function rerenderFeed() {
+  $feed.innerHTML = '';
+  state.feedItems.forEach(function(item) {
+    if (state.filter === 'all' || state.filter === item.category) appendFeedDOM(item);
+  });
+}
+
+// Filter buttons
+document.querySelectorAll('.feed-filters button').forEach(function(btn) {
+  btn.addEventListener('click', function() {
+    document.querySelectorAll('.feed-filters button').forEach(function(b){ b.classList.remove('active'); });
+    btn.classList.add('active');
+    state.filter = btn.dataset.filter;
+    rerenderFeed();
+  });
+});
+
+// --------------- Graph Rendering ---------------
+function nodeColor(type) {
+  if (!type) return '#8b949e';
+  var t = type.toLowerCase();
+  if (t === 'input') return 'var(--node-input)';
+  if (t === 'output') return 'var(--node-output)';
+  if (t === 'quantum') return 'var(--node-quantum)';
+  return 'var(--node-op)';
+}
+
+function renderGraph() {
+  var svg = $graphSvg;
+  var w = svg.clientWidth || 300;
+  var h = svg.clientHeight || 300;
+  svg.setAttribute('viewBox', '0 0 ' + w + ' ' + h);
+  var html = '';
+
+  // Layout: topological layers
+  var nodes = state.graphNodes;
+  var edges = state.graphEdges;
+  if (!nodes.length) { svg.innerHTML = '<text x="50%" y="50%" text-anchor="middle" fill="#8b949e" font-size="12">No graph loaded</text>'; return; }
+
+  // Simple layered layout
+  var idMap = {};
+  nodes.forEach(function(n, i) { n._idx = i; idMap[n.id] = n; });
+  // Compute depth
+  var depth = {};
+  nodes.forEach(function(n){ depth[n.id] = 0; });
+  for (var pass = 0; pass < nodes.length; pass++) {
+    edges.forEach(function(e) {
+      if (depth[e.to] <= depth[e.from]) depth[e.to] = depth[e.from] + 1;
+    });
+  }
+  var maxDepth = 0;
+  nodes.forEach(function(n){ if(depth[n.id] > maxDepth) maxDepth = depth[n.id]; });
+  // Group by depth
+  var layers = [];
+  for (var d = 0; d <= maxDepth; d++) layers.push([]);
+  nodes.forEach(function(n){ layers[depth[n.id]].push(n); });
+
+  var padX = 50, padY = 40;
+  var layerH = (h - 2 * padY) / Math.max(maxDepth, 1);
+  layers.forEach(function(layer, d) {
+    var layerW = (w - 2 * padX) / Math.max(layer.length, 1);
+    layer.forEach(function(n, i) {
+      n._x = padX + layerW * i + layerW / 2;
+      n._y = padY + layerH * d + layerH / 2;
+    });
+  });
+
+  // Edges
+  edges.forEach(function(e) {
+    var from = idMap[e.from], to = idMap[e.to];
+    if (!from || !to) return;
+    html += '<line class="edge-line" x1="'+from._x+'" y1="'+from._y+'" x2="'+to._x+'" y2="'+to._y+'"/>';
+  });
+
+  // Nodes
+  nodes.forEach(function(n) {
+    var executing = state.executingNode === n.id;
+    html += '<circle class="node-circle' + (executing ? ' executing' : '') + '" cx="'+n._x+'" cy="'+n._y+'" r="18" fill="' + nodeColor(n.type) + '" data-id="'+n.id+'"/>';
+    html += '<text class="node-label" x="'+n._x+'" y="'+(n._y+4)+'">'+( n.label || n.id )+'</text>';
+  });
+
+  svg.innerHTML = html;
+
+  // Click handlers
+  svg.querySelectorAll('.node-circle').forEach(function(circle) {
+    circle.addEventListener('click', function() {
+      var nid = circle.dataset.id;
+      var node = idMap[nid];
+      if (!node) return;
+      var info = '<div class="ni-title">' + (node.label || node.id) + ' (' + (node.op || node.type || '?') + ')</div>';
+      if (node.shape) info += 'Shape: ' + JSON.stringify(node.shape) + '<br>';
+      if (node.time_ms !== undefined) info += 'Exec time: ' + node.time_ms.toFixed(2) + 'ms<br>';
+      if (node.values) info += 'Values: [' + node.values.slice(0, 8).join(', ') + (node.values.length > 8 ? '...' : '') + ']';
+      $nodeInfo.innerHTML = info;
+    });
+  });
+}
+
+// --------------- Chart ---------------
+function renderChart() {
+  var canvas = $trainCanvas;
+  var dpr = window.devicePixelRatio || 1;
+  var rect = canvas.getBoundingClientRect();
+  canvas.width = rect.width * dpr;
+  canvas.height = rect.height * dpr;
+  var ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
+  var W = rect.width, H = rect.height;
+
+  ctx.clearRect(0, 0, W, H);
+  var loss = state.trainData.loss;
+  var acc = state.trainData.accuracy;
+  if (!loss.length) {
+    ctx.fillStyle = '#8b949e';
+    ctx.font = '11px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('No training data yet', W / 2, H / 2);
+    return;
+  }
+
+  var pad = { l: 36, r: 36, t: 10, b: 18 };
+  var cw = W - pad.l - pad.r, ch = H - pad.t - pad.b;
+  var n = loss.length;
+  var maxLoss = Math.max.apply(null, loss) * 1.1 || 1;
+
+  // Grid
+  ctx.strokeStyle = '#21262d';
+  ctx.lineWidth = 1;
+  for (var i = 0; i <= 4; i++) {
+    var gy = pad.t + ch * i / 4;
+    ctx.beginPath(); ctx.moveTo(pad.l, gy); ctx.lineTo(pad.l + cw, gy); ctx.stroke();
+  }
+
+  // Loss line
+  ctx.strokeStyle = '#f85149';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  for (var i = 0; i < n; i++) {
+    var x = pad.l + (i / Math.max(n - 1, 1)) * cw;
+    var y = pad.t + (1 - loss[i] / maxLoss) * ch;
+    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+
+  // Accuracy line
+  ctx.strokeStyle = '#3fb950';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  for (var i = 0; i < n; i++) {
+    var x = pad.l + (i / Math.max(n - 1, 1)) * cw;
+    var y = pad.t + (1 - acc[i]) * ch;
+    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+
+  // Labels
+  ctx.fillStyle = '#8b949e';
+  ctx.font = '9px sans-serif';
+  ctx.textAlign = 'right';
+  ctx.fillText(maxLoss.toFixed(2), pad.l - 4, pad.t + 8);
+  ctx.fillText('0', pad.l - 4, pad.t + ch + 4);
+  ctx.textAlign = 'left';
+  ctx.fillText('1.0', pad.l + cw + 4, pad.t + 8);
+  ctx.fillText('0', pad.l + cw + 4, pad.t + ch + 4);
+  ctx.textAlign = 'center';
+  ctx.fillText('Epoch 1', pad.l, pad.t + ch + 14);
+  ctx.fillText('Epoch ' + n, pad.l + cw, pad.t + ch + 14);
+
+  // Legend
+  ctx.fillStyle = '#f85149'; ctx.fillRect(pad.l, pad.t - 2, 8, 3);
+  ctx.fillStyle = '#8b949e'; ctx.textAlign = 'left'; ctx.fillText('Loss', pad.l + 12, pad.t + 4);
+  ctx.fillStyle = '#3fb950'; ctx.fillRect(pad.l + 50, pad.t - 2, 8, 3);
+  ctx.fillStyle = '#8b949e'; ctx.fillText('Accuracy', pad.l + 62, pad.t + 4);
+}
+
+// --------------- Compression Metrics ---------------
+function renderCompression() {
+  var c = state.compression;
+  document.getElementById('m-orig').textContent = c.original_size || '--';
+  document.getElementById('m-comp').textContent = c.compressed_size || '--';
+  document.getElementById('m-ratio').textContent = c.ratio ? c.ratio + 'x' : '--';
+  document.getElementById('m-delta').textContent = c.accuracy_delta !== undefined ? (c.accuracy_delta > 0 ? '+' : '') + c.accuracy_delta + '%' : '--';
+}
+
+// --------------- System Resources ---------------
+function renderResources() {
+  var r = state.sysResources;
+  document.getElementById('m-nexec').textContent = r.nodesExec;
+  document.getElementById('m-flops').textContent = formatNumber(r.flops);
+  document.getElementById('m-peak').textContent = (r.peakMem || 0) + ' MB';
+}
+
+// --------------- Models ---------------
+function renderModels() {
+  var el = document.getElementById('model-list');
+  el.innerHTML = '';
+  state.models.forEach(function(m) {
+    el.innerHTML += '<div class="model-item"><span class="name">' + m.name + '</span><span>' + m.size + ' &middot; ' + m.time + '</span></div>';
+  });
+}
+
+// --------------- Header Stats ---------------
+function renderHeaderStats() {
+  document.getElementById('stat-nodes').textContent = state.graphNodes.length;
+  document.getElementById('stat-flops').textContent = formatNumber(state.sysResources.flops);
+  document.getElementById('stat-mem').textContent = (state.sysResources.peakMem || 0) + ' MB';
+}
+
+function updateUptime() {
+  var s = Math.floor((Date.now() - state.startTime) / 1000);
+  var m = Math.floor(s / 60); s = s % 60;
+  var h = Math.floor(m / 60); m = m % 60;
+  document.getElementById('stat-uptime').textContent = (h ? h + 'h ' : '') + (m ? m + 'm ' : '') + s + 's';
+}
+setInterval(updateUptime, 1000);
+
+function formatNumber(n) {
+  if (n >= 1e9) return (n / 1e9).toFixed(1) + 'G';
+  if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M';
+  if (n >= 1e3) return (n / 1e3).toFixed(1) + 'K';
+  return String(n);
+}
+
+// --------------- REPL ---------------
+function sendRepl() {
+  var code = $replInput.value.trim();
+  if (!code) return;
+  appendRepl('qlang> ' + code, 'input');
+  $replInput.value = '';
+  if (state.connected) {
+    state.ws.send(JSON.stringify({ type: 'repl', code: code }));
+  } else {
+    appendRepl('Error: not connected to server', 'err');
+  }
+}
+
+function appendRepl(text, kind) {
+  var span = document.createElement('div');
+  span.className = 'repl-line-' + (kind || 'ok');
+  span.textContent = text;
+  $replOutput.appendChild(span);
+  $replOutput.scrollTop = $replOutput.scrollHeight;
+}
+
+$replInput.addEventListener('keydown', function(e) { if (e.key === 'Enter') sendRepl(); });
+document.getElementById('repl-send').addEventListener('click', sendRepl);
+
+// =========================================================================
+//  Agent Studio Logic
+// =========================================================================
+
+// ---- Open / Close ----
+function openAgentStudio() {
+  state.agentOpen = true;
+  $agentOverlay.classList.add('open');
+  updateAgentConnectionState();
+}
+
+function closeAgentStudio() {
+  state.agentOpen = false;
+  $agentOverlay.classList.remove('open');
+}
+
+$agentStudioBtn.addEventListener('click', openAgentStudio);
+$agentCloseBtn.addEventListener('click', closeAgentStudio);
+
+// Close on overlay background click
+$agentOverlay.addEventListener('click', function(e) {
+  if (e.target === $agentOverlay) closeAgentStudio();
+});
+
+// Close on Escape key
+document.addEventListener('keydown', function(e) {
+  if (e.key === 'Escape' && state.agentOpen) closeAgentStudio();
+});
+
+// ---- Connection state in agent panel ----
+function updateAgentConnectionState() {
+  if (state.connected) {
+    $agentNotConnected.classList.remove('visible');
+    $startPipelineBtn.disabled = state.pipelineRunning;
+  } else {
+    $agentNotConnected.classList.add('visible');
+    $startPipelineBtn.disabled = true;
+  }
+}
+
+// ---- Epoch slider live update ----
+$agentEpochs.addEventListener('input', function() {
+  $epochDisplay.textContent = $agentEpochs.value;
+});
+
+// ---- Clear agent log ----
+$agentLogClear.addEventListener('click', function() {
+  state.agentLogEntries = [];
+  $agentLog.innerHTML = '';
+  $agentLogEmpty.style.display = '';
+  $agentLog.appendChild($agentLogEmpty);
+  $pipelineProgress.classList.remove('active');
+});
+
+// ---- Add entry to agent activity log ----
+function addAgentLog(agent, model, text) {
+  // Hide the empty state placeholder
+  if ($agentLogEmpty.parentNode === $agentLog) {
+    $agentLogEmpty.style.display = 'none';
+  }
+
+  var roleIcons = {
+    'architekt':   '\uD83C\uDFD7\uFE0F',
+    'evaluator':   '\uD83D\uDD0D',
+    'training':    '\u26A1',
+    'compression': '\uD83D\uDCE6',
+    'pipeline':    '\uD83D\uDE80',
+    'system':      '\u2699\uFE0F'
+  };
+
+  var entry = document.createElement('div');
+  entry.className = 'agent-log-entry';
+
+  var agentLower = (agent || 'system').toLowerCase();
+  var icon = roleIcons[agentLower] || '\u2139\uFE0F';
+
+  var html = '<span class="agent-log-time">' + new Date().toLocaleTimeString() + '</span>';
+  html += '<span class="agent-log-role ' + agentLower + '">' + icon + ' ' + capitalizeFirst(agent || 'System') + '</span>';
+  if (model) {
+    html += '<span class="agent-log-model">' + escapeHtml(model) + '</span>';
+  }
+  html += '<div class="agent-log-text">' + text + '</div>';
+
+  entry.innerHTML = html;
+  $agentLog.appendChild(entry);
+  $agentLog.scrollTop = $agentLog.scrollHeight;
+
+  state.agentLogEntries.push({ agent: agent, model: model, text: text, time: new Date() });
+  if (state.agentLogEntries.length > 500) {
+    state.agentLogEntries.shift();
+    // Remove oldest visible entry (skip hidden empty-state div at index 0)
+    var firstEntry = $agentLog.querySelector('.agent-log-entry');
+    if (firstEntry) $agentLog.removeChild(firstEntry);
+  }
+}
+
+// ---- Pipeline progress bar ----
+function updatePipelineProgress(step, totalSteps, description) {
+  $pipelineProgress.classList.add('active');
+  var pct = totalSteps > 0 ? Math.round((step / totalSteps) * 100) : 0;
+  $pipelineBarFill.style.width = pct + '%';
+  $pipelineStepLabel.textContent = 'Pipeline Progress';
+  $pipelineStepCounter.textContent = 'Step ' + step + '/' + totalSteps;
+  $pipelineStepDesc.textContent = description || '';
+
+  addAgentLog('pipeline', null, 'Step ' + step + '/' + totalSteps + ': ' + (description || ''));
+}
+
+// ---- Populate model dropdowns from server response ----
+function populateModelSelectors(models) {
+  state.availableModels = models;
+  if (!models || !models.length) return;
+
+  var selectors = [$architectModel, $evaluatorModel];
+  var defaults = ['qwen3:4b', 'llama3.2'];
+
+  selectors.forEach(function(sel, idx) {
+    var currentVal = sel.value;
+    var defaultVal = defaults[idx];
+    sel.innerHTML = '';
+    models.forEach(function(m) {
+      var modelName = typeof m === 'string' ? m : (m.name || m.model || '');
+      if (!modelName) return;
+      var opt = document.createElement('option');
+      opt.value = modelName;
+      opt.textContent = modelName;
+      if (modelName === currentVal || modelName === defaultVal) {
+        opt.selected = true;
+      }
+      sel.appendChild(opt);
+    });
+  });
+
+  addFeed('system', 'Ollama models loaded: ' + models.map(function(m) {
+    return typeof m === 'string' ? m : (m.name || m.model || '?');
+  }).join(', '));
+}
+
+// ---- Start Pipeline button ----
+$startPipelineBtn.addEventListener('click', function() {
+  if (!state.connected) {
+    addAgentLog('system', null, 'Cannot start pipeline: not connected to server.');
+    return;
+  }
+  if (state.pipelineRunning) return;
+
+  var task = $agentTask.value.trim();
+  if (!task) {
+    $agentTask.focus();
+    $agentTask.style.borderColor = 'var(--error)';
+    setTimeout(function() { $agentTask.style.borderColor = ''; }, 2000);
+    return;
+  }
+
+  state.pipelineRunning = true;
+  $startPipelineBtn.disabled = true;
+  $startPipelineBtn.textContent = 'Pipeline Running...';
+
+  // Reset progress bar
+  $pipelineProgress.classList.add('active');
+  $pipelineBarFill.style.width = '0%';
+  $pipelineStepLabel.textContent = 'Starting Pipeline';
+  $pipelineStepCounter.textContent = '0/0';
+  $pipelineStepDesc.textContent = 'Initializing...';
+
+  // Clear previous log
+  state.agentLogEntries = [];
+  $agentLog.innerHTML = '';
+
+  // Build and send WS command
+  var message = {
+    type: 'start_pipeline',
+    task: task,
+    architect_model: $architectModel.value,
+    evaluator_model: $evaluatorModel.value,
+    epochs: parseInt($agentEpochs.value, 10),
+    use_gpu: $agentGpu.checked,
+    dataset: $agentDataset.value,
+    compress: $agentCompress.checked
+  };
+
+  state.ws.send(JSON.stringify(message));
+
+  // Log the startup info
+  addAgentLog('pipeline', null, 'Pipeline started: "' + escapeHtml(task) + '"');
+  addAgentLog('system', null, 'Architekt: ' + $architectModel.value + ' | Evaluator: ' + $evaluatorModel.value);
+  addAgentLog('system', null, 'Epochs: ' + $agentEpochs.value + ' | GPU: ' + ($agentGpu.checked ? 'Yes (MLX)' : 'No') + ' | Dataset: ' + $agentDataset.value + ' | Compress: ' + ($agentCompress.checked ? 'Yes' : 'No'));
+  addFeed('agent', 'Agent pipeline started: "' + escapeHtml(task) + '"');
+});
+
+// ---- Helpers ----
+function capitalizeFirst(s) {
+  if (!s) return '';
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+function escapeHtml(s) {
+  var div = document.createElement('div');
+  div.textContent = s;
+  return div.innerHTML;
+}
+
+// --------------- Init ---------------
+renderChart();
+wsConnect();
+
+// Resize handler
+window.addEventListener('resize', function() { renderGraph(); renderChart(); });
+
+// Expose for external use (e.g., demo mode)
+window.qlangDashboard = {
+  state: state,
+  handleMessage: handleMessage,
+  addFeed: addFeed,
+  renderGraph: renderGraph,
+  renderChart: renderChart,
+  // Agent Studio API
+  openAgentStudio: openAgentStudio,
+  closeAgentStudio: closeAgentStudio,
+  addAgentLog: addAgentLog,
+  updatePipelineProgress: updatePipelineProgress,
+  populateModelSelectors: populateModelSelectors,
+};
+
+})();
+</script>
+</body>
+</html>

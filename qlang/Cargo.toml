@@ -1,7 +1,7 @@
 [package]
 name = "qlang"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
 description = "QLANG - Graph-based AI-to-AI programming language"
 
 [workspace]
@@ -11,12 +11,13 @@ members = [
     "crates/qlang-runtime",
     "crates/qlang-agent",
     "crates/qlang-python",
+    "crates/qlang-sdk",
 ]
 resolver = "2"
 
 [workspace.package]
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
 license = "MIT"
 description = "QLANG - Graph-based AI-to-AI programming language"
 
@@ -34,11 +35,14 @@ qlang-core = { workspace = true }
 qlang-compile = { workspace = true }
 qlang-runtime = { workspace = true }
 qlang-agent = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
 inkwell = { version = "0.5", features = ["llvm18-0"], optional = true }
 
 [features]
 default = ["llvm"]
 llvm = ["inkwell", "qlang-compile/llvm"]
+mlx = ["qlang-runtime/mlx"]
 
 [[example]]
 name = "hello_qlang"
@@ -87,3 +91,7 @@ path = "examples/full_mnist_pipeline.rs"
 [[example]]
 name = "onnx_import_compress"
 path = "examples/onnx_import_compress.rs"
+
+[[example]]
+name = "benchmark_qlang_vs_json"
+path = "examples/benchmark_qlang_vs_json.rs"

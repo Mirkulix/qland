@@ -47,6 +47,7 @@ fn mat_anticommutator(a: &[f64], b: &[f64], n: usize) -> Vec<f64> {
 }
 
 /// Trace of an n×n matrix.
+#[allow(dead_code)]
 fn mat_trace(m: &[f64], n: usize) -> f64 {
     (0..n).map(|i| m[i * n + i]).sum()
 }

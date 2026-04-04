@@ -220,7 +220,7 @@ fn parse_quoted_string(s: &str) -> Option<String> {
 /// Resolves module import paths to canonical file paths.
 pub struct ModuleResolver {
     /// Root directory of the current project (used for relative imports).
-    project_root: PathBuf,
+    _project_root: PathBuf,
     /// Directory for standard library modules.
     std_lib_dir: PathBuf,
     /// Built-in module names (do not need files on disk).
@@ -239,7 +239,7 @@ impl ModuleResolver {
         builtins.insert("random".into());
 
         Self {
-            project_root: project_root.into(),
+            _project_root: project_root.into(),
             std_lib_dir: std_lib_dir.into(),
             builtins,
         }

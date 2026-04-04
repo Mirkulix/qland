@@ -13,7 +13,7 @@
 use std::collections::HashMap;
 use qlang_core::graph::Graph;
 use qlang_core::ops::Op;
-use qlang_core::tensor::{TensorData, TensorType, Shape};
+use qlang_core::tensor::Shape;
 use crate::autograd::Tape;
 
 /// Result of a training step on a graph.
@@ -42,7 +42,7 @@ pub fn train_step(
     inputs: &HashMap<String, Vec<f32>>,
     weight_names: &[&str],
     targets: &[u8],
-    lr: f32,
+    _lr: f32,
 ) -> Result<TrainStepResult, TrainError> {
     let mut tape = Tape::new();
 
@@ -234,7 +234,7 @@ mod tests {
     use super::*;
     use qlang_core::graph::Graph;
     use qlang_core::ops::Op;
-    use qlang_core::tensor::{Dtype, Shape, TensorType};
+    use qlang_core::tensor::TensorType;
 
     fn build_mlp_graph() -> Graph {
         let mut g = Graph::new("mlp");

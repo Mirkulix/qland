@@ -9,7 +9,6 @@
 //! The compiled code uses the SAME LLVM backend as Clang (C) and Rustc (Rust).
 //! Same performance. Zero interpreter overhead.
 
-use std::time::Instant;
 
 fn main() {
     #[cfg(not(feature = "llvm"))]
@@ -24,6 +23,7 @@ fn main() {
 
 #[cfg(feature = "llvm")]
 fn run() {
+    use std::time::Instant;
     println!("=== QLANG JIT Compilation Demo ===\n");
 
     use inkwell::context::Context;

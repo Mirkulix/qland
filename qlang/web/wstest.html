@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html>
+<body style="background:#111;color:#ccc;font-family:monospace;padding:20px;">
+<h2>WebSocket Test</h2>
+<pre id="log" style="font-size:14px;"></pre>
+<script>
+function log(msg) {
+  document.getElementById('log').textContent += new Date().toISOString().substr(11,12) + ' ' + msg + '\n';
+}
+
+log('Page loaded');
+log('Location: ' + window.location.href);
+
+var wsUrl = 'ws://' + window.location.host + '/ws';
+log('Connecting to: ' + wsUrl);
+
+try {
+  var ws = new WebSocket(wsUrl);
+  log('WebSocket created, readyState=' + ws.readyState);
+
+  ws.onopen = function() {
+    log('OPEN readyState=' + ws.readyState);
+    log('protocol=' + ws.protocol);
+    log('extensions=' + ws.extensions);
+  };
+
+  ws.onclose = function(e) {
+    log('CLOSE code=' + e.code + ' reason="' + e.reason + '" wasClean=' + e.wasClean);
+  };
+
+  ws.onerror = function(e) {
+    log('ERROR type=' + e.type);
+  };
+
+  ws.onmessage = function(e) {
+    log('MSG: ' + e.data);
+  };
+} catch(e) {
+  log('EXCEPTION: ' + e.message);
+}
+</script>
+</body>
+</html>

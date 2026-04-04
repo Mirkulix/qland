@@ -16,8 +16,7 @@ use std::collections::HashMap;
 use crate::vm;
 use crate::executor;
 use qlang_core::graph::Graph;
-use qlang_core::ops::Op;
-use qlang_core::tensor::{Shape, TensorData, TensorType};
+use qlang_core::tensor::{Shape, TensorData};
 
 /// A graph block extracted from source.
 #[derive(Debug)]
@@ -112,7 +111,7 @@ pub fn execute_unified(source: &str) -> Result<UnifiedResult, UnifiedError> {
 
     if !script.trim().is_empty() {
         match vm::run_qlang_script(&script) {
-            Ok((value, captured_output)) => {
+            Ok((value, _captured_output)) => {
                 return Ok(UnifiedResult {
                     vm_result: Some(value),
                     graphs: graph_names,
@@ -174,6 +173,9 @@ pub fn compress_weights(weights: &[f32]) -> Vec<f32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
+    use qlang_core::ops::Op;
+    use qlang_core::tensor::TensorType;
 
     #[test]
     fn split_graph_and_script() {

@@ -1,14 +1,11 @@
 use std::collections::HashMap;
-use std::sync::Mutex;
-
-use rayon::prelude::*;
 
 use qlang_core::graph::{Graph, NodeId};
 use qlang_core::ops::Op;
 use qlang_core::tensor::TensorData;
 use qlang_core::verify;
 
-use crate::scheduler;
+use crate::ollama::{OllamaClient, ChatMessage};
 
 /// Result of executing a QLANG graph.
 #[derive(Debug)]
@@ -336,6 +333,33 @@ pub fn execute(
 
                 node_outputs.insert((node_id, 0), TensorData::from_f32(state.shape.clone(), &result));
                 stats.quantum_ops += 1;
+            }
+
+            Op::OllamaGenerate { model } => {
+                let input = get_one_input(graph, node_id, &node_outputs)?;
+                let prompt = input.as_string().ok_or_else(|| {
+                    ExecutionError::RuntimeError("ollama_generate: input is not a UTF-8 string".into())
+                })?;
+                let client = OllamaClient::from_env();
+                let response = client.generate(model, &prompt, None).map_err(|e| {
+                    ExecutionError::RuntimeError(format!("ollama_generate: {e}"))
+                })?;
+                node_outputs.insert((node_id, 0), TensorData::from_string(&response));
+            }
+
+            Op::OllamaChat { model } => {
+                let input = get_one_input(graph, node_id, &node_outputs)?;
+                let json_str = input.as_string().ok_or_else(|| {
+                    ExecutionError::RuntimeError("ollama_chat: input is not a UTF-8 string".into())
+                })?;
+                let messages: Vec<ChatMessage> = serde_json::from_str(&json_str).map_err(|e| {
+                    ExecutionError::RuntimeError(format!("ollama_chat: failed to parse messages JSON: {e}"))
+                })?;
+                let client = OllamaClient::from_env();
+                let response = client.chat(model, messages).map_err(|e| {
+                    ExecutionError::RuntimeError(format!("ollama_chat: {e}"))
+                })?;
+                node_outputs.insert((node_id, 0), TensorData::from_string(&response));
             }
 
             other => {
@@ -708,6 +732,7 @@ fn tensor_neg(a: &TensorData) -> Result<TensorData, ExecutionError> {
     Ok(TensorData::from_f32(a.shape.clone(), &result))
 }
 
+#[allow(dead_code)]
 /// Convert a flat n×n dense matrix (f64, row-major) into a `DensityMatrix`.
 ///
 /// Symmetrises the input, runs Jacobi eigendecomposition, clamps negative
@@ -746,6 +771,7 @@ fn dense_f64_to_density(dense: &[f64], n: usize) -> qlang_core::quantum::Density
     }
 }
 
+#[allow(dead_code)]
 /// Expand a `DensityMatrix` back to a flat n×n dense matrix (f64, row-major):
 ///   ρ = Σ pₖ |ψₖ⟩⟨ψₖ|
 fn density_to_dense_f64(rho: &qlang_core::quantum::DensityMatrix) -> Vec<f64> {
@@ -762,6 +788,7 @@ fn density_to_dense_f64(rho: &qlang_core::quantum::DensityMatrix) -> Vec<f64> {
     dense
 }
 
+#[allow(dead_code)]
 /// Jacobi eigenvalue algorithm for real symmetric n×n matrices.
 /// Returns (eigenvalues, eigenvectors_flat) where eigenvectors_flat has
 /// row k = eigenvector k (each of length n).
@@ -847,7 +874,7 @@ fn jacobi_eigen_full(mat: &[f64], n: usize) -> (Vec<f64>, Vec<f64>) {
 /// The threshold is computed as mean(|w|) * 0.7 (a common heuristic).
 /// Theorem 5.2 bounds the distortion of this projection.
 fn tensor_to_ternary(a: &TensorData) -> Result<TensorData, ExecutionError> {
-    use qlang_core::tensor::{Dtype, Shape};
+    use qlang_core::tensor::Dtype;
 
     let va = a.as_f32_slice().ok_or(ExecutionError::RuntimeError(
         "to_ternary: input not f32".into(),

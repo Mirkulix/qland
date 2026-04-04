@@ -141,7 +141,7 @@ fn plan_memory(graph: &Graph, levels: &[ExecutionLevel]) -> MemoryPlan {
     // Compute peak memory: at each level, sum all live tensors
     let max_level = levels.len();
     let mut peak = 0u64;
-    let mut total = 0u64;
+    let total;
 
     for level in 0..max_level {
         let live_bytes: u64 = lifetimes.iter()

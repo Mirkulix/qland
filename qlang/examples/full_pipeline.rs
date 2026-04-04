@@ -17,7 +17,7 @@ fn main() {
 
     use qlang_runtime::autograd::train_mlp_autograd;
     use qlang_runtime::checkpoint::{Checkpoint, WeightTensor, CompressionState};
-    use qlang_runtime::mnist::MnistData;
+    
     use qlang_runtime::training::MlpWeights;
     use qlang_agent::distributed;
     use std::time::Instant;

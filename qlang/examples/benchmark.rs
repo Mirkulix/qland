@@ -6,7 +6,6 @@
 //! This demonstrates why QLANG compiles to machine code
 //! instead of interpreting graphs like Python.
 
-use std::time::Instant;
 
 fn main() {
     #[cfg(not(feature = "llvm"))]
@@ -21,6 +20,7 @@ fn main() {
 
 #[cfg(feature = "llvm")]
 fn run() {
+    use std::time::Instant;
     println!("=== QLANG Performance Benchmark ===\n");
 
     use inkwell::context::Context;

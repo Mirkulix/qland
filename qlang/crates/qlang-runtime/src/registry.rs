@@ -6,8 +6,7 @@
 //! - `metadata.json` — name, version, metrics, timestamps
 
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use crate::checkpoint::Checkpoint;
 
@@ -207,6 +206,7 @@ pub struct ModelComparison {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
     use crate::checkpoint::{Checkpoint, CompressionState, TrainingMetadata};
     use qlang_core::graph::Graph;
 

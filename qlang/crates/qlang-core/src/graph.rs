@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{BinaryHeap, HashMap};
+use std::cmp::Reverse;
 use std::fmt;
 
 use crate::ops::Op;
@@ -133,9 +134,9 @@ impl Graph {
         id
     }
 
-    /// Get a node by ID.
+    /// Get a node by ID (O(1) — node IDs are sequential indices).
     pub fn node(&self, id: NodeId) -> Option<&Node> {
-        self.nodes.iter().find(|n| n.id == id)
+        self.nodes.get(id as usize).filter(|n| n.id == id)
     }
 
     /// Get all edges going INTO a node.
@@ -167,23 +168,22 @@ impl Graph {
                 .push(edge.to_node);
         }
 
-        let mut queue: Vec<NodeId> = in_degree
+        let mut heap: BinaryHeap<Reverse<NodeId>> = in_degree
             .iter()
             .filter(|&(_, deg)| *deg == 0)
-            .map(|(&id, _)| id)
+            .map(|(&id, _)| Reverse(id))
             .collect();
-        queue.sort(); // deterministic order
 
         let mut order = Vec::with_capacity(n);
 
-        while let Some(node) = queue.pop() {
+        while let Some(Reverse(node)) = heap.pop() {
             order.push(node);
             if let Some(neighbors) = adj.get(&node) {
                 for &neighbor in neighbors {
                     let deg = in_degree.get_mut(&neighbor).unwrap();
                     *deg -= 1;
                     if *deg == 0 {
-                        queue.push(neighbor);
+                        heap.push(Reverse(neighbor));
                     }
                 }
             }

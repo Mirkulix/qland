@@ -7,7 +7,6 @@
 //! This is the graph-level equivalent of `git diff` and `git merge`.
 
 use qlang_core::graph::Graph;
-use qlang_core::ops::Op;
 
 /// A single change between two graph versions.
 #[derive(Debug, Clone)]

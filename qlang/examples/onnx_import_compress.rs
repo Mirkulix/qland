@@ -27,7 +27,7 @@ fn main() {
     use qlang_runtime::executor;
     use qlang_runtime::training::MlpWeights;
     use qlang_runtime::mnist::MnistData;
-    use qlang_core::tensor::{TensorData, Shape, Dim};
+    use qlang_core::tensor::{TensorData, Shape};
     use std::collections::HashMap;
 
     // ================================================================

@@ -136,7 +136,7 @@ pub fn run_repl() {
                                                     if let Some(edge) = incoming.first() {
                                                         // Find the source node in our graph
                                                         let source_node = reparsed.node(edge.from_node);
-                                                        if let Some(src) = source_node {
+                                                        if let Some(_src) = source_node {
                                                             // Look up the actual node name from reparsed context
                                                             // The source is likely the last node we added
                                                             if let Some((src_id, src_tt)) = find_source_in_graph(&node_names, &reparsed, edge.from_node) {
@@ -220,7 +220,7 @@ fn print_help() {
 
 fn run_graph(
     graph: &Graph,
-    node_names: &HashMap<String, (u32, qlang_core::tensor::TensorType)>,
+    _node_names: &HashMap<String, (u32, qlang_core::tensor::TensorType)>,
     input_data: &HashMap<String, Vec<f32>>,
 ) {
     let mut inputs = HashMap::new();
@@ -267,10 +267,11 @@ fn show_llvm(graph: &Graph) {
     use inkwell::OptimizationLevel;
 
     let context = Context::create();
-    match crate::codegen::compile_graph(&context, graph, OptimizationLevel::None) {
+    let result = crate::codegen::compile_graph(&context, graph, OptimizationLevel::None);
+    match result {
         Ok(compiled) => println!("{}", compiled.llvm_ir),
         Err(e) => println!("  Codegen error: {e}"),
-    }
+    };
 }
 
 fn load_file(graph: &mut Graph, node_names: &mut HashMap<String, (u32, qlang_core::tensor::TensorType)>, path: &str) {

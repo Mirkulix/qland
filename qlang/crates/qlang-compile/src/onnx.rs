@@ -9,8 +9,8 @@
 //! serialization path for easy exchange with Python tooling.
 
 use std::collections::HashMap;
-use std::io::{self, Read as IoRead, Seek, SeekFrom, Write as IoWrite};
-use std::path::{Path, PathBuf};
+use std::io;
+use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
@@ -139,7 +139,7 @@ enum WireType {
 #[derive(Debug, Clone)]
 struct ProtoField {
     field_number: u32,
-    wire_type: WireType,
+    _wire_type: WireType,
     data: ProtoData,
 }
 
@@ -229,7 +229,7 @@ fn parse_protobuf(data: &[u8]) -> Vec<ProtoField> {
         };
 
         pos += consumed;
-        fields.push(ProtoField { field_number, wire_type, data: proto_data });
+        fields.push(ProtoField { field_number, _wire_type: wire_type, data: proto_data });
     }
 
     fields
@@ -650,7 +650,9 @@ fn op_to_onnx(op: &Op) -> Option<(String, HashMap<String, OnnxAttribute>)> {
         | Op::Embedding { .. }
         | Op::Cond
         | Op::Scan { .. }
-        | Op::SubGraph { .. } => {
+        | Op::SubGraph { .. }
+        | Op::OllamaGenerate { .. }
+        | Op::OllamaChat { .. } => {
             return Some((format!("com.qlang.{op}"), op_to_qlang_attrs(op)));
         }
         // Input/Output are not emitted as ONNX nodes.
@@ -943,6 +945,7 @@ fn dtype_to_onnx(dtype: Dtype) -> &'static str {
         Dtype::I64 => "INT64",
         Dtype::Bool => "BOOL",
         Dtype::Ternary => "INT8", // closest standard type
+        Dtype::Utf8 => "STRING",
     }
 }
 

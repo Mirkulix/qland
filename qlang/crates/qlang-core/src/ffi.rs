@@ -266,6 +266,7 @@ fn dtype_from_u32(v: u32) -> Option<Dtype> {
         6 => Some(Dtype::I64),
         7 => Some(Dtype::Bool),
         8 => Some(Dtype::Ternary),
+        9 => Some(Dtype::Utf8),
         _ => None,
     }
 }
@@ -292,6 +293,8 @@ fn op_from_str(s: &str) -> Option<Op> {
         "residual" => Some(Op::Residual),
         "gelu" => Some(Op::Gelu),
         "constant" => Some(Op::Constant),
+        "ollama_generate" => Some(Op::OllamaGenerate { model: "llama3".into() }),
+        "ollama_chat" => Some(Op::OllamaChat { model: "llama3".into() }),
         _ => None,
     }
 }

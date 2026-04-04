@@ -8,6 +8,7 @@
 //! This is the interpreter backend (Phase 1).
 //! Phase 2 will add LLVM JIT compilation.
 
+pub mod accel;
 pub mod autograd;
 pub mod checkpoint;
 pub mod optimizers;
@@ -38,4 +39,5 @@ pub mod gpu_runtime;
 pub mod registry;
 pub mod parallel;
 pub mod hub;
+pub mod ollama;
 pub mod web_server;

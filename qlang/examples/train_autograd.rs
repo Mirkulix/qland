@@ -100,7 +100,7 @@ fn main() {
 
     // IGQK Compression
     println!("\n[6] IGQK Ternary Compression...");
-    let mut compressed_mlp = MlpWeights {
+    let compressed_mlp = MlpWeights {
         w1: w1.clone(), b1: b1.clone(),
         w2: w2.clone(), b2: b2.clone(),
         input_dim, hidden_dim, output_dim,

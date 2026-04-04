@@ -24,7 +24,6 @@
 //! ```
 
 use qlang_core::graph::Graph;
-use qlang_core::serial;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -120,7 +119,7 @@ impl Registry {
     /// Create the standard library package.
     pub fn load_stdlib(&mut self) {
         use qlang_core::ops::Op;
-        use qlang_core::tensor::{Dtype, Shape, TensorType};
+        use qlang_core::tensor::TensorType;
 
         let mut stdlib = Package::new("std", "0.1.0");
         stdlib.description = "QLANG Standard Library".into();

@@ -10,7 +10,6 @@
 //! 1. Forward pass: evaluate graph, store intermediate values
 //! 2. Backward pass: propagate gradients from output to inputs
 
-use std::collections::HashMap;
 
 /// A value tracked for automatic differentiation.
 #[derive(Debug, Clone)]
@@ -36,6 +35,7 @@ impl Value {
 
 /// Recorded operation for backward pass.
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 enum TapeEntry {
     Add { out: usize, a: usize, b: usize },
     Mul { out: usize, a: usize, b: usize },
@@ -190,7 +190,7 @@ impl Tape {
 
     /// Backward pass: compute gradients of `loss_id` w.r.t. all variables.
     pub fn backward(&mut self, loss_id: usize) {
-        let n = self.values.len();
+        let _n = self.values.len();
 
         // Initialize gradients to zero
         let mut grads: Vec<Vec<f32>> = self.values.iter()
@@ -271,7 +271,7 @@ impl Tape {
                     }
                 }
 
-                TapeEntry::Softmax { out, input, n_classes } => {
+                TapeEntry::Softmax { out, input, n_classes: _n_classes } => {
                     // Pass gradients through to input
                     // When combined with CE loss, grad is already (probs - one_hot)
                     // Just pass through: d(softmax)/d(logits) ≈ identity for combined CE+softmax
@@ -341,9 +341,9 @@ pub fn train_mlp_autograd(
     // Register variables
     let x_id = tape.variable(x.to_vec(), vec![batch, input_dim]);
     let w1_id = tape.variable(w1.clone(), vec![input_dim, hidden_dim]);
-    let b1_id = tape.variable(b1.clone(), vec![1, hidden_dim]);
+    let _b1_id = tape.variable(b1.clone(), vec![1, hidden_dim]);
     let w2_id = tape.variable(w2.clone(), vec![hidden_dim, output_dim]);
-    let b2_id = tape.variable(b2.clone(), vec![1, output_dim]);
+    let _b2_id = tape.variable(b2.clone(), vec![1, output_dim]);
 
     // Forward: h = relu(x @ W1 + b1_broadcast)
     let h1 = tape.matmul(x_id, w1_id);

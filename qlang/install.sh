@@ -78,6 +78,16 @@ else
     echo -e "  ${GREEN}✓${NC} cargo $(cargo --version)"
 fi
 
+# LLVM 18 (optional, für JIT-Compilation)
+if [[ "$OS" == "Darwin" ]] && check_cmd brew; then
+    if [ -d "/opt/homebrew/opt/llvm@18" ] || [ -d "/usr/local/opt/llvm@18" ]; then
+        echo -e "  ${GREEN}✓${NC} LLVM 18 gefunden"
+    else
+        echo -e "  ${YELLOW}⚠${NC} LLVM 18 nicht gefunden (optional, für JIT)"
+        echo "    Installiere mit: brew install llvm@18"
+    fi
+fi
+
 # Python (optional)
 PYTHON_CMD=""
 if check_cmd python3; then
@@ -109,12 +119,12 @@ if [ -d "$INSTALL_DIR/.git" ]; then
     echo "  Verzeichnis existiert, aktualisiere..."
     cd "$INSTALL_DIR"
     git fetch origin
-    git checkout claude/read-memory-hlO9q
-    git pull origin claude/read-memory-hlO9q
+    git checkout main
+    git pull origin main
 else
     git clone https://github.com/Mirkulix/qland.git "$INSTALL_DIR"
     cd "$INSTALL_DIR"
-    git checkout claude/read-memory-hlO9q
+    git checkout main
 fi
 
 echo -e "  ${GREEN}✓${NC} Repository bereit in $INSTALL_DIR"
@@ -230,7 +240,7 @@ echo -e "  ${PURPLE}Schnellstart:${NC}"
 echo ""
 echo -e "  ${YELLOW}# Dashboard starten${NC}"
 echo -e "  cd $INSTALL_DIR/qlang"
-echo -e "  cargo run --release --no-default-features --bin qlang-cli -- web --port 8081"
+echo -e "  cargo run --release --no-default-features -p qlang-compile --bin qlang-cli -- web --port 8081"
 echo -e "  ${BLUE}→ http://localhost:8081${NC}"
 echo ""
 echo -e "  ${YELLOW}# Demo im Browser (kein Server nötig)${NC}"

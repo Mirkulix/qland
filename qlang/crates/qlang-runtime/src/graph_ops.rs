@@ -18,6 +18,7 @@ use qlang_core::tensor::{Shape, TensorData};
 
 // ─── Conversion helpers ────────────────────────────────────────────────────
 
+#[allow(dead_code)]
 /// Convert a VM Value to a TensorData. Arrays become 1-D vectors;
 /// Tensors keep their shape.
 fn value_to_tensor(val: &Value) -> Result<(TensorData, Vec<usize>), VmError> {
@@ -54,6 +55,7 @@ fn value_to_tensor(val: &Value) -> Result<(TensorData, Vec<usize>), VmError> {
     }
 }
 
+#[allow(dead_code)]
 /// Convert TensorData back to a VM Value.
 fn tensor_to_value(td: &TensorData, shape: &[usize]) -> Result<Value, VmError> {
     let vals = td
@@ -69,6 +71,7 @@ fn tensor_to_value(td: &TensorData, shape: &[usize]) -> Result<Value, VmError> {
     }
 }
 
+#[allow(dead_code)]
 /// Get the output shape dims from a TensorData's shape.
 fn td_shape_dims(td: &TensorData) -> Vec<usize> {
     use qlang_core::tensor::Dim;
@@ -84,7 +87,7 @@ fn td_shape_dims(td: &TensorData) -> Vec<usize> {
 
 // ─── Arity check helper ────────────────────────────────────────────────────
 
-fn check_arity(name: &str, args: &[Value], expected: usize) -> Result<(), VmError> {
+fn check_arity(_name: &str, args: &[Value], expected: usize) -> Result<(), VmError> {
     if args.len() != expected {
         return Err(VmError::ArityMismatch {
             expected,
@@ -240,7 +243,7 @@ fn binary_elementwise(
     name: &str,
 ) -> Result<Option<Value>, VmError> {
     let (va, sa) = get_f64_data(a)?;
-    let (vb, sb) = get_f64_data(b)?;
+    let (vb, _sb) = get_f64_data(b)?;
 
     if va.len() != vb.len() {
         return Err(VmError::RuntimeError(format!(
@@ -361,7 +364,7 @@ fn graph_reduce_mean(a: &Value) -> Result<Option<Value>, VmError> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    
     use crate::vm::{run_qlang_script, Value};
 
     fn run(src: &str) -> (Value, Vec<String>) {

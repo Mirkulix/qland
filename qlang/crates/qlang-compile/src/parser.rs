@@ -251,6 +251,7 @@ impl<'a> Parser<'a> {
         }
     }
 
+    #[allow(dead_code)]
     fn parse_graph(&mut self) -> Result<Graph, ParseError> {
         // Parse "graph <name> {"
         let (line, text) = self.current().ok_or(self.err(0, "empty file"))?;
@@ -420,7 +421,7 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    fn resolve_op(&self, name: &str, args: &[TensorType], line: usize) -> Result<(Op, TensorType), ParseError> {
+    fn resolve_op(&self, name: &str, args: &[TensorType], _line: usize) -> Result<(Op, TensorType), ParseError> {
         let first_type = args.first().cloned().unwrap_or(TensorType::f32_scalar());
 
         match name {
@@ -465,11 +466,29 @@ impl<'a> Parser<'a> {
             "gelu" => Ok((Op::Gelu, first_type)),
             "residual" => Ok((Op::Residual, first_type)),
             "dropout" => Ok((Op::Dropout { rate: 0.1 }, first_type)),
+            s if s.starts_with("ollama_generate:") => {
+                let model = s.trim_start_matches("ollama_generate:").to_string();
+                let out = TensorType::new(Dtype::Utf8, Shape(vec![Dim::Dynamic]));
+                Ok((Op::OllamaGenerate { model }, out))
+            }
+            "ollama_generate" => {
+                let out = TensorType::new(Dtype::Utf8, Shape(vec![Dim::Dynamic]));
+                Ok((Op::OllamaGenerate { model: "llama3".to_string() }, out))
+            }
+            s if s.starts_with("ollama_chat:") => {
+                let model = s.trim_start_matches("ollama_chat:").to_string();
+                let out = TensorType::new(Dtype::Utf8, Shape(vec![Dim::Dynamic]));
+                Ok((Op::OllamaChat { model }, out))
+            }
+            "ollama_chat" => {
+                let out = TensorType::new(Dtype::Utf8, Shape(vec![Dim::Dynamic]));
+                Ok((Op::OllamaChat { model: "llama3".to_string() }, out))
+            }
             _ => Err(ParseError::UnknownOp(name.to_string())),
         }
     }
 
-    fn parse_type(&self, s: &str, line: usize) -> Result<TensorType, ParseError> {
+    fn parse_type(&self, s: &str, _line: usize) -> Result<TensorType, ParseError> {
         // Parse "f32[784]", "f32[28, 28]", "ternary[128]", "f32" (scalar)
         let bracket_start = s.find('[');
 
@@ -502,6 +521,7 @@ impl<'a> Parser<'a> {
             "i64" => Dtype::I64,
             "bool" => Dtype::Bool,
             "ternary" => Dtype::Ternary,
+            "utf8" => Dtype::Utf8,
             other => return Err(ParseError::UnknownType(other.to_string())),
         };
 
@@ -570,6 +590,28 @@ pub fn to_qlang_text(graph: &Graph) -> String {
                     Op::Residual => "residual",
                     Op::Gelu => "gelu",
                     Op::Dropout { .. } => "dropout",
+                    Op::OllamaGenerate { model } => {
+                        let incoming = graph.incoming_edges(id);
+                        let args: Vec<String> = incoming
+                            .iter()
+                            .map(|e| names.get(&e.from_node).cloned().unwrap_or_else(|| format!("?{}", e.from_node)))
+                            .collect();
+                        out.push_str(&format!("  node {} = ollama_generate:{}({})\n",
+                            var_name, model, args.join(", ")));
+                        names.insert(id, var_name);
+                        continue;
+                    }
+                    Op::OllamaChat { model } => {
+                        let incoming = graph.incoming_edges(id);
+                        let args: Vec<String> = incoming
+                            .iter()
+                            .map(|e| names.get(&e.from_node).cloned().unwrap_or_else(|| format!("?{}", e.from_node)))
+                            .collect();
+                        out.push_str(&format!("  node {} = ollama_chat:{}({})\n",
+                            var_name, model, args.join(", ")));
+                        names.insert(id, var_name);
+                        continue;
+                    }
                     other => {
                         out.push_str(&format!("  // unsupported: {other}\n"));
                         names.insert(id, var_name);
@@ -631,6 +673,7 @@ fn format_type(tt: &TensorType) -> String {
         Dtype::I64 => "i64",
         Dtype::Bool => "bool",
         Dtype::Ternary => "ternary",
+        Dtype::Utf8 => "utf8",
     };
 
     if tt.shape.0.is_empty() {

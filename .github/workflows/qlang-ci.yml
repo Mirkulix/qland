@@ -2,10 +2,10 @@ name: QLANG CI
 
 on:
   push:
-    branches: [ master, "claude/**" ]
+    branches: [ main, master, "claude/**" ]
     paths: [ "qlang/**" ]
   pull_request:
-    branches: [ master ]
+    branches: [ main, master ]
     paths: [ "qlang/**" ]
 
 env:

@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>QLANG Pipeline Monitor</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: #0d1117; color: #c9d1d9; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', monospace; min-height: 100vh; }
+
+.header { background: #161b22; padding: 16px 24px; display: flex; align-items: center; gap: 16px; border-bottom: 1px solid #30363d; }
+.header h1 { font-size: 20px; color: #bc8cff; }
+.status { display: flex; align-items: center; gap: 8px; font-size: 13px; color: #8b949e; }
+.dot { width: 10px; height: 10px; border-radius: 50%; background: #f85149; }
+.dot.ok { background: #3fb950; animation: pulse 2s infinite; }
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
+
+.main { display: flex; height: calc(100vh - 60px); }
+
+/* Left: Pipeline Diagram */
+.diagram { width: 280px; padding: 20px; border-right: 1px solid #30363d; flex-shrink: 0; }
+.pipe-node { background: #161b22; border: 2px solid #30363d; border-radius: 10px; padding: 12px; margin-bottom: 4px; text-align: center; font-size: 13px; transition: all 0.3s; position: relative; }
+.pipe-node.active { border-color: #bc8cff; box-shadow: 0 0 15px rgba(188,140,255,0.3); }
+.pipe-node.done { border-color: #3fb950; }
+.pipe-node.error { border-color: #f85149; }
+.pipe-node .label { font-weight: 700; color: #c9d1d9; }
+.pipe-node .sub { font-size: 11px; color: #8b949e; margin-top: 4px; }
+.pipe-arrow { text-align: center; color: #30363d; font-size: 18px; line-height: 20px; }
+.pipe-arrow.active { color: #bc8cff; }
+
+/* Center: Live Log */
+.log-panel { flex: 1; display: flex; flex-direction: column; }
+.log-header { padding: 12px 20px; background: #161b22; border-bottom: 1px solid #30363d; display: flex; justify-content: space-between; align-items: center; }
+.log-header h2 { font-size: 14px; color: #8b949e; text-transform: uppercase; letter-spacing: 1px; }
+.log-body { flex: 1; overflow-y: auto; padding: 12px 20px; }
+.log-entry { padding: 8px 12px; margin-bottom: 6px; border-radius: 8px; font-size: 13px; line-height: 1.5; animation: slideIn 0.3s ease-out; border-left: 3px solid #30363d; background: #161b22; }
+@keyframes slideIn { from { opacity: 0; transform: translateX(-20px); } to { opacity: 1; transform: translateX(0); } }
+.log-entry .time { color: #484f58; font-size: 11px; margin-right: 8px; }
+.log-entry .tag { display: inline-block; padding: 1px 8px; border-radius: 4px; font-size: 10px; font-weight: 700; margin-right: 6px; }
+.log-entry.ollama { border-left-color: #f0883e; }
+.log-entry.ollama .tag { background: #f0883e22; color: #f0883e; }
+.log-entry.training { border-left-color: #3fb950; }
+.log-entry.training .tag { background: #3fb95022; color: #3fb950; }
+.log-entry.system { border-left-color: #58a6ff; }
+.log-entry.system .tag { background: #58a6ff22; color: #58a6ff; }
+.log-entry.compress { border-left-color: #bc8cff; }
+.log-entry.compress .tag { background: #bc8cff22; color: #bc8cff; }
+.log-entry.pipeline { border-left-color: #d29922; }
+.log-entry.pipeline .tag { background: #d2992222; color: #d29922; }
+.log-entry.error { border-left-color: #f85149; }
+
+/* Right: Controls */
+.controls { width: 320px; padding: 20px; border-left: 1px solid #30363d; flex-shrink: 0; overflow-y: auto; }
+.controls h3 { font-size: 13px; color: #8b949e; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 12px; }
+.field { margin-bottom: 16px; }
+.field label { display: block; font-size: 12px; color: #8b949e; margin-bottom: 4px; }
+.field textarea, .field select, .field input { width: 100%; background: #0d1117; border: 1px solid #30363d; color: #c9d1d9; border-radius: 6px; padding: 8px 10px; font-size: 13px; font-family: inherit; }
+.field textarea { height: 80px; resize: vertical; }
+.field textarea:focus, .field select:focus { border-color: #58a6ff; outline: none; }
+.start-btn { width: 100%; padding: 14px; background: linear-gradient(135deg, #bc8cff, #58a6ff); color: #fff; border: none; border-radius: 8px; font-size: 15px; font-weight: 700; cursor: pointer; margin-top: 10px; transition: all 0.2s; }
+.start-btn:hover { transform: translateY(-1px); box-shadow: 0 4px 15px rgba(188,140,255,0.4); }
+.start-btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; box-shadow: none; }
+.start-btn.running { background: linear-gradient(135deg, #d29922, #f0883e); animation: btnPulse 1.5s infinite; }
+@keyframes btnPulse { 0%,100% { box-shadow: 0 0 5px rgba(210,153,34,0.3); } 50% { box-shadow: 0 0 20px rgba(210,153,34,0.5); } }
+
+.metrics { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 16px; }
+.metric { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 10px; text-align: center; }
+.metric .val { font-size: 20px; font-weight: 700; color: #c9d1d9; }
+.metric .lbl { font-size: 10px; color: #8b949e; text-transform: uppercase; margin-top: 2px; }
+
+.epoch-bar { margin-top: 16px; }
+.epoch-bar .bar-bg { height: 8px; background: #21262d; border-radius: 4px; overflow: hidden; }
+.epoch-bar .bar-fill { height: 100%; background: linear-gradient(90deg, #3fb950, #58a6ff); border-radius: 4px; transition: width 0.3s; width: 0%; }
+.epoch-bar .bar-label { font-size: 11px; color: #8b949e; margin-top: 4px; display: flex; justify-content: space-between; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>QLANG Pipeline Monitor</h1>
+  <div class="status">
+    <div class="dot" id="dot"></div>
+    <span id="connText">Verbinde...</span>
+  </div>
+  <div class="status" style="margin-left:auto;">
+    <span id="ollamaStatus">Ollama: pruefe...</span>
+  </div>
+</div>
+
+<div class="main">
+  <!-- Pipeline Diagram -->
+  <div class="diagram">
+    <div class="pipe-node" id="n-user"><div class="label">Du</div><div class="sub">Aufgabe definieren</div></div>
+    <div class="pipe-arrow" id="a1">&#8595;</div>
+    <div class="pipe-node" id="n-architect"><div class="label">Architekt</div><div class="sub" id="arch-model">---</div></div>
+    <div class="pipe-arrow" id="a2">&#8595;</div>
+    <div class="pipe-node" id="n-build"><div class="label">QLANG Build</div><div class="sub" id="build-info">---</div></div>
+    <div class="pipe-arrow" id="a3">&#8595;</div>
+    <div class="pipe-node" id="n-train"><div class="label">Training (MLX)</div><div class="sub" id="train-info">---</div></div>
+    <div class="pipe-arrow" id="a4">&#8595;</div>
+    <div class="pipe-node" id="n-compress"><div class="label">IGQK Compress</div><div class="sub" id="compress-info">---</div></div>
+    <div class="pipe-arrow" id="a5">&#8595;</div>
+    <div class="pipe-node" id="n-eval"><div class="label">Evaluator</div><div class="sub" id="eval-model">---</div></div>
+    <div class="pipe-arrow" id="a6">&#8595;</div>
+    <div class="pipe-node" id="n-done"><div class="label">Fertig</div><div class="sub" id="done-info">---</div></div>
+  </div>
+
+  <!-- Live Log -->
+  <div class="log-panel">
+    <div class="log-header">
+      <h2>Live Kommunikation</h2>
+      <button onclick="document.getElementById('logBody').innerHTML=''" style="background:none;border:1px solid #30363d;color:#8b949e;padding:4px 10px;border-radius:4px;cursor:pointer;font-size:11px;">Clear</button>
+    </div>
+    <div class="log-body" id="logBody">
+      <div class="log-entry system"><span class="tag">SYSTEM</span> Warte auf Verbindung...</div>
+    </div>
+  </div>
+
+  <!-- Controls -->
+  <div class="controls">
+    <h3>Pipeline starten</h3>
+
+    <div class="field">
+      <label>Was soll gebaut werden?</label>
+      <textarea id="task" placeholder="z.B. Baue einen Ziffern-Erkenner">Baue einen Ziffern-Erkenner</textarea>
+    </div>
+
+    <div class="field">
+      <label>Architekt (LLM)</label>
+      <select id="architect"><option>deepseek-r1:1.5b</option></select>
+    </div>
+
+    <div class="field">
+      <label>Evaluator (LLM)</label>
+      <select id="evaluator"><option>deepseek-r1:1.5b</option></select>
+    </div>
+
+    <div class="field">
+      <label>Epochs: <b id="epochVal">10</b></label>
+      <input type="range" id="epochs" min="3" max="30" value="10" oninput="document.getElementById('epochVal').textContent=this.value">
+    </div>
+
+    <div class="field">
+      <label>Dataset</label>
+      <select id="dataset">
+        <option value="synthetic">Synthetic (schnell, 5 Sek)</option>
+        <option value="mnist">MNIST (voll, 60000 Bilder)</option>
+      </select>
+    </div>
+
+    <button class="start-btn" id="startBtn" onclick="startPipeline()">Start Pipeline</button>
+
+    <div class="epoch-bar" id="epochBar" style="display:none;">
+      <div class="bar-bg"><div class="bar-fill" id="barFill"></div></div>
+      <div class="bar-label"><span id="barLeft">Epoch 0</span><span id="barRight">0%</span></div>
+    </div>
+
+    <div class="metrics" id="metricsBox" style="display:none;">
+      <div class="metric"><div class="val" id="mAcc">--</div><div class="lbl">Accuracy</div></div>
+      <div class="metric"><div class="val" id="mLoss">--</div><div class="lbl">Loss</div></div>
+      <div class="metric"><div class="val" id="mRatio">--</div><div class="lbl">Kompression</div></div>
+      <div class="metric"><div class="val" id="mSize">--</div><div class="lbl">Modell-Groesse</div></div>
+    </div>
+  </div>
+</div>
+
+<script>
+var ws = null;
+var totalEpochs = 10;
+var nodes = ['n-user','n-architect','n-build','n-train','n-compress','n-eval','n-done'];
+var arrows = ['a1','a2','a3','a4','a5','a6'];
+var stepToNode = {1:'n-architect', 2:'n-build', 3:'n-build', 4:'n-train', 5:'n-compress', 6:'n-eval'};
+
+function log(type, tag, msg) {
+  var el = document.getElementById('logBody');
+  var t = new Date().toLocaleTimeString('de-DE');
+  var div = document.createElement('div');
+  div.className = 'log-entry ' + type;
+  div.innerHTML = '<span class="time">' + t + '</span><span class="tag">' + tag + '</span> ' + msg;
+  el.appendChild(div);
+  el.scrollTop = el.scrollHeight;
+}
+
+function setNode(id, cls, sub) {
+  var el = document.getElementById(id);
+  el.className = 'pipe-node ' + cls;
+  if (sub) el.querySelector('.sub').textContent = sub;
+}
+
+function setArrow(idx, active) {
+  if (arrows[idx]) document.getElementById(arrows[idx]).className = 'pipe-arrow' + (active ? ' active' : '');
+}
+
+function activateStep(step) {
+  // Reset all
+  nodes.forEach(function(n) { document.getElementById(n).className = 'pipe-node'; });
+  arrows.forEach(function(a) { document.getElementById(a).className = 'pipe-arrow'; });
+  // Mark done
+  var nodeOrder = ['n-user','n-architect','n-build','n-train','n-compress','n-eval','n-done'];
+  var stepMap = {1:1, 2:2, 3:2, 4:3, 5:4, 6:5};
+  var idx = stepMap[step] || 0;
+  for (var i = 0; i <= idx; i++) {
+    if (i < idx) {
+      document.getElementById(nodeOrder[i]).className = 'pipe-node done';
+      if (arrows[i-1]) document.getElementById(arrows[i-1]).className = 'pipe-arrow active';
+    } else {
+      document.getElementById(nodeOrder[i]).className = 'pipe-node active';
+      if (arrows[i-1]) document.getElementById(arrows[i-1]).className = 'pipe-arrow active';
+    }
+  }
+}
+
+function connect() {
+  var url = 'ws://' + window.location.host + '/ws';
+  ws = new WebSocket(url);
+
+  ws.onopen = function() {
+    document.getElementById('dot').className = 'dot ok';
+    document.getElementById('connText').textContent = 'Verbunden';
+    log('system', 'WS', 'WebSocket verbunden mit ' + url);
+    ws.send(JSON.stringify({type: 'list_models'}));
+    log('system', 'SEND', '→ list_models angefragt');
+    document.getElementById('startBtn').disabled = false;
+  };
+
+  ws.onclose = function() {
+    document.getElementById('dot').className = 'dot';
+    document.getElementById('connText').textContent = 'Getrennt';
+    document.getElementById('startBtn').disabled = true;
+    log('error', 'WS', 'Verbindung getrennt. Reconnect in 3s...');
+    setTimeout(connect, 3000);
+  };
+
+  ws.onerror = function() {
+    log('error', 'WS', 'Verbindungsfehler');
+  };
+
+  ws.onmessage = function(ev) {
+    var msg;
+    try { msg = JSON.parse(ev.data); } catch(e) { log('error', 'PARSE', ev.data.substring(0,100)); return; }
+
+    switch(msg.type) {
+      case 'models_list':
+        var models = msg.models || [];
+        log('system', 'RECV', '← Ollama Modelle: ' + models.join(', '));
+        document.getElementById('ollamaStatus').textContent = 'Ollama: ' + models.length + ' Modelle';
+        document.getElementById('ollamaStatus').style.color = '#3fb950';
+        // Fill dropdowns
+        ['architect','evaluator'].forEach(function(id) {
+          var sel = document.getElementById(id);
+          sel.innerHTML = '';
+          models.forEach(function(m) {
+            var opt = document.createElement('option');
+            opt.value = m; opt.textContent = m;
+            sel.appendChild(opt);
+          });
+        });
+        // Set defaults
+        if (models.length > 0) document.getElementById('architect').value = models.find(function(m){return m.includes('deepseek')}) || models[0];
+        if (models.length > 1) document.getElementById('evaluator').value = models.find(function(m){return m.includes('llama')}) || models[models.length-1];
+        break;
+
+      case 'pipeline_status':
+        log('pipeline', 'STEP ' + msg.step + '/' + msg.total_steps, msg.description);
+        activateStep(msg.step);
+        if (msg.description.toLowerCase().includes('complete')) {
+          setNode('n-done', 'done', 'Pipeline fertig!');
+          setArrow(5, true);
+          document.getElementById('startBtn').disabled = false;
+          document.getElementById('startBtn').className = 'start-btn';
+          document.getElementById('startBtn').textContent = 'Neue Pipeline starten';
+        }
+        break;
+
+      case 'agent_thinking':
+        log('ollama', 'OLLAMA', msg.agent + ' (' + msg.model + ') denkt nach...');
+        if (msg.agent === 'Architekt') setNode('n-architect', 'active', msg.model + ' denkt...');
+        if (msg.agent === 'Evaluator') setNode('n-eval', 'active', msg.model + ' denkt...');
+        break;
+
+      case 'agent_response':
+        log('ollama', 'OLLAMA', msg.agent + ' (' + msg.model + '): ' + msg.response);
+        if (msg.agent === 'Architekt') setNode('n-architect', 'done', msg.response.substring(0,40));
+        if (msg.agent === 'Evaluator') setNode('n-eval', 'done', msg.response.substring(0,40));
+        break;
+
+      case 'training':
+        var pct = (msg.epoch / totalEpochs * 100).toFixed(0);
+        document.getElementById('epochBar').style.display = 'block';
+        document.getElementById('metricsBox').style.display = 'grid';
+        document.getElementById('barFill').style.width = pct + '%';
+        document.getElementById('barLeft').textContent = 'Epoch ' + msg.epoch + '/' + totalEpochs;
+        document.getElementById('barRight').textContent = (msg.accuracy * 100).toFixed(1) + '%';
+        document.getElementById('mAcc').textContent = (msg.accuracy * 100).toFixed(1) + '%';
+        document.getElementById('mLoss').textContent = msg.loss.toFixed(4);
+        setNode('n-train', 'active', 'Epoch ' + msg.epoch + ' | ' + (msg.accuracy*100).toFixed(1) + '%');
+        if (msg.epoch % 2 === 0 || msg.epoch === totalEpochs) {
+          log('training', 'TRAIN', 'Epoch ' + msg.epoch + '/' + totalEpochs + ' | loss=' + msg.loss.toFixed(4) + ' | acc=' + (msg.accuracy*100).toFixed(1) + '%');
+        }
+        break;
+
+      case 'compression':
+        log('compress', 'IGQK', msg.original_size + ' → ' + msg.compressed_size + ' (' + msg.ratio + ')');
+        setNode('n-compress', 'done', msg.ratio);
+        document.getElementById('mRatio').textContent = msg.ratio;
+        document.getElementById('mSize').textContent = msg.compressed_size;
+        break;
+
+      case 'graph':
+        var n = (msg.nodes||[]).length;
+        log('system', 'GRAPH', n + ' Nodes geladen');
+        setNode('n-build', 'done', n + ' Nodes');
+        break;
+
+      case 'system':
+        log('system', 'INFO', msg.text || '');
+        break;
+
+      default:
+        log('system', msg.type.toUpperCase(), JSON.stringify(msg).substring(0,150));
+    }
+  };
+}
+
+function startPipeline() {
+  var task = document.getElementById('task').value.trim();
+  if (!task) { document.getElementById('task').focus(); return; }
+
+  totalEpochs = parseInt(document.getElementById('epochs').value);
+  var msg = {
+    type: 'start_pipeline',
+    task: task,
+    architect_model: document.getElementById('architect').value,
+    evaluator_model: document.getElementById('evaluator').value,
+    epochs: totalEpochs,
+    dataset: document.getElementById('dataset').value,
+    compress: true
+  };
+
+  log('pipeline', 'SEND', '→ start_pipeline: "' + task + '"');
+  log('system', 'CONFIG', 'Architekt=' + msg.architect_model + ' | Evaluator=' + msg.evaluator_model + ' | Epochs=' + msg.epochs + ' | Dataset=' + msg.dataset);
+
+  ws.send(JSON.stringify(msg));
+
+  document.getElementById('startBtn').disabled = true;
+  document.getElementById('startBtn').className = 'start-btn running';
+  document.getElementById('startBtn').textContent = 'Pipeline laeuft...';
+
+  // Reset
+  setNode('n-user', 'done', '"' + task.substring(0,25) + '"');
+  setArrow(0, true);
+  document.getElementById('epochBar').style.display = 'none';
+  document.getElementById('metricsBox').style.display = 'none';
+  document.getElementById('mAcc').textContent = '--';
+  document.getElementById('mLoss').textContent = '--';
+  document.getElementById('mRatio').textContent = '--';
+  document.getElementById('mSize').textContent = '--';
+}
+
+connect();
+</script>
+</body>
+</html>

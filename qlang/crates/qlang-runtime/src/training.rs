@@ -9,8 +9,8 @@
 //!
 //! This runs entirely within QLANG — no Python, no PyTorch.
 
-use std::collections::HashMap;
-use qlang_core::tensor::{Dtype, Shape, TensorData};
+
+use crate::accel;
 
 /// Training configuration.
 pub struct TrainConfig {
@@ -66,26 +66,18 @@ impl MlpWeights {
         let batch = x.len() / self.input_dim;
 
         // Layer 1: h = relu(x @ W1 + b1)
-        let mut hidden = vec![0.0f32; batch * self.hidden_dim];
+        let mut hidden = accel::matmul(x, &self.w1, batch, self.hidden_dim, self.input_dim);
         for b in 0..batch {
             for j in 0..self.hidden_dim {
-                let mut sum = self.b1[j];
-                for i in 0..self.input_dim {
-                    sum += x[b * self.input_dim + i] * self.w1[i * self.hidden_dim + j];
-                }
-                hidden[b * self.hidden_dim + j] = sum.max(0.0); // ReLU
+                hidden[b * self.hidden_dim + j] = (hidden[b * self.hidden_dim + j] + self.b1[j]).max(0.0);
             }
         }
 
         // Layer 2: logits = h @ W2 + b2
-        let mut logits = vec![0.0f32; batch * self.output_dim];
+        let mut logits = accel::matmul(&hidden, &self.w2, batch, self.output_dim, self.hidden_dim);
         for b in 0..batch {
             for j in 0..self.output_dim {
-                let mut sum = self.b2[j];
-                for i in 0..self.hidden_dim {
-                    sum += hidden[b * self.hidden_dim + i] * self.w2[i * self.output_dim + j];
-                }
-                logits[b * self.output_dim + j] = sum;
+                logits[b * self.output_dim + j] += self.b2[j];
             }
         }
 
@@ -209,28 +201,20 @@ impl MlpWeights {
 
         // ---- Forward pass (save intermediates) ----
         // Layer 1: pre_act1 = x @ W1 + b1, hidden = relu(pre_act1)
-        let mut pre_act1 = vec![0.0f32; batch * self.hidden_dim];
+        let mut pre_act1 = accel::matmul(x, &self.w1, batch, self.hidden_dim, self.input_dim);
         let mut hidden = vec![0.0f32; batch * self.hidden_dim];
         for b in 0..batch {
             for j in 0..self.hidden_dim {
-                let mut sum = self.b1[j];
-                for i in 0..self.input_dim {
-                    sum += x[b * self.input_dim + i] * self.w1[i * self.hidden_dim + j];
-                }
-                pre_act1[b * self.hidden_dim + j] = sum;
-                hidden[b * self.hidden_dim + j] = sum.max(0.0);
+                pre_act1[b * self.hidden_dim + j] += self.b1[j];
+                hidden[b * self.hidden_dim + j] = pre_act1[b * self.hidden_dim + j].max(0.0);
             }
         }
 
         // Layer 2: logits = hidden @ W2 + b2
-        let mut logits = vec![0.0f32; batch * self.output_dim];
+        let mut logits = accel::matmul(&hidden, &self.w2, batch, self.output_dim, self.hidden_dim);
         for b in 0..batch {
             for j in 0..self.output_dim {
-                let mut sum = self.b2[j];
-                for i in 0..self.hidden_dim {
-                    sum += hidden[b * self.hidden_dim + i] * self.w2[i * self.output_dim + j];
-                }
-                logits[b * self.output_dim + j] = sum;
+                logits[b * self.output_dim + j] += self.b2[j];
             }
         }
 
@@ -267,31 +251,18 @@ impl MlpWeights {
 
         // Gradients for W2 and b2
         // dL/dW2 = hidden^T @ d_logits  (shape: [hidden_dim, output_dim])
-        let mut dw2 = vec![0.0f32; self.hidden_dim * self.output_dim];
+        // hidden is [batch, hidden_dim], d_logits is [batch, output_dim]
+        let dw2 = accel::matmul_at_b(&hidden, &d_logits, self.hidden_dim, self.output_dim, batch);
         let mut db2 = vec![0.0f32; self.output_dim];
         for b in 0..batch {
-            for i in 0..self.hidden_dim {
-                for j in 0..self.output_dim {
-                    dw2[i * self.output_dim + j] +=
-                        hidden[b * self.hidden_dim + i] * d_logits[b * self.output_dim + j];
-                }
-            }
             for j in 0..self.output_dim {
                 db2[j] += d_logits[b * self.output_dim + j];
             }
         }
 
         // dL/d_hidden = d_logits @ W2^T  (shape: [batch, hidden_dim])
-        let mut d_hidden = vec![0.0f32; batch * self.hidden_dim];
-        for b in 0..batch {
-            for i in 0..self.hidden_dim {
-                let mut sum = 0.0f32;
-                for j in 0..self.output_dim {
-                    sum += d_logits[b * self.output_dim + j] * self.w2[i * self.output_dim + j];
-                }
-                d_hidden[b * self.hidden_dim + i] = sum;
-            }
-        }
+        // d_logits is [batch, output_dim], W2 is [hidden_dim, output_dim]
+        let mut d_hidden = accel::matmul_a_bt(&d_logits, &self.w2, batch, self.hidden_dim, self.output_dim);
 
         // ReLU backward: zero out where pre_act1 <= 0
         for b in 0..batch {
@@ -304,15 +275,10 @@ impl MlpWeights {
 
         // Gradients for W1 and b1
         // dL/dW1 = x^T @ d_hidden  (shape: [input_dim, hidden_dim])
-        let mut dw1 = vec![0.0f32; self.input_dim * self.hidden_dim];
+        // x is [batch, input_dim], d_hidden is [batch, hidden_dim]
+        let dw1 = accel::matmul_at_b(x, &d_hidden, self.input_dim, self.hidden_dim, batch);
         let mut db1 = vec![0.0f32; self.hidden_dim];
         for b in 0..batch {
-            for i in 0..self.input_dim {
-                for j in 0..self.hidden_dim {
-                    dw1[i * self.hidden_dim + j] +=
-                        x[b * self.input_dim + i] * d_hidden[b * self.hidden_dim + j];
-                }
-            }
             for j in 0..self.hidden_dim {
                 db1[j] += d_hidden[b * self.hidden_dim + j];
             }
@@ -417,6 +383,7 @@ pub fn generate_toy_dataset(n_samples: usize, dim: usize) -> (Vec<f32>, Vec<u8>)
 ///
 /// Same pattern as `MlpWeights` but with an extra hidden layer for better
 /// capacity and accuracy on tasks like MNIST.
+#[derive(Clone)]
 pub struct MlpWeights3 {
     pub w1: Vec<f32>,  // [input_dim, hidden1_dim]
     pub b1: Vec<f32>,  // [hidden1_dim]
@@ -458,38 +425,26 @@ impl MlpWeights3 {
         let batch = x.len() / self.input_dim;
 
         // Layer 1: h1 = relu(x @ W1 + b1)
-        let mut h1 = vec![0.0f32; batch * self.hidden1_dim];
+        let mut h1 = accel::matmul(x, &self.w1, batch, self.hidden1_dim, self.input_dim);
         for b in 0..batch {
             for j in 0..self.hidden1_dim {
-                let mut sum = self.b1[j];
-                for i in 0..self.input_dim {
-                    sum += x[b * self.input_dim + i] * self.w1[i * self.hidden1_dim + j];
-                }
-                h1[b * self.hidden1_dim + j] = sum.max(0.0); // ReLU
+                h1[b * self.hidden1_dim + j] = (h1[b * self.hidden1_dim + j] + self.b1[j]).max(0.0);
             }
         }
 
         // Layer 2: h2 = relu(h1 @ W2 + b2)
-        let mut h2 = vec![0.0f32; batch * self.hidden2_dim];
+        let mut h2 = accel::matmul(&h1, &self.w2, batch, self.hidden2_dim, self.hidden1_dim);
         for b in 0..batch {
             for j in 0..self.hidden2_dim {
-                let mut sum = self.b2[j];
-                for i in 0..self.hidden1_dim {
-                    sum += h1[b * self.hidden1_dim + i] * self.w2[i * self.hidden2_dim + j];
-                }
-                h2[b * self.hidden2_dim + j] = sum.max(0.0); // ReLU
+                h2[b * self.hidden2_dim + j] = (h2[b * self.hidden2_dim + j] + self.b2[j]).max(0.0);
             }
         }
 
         // Layer 3: logits = h2 @ W3 + b3
-        let mut logits = vec![0.0f32; batch * self.output_dim];
+        let mut logits = accel::matmul(&h2, &self.w3, batch, self.output_dim, self.hidden2_dim);
         for b in 0..batch {
             for j in 0..self.output_dim {
-                let mut sum = self.b3[j];
-                for i in 0..self.hidden2_dim {
-                    sum += h2[b * self.hidden2_dim + i] * self.w3[i * self.output_dim + j];
-                }
-                logits[b * self.output_dim + j] = sum;
+                logits[b * self.output_dim + j] += self.b3[j];
             }
         }
 
@@ -508,6 +463,55 @@ impl MlpWeights3 {
             for j in 0..self.output_dim {
                 logits[offset + j] /= sum;
             }
+        }
+
+        logits
+    }
+
+    /// Forward pass for a single input (784 elements).
+    /// Returns a Vec of `output_dim` probabilities (softmax output).
+    pub fn forward_single(&self, input: &[f32]) -> Vec<f32> {
+        assert_eq!(input.len(), self.input_dim, "forward_single: input length mismatch");
+
+        // Layer 1: h1 = relu(input @ W1 + b1)
+        let mut h1 = vec![0.0f32; self.hidden1_dim];
+        for j in 0..self.hidden1_dim {
+            let mut sum = self.b1[j];
+            for i in 0..self.input_dim {
+                sum += input[i] * self.w1[i * self.hidden1_dim + j];
+            }
+            h1[j] = sum.max(0.0); // ReLU
+        }
+
+        // Layer 2: h2 = relu(h1 @ W2 + b2)
+        let mut h2 = vec![0.0f32; self.hidden2_dim];
+        for j in 0..self.hidden2_dim {
+            let mut sum = self.b2[j];
+            for i in 0..self.hidden1_dim {
+                sum += h1[i] * self.w2[i * self.hidden2_dim + j];
+            }
+            h2[j] = sum.max(0.0); // ReLU
+        }
+
+        // Layer 3: logits = h2 @ W3 + b3
+        let mut logits = vec![0.0f32; self.output_dim];
+        for j in 0..self.output_dim {
+            let mut sum = self.b3[j];
+            for i in 0..self.hidden2_dim {
+                sum += h2[i] * self.w3[i * self.output_dim + j];
+            }
+            logits[j] = sum;
+        }
+
+        // Softmax
+        let max = logits.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+        let mut sum = 0.0f32;
+        for j in 0..self.output_dim {
+            logits[j] = (logits[j] - max).exp();
+            sum += logits[j];
+        }
+        for j in 0..self.output_dim {
+            logits[j] /= sum;
         }
 
         logits
@@ -556,42 +560,30 @@ impl MlpWeights3 {
 
         // ---- Forward pass (save intermediates) ----
         // Layer 1: pre1 = x @ W1 + b1, h1 = relu(pre1)
-        let mut pre1 = vec![0.0f32; batch * self.hidden1_dim];
+        let mut pre1 = accel::matmul(x, &self.w1, batch, self.hidden1_dim, self.input_dim);
         let mut h1 = vec![0.0f32; batch * self.hidden1_dim];
         for b in 0..batch {
             for j in 0..self.hidden1_dim {
-                let mut sum = self.b1[j];
-                for i in 0..self.input_dim {
-                    sum += x[b * self.input_dim + i] * self.w1[i * self.hidden1_dim + j];
-                }
-                pre1[b * self.hidden1_dim + j] = sum;
-                h1[b * self.hidden1_dim + j] = sum.max(0.0);
+                pre1[b * self.hidden1_dim + j] += self.b1[j];
+                h1[b * self.hidden1_dim + j] = pre1[b * self.hidden1_dim + j].max(0.0);
             }
         }
 
         // Layer 2: pre2 = h1 @ W2 + b2, h2 = relu(pre2)
-        let mut pre2 = vec![0.0f32; batch * self.hidden2_dim];
+        let mut pre2 = accel::matmul(&h1, &self.w2, batch, self.hidden2_dim, self.hidden1_dim);
         let mut h2 = vec![0.0f32; batch * self.hidden2_dim];
         for b in 0..batch {
             for j in 0..self.hidden2_dim {
-                let mut sum = self.b2[j];
-                for i in 0..self.hidden1_dim {
-                    sum += h1[b * self.hidden1_dim + i] * self.w2[i * self.hidden2_dim + j];
-                }
-                pre2[b * self.hidden2_dim + j] = sum;
-                h2[b * self.hidden2_dim + j] = sum.max(0.0);
+                pre2[b * self.hidden2_dim + j] += self.b2[j];
+                h2[b * self.hidden2_dim + j] = pre2[b * self.hidden2_dim + j].max(0.0);
             }
         }
 
         // Layer 3: logits = h2 @ W3 + b3
-        let mut logits = vec![0.0f32; batch * self.output_dim];
+        let mut logits = accel::matmul(&h2, &self.w3, batch, self.output_dim, self.hidden2_dim);
         for b in 0..batch {
             for j in 0..self.output_dim {
-                let mut sum = self.b3[j];
-                for i in 0..self.hidden2_dim {
-                    sum += h2[b * self.hidden2_dim + i] * self.w3[i * self.output_dim + j];
-                }
-                logits[b * self.output_dim + j] = sum;
+                logits[b * self.output_dim + j] += self.b3[j];
             }
         }
 
@@ -626,32 +618,19 @@ impl MlpWeights3 {
         }
 
         // --- Gradients for W3, b3 ---
-        // dW3 = h2^T @ d_logits
-        let mut dw3 = vec![0.0f32; self.hidden2_dim * self.output_dim];
+        // dW3 = h2^T @ d_logits  [hidden2_dim, output_dim]
+        // h2 is [batch, hidden2_dim], d_logits is [batch, output_dim]
+        let dw3 = accel::matmul_at_b(&h2, &d_logits, self.hidden2_dim, self.output_dim, batch);
         let mut db3 = vec![0.0f32; self.output_dim];
         for b in 0..batch {
-            for i in 0..self.hidden2_dim {
-                for j in 0..self.output_dim {
-                    dw3[i * self.output_dim + j] +=
-                        h2[b * self.hidden2_dim + i] * d_logits[b * self.output_dim + j];
-                }
-            }
             for j in 0..self.output_dim {
                 db3[j] += d_logits[b * self.output_dim + j];
             }
         }
 
-        // dh2 = d_logits @ W3^T
-        let mut dh2 = vec![0.0f32; batch * self.hidden2_dim];
-        for b in 0..batch {
-            for i in 0..self.hidden2_dim {
-                let mut sum = 0.0f32;
-                for j in 0..self.output_dim {
-                    sum += d_logits[b * self.output_dim + j] * self.w3[i * self.output_dim + j];
-                }
-                dh2[b * self.hidden2_dim + i] = sum;
-            }
-        }
+        // dh2 = d_logits @ W3^T  [batch, hidden2_dim]
+        // d_logits is [batch, output_dim], W3 is [hidden2_dim, output_dim]
+        let mut dh2 = accel::matmul_a_bt(&d_logits, &self.w3, batch, self.hidden2_dim, self.output_dim);
 
         // ReLU backward for layer 2
         for b in 0..batch {
@@ -663,32 +642,19 @@ impl MlpWeights3 {
         }
 
         // --- Gradients for W2, b2 ---
-        // dW2 = h1^T @ dh2
-        let mut dw2 = vec![0.0f32; self.hidden1_dim * self.hidden2_dim];
+        // dW2 = h1^T @ dh2  [hidden1_dim, hidden2_dim]
+        // h1 is [batch, hidden1_dim], dh2 is [batch, hidden2_dim]
+        let dw2 = accel::matmul_at_b(&h1, &dh2, self.hidden1_dim, self.hidden2_dim, batch);
         let mut db2 = vec![0.0f32; self.hidden2_dim];
         for b in 0..batch {
-            for i in 0..self.hidden1_dim {
-                for j in 0..self.hidden2_dim {
-                    dw2[i * self.hidden2_dim + j] +=
-                        h1[b * self.hidden1_dim + i] * dh2[b * self.hidden2_dim + j];
-                }
-            }
             for j in 0..self.hidden2_dim {
                 db2[j] += dh2[b * self.hidden2_dim + j];
             }
         }
 
-        // dh1 = dh2 @ W2^T
-        let mut dh1 = vec![0.0f32; batch * self.hidden1_dim];
-        for b in 0..batch {
-            for i in 0..self.hidden1_dim {
-                let mut sum = 0.0f32;
-                for j in 0..self.hidden2_dim {
-                    sum += dh2[b * self.hidden2_dim + j] * self.w2[i * self.hidden2_dim + j];
-                }
-                dh1[b * self.hidden1_dim + i] = sum;
-            }
-        }
+        // dh1 = dh2 @ W2^T  [batch, hidden1_dim]
+        // dh2 is [batch, hidden2_dim], W2 is [hidden1_dim, hidden2_dim]
+        let mut dh1 = accel::matmul_a_bt(&dh2, &self.w2, batch, self.hidden1_dim, self.hidden2_dim);
 
         // ReLU backward for layer 1
         for b in 0..batch {
@@ -700,16 +666,11 @@ impl MlpWeights3 {
         }
 
         // --- Gradients for W1, b1 ---
-        // dW1 = x^T @ dh1
-        let mut dw1 = vec![0.0f32; self.input_dim * self.hidden1_dim];
+        // dW1 = x^T @ dh1  [input_dim, hidden1_dim]
+        // x is [batch, input_dim], dh1 is [batch, hidden1_dim]
+        let dw1 = accel::matmul_at_b(x, &dh1, self.input_dim, self.hidden1_dim, batch);
         let mut db1 = vec![0.0f32; self.hidden1_dim];
         for b in 0..batch {
-            for i in 0..self.input_dim {
-                for j in 0..self.hidden1_dim {
-                    dw1[i * self.hidden1_dim + j] +=
-                        x[b * self.input_dim + i] * dh1[b * self.hidden1_dim + j];
-                }
-            }
             for j in 0..self.hidden1_dim {
                 db1[j] += dh1[b * self.hidden1_dim + j];
             }
