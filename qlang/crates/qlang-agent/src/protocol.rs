@@ -271,58 +271,6 @@ impl Default for AgentConversation {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Serde helpers for Option<[u8; N]> -- serde doesn't support [u8; 64] natively
-// ---------------------------------------------------------------------------
-
-mod opt_bytes_32 {
-    use serde::{Deserialize, Deserializer, Serialize, Serializer};
-
-    pub fn serialize<S: Serializer>(val: &Option<[u8; 32]>, ser: S) -> Result<S::Ok, S::Error> {
-        match val {
-            Some(arr) => arr.as_slice().serialize(ser),
-            None => ser.serialize_none(),
-        }
-    }
-
-    pub fn deserialize<'de, D: Deserializer<'de>>(de: D) -> Result<Option<[u8; 32]>, D::Error> {
-        let opt: Option<Vec<u8>> = Option::deserialize(de)?;
-        match opt {
-            Some(v) => {
-                let arr: [u8; 32] = v
-                    .try_into()
-                    .map_err(|_| serde::de::Error::custom("expected 32 bytes"))?;
-                Ok(Some(arr))
-            }
-            None => Ok(None),
-        }
-    }
-}
-
-mod opt_bytes_64 {
-    use serde::{Deserialize, Deserializer, Serialize, Serializer};
-
-    pub fn serialize<S: Serializer>(val: &Option<[u8; 64]>, ser: S) -> Result<S::Ok, S::Error> {
-        match val {
-            Some(arr) => arr.as_slice().serialize(ser),
-            None => ser.serialize_none(),
-        }
-    }
-
-    pub fn deserialize<'de, D: Deserializer<'de>>(de: D) -> Result<Option<[u8; 64]>, D::Error> {
-        let opt: Option<Vec<u8>> = Option::deserialize(de)?;
-        match opt {
-            Some(v) => {
-                let arr: [u8; 64] = v
-                    .try_into()
-                    .map_err(|_| serde::de::Error::custom("expected 64 bytes"))?;
-                Ok(Some(arr))
-            }
-            None => Ok(None),
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

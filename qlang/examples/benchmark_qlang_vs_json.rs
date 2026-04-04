@@ -210,20 +210,18 @@ fn main() {
 
     // -- Hash --
     let start = Instant::now();
-    let mut last_hash = [0u8; 32];
     for _ in 0..sign_iterations {
-        last_hash = crypto::hash_graph(&graph);
-        std::hint::black_box(&last_hash);
+        let h = crypto::hash_graph(&graph);
+        std::hint::black_box(&h);
     }
     let hash_us = start.elapsed().as_micros() as f64 / sign_iterations as f64;
 
     // -- Sign --
     let start = Instant::now();
-    let mut last_sig = [0u8; 64];
     for _ in 0..sign_iterations {
         let h = crypto::hash_graph(&graph);
-        last_sig = keypair.sign(&h);
-        std::hint::black_box(&last_sig);
+        let s = keypair.sign(&h);
+        std::hint::black_box(&s);
     }
     let sign_us = start.elapsed().as_micros() as f64 / sign_iterations as f64;
 
