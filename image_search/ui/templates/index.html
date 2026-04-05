@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Image Search - Reverse Image Search</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Image Search</h1>
+            <p>Laden Sie ein Bild hoch und finden Sie es im Netz</p>
+        </header>
+
+        <!-- Upload Area -->
+        <div class="upload-area" id="dropZone">
+            <div class="icon">&#128247;</div>
+            <p>Bild hierher ziehen oder klicken zum Hochladen</p>
+            <p class="formats">JPG, PNG, GIF, BMP, WebP &bull; Max. 20 MB</p>
+            <input type="file" id="fileInput" accept="image/*" hidden>
+        </div>
+
+        <!-- URL Search -->
+        <div class="url-search">
+            <input type="text" id="urlInput" placeholder="Oder Bild-URL eingeben...">
+            <button class="btn btn-primary" id="urlSearchBtn">URL suchen</button>
+        </div>
+
+        <!-- Engine Selector -->
+        <div class="engine-selector" id="engineSelector">
+            <!-- Populated by JS -->
+        </div>
+
+        <!-- Preview -->
+        <div class="preview-container" id="previewContainer" style="display:none;">
+            <img id="previewImage" src="" alt="Vorschau">
+        </div>
+
+        <!-- Error -->
+        <div class="error-banner" id="errorBanner"></div>
+
+        <!-- Loading -->
+        <div class="loading" id="loading">
+            <div class="spinner"></div>
+            <p>Suche in Suchmaschinen...</p>
+        </div>
+
+        <!-- Results -->
+        <div id="resultsSection" style="display:none;">
+            <div class="results-header">
+                <h2>Ergebnisse</h2>
+                <span class="results-meta" id="resultsMeta"></span>
+            </div>
+            <div class="results-grid" id="resultsGrid"></div>
+        </div>
+
+        <div class="no-results" id="noResults" style="display:none;">
+            <p>Keine Ergebnisse gefunden. Versuchen Sie ein anderes Bild oder aktivieren Sie weitere Suchmaschinen.</p>
+        </div>
+    </div>
+
+    <script>
+    const dropZone = document.getElementById('dropZone');
+    const fileInput = document.getElementById('fileInput');
+    const urlInput = document.getElementById('urlInput');
+    const urlSearchBtn = document.getElementById('urlSearchBtn');
+    const previewContainer = document.getElementById('previewContainer');
+    const previewImage = document.getElementById('previewImage');
+    const loading = document.getElementById('loading');
+    const resultsSection = document.getElementById('resultsSection');
+    const resultsGrid = document.getElementById('resultsGrid');
+    const resultsMeta = document.getElementById('resultsMeta');
+    const noResults = document.getElementById('noResults');
+    const errorBanner = document.getElementById('errorBanner');
+    const engineSelector = document.getElementById('engineSelector');
+
+    let selectedEngines = new Set();
+
+    // Load available engines
+    async function loadEngines() {
+        try {
+            const resp = await fetch('/api/engines');
+            const engines = await resp.json();
+            engineSelector.innerHTML = '';
+            for (const [key, info] of Object.entries(engines)) {
+                const toggle = document.createElement('label');
+                toggle.className = `engine-toggle ${info.available ? 'active' : 'unavailable'}`;
+                toggle.innerHTML = `
+                    <span class="dot"></span>
+                    <span>${key.charAt(0).toUpperCase() + key.slice(1)}</span>
+                    <input type="checkbox" value="${key}" ${info.available ? 'checked' : 'disabled'}>
+                `;
+                if (info.available) {
+                    selectedEngines.add(key);
+                    toggle.querySelector('input').addEventListener('change', (e) => {
+                        if (e.target.checked) {
+                            selectedEngines.add(key);
+                            toggle.classList.add('active');
+                        } else {
+                            selectedEngines.delete(key);
+                            toggle.classList.remove('active');
+                        }
+                    });
+                }
+                engineSelector.appendChild(toggle);
+            }
+        } catch (e) {
+            console.error('Failed to load engines:', e);
+        }
+    }
+
+    // Drag & Drop
+    dropZone.addEventListener('click', () => fileInput.click());
+    dropZone.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        dropZone.classList.add('dragover');
+    });
+    dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+    dropZone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        dropZone.classList.remove('dragover');
+        const file = e.dataTransfer.files[0];
+        if (file && file.type.startsWith('image/')) {
+            searchWithFile(file);
+        }
+    });
+
+    fileInput.addEventListener('change', () => {
+        if (fileInput.files[0]) {
+            searchWithFile(fileInput.files[0]);
+        }
+    });
+
+    // URL Search
+    urlSearchBtn.addEventListener('click', () => {
+        const url = urlInput.value.trim();
+        if (url) searchWithUrl(url);
+    });
+    urlInput.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') {
+            const url = urlInput.value.trim();
+            if (url) searchWithUrl(url);
+        }
+    });
+
+    function showPreview(src) {
+        previewImage.src = src;
+        previewContainer.style.display = 'block';
+    }
+
+    function showError(msg) {
+        errorBanner.textContent = msg;
+        errorBanner.classList.add('visible');
+    }
+
+    function clearError() {
+        errorBanner.classList.remove('visible');
+    }
+
+    function showLoading() {
+        loading.classList.add('visible');
+        resultsSection.style.display = 'none';
+        noResults.style.display = 'none';
+        clearError();
+    }
+
+    function hideLoading() {
+        loading.classList.remove('visible');
+    }
+
+    async function searchWithFile(file) {
+        // Show preview
+        const reader = new FileReader();
+        reader.onload = (e) => showPreview(e.target.result);
+        reader.readAsDataURL(file);
+
+        showLoading();
+
+        const formData = new FormData();
+        formData.append('image', file);
+
+        const engines = Array.from(selectedEngines).join(',');
+        let url = '/api/search';
+        if (engines) url += `?engines=${engines}`;
+
+        try {
+            const resp = await fetch(url, { method: 'POST', body: formData });
+            if (!resp.ok) {
+                const err = await resp.json();
+                throw new Error(err.detail || 'Suchfehler');
+            }
+            const data = await resp.json();
+            displayResults(data);
+        } catch (e) {
+            showError(`Fehler: ${e.message}`);
+        } finally {
+            hideLoading();
+        }
+    }
+
+    async function searchWithUrl(imageUrl) {
+        showPreview(imageUrl);
+        showLoading();
+
+        const engines = Array.from(selectedEngines).join(',');
+        const params = new URLSearchParams({ url: imageUrl });
+        if (engines) params.append('engines', engines);
+
+        try {
+            const resp = await fetch(`/api/search/url?${params}`, { method: 'POST' });
+            if (!resp.ok) {
+                const err = await resp.json();
+                throw new Error(err.detail || 'Suchfehler');
+            }
+            const data = await resp.json();
+            displayResults(data);
+        } catch (e) {
+            showError(`Fehler: ${e.message}`);
+        } finally {
+            hideLoading();
+        }
+    }
+
+    function displayResults(data) {
+        if (data.errors && Object.keys(data.errors).length > 0) {
+            const errMsg = Object.entries(data.errors)
+                .map(([engine, err]) => `${engine}: ${err}`)
+                .join(', ');
+            showError(`Einige Suchmaschinen hatten Fehler: ${errMsg}`);
+        }
+
+        if (!data.results || data.results.length === 0) {
+            noResults.style.display = 'block';
+            resultsSection.style.display = 'none';
+            return;
+        }
+
+        resultsMeta.textContent = `${data.total_results} Ergebnisse von ${data.engines_used.join(', ')}`;
+        resultsGrid.innerHTML = '';
+
+        for (const result of data.results) {
+            const card = document.createElement('div');
+            card.className = 'result-card';
+
+            const imgSrc = result.thumbnail_url || result.image_url || '';
+            const similarity = result.similarity_score
+                ? `<div class="similarity-bar"><div class="fill" style="width:${Math.round(result.similarity_score * 100)}%"></div></div>`
+                : '';
+
+            card.innerHTML = `
+                <a href="${escapeHtml(result.url)}" target="_blank" rel="noopener">
+                    <div class="image-wrapper">
+                        <img src="${escapeHtml(imgSrc)}" alt="${escapeHtml(result.title)}"
+                             onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%2250%25%22 x=%2250%25%22 dominant-baseline=%22middle%22 text-anchor=%22middle%22 font-size=%2240%22>?</text></svg>'">
+                    </div>
+                </a>
+                <div class="card-body">
+                    <div class="card-title" title="${escapeHtml(result.title)}">${escapeHtml(result.title || 'Kein Titel')}</div>
+                    <div class="card-meta">
+                        <span class="engine-badge ${result.source_engine}">${result.source_engine}</span>
+                        <span>${escapeHtml(result.domain)}</span>
+                        ${similarity}
+                    </div>
+                </div>
+            `;
+            resultsGrid.appendChild(card);
+        }
+
+        resultsSection.style.display = 'block';
+        noResults.style.display = 'none';
+    }
+
+    function escapeHtml(str) {
+        if (!str) return '';
+        const div = document.createElement('div');
+        div.textContent = str;
+        return div.innerHTML;
+    }
+
+    // Init
+    loadEngines();
+    </script>
+</body>
+</html>

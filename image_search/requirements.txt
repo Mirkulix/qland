@@ -1,0 +1,20 @@
+# Core
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+python-multipart>=0.0.6
+
+# HTTP Client
+httpx>=0.25.0
+
+# Image processing
+Pillow>=10.0.0
+
+# HTML parsing (for Yandex)
+beautifulsoup4>=4.12.0
+
+# CLIP (optional - for local similarity search)
+# pip install git+https://github.com/openai/CLIP.git
+# torch>=2.0.0
+
+# Production
+gunicorn>=21.2.0
