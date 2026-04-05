@@ -9,9 +9,6 @@ import logging
 import os
 from pathlib import Path
 
-import numpy as np
-from PIL import Image
-
 from image_search.config import Config
 from image_search.engines.base import BaseSearchEngine
 from image_search.models import SearchResult
@@ -33,16 +30,16 @@ class CLIPSearchEngine(BaseSearchEngine):
         self.index_dir = config.clip_index_dir
         self._model = None
         self._preprocess = None
-        self._index: dict[str, np.ndarray] = {}
+        self._index: dict = {}
         self._metadata: dict[str, dict] = {}
 
     def is_available(self) -> bool:
         try:
             import torch
             import clip
+            import numpy
             return True
         except ImportError:
-            logger.warning("CLIP not available. Install with: pip install git+https://github.com/openai/CLIP.git")
             return False
 
     def _load_model(self):
@@ -57,11 +54,13 @@ class CLIPSearchEngine(BaseSearchEngine):
         self._device = device
         logger.info(f"CLIP model {self.model_name} loaded on {device}")
 
-    def compute_embedding(self, image_bytes: bytes) -> np.ndarray:
+    def compute_embedding(self, image_bytes: bytes):
         """Compute CLIP embedding for an image."""
         import io
         import torch
         import clip
+        import numpy as np
+        from PIL import Image
 
         self._load_model()
 
@@ -82,6 +81,8 @@ class CLIPSearchEngine(BaseSearchEngine):
 
     def save_index(self):
         """Save the index to disk."""
+        import numpy as np
+
         os.makedirs(self.index_dir, exist_ok=True)
         index_path = Path(self.index_dir) / "embeddings.npz"
         meta_path = Path(self.index_dir) / "metadata.json"
@@ -96,6 +97,8 @@ class CLIPSearchEngine(BaseSearchEngine):
 
     def load_index(self):
         """Load the index from disk."""
+        import numpy as np
+
         index_path = Path(self.index_dir) / "embeddings.npz"
         meta_path = Path(self.index_dir) / "metadata.json"
 
@@ -111,6 +114,8 @@ class CLIPSearchEngine(BaseSearchEngine):
 
     async def search(self, image_bytes: bytes, max_results: int = 20) -> list[SearchResult]:
         """Find similar images in the local index."""
+        import numpy as np
+
         if not self.is_available() or not self._index:
             return []
 
@@ -121,7 +126,6 @@ class CLIPSearchEngine(BaseSearchEngine):
             similarity = float(np.dot(query_embedding, embedding))
             similarities[image_id] = similarity
 
-        # Sort by similarity (cosine similarity, higher = more similar)
         sorted_ids = sorted(similarities, key=similarities.get, reverse=True)
 
         results = []
@@ -143,6 +147,8 @@ class CLIPSearchEngine(BaseSearchEngine):
 
     async def compute_similarity(self, image1_bytes: bytes, image2_bytes: bytes) -> float:
         """Compute similarity between two images (0.0 to 1.0)."""
+        import numpy as np
+
         if not self.is_available():
             return 0.0
 
