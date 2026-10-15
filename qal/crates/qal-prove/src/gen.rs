@@ -256,9 +256,20 @@ pub fn shrink(tp: &TProgram, ty: &Type, v: &Value) -> Vec<Value> {
                 }
             }
         }
-        (Type::Map(_, vt), Value::Map(es)) => {
+        (Type::Map(kt, vt), Value::Map(es)) => {
             for part in shrink_seq(es) {
                 out.push(Value::Map(part));
+            }
+            // Simpler keys, unless one equals another key of the map.
+            for (i, (k, _)) in es.iter().enumerate().take(8) {
+                for c in shrink(tp, kt, k).into_iter().take(NESTED) {
+                    if es.iter().enumerate().any(|(j, (e, _))| j != i && compare_values(tp, kt, e, &c).is_eq()) {
+                        continue;
+                    }
+                    let mut ys = es.clone();
+                    ys[i].0 = c;
+                    out.push(Value::Map(ys));
+                }
             }
             for (i, (_, x)) in es.iter().enumerate().take(8) {
                 for c in shrink(tp, vt, x).into_iter().take(NESTED) {

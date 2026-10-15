@@ -49,7 +49,8 @@ pub enum PropStatus {
     Failed,
     /// Too few generated inputs satisfied `req`.
     GaveUp,
-    /// Not run (time budget used up).
+    /// Not run, or stopped before its runs were done, because the time budget was used up (`runs`
+    /// says how many were run).
     Skipped,
 }
 
@@ -165,8 +166,10 @@ fn run_properties(tp: &TProgram, runner: &Runner, fns: &[usize], opts: &PropOpti
         let types: Vec<Type> = f.def.params.iter().map(|p| p.ty.clone()).collect();
         let max_tries = opts.runs.saturating_mul(10).max(1);
         let mut tries = 0;
+        let mut out_of_time = false;
         while report.runs < opts.runs && tries < max_tries {
             if start.elapsed() > opts.budget {
+                out_of_time = true;
                 break;
             }
             // Sizes grow with every attempt (not only with successful runs), so a `req` that small
@@ -184,7 +187,7 @@ fn run_properties(tp: &TProgram, runner: &Runner, fns: &[usize], opts: &PropOpti
                 }
                 Run::Fail(e) => {
                     report.runs += 1;
-                    let (args, e) = shrink_failure(tp, runner, name, &types, args, e, opts);
+                    let (args, e) = shrink_failure(tp, runner, name, &types, args, e, opts, start);
                     report.status = PropStatus::Failed;
                     report.counterexample = Some(Values(f.def.params.iter().map(|p| p.name.clone()).zip(args).collect()));
                     report.error = Some(e);
@@ -192,7 +195,10 @@ fn run_properties(tp: &TProgram, runner: &Runner, fns: &[usize], opts: &PropOpti
                 }
             }
         }
-        if report.status == PropStatus::Passed && report.runs < opts.runs / 2 {
+        // Running out of time is not giving up: `gave_up` means too few inputs satisfied `req`.
+        if report.status == PropStatus::Passed && out_of_time {
+            report.status = PropStatus::Skipped;
+        } else if report.status == PropStatus::Passed && report.runs < opts.runs / 2 {
             report.status = PropStatus::GaveUp;
         }
         out.push(report);
@@ -200,14 +206,15 @@ fn run_properties(tp: &TProgram, runner: &Runner, fns: &[usize], opts: &PropOpti
     out
 }
 
-/// Greedily replaces one argument at a time by a simpler one that still fails the same way.
+/// Greedily replaces one argument at a time by a simpler one that still fails the same way, until
+/// `opts.shrink_steps` candidates were tried or the time budget (counted from `start`) is used up.
 #[allow(clippy::too_many_arguments)]
-fn shrink_failure(tp: &TProgram, runner: &Runner, f: &str, types: &[Type], mut args: Vec<Value>, mut err: RunError, opts: &PropOptions) -> (Vec<Value>, RunError) {
+fn shrink_failure(tp: &TProgram, runner: &Runner, f: &str, types: &[Type], mut args: Vec<Value>, mut err: RunError, opts: &PropOptions, start: Instant) -> (Vec<Value>, RunError) {
     let mut steps = 0;
     'outer: loop {
         for k in 0..args.len() {
             for c in shrink(tp, &types[k], &args[k]) {
-                if steps >= opts.shrink_steps {
+                if steps >= opts.shrink_steps || start.elapsed() > opts.budget {
                     break 'outer;
                 }
                 steps += 1;

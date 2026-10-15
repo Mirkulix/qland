@@ -430,3 +430,46 @@ fn many_call_sites_are_solved_in_one_encoding() {
     assert!(rs.iter().all(|r| r.status == Status::Proven), "{:#?}", rs.iter().find(|r| r.status != Status::Proven));
     assert!(start.elapsed() < Duration::from_secs(10), "{:?}", start.elapsed());
 }
+
+#[test]
+fn shrinking_stops_at_the_budget() {
+    // M1: shrinking ran up to 500 candidates (two runs each) whatever the budget. Here every run
+    // fails, and shrinking from a large `x` halves it about 60 times (several seconds).
+    let src = "fn spin(n: Int, acc: Int) -> Int = if n == 0 then acc else spin(n - 1, acc + 1)\n\
+               fn f(x: Int) -> Int req x > 1000 ens r < 0 = spin(1000000, 0) + 0 * x";
+    let opts = PropOptions { budget: Duration::from_millis(50), fuel: 200_000_000, ..PropOptions::default() };
+    let start = std::time::Instant::now();
+    let rs = check_properties(&typed(src), None, &opts).unwrap();
+    assert_eq!(rs[0].status, PropStatus::Failed, "{:?}", rs[0]);
+    assert!(start.elapsed() < Duration::from_millis(1500), "{:?}", start.elapsed());
+}
+
+#[test]
+fn running_out_of_time_is_not_giving_up() {
+    // M2: a function stopped by the budget after a few runs was reported `gave_up`.
+    let src = "fn spin(n: Int, acc: Int) -> Int = if n == 0 then acc else spin(n - 1, acc + 1)\n\
+               fn f(x: Int) -> Int ens r >= 0 = spin(300000, 0) + 0 * x";
+    let rs = check_properties(&typed(src), None, &PropOptions { budget: Duration::from_millis(100), ..PropOptions::default() }).unwrap();
+    assert_eq!(rs[0].status, PropStatus::Skipped, "{:?}", rs[0]);
+    assert!(rs[0].runs > 0 && rs[0].runs < 50, "{:?}", rs[0]);
+}
+
+#[test]
+fn map_keys_are_shrunk() {
+    // M5: only the values and the entry list of a map were shrunk.
+    let tp = typed("type T = Leaf");
+    let m = Value::Map(vec![(Value::Str("9".into()), Value::Int(1)), (Value::Str("a".into()), Value::Int(2))]);
+    let cands = shrink(&tp, &Type::Map(Box::new(Type::Str), Box::new(Type::Int)), &m);
+    assert!(cands.contains(&Value::Map(vec![(Value::Str("".into()), Value::Int(1)), (Value::Str("a".into()), Value::Int(2))])), "{cands:?}");
+    // "9" -> "a" would duplicate the other key.
+    assert!(!cands.contains(&Value::Map(vec![(Value::Str("a".into()), Value::Int(1)), (Value::Str("a".into()), Value::Int(2))])), "{cands:?}");
+}
+
+#[test]
+fn a_refuted_test_does_not_promise_a_counterexample() {
+    // M3: E0801 of a test said "for the counterexample", but a test has none.
+    let r = reports("fn sq(x: Int) -> Int req x > 0 = x * x\ntest t1 = sq(0) == 0").into_iter().find(|r| r.def == "t1").unwrap();
+    assert_eq!((r.status, &r.counterexample), (Status::Refuted, &None));
+    let d = r.diagnostic().unwrap();
+    assert_eq!(d.message, "`req x > 0` (req[0] of sq) does not hold: running `t1` violates it");
+}
