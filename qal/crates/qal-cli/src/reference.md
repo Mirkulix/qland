@@ -62,7 +62,7 @@ Services (prelude types exist in every program; their names and variants are res
   db_exec(sql, params) -> Result[Int, DbError] !db (changed rows)  db_query(sql, params) -> Result[DbRows, DbError] !db
     sql must be a string literal with `?` placeholders, one statement, no PRAGMA/ATTACH/BEGIN/COMMIT (E0241, E0242); values go in params: [SqlInt(id), SqlText(t)]
     SqlValue = SqlNull | SqlInt(Int) | SqlFloat(Float) | SqlText(Str)  DbRows = { columns: List[Str], rows: List[List[SqlValue]] }
-    DbError = DbConstraint(Str) | DbSql(Str) | DbBusy | DbFull | DbTooLarge. One transaction per execution, committed only for status 100-399 (qal_call: no error, qal_run: exit 0).
+    DbError = DbConstraint(Str) | DbSql(Str) | DbBusy | DbFull | DbTooLarge. One transaction per execution, committed only for status 200-399 (qal_call: no error, qal_run: exit 0).
   http(call) -> Result[HttpResponse, NetError] !net  NetError = NetDenied(Str) | NetInvalid(Str) | NetConnect(Str) | NetTimeout | NetTooLarge; redirects are not followed.
   Grant "db:mem" (fresh in-memory database), "db" or "db:<name>" (.qal/db/<name>.sqlite), "net:<host>[:port]". Library: qal_query name "std.".
 Store rules: defining an existing name replaces it. Same signature: everything using it is relinked and re-checked automatically. Changed signature: rejected (`signature_change`, lists `dependents`) unless the same call also redefines those dependents. A name keeps its kind (fn, test, type). References bind to names: qal_rename changes no hash and users follow the new name. Two names can hold the identical definition, but one definition cannot refer to both (E0404 `alias_reference`): use one name.

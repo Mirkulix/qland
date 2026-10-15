@@ -219,6 +219,11 @@ impl Conn {
         if head_len > limits.max_header_bytes {
             return Next::Reject(Rejection::new(431, format!("the request line and headers are larger than {} bytes", limits.max_header_bytes)));
         }
+        // httparse accepts a bare LF as a line end; a proxy in front may keep it inside a header
+        // value and frame the bytes differently (final review M1). Only CRLF ends a line here.
+        if self.buf[..head_len].iter().enumerate().any(|(i, &b)| b == b'\n' && (i == 0 || self.buf[i - 1] != b'\r')) {
+            return Next::Reject(Rejection::new(400, "a line of the request head ends in a bare LF (only CRLF is accepted)"));
+        }
         let parsed = match self.head(limits, head_len) {
             Ok(p) => p,
             Err(r) => return Next::Reject(r),
@@ -388,6 +393,8 @@ mod tests {
         }
         assert_eq!(rejected(b"POST / HTTP/1.1\r\nHost: a\r\nContent-Length : 3\r\n\r\nabc").0, 400, "space before the colon");
         assert_eq!(rejected(b"GET / HTTP/1.1\r\nHost: a\r\nX: a\r\n b\r\n\r\n").0, 400, "folded header");
+        assert_eq!(rejected(b"POST /a HTTP/1.1\r\nHost: x\r\nX: y\nContent-Length: 3\r\n\r\nabc").0, 400, "bare LF inside the head");
+        assert_eq!(rejected(b"GET / HTTP/1.1\nHost: a\n\n").0, 400, "bare LF line ends");
         assert_eq!(rejected(b"GET http://evil/ HTTP/1.1\r\nHost: a\r\n\r\n").0, 400);
         assert_eq!(rejected(b"OPTIONS * HTTP/1.1\r\nHost: a\r\n\r\n").0, 400);
         assert_eq!(rejected(b"GET / HTTP/1.1\r\n\r\n").0, 400, "no Host");

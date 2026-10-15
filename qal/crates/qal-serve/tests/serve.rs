@@ -330,6 +330,10 @@ fn services_are_checked_before_they_start() {
     assert!(e.message.contains("must be `fn(HttpRequest) -> HttpResponse` (any effects), found `fn(Int, Str) -> HttpResponse`"), "{}", e.message);
     let e = Service::new(&typed, perms.clone(), ServiceConfig { entry: "nope".into(), ..ServiceConfig::default() }).err().unwrap();
     assert_eq!(e.kind, "bad_entry");
+    // A generic function is named as such (final review M4).
+    let generic = qal_check::check(&qal_text::parse_program(&format!("{APP}\nfn gen[T](x: T) -> T = x")).unwrap()).unwrap();
+    let e = Service::new(&generic, perms.clone(), ServiceConfig { entry: "gen".into(), ..ServiceConfig::default() }).err().unwrap();
+    assert!(e.kind == "bad_entry" && e.message.contains("`gen` is generic"), "{}", e.message);
     let e = Service::new(&typed, perms.clone(), ServiceConfig { init: Some("list".into()), ..ServiceConfig::default() }).err().unwrap();
     assert!(e.message.contains("init function `list` must be `fn() -> Result[Unit, Str]`"), "{}", e.message);
     let e = Service::new(&typed, Permissions::parse("io").unwrap(), ServiceConfig::default()).err().unwrap();

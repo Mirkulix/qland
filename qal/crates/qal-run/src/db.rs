@@ -101,8 +101,10 @@ pub const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 const PAGE_SIZE: u64 = 4096;
 
 /// Functions the guest's SQL may not call (most do not exist in the library build; listed so a
-/// future build cannot quietly add them).
-const FORBIDDEN_FUNCTIONS: [&str; 5] = ["load_extension", "readfile", "writefile", "fts3_tokenizer", "edit"];
+/// future build cannot quietly add them). `last_insert_rowid`, `changes` and `total_changes` are
+/// connection state: on a server worker they would show an earlier request's writes, even
+/// rolled back ones (final review M5). `INSERT ... RETURNING` (with `db_query`) gives new ids.
+const FORBIDDEN_FUNCTIONS: [&str; 8] = ["load_extension", "readfile", "writefile", "fts3_tokenizer", "edit", "last_insert_rowid", "changes", "total_changes"];
 
 /// The authorizer for guest statements. Writes to the schema table cannot be told apart from the
 /// ones CREATE/ALTER/DROP make internally (same actions, no accessor), so they are left to SQLite:
@@ -422,6 +424,11 @@ mod tests {
         assert!(refused("INSERT INTO sqlite_master VALUES ('table', 'x', 'x', 0, 'CREATE TABLE x (a)')").contains("may not be modified"));
         assert!(refused("SELECT * FROM pragma_table_info('t')").contains("not authorized"), "table-valued pragmas are pragmas");
         assert!(refused("SELECT 1; SELECT 2").contains("only one statement"));
+        for f in ["last_insert_rowid()", "changes()", "total_changes()"] {
+            assert!(refused(&format!("UPDATE t SET b = {f}")).contains("not authorized"), "{f}");
+        }
+        let rows = db.query("INSERT INTO t (a) VALUES ('y') RETURNING rowid", &[], 10, 1 << 20).unwrap();
+        assert_eq!(rows.rows.len(), 1, "RETURNING gives the new id");
         // The host's own statements are not affected.
         let mut db = db;
         db.begin().unwrap();

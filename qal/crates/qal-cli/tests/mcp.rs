@@ -596,7 +596,7 @@ fn agents_test_services_with_qal_request() {
     let (err, v) = c.call("qal_request", json!({"allow": ["db:mem", "io"], "requests": [{"method": "POST", "path": "/todos", "body": "x".repeat((1 << 20) + 1)}]}));
     assert_eq!((err, v["responses"][0]["status"].as_u64(), v["responses"][0]["error"]["code"].as_str()), (false, Some(413), Some("E0800")));
     let reference = qal_cli::mcp::REFERENCE;
-    for needle in ["fn handle(rq: HttpRequest) -> HttpResponse", "string literal with `?` placeholders", "committed only for status 100-399", "\"db:mem\"", "qal_query name \"std.\""] {
+    for needle in ["fn handle(rq: HttpRequest) -> HttpResponse", "string literal with `?` placeholders", "committed only for status 200-399", "\"db:mem\"", "qal_query name \"std.\""] {
         assert!(reference.contains(needle), "{needle}");
     }
     assert_eq!(c.finish(), Some(0));

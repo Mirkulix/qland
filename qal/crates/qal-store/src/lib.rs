@@ -96,9 +96,8 @@ impl Store {
         if !path.is_file() {
             return Err(vec![Diagnostic::store_error(format!("no QAL store at {}", path.display())).hint("create one with `qal init`")]);
         }
-        let mut conn = Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE).map_err(sql)?;
+        let conn = Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE).map_err(sql)?;
         schema::configure(&conn).map_err(sql)?;
-        schema::migrate(&mut conn)?;
         Store::checked(conn, path.to_path_buf())
     }
 

@@ -138,6 +138,11 @@ fn sig_text(params: &[Type], ret: &Type, effects: &[String]) -> String {
 fn check_entry(typed: &TProgram, name: &str, params: &[Type], ret: &Type, what: &str) -> Result<Vec<String>, RunError> {
     let expected = sig_text(params, ret, &[]);
     let Some(f) = typed.fns.iter().find(|f| f.def.name == name) else {
+        if typed.generics.iter().any(|g| g.def.name == name) {
+            let mut e = RunError::new("bad_entry", name, format!("`{name}` is generic; the {what} must be a monomorphic function"));
+            e.hints.push(format!("the {what} must be `{expected}` (any effects), without type parameters"));
+            return Err(e);
+        }
         let mut e = RunError::new("bad_entry", name, format!("there is no function `{name}` to use as the {what}"));
         e.hints.push(format!("the {what} must be `{expected}` (any effects)"));
         return Err(e);

@@ -419,7 +419,12 @@ impl<'a> Cx<'a> {
             d.message = format!("built-in `{v}` is not a value");
             let params: Vec<&str> = ["x", "y", "z", "w"].into_iter().take(crate::builtins::arity(v).unwrap_or(1)).collect();
             let ps = params.join(", ");
-            d = d.hint(format!("built-in `{v}` cannot be used as a value; wrap it in a closure: `fn({ps}) => {v}({ps})`"));
+            d = d.hint(if matches!(v, "db_exec" | "db_query") {
+                // Its SQL must be a literal, also inside a closure (E0241).
+                format!("built-in `{v}` cannot be used as a value; call it directly with the SQL literal, also inside a closure: `fn(id) => {v}(\"SELECT ... WHERE id = ?\", [SqlInt(id)])`")
+            } else {
+                format!("built-in `{v}` cannot be used as a value; wrap it in a closure: `fn({ps}) => {v}({ps})`")
+            });
         } else {
             d = d.hint("not a built-in or stored definition; built-ins are listed in the qal_define description; define it in the same call or check qal_query");
         }

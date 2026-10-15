@@ -797,3 +797,11 @@ fn sql_must_be_a_valid_literal() {
         assert!(d.message.contains(why), "{sql}: {}", d.message);
     }
 }
+
+#[test]
+fn db_builtins_as_values_get_a_hint_that_keeps_the_sql_literal() {
+    // Final review M3: wrapping `db_exec` in `fn(s, p) => db_exec(s, p)` would fail with E0241.
+    let d = one("fn f() -> Int !db = let g = db_exec in 0");
+    assert!(d.hints[0].contains("call it directly with the SQL literal"), "{:?}", d.hints);
+    assert!(one("fn f() -> Int = let g = trim in 0").hints[0].contains("fn(x) => trim(x)"));
+}
