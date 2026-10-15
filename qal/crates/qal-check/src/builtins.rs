@@ -8,66 +8,11 @@ use qal_core::tast::{Builtin, TExpr, TKind};
 impl Cx<'_> {
     /// Types a call of built-in `name`; None if `name` is not a built-in.
     pub fn builtin(&mut self, name: &str, args: &[Expr], path: &str) -> Option<TExpr> {
-        use Builtin as B;
+        if name == "len" {
+            return Some(self.len(args, path));
+        }
         let (a, b) = (self.sub.fresh(), self.sub.fresh());
-        let fun = |ps: Vec<Type>, r: Type| Type::Fn(ps, Box::new(r), vec![]);
-        let list = Type::list;
-        let (builtin, params, ret) = match name {
-            "len" => return Some(self.len(args, path)),
-            "slice" => (B::Slice, vec![Type::Str, Type::Int, Type::Int], Type::Str),
-            "split" => (B::Split, vec![Type::Str, Type::Str], list(Type::Str)),
-            "join" => (B::Join, vec![list(Type::Str), Type::Str], Type::Str),
-            "trim" => (B::Trim, vec![Type::Str], Type::Str),
-            "contains" => (B::Contains, vec![Type::Str, Type::Str], Type::Bool),
-            "starts_with" => (B::StartsWith, vec![Type::Str, Type::Str], Type::Bool),
-            "to_int" => (B::ToInt, vec![Type::Str], Type::option(Type::Int)),
-            "to_float" => (B::ToFloat, vec![Type::Str], Type::option(Type::Float)),
-            "from_int" => (B::FromInt, vec![Type::Int], Type::Str),
-            "from_float" => (B::FromFloat, vec![Type::Float], Type::Str),
-            "chars" => (B::Chars, vec![Type::Str], list(Type::Str)),
-            "get" => (B::Get, vec![list(a.clone()), Type::Int], Type::option(a)),
-            "push" => (B::Push, vec![list(a.clone()), a.clone()], list(a)),
-            "concat" => (B::Concat, vec![list(a.clone()), list(a.clone())], list(a)),
-            "map" => (B::Map, vec![list(a.clone()), fun(vec![a], b.clone())], list(b)),
-            "filter" => (B::Filter, vec![list(a.clone()), fun(vec![a.clone()], Type::Bool)], list(a)),
-            "fold" => (B::Fold, vec![list(a.clone()), b.clone(), fun(vec![b.clone(), a], b.clone())], b),
-            "range" => (B::Range, vec![Type::Int, Type::Int], list(Type::Int)),
-            "reverse" => (B::Reverse, vec![list(a.clone())], list(a)),
-            "sort_int" => (B::SortInt, vec![list(Type::Int)], list(Type::Int)),
-            "int_to_float" => (B::IntToFloat, vec![Type::Int], Type::Float),
-            "float_to_int" => (B::FloatToInt, vec![Type::Float], Type::option(Type::Int)),
-            "print" => (B::Print, vec![Type::Str], Type::Unit),
-            "read_line" => (B::ReadLine, vec![], Type::option(Type::Str)),
-            "read_file" => (B::ReadFile, vec![Type::Str], Type::result(Type::Str, Type::Str)),
-            "write_file" => (B::WriteFile, vec![Type::Str, Type::Str], Type::result(Type::Unit, Type::Str)),
-            "now_ms" => (B::NowMs, vec![], Type::Int),
-            "rand_int" => (B::RandInt, vec![Type::Int, Type::Int], Type::Int),
-            "read_all" => (B::ReadAll, vec![], Type::Str),
-            "sort_str" => (B::SortStr, vec![list(Type::Str)], list(Type::Str)),
-            "char_code" => (B::CharCode, vec![Type::Str], Type::Int),
-            "from_char_code" => (B::FromCharCode, vec![Type::Int], Type::Str),
-            "to_upper" => (B::ToUpper, vec![Type::Str], Type::Str),
-            "to_lower" => (B::ToLower, vec![Type::Str], Type::Str),
-            "replace" => (B::Replace, vec![Type::Str, Type::Str, Type::Str], Type::Str),
-            "index_of" => (B::IndexOf, vec![Type::Str, Type::Str], Type::option(Type::Int)),
-            "map_new" => (B::MapNew, vec![], Type::map(a, b)),
-            "map_get" => (B::MapGet, vec![Type::map(a.clone(), b.clone()), a], Type::option(b)),
-            "map_put" => (B::MapPut, vec![Type::map(a.clone(), b.clone()), a.clone(), b.clone()], Type::map(a, b)),
-            "map_del" => (B::MapDel, vec![Type::map(a.clone(), b.clone()), a.clone()], Type::map(a, b)),
-            "map_has" => (B::MapHas, vec![Type::map(a.clone(), b), a], Type::Bool),
-            "map_size" => (B::MapSize, vec![Type::map(a, b)], Type::Int),
-            "map_keys" => (B::MapKeys, vec![Type::map(a.clone(), b)], list(a)),
-            "map_values" => (B::MapValues, vec![Type::map(a, b.clone())], list(b)),
-            "to_bytes" => (B::ToBytes, vec![Type::Str], Type::Bytes),
-            "bytes_len" => (B::BytesLen, vec![Type::Bytes], Type::Int),
-            "bytes_get" => (B::BytesGet, vec![Type::Bytes, Type::Int], Type::option(Type::Int)),
-            "bytes_slice" => (B::BytesSlice, vec![Type::Bytes, Type::Int, Type::Int], Type::Bytes),
-            "bytes_from" => (B::BytesFrom, vec![list(Type::Int)], Type::Bytes),
-            "bytes_to_list" => (B::BytesToList, vec![Type::Bytes], list(Type::Int)),
-            "bytes_to_str" => (B::BytesToStr, vec![Type::Bytes], Type::option(Type::Str)),
-            "compare" => (B::Compare, vec![a.clone(), a], Type::Int),
-            _ => return None,
-        };
+        let (builtin, params, ret) = signature(name, a, b)?;
         // Bound before the arguments bind `a`/`b`, so the result's depth stays tracked.
         let ret = self.sub.wrap(ret);
         if args.len() != params.len() {
@@ -126,4 +71,75 @@ impl Cx<'_> {
         };
         TExpr { ty: Type::Int, kind: TKind::Builtin(b, vec![x], path.into()) }
     }
+}
+
+/// Number of parameters of built-in `name` (None if it is not one).
+pub(crate) fn arity(name: &str) -> Option<usize> {
+    if name == "len" {
+        return Some(1);
+    }
+    signature(name, Type::Unit, Type::Unit).map(|(_, ps, _)| ps.len())
+}
+
+/// The built-in `name` (other than `len`), its parameter types and result type, with `a` and `b`
+/// for its type variables.
+fn signature(name: &str, a: Type, b: Type) -> Option<(Builtin, Vec<Type>, Type)> {
+    use Builtin as B;
+    let fun = |ps: Vec<Type>, r: Type| Type::Fn(ps, Box::new(r), vec![]);
+    let list = Type::list;
+    Some(match name {
+        "slice" => (B::Slice, vec![Type::Str, Type::Int, Type::Int], Type::Str),
+        "split" => (B::Split, vec![Type::Str, Type::Str], list(Type::Str)),
+        "join" => (B::Join, vec![list(Type::Str), Type::Str], Type::Str),
+        "trim" => (B::Trim, vec![Type::Str], Type::Str),
+        "contains" => (B::Contains, vec![Type::Str, Type::Str], Type::Bool),
+        "starts_with" => (B::StartsWith, vec![Type::Str, Type::Str], Type::Bool),
+        "to_int" => (B::ToInt, vec![Type::Str], Type::option(Type::Int)),
+        "to_float" => (B::ToFloat, vec![Type::Str], Type::option(Type::Float)),
+        "from_int" => (B::FromInt, vec![Type::Int], Type::Str),
+        "from_float" => (B::FromFloat, vec![Type::Float], Type::Str),
+        "chars" => (B::Chars, vec![Type::Str], list(Type::Str)),
+        "get" => (B::Get, vec![list(a.clone()), Type::Int], Type::option(a)),
+        "push" => (B::Push, vec![list(a.clone()), a.clone()], list(a)),
+        "concat" => (B::Concat, vec![list(a.clone()), list(a.clone())], list(a)),
+        "map" => (B::Map, vec![list(a.clone()), fun(vec![a], b.clone())], list(b)),
+        "filter" => (B::Filter, vec![list(a.clone()), fun(vec![a.clone()], Type::Bool)], list(a)),
+        "fold" => (B::Fold, vec![list(a.clone()), b.clone(), fun(vec![b.clone(), a], b.clone())], b),
+        "range" => (B::Range, vec![Type::Int, Type::Int], list(Type::Int)),
+        "reverse" => (B::Reverse, vec![list(a.clone())], list(a)),
+        "sort_int" => (B::SortInt, vec![list(Type::Int)], list(Type::Int)),
+        "int_to_float" => (B::IntToFloat, vec![Type::Int], Type::Float),
+        "float_to_int" => (B::FloatToInt, vec![Type::Float], Type::option(Type::Int)),
+        "print" => (B::Print, vec![Type::Str], Type::Unit),
+        "read_line" => (B::ReadLine, vec![], Type::option(Type::Str)),
+        "read_file" => (B::ReadFile, vec![Type::Str], Type::result(Type::Str, Type::Str)),
+        "write_file" => (B::WriteFile, vec![Type::Str, Type::Str], Type::result(Type::Unit, Type::Str)),
+        "now_ms" => (B::NowMs, vec![], Type::Int),
+        "rand_int" => (B::RandInt, vec![Type::Int, Type::Int], Type::Int),
+        "read_all" => (B::ReadAll, vec![], Type::Str),
+        "sort_str" => (B::SortStr, vec![list(Type::Str)], list(Type::Str)),
+        "char_code" => (B::CharCode, vec![Type::Str], Type::Int),
+        "from_char_code" => (B::FromCharCode, vec![Type::Int], Type::Str),
+        "to_upper" => (B::ToUpper, vec![Type::Str], Type::Str),
+        "to_lower" => (B::ToLower, vec![Type::Str], Type::Str),
+        "replace" => (B::Replace, vec![Type::Str, Type::Str, Type::Str], Type::Str),
+        "index_of" => (B::IndexOf, vec![Type::Str, Type::Str], Type::option(Type::Int)),
+        "map_new" => (B::MapNew, vec![], Type::map(a, b)),
+        "map_get" => (B::MapGet, vec![Type::map(a.clone(), b.clone()), a], Type::option(b)),
+        "map_put" => (B::MapPut, vec![Type::map(a.clone(), b.clone()), a.clone(), b.clone()], Type::map(a, b)),
+        "map_del" => (B::MapDel, vec![Type::map(a.clone(), b.clone()), a.clone()], Type::map(a, b)),
+        "map_has" => (B::MapHas, vec![Type::map(a.clone(), b), a], Type::Bool),
+        "map_size" => (B::MapSize, vec![Type::map(a, b)], Type::Int),
+        "map_keys" => (B::MapKeys, vec![Type::map(a.clone(), b)], list(a)),
+        "map_values" => (B::MapValues, vec![Type::map(a, b.clone())], list(b)),
+        "to_bytes" => (B::ToBytes, vec![Type::Str], Type::Bytes),
+        "bytes_len" => (B::BytesLen, vec![Type::Bytes], Type::Int),
+        "bytes_get" => (B::BytesGet, vec![Type::Bytes, Type::Int], Type::option(Type::Int)),
+        "bytes_slice" => (B::BytesSlice, vec![Type::Bytes, Type::Int, Type::Int], Type::Bytes),
+        "bytes_from" => (B::BytesFrom, vec![list(Type::Int)], Type::Bytes),
+        "bytes_to_list" => (B::BytesToList, vec![Type::Bytes], list(Type::Int)),
+        "bytes_to_str" => (B::BytesToStr, vec![Type::Bytes], Type::option(Type::Str)),
+        "compare" => (B::Compare, vec![a.clone(), a], Type::Int),
+        _ => return None,
+    })
 }

@@ -8,7 +8,7 @@ Definitions (any order, any number per call; `#` starts a comment):
   fn main(args: List[Str]) -> Int !io = { print("hi"); 0 }   entry point; result = exit code
 Every parameter and result is typed. fn/test names start lowercase, type and variant names uppercase. Built-in names (below) are reserved.
 
-Types: Int (64-bit; overflow and division by zero are runtime errors), Float, Bool, Unit (value `()`), Str, Bytes, List[T], Map[K, V] (ordered by key), Option[T] = Some(x) | None, Result[T, E] = Ok(x) | Err(e), fn(A) -> B !e. No null, exceptions, implicit conversions or loops: recurse (a call in tail position is a loop; a fn with `ens` makes no tail calls). Built-ins are not values: wrap them (fn show(n: Int) -> Str = from_int(n)).
+Types: Int (64-bit; overflow and division by zero are runtime errors), Float, Bool, Unit (value `()`), Str, Bytes, List[T], Map[K, V] (ordered by key), Option[T] = Some(x) | None, Result[T, E] = Ok(x) | Err(e), fn(A) -> B !e. No null, exceptions, implicit conversions or loops: recurse (a call in tail position is a loop; a fn with `ens` makes no tail calls). Built-ins are not values: wrap them in a closure (map(xs, fn(n) => from_int(n))).
 Generics: type Pair[A, B] = { fst: A, snd: B }   type Tree[T] = Leaf | Node(Tree[T], T, Tree[T])
   fn swap[A, B](p: Pair[A, B]) -> Pair[B, A] = Pair { fst: p.snd, snd: p.fst }   type arguments are inferred at calls
   A recursive generic calls itself only at its own parameters (`size[T]` calls `size(l)` on a Tree[T]).
@@ -20,7 +20,7 @@ Expressions (everything is an expression, there are no statements):
   let x = e in body     let x: T = e in body     if c then a else b   (else is required)
   match e { Some(n) if n > 0 => n, Some(_) => 0, None => -1 }   arms separated by `,`; must be exhaustive
     patterns: _  x  42  "s"  true  Variant(p, ..)  Point { x: p, y }  plus guards `if cond`
-  { a; b; c }   sequence: a and b must be Unit (e.g. print(..)); the value is c. A `let` inside one item ends at
+  { a; b; c }   sequence: the values of a and b are discarded (a Result must be handled with match); the value is c. A `let` inside one item ends at
     its `;`, so bind first: let x = f(y) in { print(x); x }
   "text"  escapes \n \t \r \0 \\ \" \u{1F600}
   [1, 2]  f(x)  p.x  -x  !b  * / %  + -  ++ (Str or List concatenation)  == != (any type)  < <= > >= (Int, Float, Str)  && ||

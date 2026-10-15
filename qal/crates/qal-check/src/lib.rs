@@ -367,6 +367,8 @@ fn resolve_inner(g: &Globals, t: &Type, tps: &[String], def: &str, path: &str, d
                 let mut d = Diagnostic::unknown_name(def, path, n);
                 if g.variants.contains_key(n) || BUILTIN_VARIANTS.contains(&n.as_str()) {
                     d = d.hint(format!("`{n}` is a variant, not a type"));
+                } else if let Some(h) = Type::foreign_name_hint(n) {
+                    d = d.hint(h);
                 }
                 diags.push(d);
                 Type::Unit
@@ -381,7 +383,11 @@ fn resolve_inner(g: &Globals, t: &Type, tps: &[String], def: &str, path: &str, d
                     Type::Unit
                 }
                 None => {
-                    diags.push(Diagnostic::unknown_name(def, path, n));
+                    let mut d = Diagnostic::unknown_name(def, path, n);
+                    if let Some(h) = Type::foreign_name_hint(n) {
+                        d = d.hint(h);
+                    }
+                    diags.push(d);
                     Type::Unit
                 }
             }

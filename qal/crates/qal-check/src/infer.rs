@@ -247,10 +247,20 @@ impl<'a> Cx<'a> {
                 for (i, x) in items.iter().enumerate() {
                     let p = format!("{path}.items[{i}]");
                     let t = self.infer(x, &p);
-                    if i + 1 < n && !self.sub.unify(&Type::Unit, &t.ty) {
-                        self.mismatch(&p, &Type::Unit, &t.ty);
-                        if let Some(d) = self.diags.last_mut() {
-                            d.hints = vec!["only Unit values can be discarded in `{ a; b }`; bind the value with `let` or handle it with `match`".into()];
+                    // A non-last item's value is discarded, except a Result: errors must be handled.
+                    // A type not known yet becomes Unit (as for `print(..)`).
+                    if i + 1 < n {
+                        match self.sub.resolve(&t.ty) {
+                            Type::Var(_) => {
+                                self.unify_at(&p, &Type::Unit, &t.ty);
+                            }
+                            Type::Result(..) => {
+                                self.mismatch(&p, &Type::Unit, &t.ty);
+                                if let Some(d) = self.diags.last_mut() {
+                                    d.hints = vec!["a Result must be handled with `match` (or bound with `let`); only other values can be discarded in `{ a; b }`".into()];
+                                }
+                            }
+                            _ => {}
                         }
                     }
                     out.push(t);
@@ -405,7 +415,9 @@ impl<'a> Cx<'a> {
         let mut d = Diagnostic::unknown_name(self.def, path, v);
         if Builtin::NAMES.contains(&v) {
             d.message = format!("built-in `{v}` is not a value");
-            d = d.hint(format!("built-in `{v}` cannot be used as a value; wrap it in a fn, e.g. `fn my_{v}(...) = {v}(...)`, and pass `my_{v}`"));
+            let params: Vec<&str> = ["x", "y", "z", "w"].into_iter().take(crate::builtins::arity(v).unwrap_or(1)).collect();
+            let ps = params.join(", ");
+            d = d.hint(format!("built-in `{v}` cannot be used as a value; wrap it in a closure: `fn({ps}) => {v}({ps})`"));
         } else {
             d = d.hint("not a built-in or stored definition; built-ins are listed in the qal_define description; define it in the same call or check qal_query");
         }

@@ -625,6 +625,13 @@ fn bytes_hold_any_bytes() {
 }
 
 #[test]
+fn sequences_discard_values_of_any_type_but_result() {
+    // Since the 1e benchmark: `{ a; b; c }` drops the values of a and b (Int, List, Float, closure ...).
+    let r = runner("fn f(n: Int) -> Int = { n + 1; [n, n]; 2.5; \"s\"; fn(x) => x + n; Some(n); n * 2 }");
+    assert_eq!(r.call("f", &[Value::Int(21)]), Ok(Value::Int(42)));
+}
+
+#[test]
 fn maps_stay_balanced_under_ordered_inserts_and_deletes() {
     // An unbalanced tree would recurse 50 000 levels deep in `map_put` (stack overflow) and take
     // quadratic time; the AVL tree stays below 24 levels.

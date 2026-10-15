@@ -210,7 +210,13 @@ impl Parser {
                 return Ok(Type::Fn(params, Box::new(ret), effects));
             }
             Tok::Ident(s) if is_upper(&s) => s,
-            other => return Err(self.err_here(format!("expected a type (e.g. Int, Str, List[Int]), found {}", Self::describe(&other)))),
+            other => {
+                let mut d = self.err_here(format!("expected a type (e.g. Int, Str, List[Int]), found {}", Self::describe(&other)));
+                if let Some(h) = if let Tok::Ident(s) = &other { Type::foreign_name_hint(s) } else { None } {
+                    d = d.hint(h);
+                }
+                return Err(d);
+            }
         };
         self.next();
         let arg = |p: &mut Self| -> Result<Type, Diagnostic> {

@@ -227,11 +227,17 @@ fn non_exhaustive_match_is_reported_with_a_witness() {
 }
 
 #[test]
-fn sequences_discard_only_unit() {
+fn sequences_discard_values_but_not_results() {
     assert_eq!(check_src("fn f() -> Int !io = { print(\"a\"); print(\"b\"); 3 }"), vec![]);
-    let d = one("fn f() -> Int = { 1; 2 }");
-    assert_eq!((d.path.as_str(), d.expected.as_deref()), ("body.items[0]", Some("Unit")));
-    assert!(d.hints[0].starts_with("only Unit values can be discarded"));
+    // Since the 1e benchmark: any value but a Result may be discarded.
+    assert_eq!(check_src("fn f() -> Int = { 1; [1, 2]; Some(\"x\"); 3 }"), vec![]);
+    let d = one("fn f() -> Int !fs = { write_file(\"a\", \"b\"); 2 }");
+    assert_eq!((d.kind, d.path.as_str(), d.expected.as_deref()), ("type_mismatch", "body.items[0]", Some("Unit")));
+    assert!(d.hints[0].starts_with("a Result must be handled with `match` (or bound with `let`)"), "{:?}", d.hints);
+    // A value of a type not known yet becomes Unit, as before.
+    let tp = typed("fn f() -> Int = { []; 1 }");
+    let TKind::Seq(items) = &tp.fns[0].body.kind else { panic!() };
+    assert_eq!(items[0].ty, Type::list(Type::Unit));
 }
 
 #[test]
@@ -359,7 +365,31 @@ fn a_function_cannot_be_named_r() {
 fn builtins_used_as_values_say_so() {
     let d = one("fn f(xs: List[Str]) -> List[Int] = map(xs, len)");
     assert_eq!((d.kind, d.message.as_str()), ("unknown_name", "built-in `len` is not a value"));
-    assert_eq!(d.hints, ["built-in `len` cannot be used as a value; wrap it in a fn, e.g. `fn my_len(...) = len(...)`, and pass `my_len`"]);
+    assert_eq!(d.hints, ["built-in `len` cannot be used as a value; wrap it in a closure: `fn(x) => len(x)`"]);
+    let d = one("fn f(xs: List[Int]) -> Int = fold(xs, 0, compare)");
+    assert_eq!(d.hints, ["built-in `compare` cannot be used as a value; wrap it in a closure: `fn(x, y) => compare(x, y)`"]);
+    assert!(one("fn f() -> fn() -> Int !time = now_ms").hints[0].ends_with("`fn() => now_ms()`"));
+}
+
+#[test]
+fn foreign_type_names_get_a_hint() {
+    for (src, want) in [
+        ("fn f(s: String) -> Int = 0", "QAL has no type `String`; use `Str`"),
+        ("fn f(m: HashMap[Str, Int]) -> Int = 0", "QAL has no type `HashMap`; use `Map[K, V]`"),
+        ("fn f(xs: Vec[Int]) -> Int = 0", "QAL has no type `Vec`; use `List[T]`"),
+        ("type R = { o: Optional[Int] }", "QAL has no type `Optional`; use `Option[T]`"),
+        ("fn f(n: Integer) -> Int = 0", "QAL has no type `Integer`; use `Int` (64-bit)"),
+    ] {
+        let d = one(src);
+        assert_eq!((d.kind, d.hints.as_slice()), ("unknown_name", [want.to_string()].as_slice()), "{src}");
+    }
+    // Lower-case names are a parse error; the hint is the same.
+    for (name, want) in [("i64", "`Int`"), ("bool", "`Bool`"), ("void", "`Unit`"), ("char", "a one-character `Str`"), ("u8", "`Int`"), ("f64", "`Float`"), ("dict", "`Map[K, V]`")] {
+        let d = parse_program(&format!("fn f(x: {name}) -> Int = 0")).unwrap_err();
+        assert!(d.hints.iter().any(|h| h.starts_with(&format!("QAL has no type `{name}`; use {want}"))), "{name}: {:?}", d.hints);
+    }
+    // A declared type of that name is fine.
+    assert_eq!(check_src("type String = { s: Str }\nfn f(s: String) -> Str = s.s"), vec![]);
 }
 
 #[test]

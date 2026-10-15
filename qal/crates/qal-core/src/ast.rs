@@ -92,6 +92,24 @@ impl Type {
         }
     }
 
+    /// A hint for a type name from another language (`String`, `i64`, `Vec`, ...): the QAL type to use.
+    pub fn foreign_name_hint(name: &str) -> Option<String> {
+        let qal = match name {
+            "String" | "string" | "str" => "`Str`",
+            "i64" | "i32" | "int" | "Integer" | "u64" | "usize" | "long" => "`Int` (64-bit)",
+            "f64" | "f32" | "float" | "double" | "Double" => "`Float`",
+            "bool" | "boolean" | "Boolean" => "`Bool`",
+            "Vec" | "Array" | "list" | "ArrayList" | "vector" => "`List[T]`",
+            "HashMap" | "Dict" | "dict" | "BTreeMap" | "HashTable" => "`Map[K, V]`",
+            "Optional" | "Maybe" | "option" => "`Option[T]`",
+            "void" | "unit" => "`Unit` (value `()`)",
+            "char" | "Char" | "rune" => "a one-character `Str` (`chars(s)` splits a Str into them)",
+            "u8" | "byte" | "Byte" => "`Int` (an element of `Bytes`, 0..=255)",
+            _ => return None,
+        };
+        Some(format!("QAL has no type `{name}`; use {qal}"))
+    }
+
     /// Type names that cannot be declared with `type`.
     pub const BUILTIN_NAMES: &'static [&'static str] = &["Int", "Float", "Bool", "Unit", "Str", "List", "Option", "Result", "Map", "Bytes"];
 }

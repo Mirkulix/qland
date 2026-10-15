@@ -246,3 +246,11 @@ Effekt-Polymorphie; explizite Typargumente; Typklassen/Traits; Beweise über Flo
 
 - **2a — Generics, Closures, Map, Bytes:** Kern (AST, typisierte Form, kanonische Form v2, Diagnosen), Text, Prüfung und Monomorphisierung; WASM und Laufzeit (Closures, AVL-Maps, Bytes, Kodierung aller Datentypen); Store-Tests, CLI-JSON-Argumente, Sprachreferenz.
 - **2b — Beweise und Property-Tests:** Store-Schema 3 mit `proofs` und Prüfschritt in `define`; Crate `qal-prove` (Z3-Kodierung, Lösen, Bestätigen); Property-Tests; CLI/MCP (`qal prove`, `qal_prove`, Beweise in `define`, Properties in `test`).
+
+## 15. Änderungen aus dem 1e-Benchmark
+
+Der Benchmark (`bench/discussion.md`) zeigte die häufigsten Agentenfehler; drei davon behebt diese Phase im Prüfer und in der Sprachreferenz:
+
+- **Sequenzen verwerfen Werte.** In `{ a; b; c }` darf ein Element außer dem letzten jeden Typ haben; sein Wert wird verworfen. Ausnahme ist `Result[..]`: ein Fehler muss behandelt werden, daher bleibt dort `type_mismatch` (erwartet `Unit`) mit dem Hinweis, das Result mit `match` zu behandeln oder mit `let` zu binden. Ein Element, dessen Typ noch unbekannt ist, wird wie bisher `Unit`. Grund: Agenten schrieben 11-mal einen wertliefernden Aufruf (`fold(...)`, ein Helfer mit `Int`-Ergebnis) in eine Sequenz, wie es fast jede ihnen bekannte Sprache erlaubt; die strenge Regel verhinderte dabei keinen Fehler, außer beim verworfenen `Result`. Nur der Prüfer nimmt mehr an: Codegen verwarf die Werte schon immer (`drop`), kanonische Bytes und Hashes ändern sich nicht, Beweiser und Monomorphisierung behandeln Sequenzelemente typunabhängig.
+- **Fremde Typnamen** (`String`, `i64`, `Vec`, `HashMap`, `Optional`, `void`, `char`, `u8` …) bekommen einen Hinweis mit dem QAL-Typ (`Str`, `Int`, `List[T]`, `Map[K, V]`, `Option[T]`, `Unit`, ein einzeichiger `Str`, `Int` in `Bytes`); Code und Art der Diagnose bleiben.
+- **Built-ins als Werte:** Der Hinweis schlägt eine Closure vor (`fn(x) => trim(x)`, mit der Parameterzahl des Built-ins) statt einer benannten Hilfsfunktion.
