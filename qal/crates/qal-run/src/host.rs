@@ -20,6 +20,11 @@ pub struct Permissions {
     pub rand: bool,
     /// Canonical directories `fs` may read and write below. Empty = no `fs`.
     pub fs: Vec<PathBuf>,
+    /// Directory that relative guest paths are resolved against (None: the working directory).
+    pub base: Option<PathBuf>,
+    /// If set, no path component below a granted directory may start with `.` (protects `.git`,
+    /// `.qal`, `.claude`, `.env`, ... inside a granted project directory).
+    pub no_hidden: bool,
 }
 
 impl Permissions {
@@ -34,8 +39,41 @@ impl Permissions {
                 "fs" => return Err("`fs` needs a directory: `fs:<dir>`, e.g. `fs:./data`".into()),
                 _ => match item.strip_prefix("fs:") {
                     Some(dir) => {
-                        require_nofollow(O_NOFOLLOW)?;
+                        require_open_flags()?;
                         let canonical = Path::new(dir).canonicalize().map_err(|e| format!("fs:{dir}: {e}"))?;
+                        if !canonical.is_dir() {
+                            return Err(format!("fs:{dir}: not a directory"));
+                        }
+                        p.fs.push(canonical);
+                    }
+                    None => return Err(format!("unknown effect `{item}` (known: io, fs:<dir>, time, rand)")),
+                },
+            }
+        }
+        Ok(p)
+    }
+
+    /// Parses grants for a program run on behalf of an agent (MCP): items as in [`Permissions::parse`],
+    /// but `fs:<dir>` is relative to `root` and must stay inside it, hidden entries (`.git`, `.qal`,
+    /// ...) can neither be granted nor reached, and guest paths are resolved against `root`.
+    pub fn parse_in(items: &[String], root: &Path) -> Result<Permissions, String> {
+        let root = root.canonicalize().map_err(|e| format!("project root {}: {e}", root.display()))?;
+        let mut p = Permissions { base: Some(root.clone()), no_hidden: true, ..Permissions::default() };
+        for item in items.iter().map(|s| s.trim()) {
+            match item {
+                "io" => p.io = true,
+                "time" => p.time = true,
+                "rand" => p.rand = true,
+                "fs" => return Err("`fs` needs a directory: `fs:<dir>` relative to the project root, e.g. `fs:data` or `fs:.`".into()),
+                _ => match item.strip_prefix("fs:") {
+                    Some(dir) if dir.trim().is_empty() => return Err("`fs:` needs a directory: `fs:<dir>` relative to the project root, e.g. `fs:data` or `fs:.`".into()),
+                    Some(dir) => {
+                        require_open_flags()?;
+                        let canonical = root.join(dir).canonicalize().map_err(|_| format!("fs:{dir}: no such directory in the project"))?;
+                        let rel = canonical.strip_prefix(&root).map_err(|_| format!("fs:{dir}: outside the project root"))?;
+                        if hidden(rel) {
+                            return Err(format!("fs:{dir}: hidden directories (starting with `.`) cannot be granted"));
+                        }
                         if !canonical.is_dir() {
                             return Err(format!("fs:{dir}: not a directory"));
                         }
@@ -59,7 +97,15 @@ impl Permissions {
     }
 
     fn inside(&self, p: &Path) -> bool {
-        self.fs.iter().any(|root| p.starts_with(root))
+        self.fs.iter().any(|root| p.strip_prefix(root).is_ok_and(|rel| !(self.no_hidden && hidden(rel))))
+    }
+
+    /// A guest path as the host sees it: relative paths are taken from `base` if set.
+    fn resolve(&self, path: &str) -> PathBuf {
+        match &self.base {
+            Some(base) => base.join(path),
+            None => PathBuf::from(path),
+        }
     }
 
     /// Uniform refusal: identical for paths that exist and paths that do not, so file existence
@@ -83,7 +129,7 @@ impl Permissions {
     /// Resolves `path` (relative to the working directory) and checks it lies inside a granted directory.
     /// For writing, the file itself may not exist yet, but its directory must.
     pub fn check_path(&self, path: &str, for_write: bool) -> Result<PathBuf, String> {
-        let p = Path::new(path);
+        let p = &self.resolve(path);
         let resolved = match p.canonicalize() {
             Ok(c) => c,
             Err(e) if !for_write => return Err(self.unresolved(p, path, e)),
@@ -127,13 +173,22 @@ impl Permissions {
         }
     }
 
-    /// Checks, opens without following a final symlink, and verifies the opened file.
+    /// Checks, opens without following a final symlink and without blocking, and verifies that the
+    /// opened file is a regular file (a FIFO or device would block the host or never end).
     fn open(&self, path: &str, for_write: bool) -> Result<File, String> {
         let full = self.check_path(path, for_write)?;
         let file = open_nofollow(&full, for_write).map_err(|e| format!("{path}: {e}"))?;
         self.verify_opened(&file, &full)?;
+        if !file.metadata().map(|m| m.is_file()).unwrap_or(false) {
+            return Err(format!("{path}: not a regular file"));
+        }
         Ok(file)
     }
+}
+
+/// True if a path below a granted directory has a component starting with `.`.
+fn hidden(rel: &Path) -> bool {
+    rel.components().any(|c| c.as_os_str().to_string_lossy().starts_with('.'))
 }
 
 #[cfg(unix)]
@@ -179,11 +234,50 @@ const O_NOFOLLOW: Option<i32> = if cfg!(all(
     None
 };
 
+/// `O_NONBLOCK` where its value is known: opening a FIFO must not wait for a writer or reader.
+const O_NONBLOCK: Option<i32> = if cfg!(all(
+    unix,
+    any(target_os = "macos", target_os = "ios", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd", target_os = "dragonfly")
+)) {
+    Some(0x0004)
+} else if cfg!(all(any(target_os = "linux", target_os = "android"), any(target_arch = "mips", target_arch = "mips64"))) {
+    Some(0o200)
+} else if cfg!(all(any(target_os = "linux", target_os = "android"), any(target_arch = "sparc", target_arch = "sparc64"))) {
+    Some(0x4000)
+} else if cfg!(all(
+    any(target_os = "linux", target_os = "android"),
+    any(
+        target_arch = "aarch64",
+        target_arch = "arm",
+        target_arch = "powerpc",
+        target_arch = "powerpc64",
+        target_arch = "m68k",
+        target_arch = "x86",
+        target_arch = "x86_64",
+        target_arch = "riscv32",
+        target_arch = "riscv64",
+        target_arch = "loongarch64",
+        target_arch = "s390x"
+    )
+)) {
+    Some(0o4000)
+} else {
+    None
+};
+
 fn require_nofollow(flag: Option<i32>) -> Result<i32, String> {
     flag.ok_or_else(|| "the `fs` effect is not supported on this platform: files cannot be opened without following symbolic links".into())
 }
 
-/// Opens for reading, or for writing (created if missing, not truncated: the caller truncates once verified).
+/// The flags every `fs` open uses (`O_NOFOLLOW | O_NONBLOCK`), or why `fs` is unavailable here.
+fn require_open_flags() -> Result<i32, String> {
+    let nofollow = require_nofollow(O_NOFOLLOW)?;
+    let nonblock = O_NONBLOCK.ok_or("the `fs` effect is not supported on this platform: files cannot be opened without blocking")?;
+    Ok(nofollow | nonblock)
+}
+
+/// Opens for reading, or for writing (created if missing, not truncated: the caller truncates once
+/// verified), never following a final symlink and never blocking (FIFOs, devices).
 ///
 /// Known limitation: only the final path component is opened without following links, so a
 /// co-located process that swaps a directory of the path for a symlink between `check_path` and
@@ -191,7 +285,7 @@ fn require_nofollow(flag: Option<i32>) -> Result<i32, String> {
 /// then refuses to write to it). The proper fix, opening with `openat` relative to a verified
 /// parent directory descriptor, is planned for Phase 3.
 fn open_nofollow(path: &Path, write: bool) -> std::io::Result<File> {
-    let flag = require_nofollow(O_NOFOLLOW).map_err(std::io::Error::other)?;
+    let flag = require_open_flags().map_err(std::io::Error::other)?;
     let mut o = std::fs::OpenOptions::new();
     if write {
         o.write(true).create(true);
@@ -241,6 +335,9 @@ pub struct HostState {
     pub limits: StoreLimits,
     /// Memory limit in bytes; also caps captured stdout and host-side reads.
     pub limit: usize,
+    /// If set, printed output beyond this many bytes is counted in `stdout_bytes` but not kept.
+    pub stdout_limit: Option<usize>,
+    pub stdout_bytes: usize,
 }
 
 fn memory(c: &mut Caller<'_, HostState>) -> Result<Memory, wasmtime::Error> {
@@ -324,9 +421,16 @@ pub fn link(linker: &mut Linker<HostState>, perms: &Permissions) -> Result<(), w
         linker.func_wrap(HOST_MODULE, host::PRINT, |mut c: Caller<'_, HostState>, p: i32| {
             let s = guest_str(&mut c, p)?;
             let limit = c.data().limit;
-            let out = &mut c.data_mut().stdout;
             let mut line = s.into_bytes();
             line.push(b'\n');
+            if let Some(keep) = c.data().stdout_limit {
+                let data = c.data_mut();
+                data.stdout_bytes = data.stdout_bytes.saturating_add(line.len());
+                let room = keep.saturating_sub(data.stdout.len()).min(line.len());
+                data.stdout.extend_from_slice(&line[..room]);
+                return Ok(());
+            }
+            let out = &mut c.data_mut().stdout;
             let requested = out.len() + line.len();
             if requested > limit {
                 out.extend_from_slice(&line[..limit.saturating_sub(out.len())]);

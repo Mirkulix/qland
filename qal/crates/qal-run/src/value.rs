@@ -9,6 +9,8 @@ use serde::Serialize;
 const MAX_DEPTH: usize = 200;
 /// Total nodes per decoded value; shared substructure can otherwise expand exponentially.
 const MAX_NODES: usize = 100_000;
+/// Total string bytes per decoded value; longer strings are cut and end in `...(+N bytes)`.
+pub const MAX_STR_BYTES: usize = 256 << 10;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
@@ -88,12 +90,33 @@ pub fn read_str(mem: &[u8], ptr: u32) -> Option<String> {
 
 /// Decodes a value of type `ty` from its slot form (see `qal_wasm` layout).
 pub fn decode(tp: &TProgram, mem: &[u8], ty: &Type, slot: i64) -> Value {
-    decode_at(tp, mem, ty, slot, 0, &mut 0)
+    decode_at(tp, mem, ty, slot, 0, &mut Budget { nodes: 0, bytes: 0 })
 }
 
-fn decode_at(tp: &TProgram, mem: &[u8], ty: &Type, slot: i64, depth: usize, nodes: &mut usize) -> Value {
-    *nodes += 1;
-    if depth > MAX_DEPTH || *nodes > MAX_NODES {
+/// What one decoded value has used of its node and string-byte limits.
+struct Budget {
+    nodes: usize,
+    bytes: usize,
+}
+
+/// `s`, cut (at a character boundary) to what is left of the string-byte budget.
+fn budget_str(s: String, budget: &mut Budget) -> Value {
+    let room = MAX_STR_BYTES.saturating_sub(budget.bytes);
+    if s.len() <= room {
+        budget.bytes += s.len();
+        return Value::Str(s);
+    }
+    let mut end = room;
+    while !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    budget.bytes = MAX_STR_BYTES;
+    Value::Str(format!("{}...(+{} bytes)", &s[..end], s.len() - end))
+}
+
+fn decode_at(tp: &TProgram, mem: &[u8], ty: &Type, slot: i64, depth: usize, budget: &mut Budget) -> Value {
+    budget.nodes += 1;
+    if depth > MAX_DEPTH || budget.nodes > MAX_NODES {
         return Value::Str("...".into());
     }
     let ptr = slot as u32;
@@ -104,22 +127,25 @@ fn decode_at(tp: &TProgram, mem: &[u8], ty: &Type, slot: i64, depth: usize, node
         Type::Bool => Value::Bool(slot != 0),
         Type::Unit | Type::Var(_) => Value::Unit,
         Type::Fn(..) => Value::Str(format!("<fn #{ptr}>")),
-        Type::Str => read_str(mem, ptr).map(Value::Str).unwrap_or_else(bad),
+        Type::Str => match read_str(mem, ptr) {
+            Some(s) => budget_str(s, budget),
+            None => bad(),
+        },
         Type::List(elem) => {
             let Some(len) = u32_at(mem, ptr as usize) else { return bad() };
             let mut out = Vec::new();
             for k in 0..len as usize {
                 let Some(s) = slot_at(mem, ptr as usize + 8 + 8 * k) else { return bad() };
-                out.push(decode_at(tp, mem, elem, s, depth + 1, nodes));
+                out.push(decode_at(tp, mem, elem, s, depth + 1, budget));
             }
             Value::List(out)
         }
         _ if tp.is_record(ty) => {
-            let Type::Named(name) = ty else { unreachable!() };
+            let Type::Named(name) = ty else { return bad() };
             let mut fields = Vec::new();
             for (k, (f, ft)) in tp.record_fields(ty).iter().enumerate() {
                 let Some(s) = slot_at(mem, ptr as usize + 8 * k) else { return bad() };
-                fields.push((f.clone(), decode_at(tp, mem, ft, s, depth + 1, nodes)));
+                fields.push((f.clone(), decode_at(tp, mem, ft, s, depth + 1, budget)));
             }
             Value::Record(name.clone(), fields)
         }
@@ -130,7 +156,7 @@ fn decode_at(tp: &TProgram, mem: &[u8], ty: &Type, slot: i64, depth: usize, node
             let mut payload = Vec::new();
             for (k, ft) in tp.variant_fields(ty, tag).iter().enumerate() {
                 let Some(s) = slot_at(mem, ptr as usize + 8 + 8 * k) else { return bad() };
-                payload.push(decode_at(tp, mem, ft, s, depth + 1, nodes));
+                payload.push(decode_at(tp, mem, ft, s, depth + 1, budget));
             }
             Value::Variant(name.clone(), payload)
         }
@@ -175,5 +201,22 @@ mod tests {
         assert_eq!(decode(&tp, &mem, &Type::list(Type::Int), 8), Value::List(vec![Value::Int(7)]));
         assert_eq!(decode(&tp, &mem, &Type::option(Type::Int), 24), Value::Variant("Some".into(), vec![Value::Int(5)]));
         assert_eq!(decode(&tp, &mem, &Type::Str, 1000), Value::Str("<invalid Str at 1000>".into()));
+    }
+
+    #[test]
+    fn strings_share_one_byte_budget_per_value() {
+        let tp = TProgram::default();
+        // List of two strings of MAX_STR_BYTES - 1 and 10 bytes.
+        let big = MAX_STR_BYTES - 1;
+        let mut mem = vec![b'a'; 32 + big + 4 + 10];
+        mem[0..4].copy_from_slice(&2u32.to_le_bytes());
+        mem[8..16].copy_from_slice(&24i64.to_le_bytes());
+        let second = 24 + 4 + big;
+        mem[16..24].copy_from_slice(&(second as i64).to_le_bytes());
+        mem[24..28].copy_from_slice(&(big as u32).to_le_bytes());
+        mem[second..second + 4].copy_from_slice(&10u32.to_le_bytes());
+        let Value::List(xs) = decode(&tp, &mem, &Type::list(Type::Str), 0) else { panic!("not a list") };
+        assert_eq!(xs[0], Value::Str("a".repeat(big)));
+        assert_eq!(xs[1], Value::Str("a...(+9 bytes)".into()));
     }
 }

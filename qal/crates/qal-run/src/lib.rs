@@ -14,7 +14,9 @@ use qal_text::print_expr;
 use qal_wasm::{CompiledModule, FuncMeta, FAIL_BUILTIN, FAIL_DIV_ZERO, FAIL_ENS, FAIL_INDEX, FAIL_OOM, FAIL_OVERFLOW, FAIL_REQ, OOM_SCRATCH};
 use serde::Serialize;
 use std::io::Cursor;
-use wasmtime::{Config, Engine, Linker, Memory, Module, Store, StoreLimitsBuilder, Trap, Val};
+use std::sync::mpsc;
+use std::time::Duration;
+use wasmtime::{Config, Engine, Instance, Linker, Memory, Module, Store, StoreLimitsBuilder, Trap, Val};
 
 /// Instruction budget per call; exhausting it reports `timeout` instead of hanging.
 pub const DEFAULT_FUEL: u64 = 2_000_000_000;
@@ -25,7 +27,7 @@ pub const DEFAULT_MEMORY_LIMIT: usize = 256 << 20;
 pub struct RunError {
     pub code: &'static str,
     /// contract_violation | int_overflow | div_by_zero | out_of_memory | index | stack_overflow | timeout
-    /// | permission_denied | bad_args | unknown_function | trap
+    /// | permission_denied | bad_args | unknown_function | compile_error | trap
     pub kind: &'static str,
     /// Name of the definition where the failure happened (never an export name like `test:x`).
     pub def: String,
@@ -53,6 +55,7 @@ impl RunError {
             "permission_denied" => "E0508",
             "bad_args" => "E0509",
             "unknown_function" => "E0510",
+            "compile_error" => "E0511",
             _ => "E0599",
         };
         RunError {
@@ -91,6 +94,8 @@ pub struct TestResult {
 pub struct Outcome {
     pub result: Result<Value, RunError>,
     pub stdout: String,
+    /// Bytes the program printed; more than `stdout.len()` if output beyond `with_stdout_limit` was dropped.
+    pub stdout_bytes: usize,
 }
 
 pub struct Runner {
@@ -102,6 +107,8 @@ pub struct Runner {
     memory_limit: usize,
     perms: Permissions,
     stdin: Option<Vec<u8>>,
+    timeout: Option<Duration>,
+    stdout_limit: Option<usize>,
 }
 
 impl Runner {
@@ -109,10 +116,17 @@ impl Runner {
         let mut config = Config::new();
         config.wasm_tail_call(true);
         config.consume_fuel(true);
+        // Interrupts a call that runs longer than its wall-clock timeout (see `with_timeout`).
+        config.epoch_interruption(true);
+        // Compile time must stay linear in the module size (a 150 000-element list literal took
+        // minutes with the optimizing defaults): no optimization passes, single-pass register
+        // allocation. Phase 1 programs are bounded by fuel, not by speed.
+        config.cranelift_opt_level(wasmtime::OptLevel::None);
+        config.cranelift_regalloc_algorithm(wasmtime::RegallocAlgorithm::SinglePass);
         let engine = Engine::new(&config).map_err(|e| e.to_string())?;
         let module = Module::new(&engine, &meta.wasm).map_err(|e| e.to_string())?;
         let types = TProgram { types: meta.types.clone(), ..TProgram::default() };
-        Ok(Runner { engine, module, meta, types, fuel: DEFAULT_FUEL, memory_limit: DEFAULT_MEMORY_LIMIT, perms: Permissions::default(), stdin: None })
+        Ok(Runner { engine, module, meta, types, fuel: DEFAULT_FUEL, memory_limit: DEFAULT_MEMORY_LIMIT, perms: Permissions::default(), stdin: None, timeout: None, stdout_limit: None })
     }
 
     pub fn with_fuel(mut self, fuel: u64) -> Runner {
@@ -127,6 +141,20 @@ impl Runner {
 
     pub fn with_permissions(mut self, perms: Permissions) -> Runner {
         self.perms = perms;
+        self
+    }
+
+    /// Wall-clock limit per call; exceeding it reports `timeout` (fuel bounds instructions, this
+    /// also bounds time spent in host functions and large memory copies).
+    pub fn with_timeout(mut self, timeout: Duration) -> Runner {
+        self.timeout = Some(timeout);
+        self
+    }
+
+    /// Keeps only the first `bytes` of printed output (the rest is counted, not stored), instead of
+    /// failing with `out_of_memory` once the output reaches the memory limit.
+    pub fn with_stdout_limit(mut self, bytes: usize) -> Runner {
+        self.stdout_limit = Some(bytes);
         self
     }
 
@@ -157,12 +185,21 @@ impl Runner {
             .funcs
             .iter()
             .filter(|f| f.is_test)
-            .map(|f| match self.call(&f.export, &[]) {
-                Ok(Value::Bool(passed)) => TestResult { name: f.name.clone(), passed, error: None },
-                Ok(_) => unreachable!("tests are checked to return Bool"),
-                Err(e) => TestResult { name: f.name.clone(), passed: false, error: Some(e) },
-            })
+            .map(|f| self.run_test(&f.export))
             .collect()
+    }
+
+    /// Runs one test by its export name (`test:<name>`).
+    pub fn run_test(&self, export: &str) -> TestResult {
+        let name = export.strip_prefix("test:").unwrap_or(export).to_string();
+        match self.call(export, &[]) {
+            Ok(Value::Bool(passed)) => TestResult { name, passed, error: None },
+            Ok(other) => {
+                let e = RunError::new("trap", &name, format!("test returned {other:?} instead of Bool"));
+                TestResult { name, passed: false, error: Some(e) }
+            }
+            Err(e) => TestResult { name, passed: false, error: Some(e) },
+        }
     }
 
     pub fn invoke(&self, export: &str, args: &[Value]) -> Outcome {
@@ -178,12 +215,19 @@ impl Runner {
             rng: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos() as u64).unwrap_or(1),
             limits: StoreLimitsBuilder::new().memory_size(self.memory_limit).build(),
             limit: self.memory_limit,
+            stdout_limit: self.stdout_limit,
+            stdout_bytes: 0,
         };
         let mut store = Store::new(&self.engine, state);
         store.limiter(|s| &mut s.limits);
+        // Relative to the engine's current epoch, so ticks of earlier watchdogs do not count.
+        store.set_epoch_deadline(1);
+        let watchdog = self.timeout.map(|t| Watchdog::start(self.engine.clone(), t));
         let result = self.invoke_in(&mut store, export, args);
+        drop(watchdog);
+        let stdout_bytes = store.data().stdout_bytes.max(store.data().stdout.len());
         let stdout = String::from_utf8_lossy(&store.data().stdout).into_owned();
-        Outcome { result, stdout }
+        Outcome { result, stdout, stdout_bytes }
     }
 
     fn invoke_in(&self, store: &mut Store<HostState>, export: &str, args: &[Value]) -> Result<Value, RunError> {
@@ -205,16 +249,17 @@ impl Runner {
         let mut linker = Linker::new(&self.engine);
         host::link(&mut linker, &self.perms).map_err(|e| RunError::new("trap", &meta.name, e.to_string()))?;
         let instance = linker.instantiate(&mut *store, &self.module).map_err(|e| RunError::new("trap", &meta.name, e.to_string()))?;
-        let mem = instance.get_memory(&mut *store, "memory").expect("memory export");
+        let mem = memory_of(store, &instance).map_err(|m| RunError::new("trap", &meta.name, m))?;
         let mut params = Vec::new();
         for (i, (a, (pname, t))) in args.iter().zip(&meta.params).enumerate() {
             let slot = match self.encode(store, &instance, t, a) {
                 Ok(slot) => slot,
-                Err(_) if store.data().failure.is_some() => {
-                    let f = store.data().failure.expect("checked");
-                    return Err(self.describe(store, mem, &meta.name, f));
+                Err(m) => {
+                    return Err(match store.data().failure {
+                        Some(f) => self.describe(store, mem, &meta.name, f),
+                        None => RunError::new("bad_args", &meta.name, format!("argument {i} (`{pname}`): {m}")),
+                    })
                 }
-                Err(m) => return Err(RunError::new("bad_args", &meta.name, format!("argument {i} (`{pname}`): {m}"))),
             };
             params.push(match t {
                 Type::Int => Val::I64(slot),
@@ -241,6 +286,10 @@ impl Runner {
                         .hint("make the recursion tail-recursive: the recursive call must be the last thing the function does (functions with `ens` never use tail calls)"),
                     Some(Trap::OutOfFuel) => RunError::new("timeout", &meta.name, format!("instruction budget of {} exhausted", self.fuel))
                         .hint("look for unbounded recursion"),
+                    Some(Trap::Interrupt) => {
+                        let ms = self.timeout.map_or(0, |t| t.as_millis());
+                        RunError::new("timeout", &meta.name, format!("wall-clock limit of {ms} ms exceeded")).hint("look for unbounded recursion or very large intermediate values")
+                    }
                     _ => RunError::new("trap", &meta.name, e.to_string()),
                 },
             }),
@@ -248,7 +297,7 @@ impl Runner {
     }
 
     /// Writes an argument into guest memory (Str and List[...] are allocated) and returns its slot.
-    fn encode(&self, store: &mut Store<HostState>, instance: &wasmtime::Instance, t: &Type, v: &Value) -> Result<i64, String> {
+    fn encode(&self, store: &mut Store<HostState>, instance: &Instance, t: &Type, v: &Value) -> Result<i64, String> {
         Ok(match (t, v) {
             (Type::Int, Value::Int(n)) => *n,
             (Type::Float, Value::Float(x)) => x.to_bits() as i64,
@@ -256,7 +305,7 @@ impl Runner {
             (Type::Unit, Value::Unit) => 0,
             (Type::Str, Value::Str(s)) => {
                 let p = self.alloc(store, instance, 4 + s.len() as i64)?;
-                let mem = instance.get_memory(&mut *store, "memory").expect("memory export");
+                let mem = memory_of(store, instance)?;
                 mem.write(&mut *store, p as usize, &(s.len() as u32).to_le_bytes()).map_err(|e| e.to_string())?;
                 mem.write(&mut *store, p as usize + 4, s.as_bytes()).map_err(|e| e.to_string())?;
                 p as i64
@@ -267,7 +316,7 @@ impl Runner {
                     slots.push(self.encode(store, instance, elem, x)?);
                 }
                 let p = self.alloc(store, instance, 8 + 8 * xs.len() as i64)?;
-                let mem = instance.get_memory(&mut *store, "memory").expect("memory export");
+                let mem = memory_of(store, instance)?;
                 mem.write(&mut *store, p as usize, &(xs.len() as u32).to_le_bytes()).map_err(|e| e.to_string())?;
                 for (k, s) in slots.iter().enumerate() {
                     mem.write(&mut *store, p as usize + 8 + 8 * k, &s.to_le_bytes()).map_err(|e| e.to_string())?;
@@ -278,7 +327,7 @@ impl Runner {
         })
     }
 
-    fn alloc(&self, store: &mut Store<HostState>, instance: &wasmtime::Instance, size: i64) -> Result<i32, String> {
+    fn alloc(&self, store: &mut Store<HostState>, instance: &Instance, size: i64) -> Result<i32, String> {
         let f = instance.get_typed_func::<i64, i32>(&mut *store, "qal_alloc").map_err(|e| e.to_string())?;
         f.call(&mut *store, size).map_err(|e| e.to_string())
     }
@@ -309,21 +358,24 @@ impl Runner {
             return e;
         }
         if f.kind == FAIL_DENIED {
-            let name = qal_wasm::host::EFFECT_FNS[f.func as usize];
-            let effect = qal_wasm::host::effect(name).expect("effect fn");
+            let name = qal_wasm::host::EFFECT_FNS.get(f.func as usize).copied().unwrap_or("?");
+            let effect = qal_wasm::host::effect(name).unwrap_or("?");
             let flag = if effect == "fs" { "fs:<dir>" } else { effect };
             return RunError::new("permission_denied", entry, format!("`{name}` needs effect {effect} which was not granted"))
                 .hint(format!("grant it with `--allow {flag}`"));
         }
-        let meta: &FuncMeta = &self.meta.funcs[f.func as usize];
-        let site = &meta.sites[f.site as usize];
+        let site = usize::try_from(f.func).ok().and_then(|i| self.meta.funcs.get(i)).and_then(|m| Some((m, m.sites.get(usize::try_from(f.site).ok()?)?)));
+        let Some((meta, site)) = site else {
+            return RunError::new("trap", entry, format!("failure kind {} reported for an unknown site ({}, {})", f.kind, f.func, f.site));
+        };
+        let meta: &FuncMeta = meta;
         let values = self.values(store, mem, &site.values, f.vals);
         let def = meta.name.as_str();
         let mut e = match f.kind {
             FAIL_REQ | FAIL_ENS => {
                 let (label, list) = if f.kind == FAIL_REQ { ("req", &meta.req) } else { ("ens", &meta.ens) };
-                let index = site.contract.expect("contract site");
-                let text = print_expr(&list[index]);
+                let index = site.contract.unwrap_or(0);
+                let text = list.get(index).map(print_expr).unwrap_or_default();
                 let mut e = RunError::new("contract_violation", def, format!("`{label} {text}` of `{def}` is false"));
                 e.contract = Some(format!("{label}[{index}]: {text}"));
                 if f.kind == FAIL_REQ {
@@ -347,6 +399,42 @@ impl Runner {
         };
         e.values = values;
         e.at(&site.path)
+    }
+}
+
+/// The exported linear memory of an instance.
+fn memory_of(store: &mut Store<HostState>, instance: &Instance) -> Result<Memory, String> {
+    instance.get_memory(&mut *store, "memory").ok_or_else(|| "module has no memory export".to_string())
+}
+
+/// Increments the engine's epoch once `timeout` has passed, which interrupts the running call;
+/// dropping the watchdog before that stops it.
+struct Watchdog {
+    stop: Option<mpsc::Sender<()>>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl Watchdog {
+    fn start(engine: Engine, timeout: Duration) -> Watchdog {
+        let (stop, wait) = mpsc::channel::<()>();
+        let thread = std::thread::Builder::new()
+            .name("qal-watchdog".into())
+            .spawn(move || {
+                if let Err(mpsc::RecvTimeoutError::Timeout) = wait.recv_timeout(timeout) {
+                    engine.increment_epoch();
+                }
+            })
+            .ok();
+        Watchdog { stop: Some(stop), thread }
+    }
+}
+
+impl Drop for Watchdog {
+    fn drop(&mut self) {
+        drop(self.stop.take());
+        if let Some(t) = self.thread.take() {
+            let _ = t.join();
+        }
     }
 }
 

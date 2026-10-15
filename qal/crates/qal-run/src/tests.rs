@@ -140,8 +140,8 @@ fn main_gets_args_and_prints() {
                  Some(n) => { print(\"hello \" ++ n); print(from_int(len(args))); 0 },\n\
                }";
     let r = main_runner(src, "io");
-    assert_eq!(r.run_main(&["ada".into(), "x".into()]), Outcome { result: Ok(Value::Int(0)), stdout: "hello ada\n2\n".into() });
-    assert_eq!(r.run_main(&[]), Outcome { result: Ok(Value::Int(2)), stdout: "usage: hello <name>\n".into() });
+    assert_eq!(r.run_main(&["ada".into(), "x".into()]), Outcome { result: Ok(Value::Int(0)), stdout: "hello ada\n2\n".into(), stdout_bytes: 12 });
+    assert_eq!(r.run_main(&[]), Outcome { result: Ok(Value::Int(2)), stdout: "usage: hello <name>\n".into(), stdout_bytes: 20 });
 }
 
 #[test]
@@ -333,4 +333,120 @@ fn oversized_file_is_out_of_memory() {
     let r = main_runner(src, &format!("fs:{}", root.display())).with_memory_limit(1 << 20);
     let e = r.run_main(&[root.join("big.txt").to_string_lossy().into_owned()]).result.unwrap_err();
     assert_eq!((e.kind, e.def.as_str()), ("out_of_memory", "main"));
+}
+
+#[test]
+fn wall_clock_timeout_interrupts_and_the_runner_stays_usable() {
+    let r = runner("fn spin(n: Int) -> Int = spin(n + 1)\nfn one() -> Int = 1").with_fuel(u64::MAX).with_timeout(std::time::Duration::from_millis(200));
+    let t = std::time::Instant::now();
+    let e = r.call("spin", &[Value::Int(0)]).unwrap_err();
+    assert!(t.elapsed() < std::time::Duration::from_secs(5), "{:?}", t.elapsed());
+    assert_eq!((e.kind, e.code, e.message.as_str()), ("timeout", "E0507", "wall-clock limit of 200 ms exceeded"));
+    // The epoch tick of the first call does not interrupt the next one.
+    assert_eq!(r.call("one", &[]), Ok(Value::Int(1)));
+    assert_eq!(r.call("one", &[]), Ok(Value::Int(1)));
+}
+
+#[test]
+fn run_test_reports_one_test() {
+    let r = Runner::new(compile("test a = 1 == 1\ntest b = 1 / 0 == 0", Entry::Tests)).unwrap();
+    assert_eq!(r.run_test("test:a"), TestResult { name: "a".into(), passed: true, error: None });
+    let b = r.run_test("test:b");
+    assert_eq!((b.passed, b.error.map(|e| e.kind)), (false, Some("div_by_zero")));
+    assert_eq!(r.run_test("test:nope").error.map(|e| e.kind), Some("unknown_function"));
+}
+
+/// A main that reads (or, with a second argument, writes) the file named by its first argument.
+const FILE_PROGRAM: &str = "fn main(args: List[Str]) -> Int !fs !io = match get(args, 0) {\n\
+      None => 2,\n\
+      Some(p) => match get(args, 1) {\n\
+        None => match read_file(p) { Ok(s) => { print(s); 0 }, Err(e) => { print(e); 1 } },\n\
+        Some(c) => match write_file(p, c) { Ok(_) => 0, Err(e) => { print(e); 1 } },\n\
+      },\n\
+    }";
+
+#[cfg(unix)]
+#[test]
+fn fifos_in_granted_directories_do_not_block() {
+    let root = std::env::temp_dir().join(format!("qal-run-fifo-{}", std::process::id()));
+    std::fs::create_dir_all(&root).unwrap();
+    let fifo = root.join("pipe");
+    let _ = std::fs::remove_file(&fifo);
+    assert!(std::process::Command::new("mkfifo").arg(&fifo).status().unwrap().success());
+    let r = main_runner(FILE_PROGRAM, &format!("io,fs:{}", root.display()));
+    let path = fifo.to_string_lossy().into_owned();
+    let t = std::time::Instant::now();
+    let out = r.run_main(&[path.clone()]);
+    assert_eq!(out.result, Ok(Value::Int(1)));
+    assert_eq!(out.stdout, format!("{path}: not a regular file\n"));
+    // Writing: no reader, so the non-blocking open fails instead of waiting for one.
+    let out = r.run_main(&[path.clone(), "x".into()]);
+    assert_eq!(out.result, Ok(Value::Int(1)));
+    assert!(out.stdout.starts_with(&format!("{path}: ")), "{}", out.stdout);
+    assert!(t.elapsed() < std::time::Duration::from_secs(5));
+}
+
+#[test]
+fn confined_permissions_resolve_against_the_root_and_hide_dot_entries() {
+    let root = std::env::temp_dir().join(format!("qal-run-confined-{}", std::process::id()));
+    std::fs::create_dir_all(root.join("data")).unwrap();
+    std::fs::create_dir_all(root.join(".git")).unwrap();
+    std::fs::write(root.join("data/a.txt"), "A").unwrap();
+    std::fs::write(root.join(".git/config"), "secret").unwrap();
+    std::fs::write(root.join("data/.env"), "secret").unwrap();
+    let grant = |items: &[&str]| Permissions::parse_in(&items.iter().map(|s| s.to_string()).collect::<Vec<_>>(), &root);
+    // Directories are relative to the root and must stay inside it; hidden ones cannot be granted.
+    assert!(grant(&["fs:../"]).unwrap_err().contains("outside the project root"));
+    assert!(grant(&["fs:/"]).unwrap_err().contains("outside the project root"));
+    assert!(grant(&["fs:.git"]).unwrap_err().contains("hidden directories"));
+    assert!(grant(&["fs:nope"]).unwrap_err().contains("no such directory"));
+    assert!(grant(&["fs"]).unwrap_err().contains("needs a directory"));
+    assert!(grant(&["fs:"]).unwrap_err().contains("needs a directory"));
+    assert!(grant(&["fs: "]).unwrap_err().contains("needs a directory"));
+    assert!(grant(&["net"]).unwrap_err().contains("unknown effect"));
+    let whole = grant(&["io", "fs:."]).unwrap();
+    assert!(whole.io && whole.no_hidden && whole.base.is_some());
+    let r = main_runner(FILE_PROGRAM, "").with_permissions(whole);
+    let run = |args: &[&str]| {
+        let out = r.run_main(&args.iter().map(|s| s.to_string()).collect::<Vec<_>>());
+        (out.result.unwrap(), out.stdout)
+    };
+    // Guest paths are relative to the root, not the working directory.
+    assert_eq!(run(&["data/a.txt"]), (Value::Int(0), "A\n".into()));
+    let denied = |p: &str| (Value::Int(1), format!("permission denied: `{p}` is outside the allowed directories\n"));
+    assert_eq!(run(&[".git/config"]), denied(".git/config"));
+    assert_eq!(run(&["data/.env"]), denied("data/.env"));
+    assert_eq!(run(&["data/../.git/config"]), denied("data/../.git/config"));
+    assert_eq!(run(&[".git/hooks-pre-commit", "x"]), denied(".git/hooks-pre-commit"));
+    assert_eq!(run(&["../outside.txt", "x"]), denied("../outside.txt"));
+    assert!(!root.join("../outside.txt").exists());
+    // Absolute paths inside the root are fine.
+    let abs = root.join("data/a.txt").to_string_lossy().into_owned();
+    assert_eq!(run(&[&abs]), (Value::Int(0), "A\n".into()));
+    let narrow = grant(&["io", "fs:data"]).unwrap();
+    let r = main_runner(FILE_PROGRAM, "").with_permissions(narrow);
+    let out = r.run_main(&["data/b.txt".into(), "B".into()]);
+    assert_eq!(out.result, Ok(Value::Int(0)));
+    assert_eq!(std::fs::read_to_string(root.join("data/b.txt")).unwrap(), "B");
+}
+
+#[test]
+fn output_beyond_the_stdout_limit_is_counted_not_kept() {
+    let src = "fn main(args: List[Str]) -> Int !io = loop(0)\nfn loop(i: Int) -> Int !io = if i == 1000 then 7 else { print(\"0123456789\"); loop(i + 1) }";
+    let out = main_runner(src, "io").with_stdout_limit(25).run_main(&[]);
+    assert_eq!((out.result, out.stdout.as_str(), out.stdout_bytes), (Ok(Value::Int(7)), "0123456789\n0123456789\n012", 11_000));
+    // Without a limit the output is kept up to the memory limit, as before.
+    let out = main_runner(src, "io").run_main(&[]);
+    assert_eq!((out.stdout.len(), out.stdout_bytes), (11_000, 11_000));
+}
+
+#[test]
+fn large_functions_compile_in_linear_time() {
+    // Optimizing compilation took minutes for this (quadratic register allocation).
+    let items: Vec<String> = (0..30_000).map(|i| i.to_string()).collect();
+    let src = format!("fn main(args: List[Str]) -> Int = len([{}])", items.join(","));
+    let t = std::time::Instant::now();
+    let out = main_runner(&src, "").run_main(&[]);
+    assert_eq!(out.result, Ok(Value::Int(30_000)));
+    assert!(t.elapsed() < std::time::Duration::from_secs(20), "{:?}", t.elapsed());
 }
