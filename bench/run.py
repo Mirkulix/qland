@@ -62,7 +62,7 @@ def new_workdir(task, arm, run):
     """A fresh directory under a random name; replaces the entry's previous one (a repeated dispatch)."""
     dirs = workdirs()
     old = dirs.get(entry_key(task, arm, run))
-    if old:
+    if old and os.path.realpath(old).startswith(os.path.realpath(WORK) + os.sep):
         shutil.rmtree(old, ignore_errors=True)
     wd = os.path.join(os.path.realpath(WORK) if os.path.exists(WORK) else WORK, secrets.token_hex(8))
     os.makedirs(wd)
@@ -73,6 +73,17 @@ def new_workdir(task, arm, run):
         json.dump(dirs, f, indent=1)
         f.write("\n")
     return wd
+
+ARCHIVE = os.environ.get("BENCH_ARCHIVE", os.path.expanduser("~/.cache/qal-bench-archive"))
+
+def archive_workdir(wd, key, archive_root=None):
+    """Moves a finished work dir out of $BENCH_WORK (where later agents could stumble on it) into the
+    archive; returns the new path."""
+    root = archive_root or ARCHIVE
+    os.makedirs(root, exist_ok=True)
+    dest = os.path.join(root, f"{key}-{os.path.basename(wd)}")
+    shutil.move(wd, dest)
+    return dest
 
 def rules(template):
     """The shared part of a prompt template: everything before `## How to work`."""
@@ -147,13 +158,66 @@ def command_paths(cmd):
     words = re.split(r"[\s;|&<>()=`]+", cmd)
     return [w for w in words if w.startswith(("/", "~", "$HOME", "${HOME}")) or w == ".." or w.startswith("../") or "/../" in w or w.endswith("/..")]
 
+# Substrings that must not occur anywhere in a command (quoted text and heredoc bodies included):
+# they name the benchmark's tree, hidden tests, reference solutions or other agents' work dirs.
+FORBIDDEN = ("bench/", "/tasks/", "tasks/", "solutions/", "tests.json", "qal-bench", "$HOME", "${HOME}")
+
+def forbidden_in(text, wd, repo):
+    """Reasons why `text` (a command, or a Glob pattern) names something off limits; the agent's own
+    work dir is masked first."""
+    t = text.replace(wd, "<wd>")
+    why = [f"names `{f}`" for f in FORBIDDEN if f in t]
+    if repo in t:
+        why.append("names the repository")
+    if re.search(r"(^|[\s/='\"(;|&<>`])\.\.($|[\s/'\";|&<>)`])", t):
+        why.append("names `..`")
+    if re.search(r"(^|[\s='\"(;|&<>`])~", t):
+        why.append("names `~`")
+    return why
+
+def tool_violations(name, inp, wd, repo):
+    """Violations of one Read/Write/Edit/Glob/Grep call: an explicit absolute path inside the work dir
+    is required (the tools' default directory is the repository), and a Glob pattern must stay inside."""
+    v = []
+    keys = [k for k in ("file_path", "path", "notebook_path") if isinstance(inp.get(k), str)]
+    if name in ("Read", "Write", "Edit", "MultiEdit", "NotebookEdit") and not keys:
+        v.append(f"{name} without file_path")
+    if name in ("Glob", "Grep") and not isinstance(inp.get("path"), str):
+        v.append(f"{name} without an explicit path (it would search the repository)")
+    for k in keys:
+        p = inp[k]
+        if not os.path.isabs(p) or outside(p, wd):
+            v.append(f"{name} {k}={p} is not an absolute path inside the work dir")
+    if name == "Glob" and isinstance(inp.get("pattern"), str):
+        pat = inp["pattern"]
+        if os.path.isabs(pat) and outside(pat.split("*")[0].split("?")[0].split("[")[0].split("{")[0], wd):
+            v.append(f"Glob pattern outside the work dir: {pat}")
+        v += [f"Glob pattern {w}: {pat}" for w in forbidden_in(pat, wd, repo)]
+    if name == "Grep" and isinstance(inp.get("glob"), str):
+        v += [f"Grep glob {w}: {inp['glob']}" for w in forbidden_in(inp["glob"], wd, repo)]
+    return v
+
+def bash_violations(cmd, wd, repo, allowed_paths):
+    v = []
+    if not re.match(rf"\s*cd\s+(['\"]?){re.escape(wd)}\1\s*(&&|;)", cmd):
+        v.append(f"Bash command does not start with `cd {wd} &&`: {cmd[:120]}")
+    v += [f"Bash command {w}: {cmd[:200]}" for w in forbidden_in(cmd, wd, repo)]
+    for w in command_paths(cmd):
+        w2 = w.replace("${HOME}", "~").replace("$HOME", "~")
+        p = os.path.realpath(os.path.join(wd, os.path.expanduser(w2)))
+        if outside(w2, wd) and not (p + os.sep).startswith(SYSTEM_PREFIXES + allowed_paths) and not p.startswith(allowed_paths):
+            v.append(f"Bash command names a path outside the work dir: {w}")
+    return v
+
 def audit(agent_id, wd, arm):
     """Statistics of a subagent transcript: API calls and usage (deduplicated per message; the
     transcript's output_tokens are only those of the first streamed chunk, so the dispatch result's
     subagent_tokens stay the primary token measure), work tool calls (without the final
     SubagentHandback), failed tool calls (any error the toolchain reported: a tool error, `isError:
     true` from qalc.py, a Rust compile error, panic or failed `cargo test`), and rule violations (a
-    tool outside ALLOWED_TOOLS, a path outside the work dir, the repository path)."""
+    tool outside ALLOWED_TOOLS; a Bash call not starting with `cd <workdir> &&`; any forbidden substring
+    or path outside the work dir in a command, quoted text and heredocs included; a file tool or
+    Glob/Grep without an explicit path inside the work dir)."""
     path = transcript_path(agent_id)
     if path is None:
         return {"found": False}
@@ -183,9 +247,10 @@ def audit(agent_id, wd, arm):
     by_tool, failed, violations = {}, 0, []
     repo = os.path.realpath(REPO)
     allowed_paths = (os.path.realpath(os.path.join(WORK, "bin")) + os.sep,)
-    for name, _ in calls.values():
+    order = {cid: n for n, cid in enumerate(calls, 1)}
+    for cid, (name, _) in calls.items():
         if name not in ALLOWED_TOOLS:
-            violations.append(f"used tool {name}")
+            violations.append(f"call {order[cid]}: used tool {name}")
     calls = {k: v for k, v in calls.items() if v[0] != "SubagentHandback"}
     for cid, (name, inp) in calls.items():
         by_tool[name] = by_tool.get(name, 0) + 1
@@ -196,16 +261,13 @@ def audit(agent_id, wd, arm):
         if arm == "rust" and name == "Bash" and "cargo" in cmd:
             is_error = is_error or re.search(r"^error\[E\d+\]|^error: could not compile|panicked at|^test result: FAILED", text, re.M) is not None
         failed += is_error
-        for key in ("file_path", "path", "notebook_path"):
-            if isinstance(inp.get(key), str) and outside(inp[key], wd):
-                violations.append(f"{name} {key}={inp[key]}")
         if name == "Bash":
-            if repo in cmd.replace(wd, "<wd>"):
-                violations.append(f"Bash command names the repository: {cmd[:200]}")
-            for w in command_paths(cmd):
-                p = os.path.realpath(os.path.join(wd, os.path.expanduser(w.replace("${HOME}", "~").replace("$HOME", "~"))))
-                if outside(w.replace("${HOME}", "~").replace("$HOME", "~"), wd) and not (p + os.sep).startswith(SYSTEM_PREFIXES + allowed_paths) and not p.startswith(allowed_paths):
-                    violations.append(f"Bash command names a path outside the work dir: {w}")
+            found = bash_violations(cmd, wd, repo, allowed_paths)
+        elif name in ("Read", "Write", "Edit", "MultiEdit", "NotebookEdit", "Glob", "Grep"):
+            found = tool_violations(name, inp, wd, repo)
+        else:
+            found = []
+        violations += [f"call {order[cid]}: {x}" for x in found]
     return {"found": True, "path": path, "api_calls": len(usage), "tokens": tokens, "total_tokens": sum(tokens.values()),
             "tool_calls": len(calls), "over_budget": len(calls) > TOOL_BUDGET, "by_tool": by_tool, "failed_tool_calls": failed,
             "violations": violations}
@@ -224,6 +286,15 @@ def finish(task, arm, run, opts):
     rec = {"task": task, "arm": arm, "run": run, "attempt": int(opts["attempt"]), "agent_id": opts["agent-id"], "reply": opts["reply"],
            "dispatch": {"total_tokens": int(opts["subagent-tokens"]), "tool_uses": int(opts["tool-uses"]), "duration_ms": int(opts["duration-ms"])},
            "check": res, "passed": passed, "transcript": a, "valid": a.get("found", False) and not a.get("violations")}
+    final = passed or not rec["valid"] or rec["attempt"] >= MAX_ATTEMPTS
+    rec["archive"] = None
+    if final and os.path.isdir(wd):
+        rec["archive"] = archive_workdir(wd, entry_key(task, arm, run))
+        dirs = workdirs()
+        dirs[entry_key(task, arm, run)] = rec["archive"]
+        with open(WORKDIRS, "w", encoding="utf-8") as f:
+            json.dump(dirs, f, indent=1)
+            f.write("\n")
     with open(RESULTS, "a", encoding="utf-8") as f:
         f.write(json.dumps(rec) + "\n")
     check.show(res, False)

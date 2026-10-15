@@ -48,8 +48,8 @@ class Audit(unittest.TestCase):
     def test_payloads_in_heredocs_and_quotes_are_not_violations(self):
         wd = self.wd
         a = self.audit("qal", [
-            ("Bash", {"command": f"python3 {wd}/qalc.py define <<'EOF'\n# count all solutions in the bench, see /etc/x and ../y\nfn main(args: List[Str]) -> Int !io = 0\nEOF"}, "isError: false\n{}", False),
-            ("Bash", {"command": f"python3 {wd}/qalc.py call qal_run '{{\"stdin\": \"the bench is long ../x /tmp\\n\"}}'"}, "isError: true\n{}", False),
+            ("Bash", {"command": f"cd {wd} && python3 qalc.py define <<'EOF'\n# count all solutions in the bench, see /etc/x and a/b\nfn main(args: List[Str]) -> Int !io = 0\nEOF"}, "isError: false\n{}", False),
+            ("Bash", {"command": f"cd {wd} && python3 qalc.py call qal_run '{{\"stdin\": \"the bench is long /tmp\\n\"}}'"}, "isError: true\n{}", False),
             ("Bash", {"command": f"cd {wd} && mkdir -p data && printf 'a b\\n' > data/x.txt"}, "", False),
         ])
         self.assertEqual(a["violations"], [])
@@ -59,17 +59,20 @@ class Audit(unittest.TestCase):
     def test_paths_outside_the_work_dir_are_violations(self):
         wd = self.wd
         a = self.audit("rust", [
-            ("Bash", {"command": f"cat {wd}/../other/src/main.rs"}, "", False),
-            ("Bash", {"command": "ls /tmp"}, "", False),
+            ("Bash", {"command": f"cd {wd} && cat {wd}/../other/src/main.rs"}, "", False),
+            ("Bash", {"command": f"cd {wd} && ls /tmp"}, "", False),
             ("Bash", {"command": f"cd {wd} && cat ../x.prompt.md"}, "", False),
-            ("Bash", {"command": "cat ~/notes"}, "", False),
-            ("Bash", {"command": "cat \"/etc/passwd\""}, "", False),
+            ("Bash", {"command": f"cd {wd} && cat ~/notes"}, "", False),
+            ("Bash", {"command": f"cd {wd} && cat \"/etc/passwd\""}, "", False),
             ("Read", {"file_path": "/etc/hosts"}, "", False),
-            ("Bash", {"command": f"cat {run.REPO}/README"}, "", False),
+            ("Bash", {"command": f"cd {wd} && cat {run.REPO}/README"}, "", False),
             ("WebFetch", {"url": "https://example.org"}, "", False),
             ("Bash", {"command": f"cd {wd} && cargo build && /usr/bin/env ls"}, "", False),
         ])
-        self.assertEqual(len(a["violations"]), 9, a["violations"])
+        self.assertGreaterEqual(len(a["violations"]), 8, a["violations"])
+        for i in range(8):
+            self.assertTrue(any(v.startswith(f"call {i + 1}:") for v in a["violations"]), (i, a["violations"]))
+        self.assertFalse(any(v.startswith("call 9:") for v in a["violations"]), a["violations"])
         self.assertTrue(any("WebFetch" in v for v in a["violations"]))
 
     def test_rust_failures_are_compile_errors_panics_and_failed_tests_only(self):
@@ -81,6 +84,100 @@ class Audit(unittest.TestCase):
             ("Bash", {"command": f"cd {wd} && cargo test"}, "test result: FAILED. 1 passed; 1 failed\n", False),
         ])
         self.assertEqual((a["violations"], a["failed_tool_calls"]), ([], 3))
+
+    def flagged(self, calls, arm="rust"):
+        return self.audit(arm, calls)["violations"]
+
+    def test_leakage_probes_are_flagged(self):
+        wd = self.wd
+        T = "bench/tasks/01-word-count/tests.json"
+        probes = [
+            ("Bash", {"command": f"cd {wd} && cat {T}"}),
+            ("Bash", {"command": f"cd {wd} && grep -r tests.json ."}),
+            ("Bash", {"command": f"cd {wd} && ls solutions/rust"}),
+            ("Bash", {"command": f"cd {wd} && bash -c \"cat ../x\""}),
+            ("Bash", {"command": f"cd {wd} && python3 - <<'EOF'\nprint(open('{T}').read())\nEOF"}),
+            ("Bash", {"command": f"cd {wd} && cat \"$HOME/x\""}),
+            ("Bash", {"command": f"cd {wd} && ls /tmp/qal-bench"}),
+            ("Bash", {"command": f"cat {T}"}),
+            ("Bash", {"command": "find . -name '*.json'"}),
+            ("Bash", {"command": f"cd /tmp && ls"}),
+            ("Glob", {"pattern": "/Users/x/**/tests.json", "path": wd}),
+            ("Glob", {"pattern": "**/tests.json"}),
+            ("Glob", {"pattern": "../**", "path": wd}),
+            ("Grep", {"pattern": "expected"}),
+            ("Grep", {"pattern": "x", "path": "/Users/x"}),
+            ("Read", {"file_path": "src/main.rs"}),
+            ("Write", {"file_path": "/tmp/x.rs", "content": ""}),
+            ("Edit", {"file_path": f"{wd}/../x", "old_string": "a", "new_string": "b"}),
+        ]
+        for tool, inp in probes:
+            self.assertGreaterEqual(len(self.flagged([(tool, inp, "", False)])), 1, (tool, inp))
+
+    def test_normal_run_is_clean(self):
+        wd = self.wd
+        a = self.audit("rust", [
+            ("Write", {"file_path": f"{wd}/src/main.rs", "content": "fn main() { let _ = 1 / 2; println!(\"a/b\"); }"}, "", False),
+            ("Bash", {"command": f"cd {wd} && cargo build 2>&1 | tail -5"}, "", False),
+            ("Bash", {"command": f"cd {wd} && printf 'x\\n' > in.txt && cargo run -q < in.txt"}, "", False),
+            ("Bash", {"command": f"cd {wd} && cat > src/main.rs <<'EOF'\nfn main() {{ for i in 0..3 {{ println!(\"{{}}\", i / 2); }} }}\nEOF"}, "", False),
+            ("Read", {"file_path": f"{wd}/src/main.rs"}, "", False),
+            ("Edit", {"file_path": f"{wd}/src/main.rs", "old_string": "a", "new_string": "b"}, "", False),
+            ("Glob", {"pattern": "**/*.rs", "path": wd}, "", False),
+            ("Glob", {"pattern": f"{wd}/src/*.rs", "path": wd}, "", False),
+            ("Grep", {"pattern": "fn main", "path": wd}, "", False),
+            ("Bash", {"command": f"cd {wd} && /usr/bin/env ls"}, "", False),
+            ("ToolSearch", {"query": "select:Bash"}, "", False),
+        ])
+        self.assertEqual(a["violations"], [])
+
+    def test_missing_cd_is_a_violation(self):
+        v = self.flagged([("Bash", {"command": "cargo build"}, "", False)])
+        self.assertEqual(len(v), 1)
+        self.assertIn("cd", v[0])
+
+class Archive(unittest.TestCase):
+    def test_final_results_move_the_work_dir_to_the_archive(self):
+        tmp = tempfile.mkdtemp()
+        try:
+            wd = os.path.join(tmp, "work", "abc")
+            os.makedirs(wd)
+            open(os.path.join(wd, "f"), "w").close()
+            dest = run.archive_workdir(wd, "t-qal-run1", archive_root=os.path.join(tmp, "arch"))
+            self.assertFalse(os.path.exists(wd))
+            self.assertTrue(os.path.exists(os.path.join(dest, "f")))
+            self.assertTrue(dest.startswith(os.path.join(tmp, "arch")))
+        finally:
+            shutil.rmtree(tmp)
+
+class Robustness(unittest.TestCase):
+    def test_client_request_times_out(self):
+        tmp = tempfile.mkdtemp()
+        try:
+            fake = os.path.join(tmp, "fake")
+            with open(fake, "w") as f:
+                f.write("#!/bin/sh\nsleep 30\n")
+            os.chmod(fake, 0o755)
+            old = qalc.REQUEST_TIMEOUT
+            qalc.REQUEST_TIMEOUT = 1
+            try:
+                with self.assertRaises(RuntimeError):
+                    qalc.Client(root=tmp, binary=fake)
+            finally:
+                qalc.REQUEST_TIMEOUT = old
+        finally:
+            shutil.rmtree(tmp)
+
+    def test_run_limited_caps_output_and_kills_the_group(self):
+        import time
+        t = time.time()
+        rc, out, timed_out = check.run_limited(["sh", "-c", "yes"], cwd="/", stdin=b"", timeout=5, cap=1000)
+        self.assertTrue(len(out) > 1000 and len(out) < 1 << 20 and not timed_out)
+        rc, out, timed_out = check.run_limited(["sh", "-c", "sleep 30 & sleep 30"], cwd="/", stdin=b"", timeout=1, cap=1000)
+        self.assertTrue(timed_out)
+        self.assertLess(time.time() - t, 15)
+        rc, out, timed_out = check.run_limited(["sh", "-c", "cat; exit 3"], cwd="/", stdin=b"hi\n", timeout=5, cap=1000)
+        self.assertEqual((rc, out, timed_out), (3, b"hi\n", False))
 
 class Checker(unittest.TestCase):
     def test_output_must_match_exactly(self):
@@ -138,6 +235,13 @@ class Report(unittest.TestCase):
         runs = report.runs_of([self.rec("t", "qal", 1, True, 10, valid=False), self.rec("t", "qal", 1, False, 20), self.rec("t", "qal", 2, True, 30)])
         r = runs[("t", "qal", 1)]
         self.assertEqual((r["attempts"], r["tokens"], r["passed"], r["first_pass"], r["valid"]), (2, 30, True, False, True))
+
+    def test_over_budget_runs_are_listed(self):
+        rec = self.rec("t", "qal", 1, True, 10)
+        rec["transcript"]["over_budget"] = True
+        lines = report.over_budget_lines(report.runs_of([rec, self.rec("u", "rust", 1, True, 10)]))
+        self.assertEqual(len(lines), 1)
+        self.assertIn("t qal", lines[0])
 
     def test_winner_ranks_by_solve_rate_then_tokens(self):
         a = lambda passed, tokens: {"passed": passed, "tokens": tokens}

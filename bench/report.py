@@ -46,6 +46,11 @@ def runs_of(recs):
         s["first_pass"] = s.get("first_pass") or (r["passed"] and r["attempt"] == 1)
     return out
 
+def over_budget_lines(runs):
+    """Runs over the tool-call budget: counted like any valid run, but listed."""
+    return [f"- {k[0]} {k[1]} run {k[2]}: {v['tool_uses']} tool calls ({'valid' if v['valid'] else 'invalid'}, {'solved' if v['passed'] else 'not solved'})"
+            for k, v in sorted(runs.items()) if v.get("over_budget")]
+
 def fmt_k(n):
     return f"{n / 1000:.1f}k"
 
@@ -123,6 +128,9 @@ def main():
     invalid = {k: v for k, v in runs.items() if not v["valid"]}
     if invalid:
         md += ["## Invalid runs (not counted)\n"] + [f"- {k[0]} {k[1]} run {k[2]}: {'; '.join(v['violations'][:3]) or 'transcript not found'}" for k, v in sorted(invalid.items())] + [""]
+    over = over_budget_lines(runs)
+    if over:
+        md += ["## Runs over the 60-tool-call budget (counted, not invalid)\n"] + over + [""]
     md += ["## Threats to validity\n",
            "- **Prior knowledge:** the model has seen a great deal of Rust and no QAL; the QAL arm learns the language from the tool descriptions in its prompt.",
            "- **Prompt size:** the QAL prompt carries the MCP tool descriptions (the language reference, about 11 KB) that an MCP client would put in context; "

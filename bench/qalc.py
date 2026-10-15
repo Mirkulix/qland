@@ -16,12 +16,15 @@ gives an agent a copy with both fixed.
 
 import json
 import os
+import select
 import subprocess
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 BIN = os.environ.get("QAL_BIN") or os.path.join(os.path.dirname(HERE), "qal", "target", "release", "qal")
 ROOT = os.environ.get("QAL_ROOT") or os.getcwd()
+
+REQUEST_TIMEOUT = 60  # seconds to wait for one server answer
 
 class Client:
     """One `qal mcp` server process speaking MCP (initialize handshake, then tools/*)."""
@@ -42,6 +45,12 @@ class Client:
     def request(self, method, params):
         self.next_id += 1
         self.send({"jsonrpc": "2.0", "id": self.next_id, "method": method, "params": params})
+        if not select.select([self.p.stdout], [], [], REQUEST_TIMEOUT)[0]:
+            self.p.kill()
+            self.p.wait()
+            self.p.stdin.close()
+            self.p.stdout.close()
+            raise RuntimeError(f"the QAL server did not answer within {REQUEST_TIMEOUT} s")
         line = self.p.stdout.readline()
         if not line:
             raise RuntimeError("the QAL server exited without answering")

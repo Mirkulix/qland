@@ -17,10 +17,12 @@ allow ["io"] (plus "fs:data" for file tasks), exactly as an agent can.
 import json
 import os
 import re
+import signal
 import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 
 BENCH = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(BENCH)
@@ -98,6 +100,50 @@ def check_qal(task, root=None, source=None):
         finally:
             c.close()
 
+def run_limited(cmd, cwd, stdin, timeout, cap, env=None):
+    """Runs cmd in its own process group; stdout is streamed and cut at cap+1 bytes (the group is killed
+    once it is exceeded), the whole group is killed at the timeout. Returns (returncode, stdout, timed_out)."""
+    p = subprocess.Popen(cmd, cwd=cwd, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, start_new_session=True)
+    chunks, size, over = [], [0], threading.Event()
+
+    def kill():
+        try:
+            os.killpg(p.pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
+
+    def feed():
+        try:
+            p.stdin.write(stdin)
+            p.stdin.close()
+        except (BrokenPipeError, OSError):
+            pass
+
+    def drain():
+        while True:
+            b = os.read(p.stdout.fileno(), 65536)
+            if not b:
+                return
+            chunks.append(b)
+            size[0] += len(b)
+            if size[0] > cap:
+                over.set()
+                kill()
+                return
+
+    threads = [threading.Thread(target=feed, daemon=True), threading.Thread(target=drain, daemon=True)]
+    for t in threads:
+        t.start()
+    threads[1].join(timeout)
+    timed_out = threads[1].is_alive()
+    if timed_out:
+        kill()
+    kill()  # stray children holding the pipe
+    threads[1].join(5)
+    p.stdout.close()
+    p.wait()
+    return p.returncode, b"".join(chunks), timed_out and not over.is_set()
+
 def check_rust(task, project):
     spec = load(task)
     cases = spec["cases"]
@@ -119,12 +165,8 @@ def check_rust(task, project):
             shutil.rmtree(cwd, ignore_errors=True)
             os.makedirs(cwd)
             write_files(cwd, case["files"])
-            try:
-                p = subprocess.run([exe] + case["args"], cwd=cwd, input=case["stdin"].encode(), capture_output=True, timeout=TIMEOUT)
-                stdout = p.stdout[:MAX_OUTPUT + 1].decode("utf-8", errors="replace")
-                ok = len(p.stdout) <= MAX_OUTPUT and p.returncode == case["exit_code"] and stdout == case["stdout"]
-            except subprocess.TimeoutExpired:
-                ok = False
+            code, out, timed_out = run_limited([exe] + case["args"], cwd, case["stdin"].encode(), TIMEOUT, MAX_OUTPUT)
+            ok = not timed_out and len(out) <= MAX_OUTPUT and code == case["exit_code"] and out.decode("utf-8", errors="replace") == case["stdout"]
             if not ok:
                 failed.append(case["name"])
         return result(task, "rust", cases, failed)
