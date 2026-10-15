@@ -19,9 +19,13 @@ use crate::lexer::{lex, Tok, Token, KEYWORDS};
 use qal_core::ast::*;
 use qal_core::diag::Diagnostic;
 
+/// Maximum AST height (and parser nesting). Every later stage only sees parser-built ASTs and
+/// recurses over them, so bounding this here bounds recursion everywhere.
+const MAX_DEPTH: usize = 256;
+
 pub fn parse_program(src: &str) -> Result<Program, Diagnostic> {
     let tokens = lex(src)?;
-    let mut p = Parser { tokens, pos: 0 };
+    let mut p = Parser { tokens, pos: 0, depth: 0, height: 0 };
     let mut defs = Vec::new();
     while p.peek() != &Tok::Eof {
         defs.push(p.def()?);
@@ -32,6 +36,10 @@ pub fn parse_program(src: &str) -> Result<Program, Diagnostic> {
 struct Parser {
     tokens: Vec<Token>,
     pos: usize,
+    /// Current recursion depth of expr()/unary().
+    depth: usize,
+    /// Height of the AST most recently built.
+    height: usize,
 }
 
 impl Parser {
@@ -50,6 +58,20 @@ impl Parser {
     fn err_here(&self, message: impl Into<String>) -> Diagnostic {
         let t = &self.tokens[self.pos];
         Diagnostic::parse(t.line, t.col, message)
+    }
+
+    #[cold]
+    fn too_deep(&self) -> Diagnostic {
+        self.err_here(format!("expression nested too deeply (max {MAX_DEPTH} levels)"))
+    }
+
+    /// Records a new AST node whose tallest child has height `child`.
+    fn node(&mut self, child: usize) -> Result<(), Diagnostic> {
+        self.height = child + 1;
+        if self.height > MAX_DEPTH {
+            return Err(self.too_deep());
+        }
+        Ok(())
     }
 
     fn describe(tok: &Tok) -> String {
@@ -162,25 +184,53 @@ impl Parser {
     }
 
     fn expr(&mut self) -> Result<Expr, Diagnostic> {
+        self.depth += 1;
+        if self.depth > MAX_DEPTH {
+            return Err(self.too_deep());
+        }
+        let e = self.expr_inner();
+        self.depth -= 1;
+        e
+    }
+
+    fn expr_inner(&mut self) -> Result<Expr, Diagnostic> {
         if self.is_kw("let") {
+            self.let_expr()
+        } else if self.is_kw("if") {
+            self.if_expr()
+        } else {
+            self.binary(1)
+        }
+    }
+
+    // let/if/call/paren live in their own functions so the frames on the common recursion path stay small.
+    fn let_expr(&mut self) -> Result<Expr, Diagnostic> {
+        {
             self.next();
             let name = self.ident()?;
             self.expect_sym("=")?;
             let value = self.expr()?;
             self.expect_kw("in")?;
+            let value_h = self.height;
             let body = self.expr()?;
-            return Ok(Expr::Let(name, Box::new(value), Box::new(body)));
+            self.node(value_h.max(self.height))?;
+            Ok(Expr::Let(name, Box::new(value), Box::new(body)))
         }
-        if self.is_kw("if") {
+    }
+
+    fn if_expr(&mut self) -> Result<Expr, Diagnostic> {
+        {
             self.next();
             let c = self.expr()?;
+            let mut h = self.height;
             self.expect_kw("then")?;
             let t = self.expr()?;
+            h = h.max(self.height);
             self.expect_kw("else")?;
             let e = self.expr()?;
-            return Ok(Expr::If(Box::new(c), Box::new(t), Box::new(e)));
+            self.node(h.max(self.height))?;
+            Ok(Expr::If(Box::new(c), Box::new(t), Box::new(e)))
         }
-        self.binary(1)
     }
 
     fn peek_binop(&self) -> Option<BinOp> {
@@ -211,12 +261,14 @@ impl Parser {
                 break;
             }
             self.next();
+            let lhs_h = self.height;
             let rhs = self.binary(prec + 1)?;
+            self.node(lhs_h.max(self.height))?;
             lhs = Expr::Bin(op, Box::new(lhs), Box::new(rhs));
             if prec == 3 {
                 if let Some(next) = self.peek_binop() {
                     if next.precedence() == 3 {
-                        return Err(self.err_here("comparisons cannot be chained; use `&&`"));
+                        return Err(self.chained());
                     }
                 }
             }
@@ -224,61 +276,89 @@ impl Parser {
         Ok(lhs)
     }
 
+    #[cold]
+    fn chained(&self) -> Diagnostic {
+        self.err_here("comparisons cannot be chained; use `&&`")
+    }
+
     fn unary(&mut self) -> Result<Expr, Diagnostic> {
-        if self.is_sym("-") {
-            self.next();
-            return Ok(Expr::Un(UnOp::Neg, Box::new(self.unary()?)));
+        let op = if self.is_sym("-") {
+            UnOp::Neg
+        } else if self.is_sym("!") {
+            UnOp::Not
+        } else {
+            return self.atom();
+        };
+        self.next();
+        self.depth += 1;
+        if self.depth > MAX_DEPTH {
+            return Err(self.too_deep());
         }
-        if self.is_sym("!") {
-            self.next();
-            return Ok(Expr::Un(UnOp::Not, Box::new(self.unary()?)));
-        }
-        self.atom()
+        let inner = self.unary()?;
+        self.depth -= 1;
+        self.node(self.height)?;
+        Ok(Expr::Un(op, Box::new(inner)))
     }
 
     fn atom(&mut self) -> Result<Expr, Diagnostic> {
         match self.peek().clone() {
             Tok::Int(n) => {
                 self.next();
+                self.height = 1;
                 Ok(Expr::Int(n))
             }
             Tok::Ident(s) if s == "true" => {
                 self.next();
+                self.height = 1;
                 Ok(Expr::Bool(true))
             }
             Tok::Ident(s) if s == "false" => {
                 self.next();
+                self.height = 1;
                 Ok(Expr::Bool(false))
             }
-            Tok::Sym("(") => {
-                self.next();
-                if self.is_sym(")") {
-                    self.next();
-                    return Ok(Expr::Unit);
-                }
-                let e = self.expr()?;
-                self.expect_sym(")")?;
-                Ok(e)
-            }
-            Tok::Ident(_) => {
-                let name = self.ident()?;
-                if self.is_sym("(") {
-                    self.next();
-                    let mut args = Vec::new();
-                    while !self.is_sym(")") {
-                        args.push(self.expr()?);
-                        if !self.is_sym(")") {
-                            self.expect_sym(",")?;
-                        }
-                    }
-                    self.expect_sym(")")?;
-                    Ok(Expr::Call(name, args))
-                } else {
-                    Ok(Expr::Var(name))
-                }
-            }
-            other => Err(self.err_here(format!("expected an expression, found {}", Self::describe(&other)))),
+            Tok::Sym("(") => self.paren(),
+            Tok::Ident(_) => self.name_or_call(),
+            other => Err(self.expected_expr(&other)),
         }
+    }
+
+    #[cold]
+    fn expected_expr(&self, found: &Tok) -> Diagnostic {
+        self.err_here(format!("expected an expression, found {}", Self::describe(found)))
+    }
+
+    fn paren(&mut self) -> Result<Expr, Diagnostic> {
+        self.next();
+        if self.is_sym(")") {
+            self.next();
+            self.height = 1;
+            return Ok(Expr::Unit);
+        }
+        let e = self.expr()?;
+        self.expect_sym(")")?;
+        Ok(e)
+    }
+
+    fn name_or_call(&mut self) -> Result<Expr, Diagnostic> {
+        let name = self.ident()?;
+        if !self.is_sym("(") {
+            self.height = 1;
+            return Ok(Expr::Var(name));
+        }
+        self.next();
+        let mut args = Vec::new();
+        let mut h = 0;
+        while !self.is_sym(")") {
+            args.push(self.expr()?);
+            h = h.max(self.height);
+            if !self.is_sym(")") {
+                self.expect_sym(",")?;
+            }
+        }
+        self.expect_sym(")")?;
+        self.node(h)?;
+        Ok(Expr::Call(name, args))
     }
 }
 
@@ -339,6 +419,52 @@ mod tests {
         assert!(e.message.contains("chained"), "{}", e.message);
         let e = parse_program("fn f() -> Float = 1").unwrap_err();
         assert!(e.message.contains("expected a type"), "{}", e.message);
+    }
+
+    /// Debug-build parser frames are large; give deep-but-legal inputs more room than a 2 MiB test thread.
+    fn parse_big_stack(src: String) -> Result<Program, Diagnostic> {
+        std::thread::Builder::new().stack_size(32 << 20).spawn(move || parse_program(&src)).unwrap().join().unwrap()
+    }
+
+    fn rejects_deep(src: String) {
+        let e = parse_big_stack(src).unwrap_err();
+        assert_eq!(e.kind, "parse");
+        assert!(e.message.contains("nested too deeply (max 256 levels)"), "{}", e.message);
+    }
+
+    #[test]
+    fn rejects_deeply_nested_parens() {
+        let n = 10_000;
+        rejects_deep(format!("test t = {}1{}", "(".repeat(n), ")".repeat(n)));
+    }
+
+    #[test]
+    fn rejects_long_operator_chain() {
+        let mut src = String::from("test t = 1");
+        for _ in 0..10_000 {
+            src.push_str(" + 1");
+        }
+        rejects_deep(src);
+    }
+
+    #[test]
+    fn rejects_long_unary_chain() {
+        rejects_deep(format!("test t = {}1", "-".repeat(10_000)));
+    }
+
+    #[test]
+    fn rejects_deeply_nested_lets() {
+        rejects_deep(format!("test t = {}1", "let x = 1 in ".repeat(10_000)));
+    }
+
+    #[test]
+    fn accepts_moderate_chains_and_nesting() {
+        let mut src = String::from("test t = 1");
+        for _ in 0..200 {
+            src.push_str(" + 1");
+        }
+        parse_big_stack(src).unwrap();
+        parse_big_stack(format!("test t = {}1{}", "(".repeat(200), ")".repeat(200))).unwrap();
     }
 
     #[test]

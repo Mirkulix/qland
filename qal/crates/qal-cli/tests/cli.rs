@@ -79,3 +79,13 @@ fn usage_and_io_errors_exit_2() {
     assert_eq!(qal(&["check", "/nonexistent/x.qal"]).0, 2);
     assert_eq!(qal(&["frobnicate", &example()]).0, 2);
 }
+
+#[test]
+fn check_rejects_deeply_nested_input_with_json_diagnostic() {
+    let src = format!("test t = {}1{} == 1\n", "(".repeat(10_000), ")".repeat(10_000));
+    let file = temp_file("deep.qal", &src);
+    let (code, v) = qal_json(&["check", &file]);
+    assert_eq!(code, 1);
+    assert_eq!(v["diagnostics"][0]["kind"], "parse");
+    assert!(v["diagnostics"][0]["message"].as_str().unwrap().contains("nested too deeply"), "{v}");
+}
