@@ -79,6 +79,16 @@ impl Diagnostic {
         )
         .hint(format!("add `!{}` to the signature of `{def}`", missing.join(" !")))
     }
+
+    pub fn non_exhaustive(def: &str, path: &str, missing: &str) -> Self {
+        Diagnostic::new("E0205", "non_exhaustive_match", def, path, format!("match does not cover `{missing}`"))
+            .hint(format!("add an arm `{missing} => ...` or a final `_ => ...` arm"))
+    }
+
+    pub fn missing_field(def: &str, path: &str, record: &str, field: &str) -> Self {
+        Diagnostic::new("E0206", "type_mismatch", def, path, format!("`{record}` needs field `{field}`"))
+            .hint(format!("add `{field}: ...` to the `{record} {{ ... }}` literal"))
+    }
 }
 
 #[cfg(test)]
@@ -100,5 +110,14 @@ mod tests {
         let p = serde_json::to_value(Diagnostic::parse(3, 7, "unexpected `)`")).unwrap();
         assert!(p.get("expected").is_none());
         assert_eq!(p["path"], "3:7");
+    }
+
+    #[test]
+    fn match_and_record_diagnostics() {
+        let d = Diagnostic::non_exhaustive("f", "body", "Some(_)");
+        assert_eq!((d.code, d.kind, d.message.as_str()), ("E0205", "non_exhaustive_match", "match does not cover `Some(_)`"));
+        assert_eq!(d.hints, vec!["add an arm `Some(_) => ...` or a final `_ => ...` arm".to_string()]);
+        let d = Diagnostic::missing_field("f", "body", "User", "id");
+        assert_eq!((d.code, d.kind), ("E0206", "type_mismatch"));
     }
 }
