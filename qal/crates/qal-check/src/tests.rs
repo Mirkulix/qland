@@ -244,3 +244,24 @@ fn runtime_export_names_are_reserved() {
     assert_eq!(kinds("fn memory() -> Int = 1")[0].0, "duplicate_name");
     assert_eq!(one("fn qal_alloc() -> Int = 1").hints, vec!["`qal_alloc` is reserved by the runtime".to_string()]);
 }
+
+#[test]
+fn effects_are_contravariant_in_parameter_position() {
+    let src = "fn hi() -> Unit !io = print(\"hi\")\n\
+               fn h(cb: fn() -> Unit) -> Unit = cb()\n\
+               fn g(k: fn(fn() -> Unit !io) -> Unit) -> Unit = k(hi)\n\
+               fn run() -> Unit = g(h)";
+    assert!(!check_src(src).is_empty());
+    let ok = "fn h(cb: fn() -> Unit !io) -> Unit !io = cb()\n\
+              fn g(k: fn(fn() -> Unit) -> Unit !io) -> Unit !io = k(h2)\n\
+              fn h2() -> Unit = ()\n\
+              fn run() -> Unit !io = g(h)";
+    assert_eq!(check_src(ok), vec![]);
+}
+
+#[test]
+fn duplicate_fields_in_record_patterns_are_rejected() {
+    let src = "type R = { x: Bool }\nfn f(p: R) -> Int = match p { R { x: true, x: false } => 1, R { x: false } => 2 }";
+    let k = kinds(src);
+    assert_eq!(k[0], ("duplicate_name", "f".into(), "body.arms[0].pattern.fields.x".into()));
+}

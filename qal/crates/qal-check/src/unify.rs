@@ -68,7 +68,8 @@ impl Subst {
             (Type::Result(a1, b1), Type::Result(a2, b2)) => self.unify(a1, a2) && self.unify(b1, b2),
             (Type::Fn(p1, r1, e1), Type::Fn(p2, r2, e2)) => {
                 p1.len() == p2.len()
-                    && p1.iter().zip(p2).all(|(x, y)| self.unify(x, y))
+                    // Parameters are contravariant: effect subtyping flips.
+                    && p1.iter().zip(p2).all(|(x, y)| self.unify(y, x))
                     && self.unify(r1, r2)
                     && e2.iter().all(|e| e1.contains(e))
             }

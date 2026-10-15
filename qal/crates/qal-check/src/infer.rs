@@ -428,8 +428,14 @@ impl<'a> Cx<'a> {
                     return TPat::Wild;
                 }
                 let mut out = Vec::new();
+                let mut seen: Vec<&String> = Vec::new();
                 for (f, p) in fs {
                     let fp = format!("{path}.fields.{f}");
+                    if seen.contains(&f) {
+                        self.diags.push(Diagnostic::duplicate_name(self.def, &fp, f));
+                        continue;
+                    }
+                    seen.push(f);
                     match decl.iter().position(|(n, _)| n == f) {
                         Some(i) => out.push((i as u32, self.pattern(p, &decl[i].1, &fp, bound))),
                         None => self.diags.push(Diagnostic::unknown_name(self.def, &fp, f)),
