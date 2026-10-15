@@ -109,6 +109,22 @@ impl Prepared {
     }
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Tests: write like a store from before Phase 3, which did not reserve the prelude names.
+    pub(crate) static LEGACY_WRITER: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+#[cfg(test)]
+fn legacy_writer() -> bool {
+    LEGACY_WRITER.with(|c| c.get())
+}
+
+#[cfg(not(test))]
+fn legacy_writer() -> bool {
+    false
+}
+
 /// Assembles the input with the stored codebase, enforces the replacement rule, checks and hashes.
 fn prepare(tx: &Transaction, input: &Program) -> Result<Prepared, Vec<Diagnostic>> {
     let snap = Snapshot::load(tx)?;
@@ -121,7 +137,8 @@ fn prepare(tx: &Transaction, input: &Program) -> Result<Prepared, Vec<Diagnostic
     let stored = snap.program(tx, &|n| input_names.contains(n))?;
     let mut combined = stored;
     combined.defs.extend(input.defs.iter().cloned());
-    let typed = qal_check::check(&combined)?;
+    // Only the definitions written now may not take prelude names (older stored ones keep working).
+    let typed = qal_check::check_stored(&combined, &|n| input_names.contains(n) && !legacy_writer())?;
 
     let hashed = hash(&combined)?;
     identical_types(&hashed.defs)?;

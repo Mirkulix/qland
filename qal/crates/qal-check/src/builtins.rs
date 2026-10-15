@@ -13,6 +13,11 @@ impl Cx<'_> {
         }
         let (a, b) = (self.sub.fresh(), self.sub.fresh());
         let (builtin, params, ret) = signature(name, a, b)?;
+        if !self.g.prelude && matches!(builtin, Builtin::Http | Builtin::DbExec | Builtin::DbQuery) {
+            self.diags.push(Diagnostic::prelude_shadowed(self.def, path, name));
+            self.infer_all(args, path);
+            return Some(self.poison());
+        }
         // Bound before the arguments bind `a`/`b`, so the result's depth stays tracked.
         let ret = self.sub.wrap(ret);
         if args.len() != params.len() {

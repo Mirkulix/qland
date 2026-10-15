@@ -230,6 +230,13 @@ impl Diagnostic {
             .hint("prelude types (HttpHeader, HttpRequest, HttpResponse, HttpCall, NetError, SqlValue, DbRows, DbError) and their variants exist in every program; choose another name")
     }
 
+    /// `http`/`db_exec`/`db_query` in a legacy codebase whose own definitions take prelude names
+    /// (stored before Phase 3): the prelude types those built-ins use are not available.
+    pub fn prelude_shadowed(def: &str, path: &str, callee: &str) -> Self {
+        Diagnostic::new("E0240", "reserved_name", def, path, format!("`{callee}` needs the prelude types, but this codebase defines prelude names itself"))
+            .hint("rename the stored types (qal_rename) or redefine the enums whose names or variants are prelude names (HttpHeader, HttpRequest, HttpResponse, HttpCall, NetError, SqlValue, DbRows, DbError and their variants)")
+    }
+
     /// The `sql` argument of `db_exec` / `db_query` is not a string literal.
     pub fn sql_not_literal(def: &str, path: &str, callee: &str) -> Self {
         Diagnostic::new("E0241", "sql_not_literal", def, path, format!("the SQL text of `{callee}` must be a string literal"))

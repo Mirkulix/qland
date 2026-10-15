@@ -174,7 +174,7 @@ pub fn rename(conn: &mut Connection, old: &str, new: &str, agent: &str) -> Resul
     // hash exactly as before.
     let renamed = snap.renamed(old, new);
     let program = renamed.program(&tx, &|_| false)?;
-    if let Err(diags) = qal_check::check(&program) {
+    if let Err(diags) = qal_check::check_stored(&program, &|n| n == new) {
         // Other definitions named like built-ins (stored before those built-ins existed) do not
         // block the rename: they are renamed one at a time.
         let rest: Vec<Diagnostic> = diags.into_iter().filter(|d| !(d.is_builtin_name() && d.def != new)).collect();

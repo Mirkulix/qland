@@ -1018,6 +1018,39 @@ fn an_empty_package_is_valid_and_old_stores_are_migrated() {
 }
 
 #[test]
+fn stores_with_definitions_named_like_prelude_types_keep_working_and_can_be_repaired() {
+    // Final review I2: types and variants with names the prelude reserves were legal before
+    // Phase 3. Written here like an older version would have.
+    let mut s = store();
+    let legacy = "type HttpHeader = { name: Str, value: Str }\ntype Status = SqlNull | Ok2\n\
+                  fn hv(h: HttpHeader) -> Str = h.value\nfn st(s: Status) -> Int = match s { SqlNull => 0, Ok2 => 1 }\n\
+                  test t = st(Ok2) == 1 && hv(HttpHeader { name: \"a\", value: \"b\" }) == \"b\"";
+    crate::define::LEGACY_WRITER.with(|c| c.set(true));
+    let written = s.define(legacy, "old");
+    crate::define::LEGACY_WRITER.with(|c| c.set(false));
+    written.unwrap();
+    let before = hashes(&mut s);
+    // The codebase still checks (without the prelude), so it can be run, tested and extended.
+    let p = s.program().unwrap();
+    let tp = qal_check::check_stored(&p, &|_| false).unwrap();
+    assert!(tp.types.iter().all(|t| t.name != "HttpRequest"), "no prelude in a legacy codebase");
+    assert!(qal_check::check(&p).is_err(), "a fresh program may not take the names");
+    ok(&mut s, "fn other() -> Int = 1");
+    // Services are refused until the names are gone; so are new definitions with prelude names.
+    let d = err(&mut s, "fn q() -> Result[Int, Str] !db = Ok(0)\nfn bad() -> Int !db = match db_exec(\"SELECT 1\", []) { Ok(n) => n, Err(_) => 0 }");
+    assert_eq!((d[0].code, d[0].def.as_str()), ("E0240", "bad"));
+    assert_eq!(err(&mut s, "type DbRows = { n: Int }")[0].code, "E0240");
+    // Repair one at a time: rename the type (the other offender does not block it), then
+    // redefine the enum with its users.
+    s.rename("HttpHeader", "Header", "test").unwrap();
+    assert_eq!(s.rename("Header", "HttpCall", "test").unwrap_err()[0].code, "E0240", "renaming onto a prelude name is refused");
+    ok(&mut s, "type Status = Nil2 | Ok2\nfn st(s: Status) -> Int = match s { Nil2 => 0, Ok2 => 1 }\ntest t = st(Ok2) == 1 && hv(Header { name: \"a\", value: \"b\" }) == \"b\"");
+    assert_eq!(hashes(&mut s).iter().find(|(n, _)| n == "hv").map(|(_, h)| h.clone()), before.iter().find(|(n, _)| n == "hv").map(|(_, h)| h.clone()), "renaming changes no hash");
+    // Now the prelude is back.
+    ok(&mut s, "fn cell(v: SqlValue) -> Int = match v { SqlInt(n) => n, _ => 0 }");
+}
+
+#[test]
 fn imports_are_verified_like_define() {
     let mut src = store();
     ok(&mut src, "fn lib_one() -> Int = 1\nfn lib_two(x: Int) -> Int = x + lib_one()");

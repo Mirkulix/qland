@@ -54,6 +54,9 @@ pub(crate) struct Globals {
     pub variants: HashMap<String, (String, u32, Vec<Type>)>,
     /// Type name -> index into `tp.types` (a linear search per lookup made checking quadratic).
     pub type_index: HashMap<String, usize>,
+    /// False for a legacy codebase that defines a prelude name itself (see [`check_stored`]): it
+    /// is checked without the prelude, as before Phase 3, and cannot use `http`/`db_*`.
+    pub prelude: bool,
 }
 
 impl Globals {
@@ -76,8 +79,21 @@ pub fn check_program(p: &Program) -> Vec<Diagnostic> {
 /// `TProgram::generics`; every instance reachable from a monomorphic function or a test is then
 /// generated (monomorphisation), so `TProgram::fns` and the tests contain no generic calls.
 pub fn check(p: &Program) -> Result<TProgram, Vec<Diagnostic>> {
+    check_stored(p, &|_| true)
+}
+
+/// [`check`] for a stored codebase. `is_new` tells which definitions are being written now (or
+/// renamed to their name); only those may not take a prelude name (`reserved_name`, E0240).
+///
+/// A stored type or variant from before Phase 3 may have a name the prelude now reserves
+/// (`HttpHeader`, `SqlNull`, ...). Such a codebase stays usable exactly as it was: if any
+/// definition that is not new takes a prelude name, the whole program is checked without the
+/// prelude (its own definitions keep their meaning and hashes, and it can run, be tested and be
+/// renamed), and calling `http`, `db_exec` or `db_query` is an error until those definitions are
+/// renamed (`qal_rename`) or redefined.
+pub fn check_stored(p: &Program, is_new: &dyn Fn(&str) -> bool) -> Result<TProgram, Vec<Diagnostic>> {
     let mut diags = Vec::new();
-    let g = globals(p, &mut diags);
+    let g = globals(p, &mut diags, is_new);
     // An irregular recursive type has infinitely many instances: nothing below may expand it.
     if diags.iter().any(|d| d.kind == "irregular_recursion") {
         return Err(diags);
@@ -132,10 +148,25 @@ fn check_tparams(g: &Globals, def: &str, tps: &[String], diags: &mut Vec<Diagnos
     }
 }
 
-fn globals(p: &Program, diags: &mut Vec<Diagnostic>) -> Globals {
-    let mut g = Globals { tp: TProgram::default(), fns: HashMap::new(), variants: HashMap::new(), type_index: HashMap::new() };
-    // The prelude types come first; they exist in every program.
-    for t in prelude::types() {
+/// The stored definitions that take a prelude name (as a type or a variant name).
+pub fn legacy_prelude_names(p: &Program, is_new: &dyn Fn(&str) -> bool) -> Vec<String> {
+    p.defs
+        .iter()
+        .filter_map(|d| match d {
+            Def::Type(t) if !is_new(&t.name) => {
+                let clash = prelude::is_reserved(&t.name) || matches!(&t.body, TypeBody::Enum(vs) if vs.iter().any(|v| prelude::is_reserved(&v.name)));
+                clash.then(|| t.name.clone())
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+fn globals(p: &Program, diags: &mut Vec<Diagnostic>, is_new: &dyn Fn(&str) -> bool) -> Globals {
+    let legacy = !legacy_prelude_names(p, is_new).is_empty();
+    let mut g = Globals { tp: TProgram::default(), fns: HashMap::new(), variants: HashMap::new(), type_index: HashMap::new(), prelude: !legacy };
+    // The prelude types come first; they exist in every program (except a legacy one).
+    for t in if legacy { Vec::new() } else { prelude::types() } {
         if let TypeBody::Enum(vs) = &t.body {
             for (tag, v) in vs.iter().enumerate() {
                 g.variants.insert(v.name.clone(), (t.name.clone(), tag as u32, v.fields.clone()));
@@ -146,7 +177,8 @@ fn globals(p: &Program, diags: &mut Vec<Diagnostic>) -> Globals {
     }
     for d in &p.defs {
         let Def::Type(t) = d else { continue };
-        if prelude::is_reserved(&t.name) {
+        let reserved = |n: &str| prelude::is_reserved(n) && (!legacy || is_new(&t.name));
+        if reserved(&t.name) {
             diags.push(Diagnostic::reserved_name(&t.name, "", &t.name));
             continue;
         }
@@ -169,7 +201,7 @@ fn globals(p: &Program, diags: &mut Vec<Diagnostic>) -> Globals {
             }
             TypeBody::Enum(vs) => {
                 for (tag, v) in vs.iter().enumerate() {
-                    if prelude::is_reserved(&v.name) {
+                    if reserved(&v.name) {
                         diags.push(Diagnostic::reserved_name(&t.name, &format!("variants[{tag}]"), &v.name));
                     } else if BUILTIN_VARIANTS.contains(&v.name.as_str()) || g.variants.contains_key(&v.name) {
                         let mut d = Diagnostic::duplicate_name(&t.name, &format!("variants[{tag}]"), &v.name);

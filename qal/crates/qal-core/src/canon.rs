@@ -1788,11 +1788,12 @@ impl<'b> Dec<'b> {
             t => return Err(bad_tag("variant owner", t)),
         }
         let name = self.str()?;
-        // A prelude variant belongs to its prelude enum, and no declared enum can have one.
+        // A variant under a prelude enum must be one of its variants. A declared enum may have a
+        // variant with a prelude name: one stored before Phase 3 (the checker refuses new ones).
         let ok = match name.as_str() {
             "None" | "Some" => owner == V_OPTION,
             "Ok" | "Err" => owner == V_RESULT,
-            _ => owner == V_ENUM && prelude_owner.as_deref() == prelude::variant_owner(&name),
+            _ => owner == V_ENUM && prelude_owner.as_deref().is_none_or(|p| prelude::variant_owner(&name) == Some(p)),
         };
         if !ok {
             return Err(format!("variant `{name}` does not belong to its owner"));

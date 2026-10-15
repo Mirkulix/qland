@@ -24,12 +24,14 @@ pub struct Loaded {
 /// Parses and checks `src`. Any diagnostic means nothing can be compiled.
 pub fn load(src: &str) -> Result<Loaded, Vec<Diagnostic>> {
     let program = qal_text::parse_program(src).map_err(|d| vec![d])?;
-    load_program(program)
+    let typed = qal_check::check(&program)?;
+    Ok(Loaded { program, typed })
 }
 
-/// Checks an already parsed (or stored) program.
+/// Checks a stored program. Stored definitions that take a prelude name (written before Phase 3)
+/// keep working; see `qal_check::check_stored`.
 pub fn load_program(program: Program) -> Result<Loaded, Vec<Diagnostic>> {
-    let typed = qal_check::check(&program)?;
+    let typed = qal_check::check_stored(&program, &|_| false)?;
     Ok(Loaded { program, typed })
 }
 
