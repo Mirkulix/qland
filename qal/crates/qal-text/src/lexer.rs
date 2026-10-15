@@ -26,7 +26,35 @@ pub struct Token {
 pub const MAX_NAME_LEN: usize = 128;
 
 pub const KEYWORDS: &[&str] =
-    &["fn", "type", "test", "let", "in", "if", "then", "else", "match", "req", "ens", "true", "false"];
+    &["fn", "type", "test", "let", "in", "if", "then", "else", "match", "req", "ens", "true", "false", "std"];
+
+/// The prefix of the standard library's names (Phase 3 §4.1): `std.<module>.<name>` is one name
+/// token, not a field access. The module segment is lowercase (`a-z`, `0-9`, `_`, starting with a
+/// letter); the last segment is a function, test, type or variant name.
+pub const STD_PREFIX: &str = "std.";
+
+/// True if `name` is a qualified standard library name (`std.<module>.<name>`), checked as the
+/// lexer would accept it as one token.
+pub fn is_std_name(name: &str) -> bool {
+    std_parts(name).is_some()
+}
+
+/// (module, last segment) of a qualified standard library name.
+pub fn std_parts(name: &str) -> Option<(&str, &str)> {
+    let rest = name.strip_prefix(STD_PREFIX)?;
+    let (module, last) = rest.split_once('.')?;
+    let module_ok = module.starts_with(|c: char| c.is_ascii_lowercase()) && module.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_') && !KEYWORDS.contains(&module);
+    let last_ok = last.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_')
+        && last.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+        && last != "_"
+        && !KEYWORDS.contains(&last);
+    (module_ok && last_ok && name.len() <= MAX_NAME_LEN).then_some((module, last))
+}
+
+/// The segment of a name that decides its case: the last one (`std.json.Str` is uppercase).
+pub fn last_segment(name: &str) -> &str {
+    name.rsplit('.').next().unwrap_or(name)
+}
 
 /// Longest symbols first so that "->" wins over "-" and "++" over "+".
 const SYMBOLS: &[&str] = &[
@@ -113,7 +141,14 @@ pub fn lex(src: &str) -> Result<Vec<Token>, Diagnostic> {
             if i - start > MAX_NAME_LEN {
                 return Err(Diagnostic::parse(start_line, start_col, format!("identifier longer than {MAX_NAME_LEN} characters")));
             }
-            let text: String = chars[start..i].iter().collect();
+            let mut text: String = chars[start..i].iter().collect();
+            // `std.<module>.<name>`: one token, unless `std` follows a `.` (a field named `std`,
+            // which the parser rejects as a keyword).
+            let after_dot = matches!(out.last(), Some(Token { tok: Tok::Sym("."), .. }));
+            if text == "std" && !after_dot && chars.get(i) == Some(&'.') {
+                text = qualified(&chars, &mut i, start_line, start_col)?;
+                col = start_col + (i - start);
+            }
             out.push(Token { tok: Tok::Ident(text), line: start_line, col: start_col });
             continue;
         }
@@ -134,6 +169,36 @@ pub fn lex(src: &str) -> Result<Vec<Token>, Diagnostic> {
     }
     out.push(Token { tok: Tok::Eof, line, col });
     Ok(out)
+}
+
+/// Lexes the two segments after `std` (at the `.` at `i`): `.<module>.<name>`.
+fn qualified(chars: &[char], i: &mut usize, line: usize, col: usize) -> Result<String, Diagnostic> {
+    let mut text = String::from("std");
+    for _ in 0..2 {
+        if chars.get(*i) != Some(&'.') || !chars.get(*i + 1).is_some_and(|c| c.is_ascii_alphabetic() || *c == '_') {
+            return Err(std_form(line, col, &text));
+        }
+        let start = *i + 1;
+        *i = start;
+        while *i < chars.len() && (chars[*i].is_ascii_alphanumeric() || chars[*i] == '_') {
+            *i += 1;
+        }
+        text.push('.');
+        text.extend(&chars[start..*i]);
+    }
+    if text.len() > MAX_NAME_LEN {
+        return Err(Diagnostic::parse(line, col, format!("identifier longer than {MAX_NAME_LEN} characters")));
+    }
+    if !is_std_name(&text) {
+        return Err(std_form(line, col, &text));
+    }
+    Ok(text)
+}
+
+#[cold]
+fn std_form(line: usize, col: usize, found: &str) -> Diagnostic {
+    Diagnostic::parse(line, col, format!("`{found}` is not a standard library name"))
+        .hint("standard library names have the form `std.<module>.<name>`: a lowercase module (e.g. `std.json.parse`, `std.json.Json`, `std.json.Str(\"a\")`)")
 }
 
 /// Lexes a string literal starting at the opening quote. Escapes: `\n \t \r \0 \\ \" \u{HEX}`.
@@ -209,6 +274,25 @@ mod tests {
         assert!(lex(&"a".repeat(MAX_NAME_LEN)).is_ok());
         let e = lex(&format!("fn {}", "a".repeat(MAX_NAME_LEN + 1))).unwrap_err();
         assert_eq!((e.path.as_str(), e.message.as_str()), ("1:4", "identifier longer than 128 characters"));
+    }
+
+    #[test]
+    fn std_names_are_one_token() {
+        assert_eq!(toks("std.json.parse(x)"), vec![Tok::Ident("std.json.parse".into()), Tok::Sym("("), Tok::Ident("x".into()), Tok::Sym(")"), Tok::Eof]);
+        assert_eq!(toks("std.json.Str.x"), vec![Tok::Ident("std.json.Str".into()), Tok::Sym("."), Tok::Ident("x".into()), Tok::Eof]);
+        // After a `.` (a field named `std`) and with spaces it is the keyword alone.
+        assert_eq!(toks("r.std.x"), vec![Tok::Ident("r".into()), Tok::Sym("."), Tok::Ident("std".into()), Tok::Sym("."), Tok::Ident("x".into()), Tok::Eof]);
+        assert_eq!(toks("std . a"), vec![Tok::Ident("std".into()), Tok::Sym("."), Tok::Ident("a".into()), Tok::Eof]);
+        let t = lex("x std.a.b y").unwrap();
+        assert_eq!((t[2].line, t[2].col), (1, 11));
+        for bad in ["std.json", "std.json.", "std.Json.x", "std.json.1", "std.json._", "std.json.type", "std.fn.x", "std.ä.x"] {
+            let e = lex(bad).unwrap_err();
+            assert!(e.message.contains("not a standard library name"), "{bad}: {}", e.message);
+        }
+        assert!(lex(&format!("std.a.{}", "b".repeat(MAX_NAME_LEN))).unwrap_err().message.contains("longer than"));
+        assert_eq!(std_parts("std.json.Str"), Some(("json", "Str")));
+        assert_eq!((is_std_name("std.json"), is_std_name("json.parse"), is_std_name("std.a.b.c")), (false, false, false));
+        assert_eq!(last_segment("std.json.Str"), "Str");
     }
 
     #[test]

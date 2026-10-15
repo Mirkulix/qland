@@ -24,13 +24,16 @@
 //!   arm      := pattern ("if" expr)? "=>" expr
 //!   pattern  := "_" | LOWER | "-"? INT | STR | "true" | "false" | "(" ")"     (`-9223372036854775808` is allowed here)
 //!             | UPPER ("(" pattern ("," pattern)* ","? ")")? | UPPER "{" (LOWER (":" pattern)?),* "}"
+//!   LOWER and UPPER of definitions, types, variants and references may be qualified standard
+//!   library names `std.<module>.<name>` (one token; the last segment decides the case); the names
+//!   of parameters, locals, fields, effects and type parameters may not.
 //!   binary   := precedence climbing over BinOp::precedence (comparisons non-associative)
 //!   unary    := ("-" | "!") unary | postfix
 //!   postfix  := atom ("." LOWER)*
 //!   atom     := INT | FLOAT | STR | "true" | "false" | "(" ")" | "(" expr ")" | "[" (expr ("," expr)* ","?)? "]"
 //!             | "{" expr (";" expr)* "}" | UPPER "{" (LOWER ":" expr),* "}" | IDENT | IDENT "(" args ")"
 
-use crate::lexer::{lex, Tok, Token, KEYWORDS};
+use crate::lexer::{is_std_name, last_segment, lex, Tok, Token, KEYWORDS};
 use qal_core::ast::*;
 use qal_core::diag::Diagnostic;
 
@@ -61,8 +64,9 @@ struct Parser {
     no_struct: bool,
 }
 
+/// The case of a name is the case of its last segment (`std.json.Str` is an uppercase name).
 fn is_upper(s: &str) -> bool {
-    s.starts_with(|c: char| c.is_ascii_uppercase())
+    last_segment(s).starts_with(|c: char| c.is_ascii_uppercase())
 }
 
 impl Parser {
@@ -164,6 +168,20 @@ impl Parser {
         self.ident()
     }
 
+    /// A name for a parameter, local, field or effect: never a qualified `std.` name.
+    fn local(&mut self, what: &str) -> Result<String, Diagnostic> {
+        self.unqualified(what)?;
+        self.lower(what)
+    }
+
+    fn unqualified(&self, what: &str) -> Result<(), Diagnostic> {
+        match self.peek() {
+            Tok::Ident(s) if is_std_name(s) => Err(self.err_here(format!("{what} names cannot be qualified, found {}", Self::describe(self.peek())))
+                .hint("only definitions (functions, tests, types and variants) have `std.<module>.<name>` names")),
+            _ => Ok(()),
+        }
+    }
+
     /// A name for a type or variant.
     fn upper(&mut self, what: &str) -> Result<String, Diagnostic> {
         if matches!(self.peek(), Tok::Ident(s) if !is_upper(s)) {
@@ -260,7 +278,7 @@ impl Parser {
         let mut effects = Vec::new();
         while self.is_sym("!") {
             self.next();
-            effects.push(self.lower("effect")?);
+            effects.push(self.local("effect")?);
         }
         effects.sort_unstable();
         effects.dedup();
@@ -291,7 +309,10 @@ impl Parser {
             return Ok(Vec::new());
         }
         self.next();
-        let ps = self.list_of("]", |p| p.upper("type parameter"))?;
+        let ps = self.list_of("]", |p| {
+            p.unqualified("type parameter")?;
+            p.upper("type parameter")
+        })?;
         if ps.is_empty() {
             return Err(self.err_here("`[]` needs at least one type parameter"));
         }
@@ -305,7 +326,7 @@ impl Parser {
         if self.is_sym("{") {
             self.next();
             let fields = self.list_of("}", |p| {
-                let f = p.lower("field")?;
+                let f = p.local("field")?;
                 p.expect_sym(":")?;
                 Ok((f, p.ty()?))
             })?;
@@ -341,7 +362,7 @@ impl Parser {
         let tparams = self.tparams()?;
         self.expect_sym("(")?;
         let params = self.list_of(")", |p| {
-            let pname = p.lower("parameter")?;
+            let pname = p.local("parameter")?;
             p.expect_sym(":")?;
             Ok(Param { name: pname, ty: p.ty()? })
         })?;
@@ -387,7 +408,7 @@ impl Parser {
     // let/if/match/call/paren live in their own functions so the frames on the common recursion path stay small.
     fn let_expr(&mut self) -> Result<Expr, Diagnostic> {
         self.next();
-        let name = self.lower("variable")?;
+        let name = self.local("variable")?;
         let ann = if self.is_sym(":") {
             self.next();
             Some(self.ty()?)
@@ -500,7 +521,7 @@ impl Parser {
                     self.next();
                     let mut h = 0;
                     let fs = self.list_of("}", |p| {
-                        let f = p.lower("field")?;
+                        let f = p.local("field")?;
                         let x = if p.is_sym(":") {
                             p.next();
                             p.pattern()?
@@ -516,7 +537,7 @@ impl Parser {
                     Ok(Pat::Variant(s, vec![]))
                 }
             }
-            Tok::Ident(_) => Ok(Pat::Bind(self.lower("variable")?)),
+            Tok::Ident(_) => Ok(Pat::Bind(self.local("variable")?)),
             other => Err(self.expected_pattern(&other)),
         }
     }
@@ -586,7 +607,7 @@ impl Parser {
         let mut e = self.atom()?;
         while self.is_sym(".") {
             self.next();
-            let field = self.lower("field")?;
+            let field = self.local("field")?;
             self.node(self.height)?;
             e = Expr::Field(Box::new(e), field);
         }
@@ -706,7 +727,7 @@ impl Parser {
         self.next();
         self.expect_sym("(")?;
         let params = self.list_of(")", |p| {
-            let n = p.lower("parameter")?;
+            let n = p.local("parameter")?;
             let ann = if p.is_sym(":") {
                 p.next();
                 Some(p.ty()?)
@@ -726,7 +747,7 @@ impl Parser {
         self.expect_sym("{")?;
         let mut h = 0;
         let fields = self.list_of("}", |p| {
-            let f = p.lower("field")?;
+            let f = p.local("field")?;
             p.expect_sym(":")?;
             let e = p.expr()?;
             h = h.max(p.height);
@@ -984,6 +1005,61 @@ mod tests {
         }
         parse_big_stack(src).unwrap();
         parse_big_stack(format!("test t = {}1{}", "(".repeat(200), ")".repeat(200))).unwrap();
+    }
+
+    #[test]
+    fn qualified_std_names_are_one_name() {
+        let src = "type std.json.Json = std.json.Null | std.json.Str(Str) | std.json.Arr(List[std.json.Json])\n\
+                   type std.route.Route[A] = { method: Str, tag: A }\n\
+                   fn std.json.str(s: Str) -> std.json.Json = std.json.Str(s)\n\
+                   fn std.route.tag[A](r: std.route.Route[A]) -> A = r.tag\n\
+                   test std.json.t = match std.json.str(\"a\") { std.json.Str(x) => x == \"a\", std.json.Null => false, _ => false }";
+        let p = parse_program(src).unwrap();
+        let Def::Type(t) = &p.defs[0] else { panic!() };
+        assert_eq!(t.name, "std.json.Json");
+        let TypeBody::Enum(vs) = &t.body else { panic!() };
+        assert_eq!(vs[0].name, "std.json.Null");
+        assert_eq!(vs[2].fields, vec![Type::list(Type::Named("std.json.Json".into()))]);
+        let Def::Fn(f) = &p.defs[2] else { panic!() };
+        assert_eq!((f.name.as_str(), &f.ret), ("std.json.str", &Type::Named("std.json.Json".into())));
+        assert_eq!(f.body, Expr::Call("std.json.Str".into(), vec![Expr::Var("s".into())]));
+        let Def::Fn(g) = &p.defs[3] else { panic!() };
+        assert_eq!(g.params[0].ty, Type::App("std.route.Route".into(), vec![Type::Named("A".into())]));
+        let Def::Test(t) = &p.defs[4] else { panic!() };
+        let Expr::Match(scrut, arms) = &t.body else { panic!() };
+        assert_eq!(**scrut, Expr::Call("std.json.str".into(), vec![Expr::Str("a".into())]));
+        assert_eq!(arms[0].pat, Pat::Variant("std.json.Str".into(), vec![Pat::Bind("x".into())]));
+        assert_eq!(arms[1].pat, Pat::Variant("std.json.Null".into(), vec![]));
+        // Round trip through the printer.
+        let printed = crate::print_program(&p);
+        assert!(printed.contains("std.json.Str(s)") && printed.contains("std.route.Route[A]"), "{printed}");
+        assert_eq!(parse_program(&printed).unwrap(), p);
+        // A field access after a qualified call, and a record literal of a qualified type.
+        assert_eq!(body("std.a.f(1).x"), Expr::Field(Box::new(Expr::Call("std.a.f".into(), vec![Expr::Int(1)])), "x".into()));
+        assert_eq!(body("std.a.P { x: 1 }"), Expr::Record("std.a.P".into(), vec![("x".into(), Expr::Int(1))]));
+        let Expr::Match(_, arms) = body("match p { std.a.P { x } => x }") else { panic!() };
+        assert_eq!(arms[0].pat, Pat::Record("std.a.P".into(), vec![("x".into(), Pat::Bind("x".into()))]));
+    }
+
+    #[test]
+    fn std_is_a_keyword_and_locals_are_never_qualified() {
+        for (src, msg) in [
+            ("fn std() -> Int = 1", "expected a name, found `std`"),
+            ("test t = let std = 1 in std", "expected a name, found `std`"),
+            ("test t = r.std", "expected a name, found `std`"),
+            ("test t = std . json . f(1)", "expected an expression, found `std`"),
+            ("fn f(std.a.x: Int) -> Int = 1", "parameter names cannot be qualified"),
+            ("test t = let std.a.x = 1 in 2", "variable names cannot be qualified"),
+            ("type T = { std.a.x: Int }", "field names cannot be qualified"),
+            ("fn f() -> Int !std.a.io = 1", "effect names cannot be qualified"),
+            ("fn f[std.a.T](x: Int) -> Int = 1", "type parameter names cannot be qualified"),
+            ("test t = match 1 { std.a.x => 1 }", "variable names cannot be qualified"),
+            ("fn std.a.F() -> Int = 1", "function names start with a lowercase letter"),
+            ("type std.a.t = { x: Int }", "type names start with an uppercase letter"),
+        ] {
+            let e = parse_program(src).unwrap_err();
+            assert!(e.message.contains(msg), "{src}: {}", e.message);
+        }
     }
 
     #[test]
