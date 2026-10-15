@@ -6,7 +6,8 @@
 //!   qal fmt <file>                                   -> canonical text
 //! The project's store (`.qal/store.db` in the current directory or a parent):
 //!   qal init                                         -> {"ok":true,"store":"<path>"}
-//!   qal define <file> [--agent <name>]               -> {"defined":[{name,kind,hash,status,old_hash?}]} | {"diagnostics":[...]}
+//!   qal define <file> [--agent <name>]               -> {"defined":[{name,kind,hash,status,old_hash?}],"proofs":[...]?} | {"diagnostics":[...]}
+//!                                                       (a function with a refuted contract is not stored: E0801)
 //!   qal view <name|#hash>...                         -> {"views":[{name,kind,hash,signature,effects,text,deps}]}
 //!   qal query [--name <prefix>] [--type <pattern>] [--uses <name|#hash>]
 //!                                                    -> {"results":[{name,kind,hash,signature,effects}]}
@@ -16,7 +17,11 @@
 //! Running code from a file or from the store (`<target>` is a file or a name):
 //!   qal call <file> [--allow <spec>] <fn> [args..]   -> {"ok":<value>,"stdout":".."} | {"error":{...},"stdout":".."} | {"diagnostics":[...]}
 //!   qal call <fn> [--allow <spec>] [args..]          (store)
-//!   qal test <file> | qal test [<name>...]           -> {"tests":[...],"passed":n,"failed":m}
+//!   qal test <file> | qal test [<name>...] [--seed <n>]
+//!                                                    -> {"tests":[...],"properties":[...]?,"passed":n,"failed":m}
+//!                                                       (names: tests, or functions for their property test)
+//!   qal prove <file> | qal prove [<name>...]         -> {"proofs":[{def,obligation,path,contract,status,counterexample?,reason?}],
+//!                                                        "proven":n,"refuted":m,"unknown":k} (exit 1 if refuted)
 //!   qal run <file> [--allow <spec>] [--] [args..]    -> {"exit_code":n,"stdout":".."} | {"error":{...},"stdout":".."} | {"diagnostics":[...]}
 //!   qal run <name> [--allow <spec>] [--] [args..]    (store; `<name>` is any `fn(List[Str]) -> Int`)
 //! For agents:
@@ -37,7 +42,7 @@ const USAGE: &str = "usage: qal <check|fmt> <file>\n       \
                      qal init | define <file> [--agent <name>] | view <name>... | rename <old> <new> [--agent <name>] | history <name> | build <name>\n       \
                      qal query [--name <prefix>] [--type <pattern>] [--uses <name>]\n       \
                      qal call <file> [--allow <spec>] <fn> [args...] | call <fn> [--allow <spec>] [args...]\n       \
-                     qal test [--allow <spec>] [<file> | <name>...]\n       \
+                     qal test [--allow <spec>] [--seed <n>] [<file> | <name>...] | prove [<file> | <name>...]\n       \
                      qal run <file|name> [--allow <spec>] [--] [args...]\n       \
                      qal mcp [--root <dir>]";
 
@@ -70,6 +75,7 @@ fn main() -> ExitCode {
         "check" | "fmt" => file_command(cmd, rest),
         "init" | "define" | "view" | "query" | "rename" | "history" | "build" => store_command(cmd, rest),
         "call" | "test" | "run" => run_command(cmd, rest),
+        "prove" => prove_command(rest),
         "mcp" => mcp(rest),
         _ => usage(),
     }
@@ -171,13 +177,19 @@ fn run_command(cmd: &str, args: &[String]) -> ExitCode {
         "test" => usize::MAX,
         _ => 1,
     };
-    let s = match split(args, &["allow"], &["allow"], &targets) {
+    let options: &[&str] = if cmd == "test" { &["allow", "seed"] } else { &["allow"] };
+    let s = match split(args, options, &["allow"], &targets) {
         Ok(s) => s,
         Err(code) => return code,
     };
     let perms = match permissions(&s) {
         Ok(p) => p,
         Err(e) => return bad_usage(&e),
+    };
+    let seed = match s.one("seed").map(str::parse::<u64>) {
+        None => 0,
+        Some(Ok(n)) => n,
+        Some(Err(_)) => return bad_usage("--seed takes a number"),
     };
     let from_file = s.targets.first().is_some_and(|t| is_file(t));
     if cmd == "test" && (!s.rest.is_empty() || (from_file && s.targets.len() > 1) || s.targets.iter().skip(1).any(|t| is_file(t))) {
@@ -203,7 +215,7 @@ fn run_command(cmd: &str, args: &[String]) -> ExitCode {
         Err(code) => return code,
     };
     emit(match cmd {
-        "test" => ops::test(&c, &source, perms, if from_file { &[] } else { &s.targets }),
+        "test" => ops::test(&c, &source, perms, if from_file { &[] } else { &s.targets }, seed),
         "call" => {
             let name = if from_file { &s.targets[1] } else { &s.targets[0] };
             ops::call(&c, &source, perms, name, CallArgs::Strings(&s.rest))
@@ -213,6 +225,30 @@ fn run_command(cmd: &str, args: &[String]) -> ExitCode {
             ops::run(&c, &source, perms, name, &s.rest)
         }
     })
+}
+
+fn prove_command(args: &[String]) -> ExitCode {
+    let s = match split(args, &[], &[], &all) {
+        Ok(s) => s,
+        Err(code) => return code,
+    };
+    let from_file = s.targets.first().is_some_and(|t| is_file(t));
+    if from_file && s.targets.len() > 1 || s.targets.iter().skip(1).any(|t| is_file(t)) {
+        return usage();
+    }
+    let text = if from_file {
+        match read(&s.targets[0]) {
+            Ok(src) => Some(src),
+            Err(code) => return code,
+        }
+    } else {
+        None
+    };
+    let source = match &text {
+        Some(src) => Source::Text(src),
+        None => Source::Store,
+    };
+    with_ctx(|c| ops::prove(c, &source, if from_file { &[] } else { &s.targets }))
 }
 
 fn mcp(args: &[String]) -> ExitCode {

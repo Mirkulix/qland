@@ -114,7 +114,7 @@ fn handshake_lists_the_tools_with_the_language_reference() {
     assert_eq!(c.request("ping", json!({}))["result"], json!({}));
     let tools = c.request("tools/list", json!({}))["result"]["tools"].clone();
     let names: Vec<&str> = tools.as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap()).collect();
-    assert_eq!(names, ["qal_define", "qal_test", "qal_run", "qal_call", "qal_view", "qal_query", "qal_rename", "qal_history", "qal_build"]);
+    assert_eq!(names, ["qal_define", "qal_test", "qal_prove", "qal_run", "qal_call", "qal_view", "qal_query", "qal_rename", "qal_history", "qal_build"]);
     for t in tools.as_array().unwrap() {
         assert_eq!(t["inputSchema"]["type"], "object", "{t}");
         assert!(!t["description"].as_str().unwrap().is_empty());
@@ -452,4 +452,48 @@ fn reference_and_launcher_are_precise() {
     let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..");
     let script = std::fs::read_to_string(repo.join("qal/mcp.sh")).unwrap();
     assert!(script.contains("CDPATH=") && script.contains("build failed"), "{script}");
+}
+
+#[test]
+fn agents_get_proofs_counterexamples_and_property_tests() {
+    let mut c = Client::start();
+    c.initialize();
+    let src = "fn abs(x: Int) -> Int ens r >= 0 = if x < 0 then -x else x\n\
+               fn pos(x: Int) -> Int req x > 0 = x\n\
+               fn head(xs: List[Int]) -> Int ens r >= 0 = match get(sort_int(xs), 0) { Some(x) => x, None => 0 }\n\
+               test t = pos(abs(-3) + 1) == 4";
+    let (err, v) = c.call("qal_define", json!({"source": src}));
+    assert!(!err, "{v}");
+    let statuses: Vec<(&str, &str)> = v["proofs"].as_array().unwrap().iter().map(|r| (r["def"].as_str().unwrap(), r["status"].as_str().unwrap())).collect();
+    assert_eq!(statuses, [("abs", "proven"), ("head", "unknown"), ("t", "proven")]);
+    assert_eq!((v["warnings"][0]["code"].as_str(), v["warnings"][0]["def"].as_str(), v["warnings"].as_array().map(Vec::len)), (Some("E0802"), Some("head"), Some(1)));
+    // A refuted contract: nothing is stored, the diagnostic carries the counterexample.
+    let (err, v) = c.call("qal_define", json!({"source": "fn dec(x: Int) -> Int ens r >= 0 = x - 1"}));
+    assert!(err);
+    assert_eq!((v["diagnostics"][0]["code"].as_str(), v["diagnostics"][0]["kind"].as_str()), (Some("E0801"), Some("contract_refuted")));
+    assert!(v["diagnostics"][0]["counterexample"]["x"].as_i64().unwrap() <= 0, "{v}");
+    assert_eq!(c.call("qal_view", json!({"names": ["dec"]})).1["diagnostics"][0]["kind"], "unknown_name");
+    // qal_prove reuses the stored results.
+    let (err, v) = c.call("qal_prove", json!({}));
+    assert_eq!((err, v["proven"].as_u64(), v["refuted"].as_u64(), v["unknown"].as_u64()), (false, Some(2), Some(0), Some(1)));
+    let (err, v) = c.call("qal_prove", json!({"names": ["nope"]}));
+    assert_eq!((err, v["diagnostics"][0]["kind"].as_str()), (true, Some("unknown_name")));
+    // The property test of `head` finds the counterexample the proof could not decide.
+    let (err, v) = c.call("qal_test", json!({}));
+    assert!(err, "{v}");
+    assert_eq!((v["passed"].as_u64(), v["failed"].as_u64(), v["failed_properties"].as_u64()), (Some(1), Some(0), Some(1)));
+    let props: Vec<(&str, &str)> = v["properties"].as_array().unwrap().iter().map(|p| (p["def"].as_str().unwrap(), p["status"].as_str().unwrap())).collect();
+    assert_eq!(props, [("abs", "passed"), ("head", "failed")]);
+    assert_eq!(v["properties"][1]["counterexample"], json!({"xs": [-1]}));
+    let (_, v) = c.call("qal_test", json!({"names": ["head"], "seed": 7}));
+    assert_eq!((v["properties"][0]["seed"].as_u64(), v["tests"].as_array().map(Vec::len)), (Some(7), Some(0)));
+    assert_eq!(c.call("qal_test", json!({"seed": -1})).1["diagnostics"][0]["kind"], "bad_arguments");
+    // Structured JSON arguments: maps, records, variants, bytes.
+    let src = "type P = { name: Str, n: Int }\nfn total(m: Map[Str, P], b: Bytes, o: Option[Int]) -> Int = fold(map_values(m), bytes_len(b), fn(acc, p) => acc + p.n) + (match o { Some(k) => k, None => 0 })";
+    assert!(!c.call("qal_define", json!({"source": src})).0);
+    let (err, v) = c.call("qal_call", json!({"fn": "total", "args": [[["a", {"name": "x", "n": 2}], ["b", {"name": "y", "n": 3}]], [1, 2, 3], {"Some": [10]}]}));
+    assert_eq!((err, &v["ok"]), (false, &json!(18)), "{v}");
+    let (err, v) = c.call("qal_call", json!({"fn": "total", "args": [[], [300], "None"]}));
+    assert_eq!((err, v["error"]["message"].as_str()), (true, Some("`b`: expected a byte (0..=255), got 300")));
+    assert_eq!(c.finish(), Some(0));
 }

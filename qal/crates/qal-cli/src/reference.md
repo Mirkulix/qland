@@ -27,7 +27,13 @@ Expressions (everything is an expression, there are no statements):
   / truncates toward zero; % has the sign of the left operand. Str order compares Unicode code points ("B" < "a" < "é").
 Effects: a fn that uses the system declares it after the result type and callers declare the union:
   !io print, read_line, read_all   !fs read_file, write_file   !time now_ms   !rand rand_int.  Several: `-> Int !io !fs`. Tests and contracts are pure.
-Contracts: fn sqrt_floor(n: Int) -> Int req n >= 0 ens r * r <= n = ...   (`r` is the result inside `ens`; `r` cannot be a definition name, nor a parameter of a fn with `ens`; elsewhere parameters and locals named `r` are fine; checked at run time)
+Contracts: fn sqrt_floor(n: Int) -> Int req n >= 0 ens r * r <= n = ...   (`r` is the result inside `ens`; `r` cannot be a definition name, nor a parameter of a fn with `ens`; elsewhere parameters and locals named `r` are fine; always checked at run time)
+  qal_define proves them with Z3: each `ens`, and the `req` of every function at each call. A function whose contract
+  is refuted is not stored; the diagnostic (E0801) has a counterexample. Proofs are exact for Int and Bool (overflow
+  traps, so `if x < 0 then -x else x` is >= 0) and use callees' contracts, not their bodies: a fn whose result comes
+  from a helper needs the helper's `ens`. Unproven contracts are `unknown` (with a reason), still checked at run time.
+  qal_test also runs a generated property test (100 inputs that satisfy `req`) for each pure fn with `ens`; failures
+  come with a shrunk counterexample; traps like overflow are counted (`traps`, `trap`), not failures.
 Record construction needs every field (`field: value`). There are no list patterns: use len and get.
 
 Built-ins (indices count characters; slice and range are half-open: the end is excluded):
@@ -50,4 +56,4 @@ Built-ins (indices count characters; slice and range are half-open: the end is e
 Performance: push on a list or ++ on a string in a loop is quadratic (about 8 000 elements at most): build lists with split/map/filter/range. len and slice on Str are O(n): iterate with chars.
 
 Store rules: defining an existing name replaces it. Same signature: everything using it is relinked and re-checked automatically. Changed signature: rejected (`signature_change`, lists `dependents`) unless the same call also redefines those dependents. A name keeps its kind (fn, test, type). References bind to names: qal_rename changes no hash and users follow the new name. Two names can hold the identical definition, but one definition cannot refer to both (E0404 `alias_reference`): use one name.
-Workflow: qal_define -> qal_test -> qal_run (entry point; grant effects with allow: ["io"], "fs:<dir>" grants read AND write of all non-hidden files under that project dir, e.g. Cargo.toml: grant the narrowest dir) or qal_call (any fn, JSON args). Read the codebase with qal_query and qal_view.
+Workflow: qal_define -> qal_test -> qal_run (entry point; grant effects with allow: ["io"], "fs:<dir>" grants read AND write of all non-hidden files under that project dir, e.g. Cargo.toml: grant the narrowest dir) or qal_call (any fn, JSON args). qal_prove shows the proof status. Read the codebase with qal_query and qal_view.

@@ -5,8 +5,10 @@
 use crate::{is_entry_point, json_args, load, load_program, parse_args, Loaded};
 use qal_core::canon::Hash;
 use qal_core::diag::Diagnostic;
+use qal_core::tast::TProgram;
+use qal_prove::{PropOptions, PropReport, PropStatus, Report, Status};
 use qal_run::{Permissions, RunError, TestResult, Value};
-use qal_store::{Defined, Entry as QueryEntry, HistoryEntry, Query, Renamed, Store, View};
+use qal_store::{Defined, Entry as QueryEntry, HistoryEntry, Query, Renamed, Store, Verify, View};
 use qal_wasm::Entry;
 use serde::Serialize;
 use std::path::{Path, PathBuf};
@@ -43,12 +45,31 @@ pub struct Output {
     pub stdout_truncated: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub diagnostics: Option<Vec<Diagnostic>>,
+    /// Contract proofs: one report per obligation (`define`: of the definitions it changed; `prove`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub proofs: Option<Vec<Report>>,
+    /// Proof results that are not `proven`, as diagnostics: E0801 `contract_refuted` (of a test, or in
+    /// `prove`), E0802 `contract_unproven`. They do not make the operation fail.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub warnings: Option<Vec<Diagnostic>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub proven: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub refuted: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unknown: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tests: Option<Vec<TestResult>>,
+    /// Generated property tests of functions with contracts.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub properties: Option<Vec<PropReport>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub passed: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub failed: Option<usize>,
+    /// Property tests that failed (`passed`/`failed` count the written tests).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub failed_properties: Option<usize>,
     /// Tests not run because the time budget (`Ctx::test_budget`) was used up.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub skipped: Option<Vec<String>>,
@@ -111,7 +132,7 @@ impl Reply {
     /// True if the operation failed: diagnostics, a runtime error, or failed tests (a program
     /// that runs and returns a non-zero exit code did not fail).
     pub fn is_error(&self) -> bool {
-        self.out.diagnostics.is_some() || self.out.error.is_some() || self.out.failed.is_some_and(|n| n > 0)
+        self.out.diagnostics.is_some() || self.out.error.is_some() || self.out.failed.is_some_and(|n| n > 0) || self.out.failed_properties.is_some() || self.out.refuted.is_some_and(|n| n > 0)
     }
 }
 
@@ -248,11 +269,130 @@ pub fn check(src: &str) -> Reply {
     }
 }
 
+/// Adds or replaces definitions; their contracts are proven before anything is stored. A function
+/// with a refuted contract (its `ens`, or the `req` of a function it calls) is not stored; refuted
+/// call sites in tests are reported (the test fails when run) but do not stop the definition.
 pub fn define(ctx: &Ctx, src: &str, agent: &str) -> Reply {
-    match ctx.open_store(true).and_then(|mut s| s.define(src, agent)) {
-        Ok(d) => Reply::new(Output { defined: Some(d), ..Output::default() }, 0),
+    let opts = qal_prove::Options::default();
+    let mut reports: Vec<Report> = Vec::new();
+    let result = {
+        let mut run = |tp: &TProgram, todo: &[(String, String)]| -> Result<Vec<(String, String)>, Vec<Diagnostic>> {
+            let names: Vec<String> = todo.iter().map(|(n, _)| n.clone()).collect();
+            let rs = qal_prove::prove(tp, Some(&names), &opts);
+            let is_test = |n: &str| tp.tests.iter().any(|t| t.name == n);
+            let refuted: Vec<Diagnostic> = rs.iter().filter(|r| r.status == Status::Refuted && !is_test(&r.def)).filter_map(Report::diagnostic).collect();
+            if !refuted.is_empty() {
+                return Err(refuted);
+            }
+            let stable = |n: &str| rs.iter().filter(|r| r.def == n).all(Report::is_stable);
+            let rows = todo.iter().filter(|(n, _)| stable(n)).map(|(n, h)| (h.clone(), proofs_json(rs.iter().filter(|r| r.def == *n)))).collect();
+            reports = rs;
+            Ok(rows)
+        };
+        let mut verify = Verify { key: opts.key(), run: &mut run };
+        ctx.open_store(true).and_then(|mut s| s.define_verified(src, agent, &mut verify))
+    };
+    match result {
+        Ok(d) => {
+            let mut out = Output { defined: Some(d), warnings: warnings(&reports), ..Output::default() };
+            if !reports.is_empty() {
+                out.proofs = Some(reports);
+            }
+            Reply::new(out, 0)
+        }
         Err(d) => Reply::diagnostics(d),
     }
+}
+
+/// The diagnostic form of the results that are not `proven` (None if there are none).
+fn warnings(reports: &[Report]) -> Option<Vec<Diagnostic>> {
+    let w: Vec<Diagnostic> = reports.iter().filter_map(Report::diagnostic).collect();
+    (!w.is_empty()).then_some(w)
+}
+
+fn proofs_json<'a>(rs: impl Iterator<Item = &'a Report>) -> String {
+    serde_json::to_string(&rs.collect::<Vec<_>>()).unwrap_or_else(|_| "[]".into())
+}
+
+/// Proves the contracts of the named functions and tests (all if `names` is empty). From the
+/// store, results stored for the same definition and prover settings are reused; new ones are stored.
+pub fn prove(ctx: &Ctx, source: &Source, names: &[String]) -> Reply {
+    let loaded = match ctx.load(source) {
+        Ok(l) => l,
+        Err(d) => return Reply::diagnostics(d),
+    };
+    let tp = &loaded.typed;
+    let known = |n: &str| tp.fns.iter().any(|f| f.def.name == n && f.instance.is_none()) || tp.generics.iter().any(|f| f.def.name == n) || tp.tests.iter().any(|t| t.name == n);
+    let unknown: Vec<Diagnostic> = names
+        .iter()
+        .filter(|n| !known(n))
+        .map(|n| {
+            let d = Diagnostic::unknown_name(n, "", n);
+            match ctx.renamed_hint(source, n) {
+                Some(h) => d.hint(h),
+                None if tp.type_def(n).is_some() => d.hint(format!("`{n}` is a type; only functions and tests have contracts to prove")),
+                None => d,
+            }
+        })
+        .collect();
+    if !unknown.is_empty() {
+        return Reply::diagnostics(unknown);
+    }
+    let opts = qal_prove::Options::default();
+    let only = (!names.is_empty()).then_some(names);
+    let reports = match source {
+        Source::Text(_) => qal_prove::prove(tp, only, &opts),
+        Source::Store => match stored_proofs(ctx, tp, only, &opts) {
+            Ok(r) => r,
+            Err(d) => return Reply::diagnostics(d),
+        },
+    };
+    let count = |st: Status| reports.iter().filter(|r| r.status == st).count();
+    let (proven, refuted, unknown) = (count(Status::Proven), count(Status::Refuted), count(Status::Unknown));
+    let out = Output { warnings: warnings(&reports), proofs: Some(reports), proven: Some(proven), refuted: Some(refuted), unknown: Some(unknown), ..Output::default() };
+    Reply::new(out, u8::from(refuted > 0))
+}
+
+/// Proof results of the stored definitions: reused per (hash, prover key), computed and stored if missing.
+fn stored_proofs(ctx: &Ctx, tp: &TProgram, only: Option<&[String]>, opts: &qal_prove::Options) -> Result<Vec<Report>, Vec<Diagnostic>> {
+    let mut store = ctx.open()?;
+    let hashes: std::collections::HashMap<String, String> = store.query(&Query::default())?.into_iter().map(|e| (e.name, e.hash)).collect();
+    let key = opts.key();
+    let targets: Vec<String> = tp
+        .fns
+        .iter()
+        .filter(|f| f.instance.is_none())
+        .map(|f| &f.def.name)
+        .chain(tp.generics.iter().map(|f| &f.def.name))
+        .chain(tp.tests.iter().map(|t| &t.name))
+        .filter(|n| only.is_none_or(|ns| ns.contains(n)))
+        .cloned()
+        .collect();
+    let mut cached: std::collections::HashMap<String, Vec<Report>> = std::collections::HashMap::new();
+    let mut missing = Vec::new();
+    for n in &targets {
+        let stored = match hashes.get(n) {
+            Some(h) => store.proofs(h, &key)?.and_then(|j| serde_json::from_str::<Vec<Report>>(&j).ok()),
+            None => None,
+        };
+        match stored {
+            Some(rs) => {
+                cached.insert(n.clone(), rs);
+            }
+            None => missing.push(n.clone()),
+        }
+    }
+    if !missing.is_empty() {
+        let fresh = qal_prove::prove(tp, Some(&missing), opts);
+        for n in &missing {
+            let rs: Vec<Report> = fresh.iter().filter(|r| r.def == *n).cloned().collect();
+            if let Some(h) = hashes.get(n).filter(|_| rs.iter().all(Report::is_stable)) {
+                store.save_proofs(h, &key, &proofs_json(rs.iter()))?;
+            }
+            cached.insert(n.clone(), rs);
+        }
+    }
+    Ok(targets.iter().flat_map(|n| cached.remove(n).unwrap_or_default()).collect())
 }
 
 /// Shows the named definitions. Repeated names count once; the views are built one by one under a
@@ -307,15 +447,16 @@ pub fn history(ctx: &Ctx, name: &str) -> Reply {
     }
 }
 
-/// Runs the named tests (all if `names` is empty).
-pub fn test(ctx: &Ctx, source: &Source, perms: Permissions, names: &[String]) -> Reply {
+/// Runs the named tests and property tests (all if `names` is empty); `seed` varies the generated inputs.
+pub fn test(ctx: &Ctx, source: &Source, perms: Permissions, names: &[String], seed: u64) -> Reply {
     let loaded = match ctx.load(source) {
         Ok(l) => l,
         Err(d) => return Reply::diagnostics(d),
     };
+    let candidates: Vec<String> = qal_prove::props::candidates(&loaded.typed).into_iter().map(|i| loaded.typed.fns[i].def.name.clone()).collect();
     let mut unknown = Vec::new();
     for n in names {
-        if loaded.typed.tests.iter().any(|t| &t.name == n) {
+        if loaded.typed.tests.iter().any(|t| &t.name == n) || candidates.contains(n) {
             continue;
         }
         let mut d = Diagnostic::unknown_name(n, "", n);
@@ -323,6 +464,7 @@ pub fn test(ctx: &Ctx, source: &Source, perms: Permissions, names: &[String]) ->
             d.message = format!("`{n}` is a function, not a test");
             let call = if ctx.is_mcp() { format!("`qal_call` with fn `{n}`") } else { format!("`qal call {n} ...`") };
             d = d.hint(format!("call it with {call}, or write a test: `test {n}_works = {n}(...) == ...`"));
+            d = d.hint("a function gets a generated property test if it is pure, has an `ens` or calls a function with `req`, and takes no function values");
         } else if let Some(h) = ctx.renamed_hint(source, n) {
             d = d.hint(h);
         }
@@ -338,7 +480,8 @@ pub fn test(ctx: &Ctx, source: &Source, perms: Permissions, names: &[String]) ->
     let start = Instant::now();
     let mut tests = Vec::new();
     let mut skipped = Vec::new();
-    for t in loaded.typed.tests.iter().filter(|t| names.is_empty() || names.contains(&t.name)) {
+    let run_all = names.is_empty();
+    for t in loaded.typed.tests.iter().filter(|t| run_all || names.contains(&t.name)) {
         if ctx.test_budget.is_some_and(|b| start.elapsed() > b) {
             skipped.push(t.name.clone());
             continue;
@@ -347,10 +490,37 @@ pub fn test(ctx: &Ctx, source: &Source, perms: Permissions, names: &[String]) ->
         r.error = r.error.map(capped);
         tests.push(r);
     }
+    // Property tests: of every candidate, or of the functions named; with the rest of the time budget.
+    let prop_names: Vec<String> = names.iter().filter(|n| candidates.contains(n)).cloned().collect();
+    let mut properties = Vec::new();
+    if run_all || !prop_names.is_empty() {
+        let mut opts = PropOptions { seed, ..PropOptions::default() };
+        if let (Some(budget), Some(timeout)) = (ctx.test_budget, ctx.timeout) {
+            opts.budget = budget.saturating_sub(start.elapsed());
+            opts.timeout = opts.timeout.min(timeout);
+        }
+        let only = (!run_all).then_some(prop_names.as_slice());
+        match qal_prove::check_properties(&loaded.typed, only, &opts) {
+            Ok(ps) => properties = ps,
+            Err(e) => return Reply::error(e),
+        }
+    }
     let passed = tests.iter().filter(|t| t.passed).count();
     let failed = tests.len() - passed;
-    let out = Output { tests: Some(tests), passed: Some(passed), failed: Some(failed), skipped: (!skipped.is_empty()).then_some(skipped), ..Output::default() };
-    Reply::new(out, u8::from(failed > 0))
+    let failed_properties = properties.iter().filter(|p| p.status == PropStatus::Failed).count();
+    for p in &mut properties {
+        p.error = p.error.take().map(capped);
+    }
+    let out = Output {
+        tests: Some(tests),
+        properties: (!properties.is_empty()).then_some(properties),
+        passed: Some(passed),
+        failed: Some(failed),
+        failed_properties: (failed_properties > 0).then_some(failed_properties),
+        skipped: (!skipped.is_empty()).then_some(skipped),
+        ..Output::default()
+    };
+    Reply::new(out, u8::from(failed + failed_properties > 0))
 }
 
 /// The function `name` of `loaded`, or why it cannot be called (checked before compiling).

@@ -366,9 +366,12 @@ fn store_errors_name_tests_functions_and_renamed_names() {
     let dir = project("store-messages");
     qal_in(&dir, &["init"]);
     qal_in(&dir, &["define", &example("math.qal")]);
+    // `gcd` calls a function with `req` (itself), so it has a property test; `is_prime` has none.
+    let (code, v) = qal_in(&dir, &["test", "is_prime"]);
+    assert_eq!((code, v["diagnostics"][0]["message"].as_str()), (1, Some("`is_prime` is a function, not a test")));
+    assert!(v["diagnostics"][0]["hints"][0].as_str().unwrap().contains("qal call is_prime"));
     let (code, v) = qal_in(&dir, &["test", "gcd"]);
-    assert_eq!((code, v["diagnostics"][0]["message"].as_str()), (1, Some("`gcd` is a function, not a test")));
-    assert!(v["diagnostics"][0]["hints"][0].as_str().unwrap().contains("qal call gcd"));
+    assert_eq!((code, v["tests"].as_array().map(Vec::len), v["properties"][0]["def"].as_str(), v["properties"][0]["status"].as_str()), (0, Some(0), Some("gcd"), Some("passed")));
     let (code, v) = qal_in(&dir, &["call", "fact_5"]);
     assert_eq!((code, v["error"]["message"].as_str()), (1, Some("`fact_5` is a test, not a function")));
     qal_in(&dir, &["rename", "gcd", "greatest_common_divisor"]);
@@ -427,4 +430,28 @@ fn deep_recursion_works_and_overflow_is_reported() {
     assert_eq!(qal_json(&["call", &f, "deep", "10000"]), (0, json!({"ok": 10000, "stdout": ""})));
     let (code, v) = qal_json(&["call", &f, "deep", "100000000"]);
     assert_eq!((code, v["error"]["kind"].as_str()), (1, Some("stack_overflow")));
+}
+
+#[test]
+fn prove_and_property_tests_from_files_and_the_store() {
+    let dir = project("prove");
+    qal_in(&dir, &["init"]);
+    let ok = write(&dir, "ok.qal", "fn abs(x: Int) -> Int ens r >= 0 = if x < 0 then -x else x\nfn pos(x: Int) -> Int req x > 0 = x\ntest t = pos(abs(-3) + 1) == 4");
+    let (code, v) = qal_in(&dir, &["define", &ok]);
+    assert_eq!((code, v["proofs"].as_array().map(Vec::len)), (0, Some(2)), "{v}");
+    let (code, v) = qal_in(&dir, &["prove"]);
+    assert_eq!((code, v["proven"].as_u64(), v["refuted"].as_u64(), v["unknown"].as_u64()), (0, Some(2), Some(0), Some(0)));
+    let (code, v) = qal_in(&dir, &["prove", "abs"]);
+    assert_eq!((code, v["proofs"][0]["contract"].as_str()), (0, Some("ens r >= 0")));
+    let bad = write(&dir, "bad.qal", "fn dec(x: Int) -> Int ens r >= 0 = x - 1");
+    let (code, v) = qal_in(&dir, &["define", &bad]);
+    assert_eq!((code, v["diagnostics"][0]["kind"].as_str()), (1, Some("contract_refuted")));
+    let (code, v) = qal_in(&dir, &["prove", &bad]);
+    assert_eq!((code, v["refuted"].as_u64(), v["proofs"][0]["status"].as_str()), (1, Some(1), Some("refuted")));
+    let props = write(&dir, "props.qal", "fn head(xs: List[Int]) -> Int ens r >= 0 = match get(sort_int(xs), 0) { Some(x) => x, None => 0 }\ntest t = head([1]) == 1");
+    let (code, v) = qal_in(&dir, &["test", &props]);
+    assert_eq!((code, v["passed"].as_u64(), v["failed_properties"].as_u64(), &v["properties"][0]["counterexample"]), (1, Some(1), Some(1), &json!({"xs": [-1]})));
+    let (_, v) = qal_in(&dir, &["test", &props, "--seed", "3"]);
+    assert_eq!(v["properties"][0]["seed"].as_u64(), Some(3));
+    assert_eq!(qal_in(&dir, &["prove", "nope"]).1["diagnostics"][0]["kind"], "unknown_name");
 }

@@ -61,7 +61,7 @@ const UNSUPPORTED_VERSION: i64 = -32022;
 pub const REFERENCE: &str = include_str!("reference.md");
 
 const INSTRUCTIONS: &str = "QAL is a programming language for AI agents. Code lives in a checked, content-addressed store in this project \
-(.qal/store.db), not in files: write it with qal_define (its description is the language reference), test it with qal_test, run it with \
+(.qal/store.db), not in files: write it with qal_define (its description is the language reference), test it with qal_test, prove its contracts with qal_prove, run it with \
 qal_run (entry point main(args: List[Str]) -> Int) or qal_call (any function). Every result is JSON; errors are diagnostics with a path and hints.";
 
 /// A JSON-RPC error.
@@ -390,7 +390,15 @@ impl Server {
                 ops::view(&ctx, &names)
             }
             "qal_query" => ops::query(&ctx, &Query { name: a.string("name")?, type_pattern: a.string("type")?, uses: a.string("uses")? }),
-            "qal_test" => ops::test(&ctx, &Source::Store, Permissions::default(), &a.names("names")?),
+            "qal_test" => {
+                let seed = match a.get("seed") {
+                    None => 0,
+                    Some(J::Number(n)) => n.as_u64().ok_or("`seed` must be a non-negative integer")?,
+                    Some(_) => return Err("`seed` must be a non-negative integer".into()),
+                };
+                ops::test(&ctx, &Source::Store, Permissions::default(), &a.names("names")?, seed)
+            }
+            "qal_prove" => ops::prove(&ctx, &Source::Store, &a.names("names")?),
             "qal_run" => {
                 let entry = a.string("entry")?.unwrap_or_else(|| "main".into());
                 let perms = perms(&a)?;
@@ -519,14 +527,15 @@ impl<'a> Args<'a> {
     }
 }
 
-const TOOL_NAMES: [&str; 9] = ["qal_define", "qal_test", "qal_run", "qal_call", "qal_view", "qal_query", "qal_rename", "qal_history", "qal_build"];
+const TOOL_NAMES: [&str; 10] = ["qal_define", "qal_test", "qal_prove", "qal_run", "qal_call", "qal_view", "qal_query", "qal_rename", "qal_history", "qal_build"];
 
 fn tool_params(tool: &str) -> &'static [&'static str] {
     match tool {
         "qal_define" => &["source", "agent"],
         "qal_view" => &["names"],
         "qal_query" => &["name", "type", "uses"],
-        "qal_test" => &["names"],
+        "qal_test" => &["names", "seed"],
+        "qal_prove" => &["names"],
         "qal_run" => &["entry", "args", "stdin", "allow"],
         "qal_call" => &["fn", "args", "stdin", "allow"],
         "qal_build" => &["entry"],
@@ -546,14 +555,17 @@ pub fn tools() -> J {
     let read_only = json!({"readOnlyHint": true, "openWorldHint": false});
     let writes = json!({"readOnlyHint": false, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false});
     let define = format!(
-        "Add or replace QAL definitions (types, functions, tests) in the project's store. Nothing is stored unless all of them parse and type-check together with the stored code; then the result lists each name with its hash and status (added, replaced, unchanged, relinked). Otherwise `diagnostics` say what to fix.\n\n{REFERENCE}"
+        "Add or replace QAL definitions (types, functions, tests) in the project's store. Nothing is stored unless all of them parse and type-check together with the stored code; then the result lists each name with its hash and status (added, replaced, unchanged, relinked). Otherwise `diagnostics` say what to fix. Contracts are proven on the way (`proofs`): a function whose contract is refuted is not stored (the diagnostic has a counterexample).\n\n{REFERENCE}"
     );
     json!([
         {"name": "qal_define", "title": "Define QAL code", "description": define, "annotations": writes,
          "inputSchema": {"type": "object", "properties": {"source": s("QAL source text with one or more definitions."), "agent": agent}, "required": ["source"], "additionalProperties": false}},
         {"name": "qal_test", "title": "Run QAL tests", "annotations": read_only,
-         "description": "Run the stored tests (all, or the named ones). Result: each test with passed true/false and the runtime error of a failing one, plus passed/failed counts.",
-         "inputSchema": {"type": "object", "properties": {"names": list("Test names (default: all tests).")}, "additionalProperties": false}},
+         "description": "Run the stored tests and the generated property tests (all, or the named tests and functions). A pure function with an `ens`, or that calls a function with `req`, gets a property test: 100 generated inputs that satisfy its `req`; any contract violation fails it, with a shrunk counterexample. Result: each test with passed true/false and the runtime error of a failing one, `properties` (passed, failed, gave_up, skipped), plus passed/failed counts.",
+         "inputSchema": {"type": "object", "properties": {"names": list("Test or function names (default: all)."), "seed": {"type": "integer", "minimum": 0, "description": "Seed of the generated inputs (default 0)."}}, "additionalProperties": false}},
+        {"name": "qal_prove", "title": "Prove QAL contracts", "annotations": read_only,
+         "description": "Prove the `req`/`ens` contracts of stored functions and tests with Z3 (all, or the named ones): every `ens`, and the `req` of every called function at its call site. Status per obligation: proven, refuted (with a counterexample that really violates it), or unknown (with the reason: Int and Bool facts are modelled exactly, other values only approximately; the contract stays checked at runtime). Results are stored per definition hash.",
+         "inputSchema": {"type": "object", "properties": {"names": list("Function or test names (default: all).")}, "additionalProperties": false}},
         {"name": "qal_run", "title": "Run a QAL program", "annotations": {"readOnlyHint": false, "destructiveHint": false, "openWorldHint": false},
          "description": "Run a stored entry point `fn(List[Str]) -> Int` (default `main`) with string arguments. Result: exit_code and stdout, or a runtime `error` (contract violation, overflow, timeout after 10 s, ...). Effects the program declares must be granted with `allow`.",
          "inputSchema": {"type": "object", "properties": {"entry": s("Entry point name (default main)."), "args": list("Program arguments."), "stdin": stdin.clone(), "allow": allow.clone()}, "additionalProperties": false}},
