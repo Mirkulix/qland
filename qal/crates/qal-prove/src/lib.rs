@@ -15,11 +15,15 @@
 //! resource limit (`rlimit`, deterministic for a given Z3 version); the wall-clock timeout is only a
 //! safety net. Results are a function of the definition, its callees' contracts, the prover version,
 //! the Z3 version and the resource limit — [`Options::key`] names all of them.
+//!
+//! **Property tests** (`props`): generated inputs that satisfy `req`, checked for contract violations.
 
 mod gen;
+pub mod props;
 mod vc;
 
-pub use gen::smallest;
+pub use gen::{fnv, generatable, random, shrink, smallest, Rng};
+pub use props::{check_properties, PropOptions, PropReport, PropStatus};
 
 use qal_core::ast::Type;
 use qal_core::diag::Diagnostic;

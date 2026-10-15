@@ -254,3 +254,111 @@ fn simple_recursive_counterexamples_are_found() {
     let r = one("fn f(x: Int, n: Int) -> Int req x > 0 = if n == 0 then 0 else f(x - 1, n - 1)", "f");
     assert_eq!(r.status, Status::Refuted, "{r:#?}");
 }
+
+// ---------------------------------------------------------------------------------------------
+// Property tests
+
+fn props(src: &str) -> Vec<PropReport> {
+    check_properties(&typed(src), None, &PropOptions::default()).unwrap()
+}
+
+#[test]
+fn failing_properties_are_shrunk() {
+    let rs = props("fn head(xs: List[Int]) -> Int ens r >= 0 = match get(sort_int(xs), 0) { Some(x) => x, None => 0 }");
+    assert_eq!(rs.len(), 1);
+    assert_eq!(rs[0].status, PropStatus::Failed);
+    assert_eq!(serde_json::to_value(rs[0].counterexample.as_ref().unwrap()).unwrap(), json!({"xs": [-1]}));
+    assert_eq!(rs[0].error.as_ref().map(|e| (e.kind, e.contract.as_deref())), Some(("contract_violation", Some("ens[0]: r >= 0"))));
+}
+
+#[test]
+fn passing_properties_count_runs_discards_and_traps() {
+    let rs = props(
+        "fn clamp(x: Int) -> Int ens r >= 0 && r <= 10 = if x < 0 then 0 else if x > 10 then 10 else x\n\
+         fn inv(x: Int) -> Int req x != 0 ens r == 100 / x = 100 / x\n\
+         fn sq(x: Int) -> Int ens r >= 0 = x * x\n\
+         fn rare(x: Int) -> Int req x == 123456 ens r == x = x",
+    );
+    let st: Vec<(&str, PropStatus, u32)> = rs.iter().map(|r| (r.def.as_str(), r.status, r.runs)).collect();
+    assert_eq!(st, vec![("clamp", PropStatus::Passed, 100), ("inv", PropStatus::Passed, 100), ("sq", PropStatus::Passed, 100), ("rare", PropStatus::GaveUp, 0)]);
+    assert!(rs[1].discarded > 0, "x = 0 is generated");
+    assert!(rs[2].traps > 0 && rs[2].trap.as_ref().unwrap().kind == "int_overflow" && rs[2].error.is_none(), "edge values overflow: {:?}", rs[2]);
+    assert_eq!(rs[3].discarded, 1000);
+}
+
+#[test]
+fn recursive_calls_that_break_their_own_req_fail() {
+    let rs = props("fn down(n: Int) -> Int req n >= 0 ens r == 0 = if n == 0 then 0 else down(n - 2)");
+    assert_eq!(rs[0].status, PropStatus::Failed);
+    assert_eq!(serde_json::to_value(rs[0].counterexample.as_ref().unwrap()).unwrap(), json!({"n": 1}));
+    assert_eq!(rs[0].error.as_ref().unwrap().contract.as_deref(), Some("req[0]: n >= 0"));
+}
+
+#[test]
+fn structured_inputs_are_generated_and_shrunk() {
+    let src = "type P = { name: Str, tags: Map[Str, Int] }\ntype Shape = Dot | Line(Int) | Poly(List[Shape])\n\
+               fn name_len(p: P) -> Int ens r < 5 = len(p.name)\n\
+               fn depth(s: Shape) -> Int ens r < 2 = match s { Dot => 0, Line(_) => 0, Poly(xs) => 1 + fold(xs, 0, fn(m, x) => if depth(x) > m then depth(x) else m) }\n\
+               fn bytes_ok(b: Bytes, o: Option[Result[Bool, Float]]) -> Int ens r >= 0 = bytes_len(b)";
+    let rs = props(src);
+    let by = |n: &str| rs.iter().find(|r| r.def == n).unwrap();
+    assert_eq!(by("name_len").status, PropStatus::Failed);
+    assert_eq!(serde_json::to_value(by("name_len").counterexample.as_ref().unwrap()).unwrap(), json!({"p": {"name": "aaaaa", "tags": []}}));
+    assert_eq!(by("depth").status, PropStatus::Failed);
+    assert_eq!(serde_json::to_value(by("depth").counterexample.as_ref().unwrap()).unwrap(), json!({"s": {"Poly": [[{"Poly": [[]]}]]}}));
+    assert_eq!(by("bytes_ok").status, PropStatus::Passed);
+}
+
+#[test]
+fn only_pure_functions_with_contracts_and_generatable_inputs_are_tested() {
+    let src = "fn pos(x: Int) -> Int req x > 0 = x\n\
+               fn plain(x: Int) -> Int = x\n\
+               fn io(x: Int) -> Int !io ens r == x = { print(\"x\"); x }\n\
+               fn higher(f: fn(Int) -> Int) -> Int ens r == r = f(1)\n\
+               fn calls(x: Int) -> Int req x > 10 = pos(x)\n\
+               fn id[T](x: T) -> T ens r == x = x\n\
+               test t = id(1) == 1";
+    let rs = props(src);
+    // `pos` only has a `req` (nothing to check beyond it); `id[Int]` is the instance in use.
+    assert_eq!(rs.iter().map(|r| (r.def.as_str(), r.status)).collect::<Vec<_>>(), vec![("calls", PropStatus::Passed), ("id[Int]", PropStatus::Passed)]);
+    let only = check_properties(&typed(src), Some(&["calls".to_string()]), &PropOptions::default()).unwrap();
+    assert_eq!(only.len(), 1);
+}
+
+#[test]
+fn properties_are_deterministic_per_seed() {
+    let src = "fn f(xs: List[Int], s: Str) -> Int ens r < 40 = len(xs) + len(s)";
+    let a = props(src);
+    assert_eq!(a, props(src));
+    assert_eq!(a[0].status, PropStatus::Failed);
+    let other = check_properties(&typed(src), None, &PropOptions { seed: 99, ..PropOptions::default() }).unwrap();
+    assert_eq!((other[0].seed, other[0].status), (99, PropStatus::Failed));
+    let skipped = check_properties(&typed(src), None, &PropOptions { budget: Duration::ZERO, ..PropOptions::default() }).unwrap();
+    assert_eq!(skipped[0].status, PropStatus::Skipped);
+}
+
+#[test]
+fn generation_and_shrinking_basics() {
+    let tp = typed("type T = Leaf | Node(T, Int, T)");
+    let t = Type::Named("T".into());
+    assert_eq!(smallest(&tp, &t), Some(Value::Variant("Leaf".into(), vec![])));
+    assert!(smallest(&tp, &Type::Fn(vec![], Box::new(Type::Int), vec![])).is_none());
+    let mut rng = Rng::new(1);
+    for size in 0..40 {
+        assert!(random(&tp, &t, size, &mut rng).is_some());
+    }
+    assert_eq!(shrink(&tp, &Type::Int, &Value::Int(10)), vec![Value::Int(0), Value::Int(5), Value::Int(9)]);
+    assert_eq!(shrink(&tp, &Type::Int, &Value::Int(i64::MIN))[0], Value::Int(0));
+    let node = Value::Variant("Node".into(), vec![Value::Variant("Leaf".into(), vec![]), Value::Int(3), Value::Variant("Leaf".into(), vec![])]);
+    assert_eq!(shrink(&tp, &t, &node)[0], Value::Variant("Leaf".into(), vec![]));
+    assert!(!generatable(&tp, &Type::list(Type::Fn(vec![], Box::new(Type::Int), vec![]))));
+    assert_eq!(Rng::new(5).next(), Rng::new(5).next());
+}
+
+#[test]
+fn huge_inputs_are_not_generated() {
+    let start = std::time::Instant::now();
+    let ps = check_properties(&typed(&huge_record_source()), None, &PropOptions::default()).unwrap();
+    assert!(start.elapsed() < Duration::from_secs(10), "{:?}", start.elapsed());
+    assert_eq!(ps[0].status, PropStatus::GaveUp);
+}
