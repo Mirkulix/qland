@@ -99,7 +99,7 @@ fn effects_must_be_declared_and_known() {
     let d = one(src);
     assert_eq!((d.kind, d.def.as_str(), d.code), ("effect_violation", "pure_caller", "E0301"));
     assert_eq!(d.hints, vec!["add `!io` to the signature of `pure_caller`".to_string()]);
-    assert_eq!(kinds("fn f() -> Unit !net = ()")[0], ("unknown_name", "f".into(), "effects[0]".into()));
+    assert_eq!(kinds("fn f() -> Unit !web = ()")[0], ("unknown_name", "f".into(), "effects[0]".into()));
     assert_eq!(kinds("fn say() -> Unit !io = ()\ntest t = say() == ()")[0].0, "effect_violation");
     assert_eq!(kinds("fn say() -> Unit !io = ()\nfn f() -> Int !io req say() == () = 1")[0].0, "effect_violation");
 }
@@ -746,4 +746,54 @@ fn joining_list_items_stays_linear_in_type_depth() {
     assert_eq!(check_src(&src), vec![]);
     let closures = start.elapsed();
     assert!(plain + closures < std::time::Duration::from_secs(3), "{plain:?} {closures:?}");
+}
+
+#[test]
+fn prelude_types_exist_in_every_program() {
+    let src = "fn ok(rq: HttpRequest) -> HttpResponse = HttpResponse { status: 200, headers: [HttpHeader { name: \"x-path\", value: rq.path }], body: rq.body }\n\
+               fn code(e: NetError) -> Int = match e { NetDenied(_) => 1, NetInvalid(m) => len(m), NetConnect(_) => 3, NetTimeout => 4, NetTooLarge => 5 }\n\
+               fn cell(v: SqlValue) -> Str = match v { SqlNull => \"null\", SqlInt(n) => from_int(n), SqlFloat(x) => from_float(x), SqlText(s) => s }\n\
+               fn rows(r: DbRows) -> Int = len(r.rows) + len(r.columns)\n\
+               fn busy(e: DbError) -> Bool = match e { DbBusy => true, _ => false }\n\
+               fn call() -> HttpCall = HttpCall { method: \"GET\", url: \"http://127.0.0.1:9/\", headers: [], body: \"\" }";
+    assert_eq!(check_src(src), vec![]);
+    let tp = typed(src);
+    assert_eq!(&tp.types[..8].iter().map(|t| t.name.as_str()).collect::<Vec<_>>(), &qal_core::prelude::TYPE_NAMES);
+    let d = one("fn f(e: DbError) -> Int = match e { DbBusy => 1 }");
+    assert_eq!(d.kind, "non_exhaustive_match");
+}
+
+#[test]
+fn prelude_names_are_reserved() {
+    for src in ["type HttpRequest = { a: Int }", "type SqlValue = A | B", "type E = SqlInt(Int) | Other", "type F = DbBusy"] {
+        let d = one(src);
+        assert_eq!((d.code, d.kind), ("E0240", "reserved_name"), "{src}");
+    }
+    assert_eq!(one("type E = A | SqlInt(Int)").path, "variants[1]");
+}
+
+#[test]
+fn net_and_db_builtins_need_their_effects() {
+    let ok = "fn fetch(u: Str) -> Result[HttpResponse, NetError] !net = http(HttpCall { method: \"GET\", url: u, headers: [], body: \"\" })\n\
+              fn add(t: Str) -> Result[Int, DbError] !db = db_exec(\"INSERT INTO todos (title) VALUES (?)\", [SqlText(t)])\n\
+              fn all() -> Result[DbRows, DbError] !db = db_query(\"SELECT * FROM todos\", [])";
+    assert_eq!(check_src(ok), vec![]);
+    assert_eq!(kinds("fn f() -> Result[DbRows, DbError] = db_query(\"SELECT 1\", [])"), vec![("effect_violation", "f".into(), "body".into())]);
+    let d = one("fn f(c: HttpCall) -> Bool = match http(c) { Ok(_) => true, Err(_) => false }");
+    assert_eq!((d.kind, d.message.contains("net")), ("effect_violation", true));
+    assert_eq!(one("fn f() -> Result[Int, DbError] !db = db_exec(\"DELETE FROM t\", [1])").kind, "type_mismatch");
+}
+
+#[test]
+fn sql_must_be_a_valid_literal() {
+    let d = one("fn f(sql: Str) -> Result[Int, DbError] !db = db_exec(sql, [])");
+    assert_eq!((d.code, d.kind, d.path.as_str()), ("E0241", "sql_not_literal", "body.args[0]"));
+    assert!(d.hints[0].contains("`?` placeholders"), "{:?}", d.hints);
+    let d = one("fn f(t: Str) -> Result[DbRows, DbError] !db = db_query(\"SELECT * FROM \" ++ t, [])");
+    assert_eq!(d.code, "E0241");
+    for (sql, why) in [("SELECT 1; DROP TABLE t", "only one statement"), ("SELECT * FROM t WHERE id = :id", "named parameters"), ("PRAGMA journal_mode = DELETE", "not allowed"), ("ATTACH '/etc/passwd' AS p", "not allowed"), ("COMMIT", "not allowed"), ("SELECT 'x", "unterminated")] {
+        let d = one(&format!("fn f() -> Result[Int, DbError] !db = db_exec({}, [])", qal_text::printer::print_str(sql)));
+        assert_eq!((d.code, d.kind), ("E0242", "sql_invalid"), "{sql}");
+        assert!(d.message.contains(why), "{sql}: {}", d.message);
+    }
 }

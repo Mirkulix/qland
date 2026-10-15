@@ -10,11 +10,12 @@ mod unify;
 use infer::Cx;
 use qal_core::ast::*;
 use qal_core::diag::Diagnostic;
+use qal_core::prelude;
 use qal_core::tast::{Builtin, TFn, TProgram, TTest};
 use std::collections::{HashMap, HashSet};
 
-/// Effects known in Phase 1.
-pub const KNOWN_EFFECTS: &[&str] = &["io", "fs", "time", "rand"];
+/// Known effects: Phase 1's plus outgoing HTTP (`net`) and the SQLite database (`db`).
+pub const KNOWN_EFFECTS: &[&str] = &["io", "fs", "time", "rand", "net", "db"];
 
 pub use qal_core::ast::RESULT_VAR;
 
@@ -133,8 +134,22 @@ fn check_tparams(g: &Globals, def: &str, tps: &[String], diags: &mut Vec<Diagnos
 
 fn globals(p: &Program, diags: &mut Vec<Diagnostic>) -> Globals {
     let mut g = Globals { tp: TProgram::default(), fns: HashMap::new(), variants: HashMap::new(), type_index: HashMap::new() };
+    // The prelude types come first; they exist in every program.
+    for t in prelude::types() {
+        if let TypeBody::Enum(vs) = &t.body {
+            for (tag, v) in vs.iter().enumerate() {
+                g.variants.insert(v.name.clone(), (t.name.clone(), tag as u32, v.fields.clone()));
+            }
+        }
+        g.type_index.insert(t.name.clone(), g.tp.types.len());
+        g.tp.types.push(t);
+    }
     for d in &p.defs {
         let Def::Type(t) = d else { continue };
+        if prelude::is_reserved(&t.name) {
+            diags.push(Diagnostic::reserved_name(&t.name, "", &t.name));
+            continue;
+        }
         if Type::BUILTIN_NAMES.contains(&t.name.as_str()) {
             diags.push(Diagnostic::duplicate_name(&t.name, "", &t.name).hint(format!("`{}` is a built-in type", t.name)));
             continue;
@@ -154,7 +169,9 @@ fn globals(p: &Program, diags: &mut Vec<Diagnostic>) -> Globals {
             }
             TypeBody::Enum(vs) => {
                 for (tag, v) in vs.iter().enumerate() {
-                    if BUILTIN_VARIANTS.contains(&v.name.as_str()) || g.variants.contains_key(&v.name) {
+                    if prelude::is_reserved(&v.name) {
+                        diags.push(Diagnostic::reserved_name(&t.name, &format!("variants[{tag}]"), &v.name));
+                    } else if BUILTIN_VARIANTS.contains(&v.name.as_str()) || g.variants.contains_key(&v.name) {
                         let mut d = Diagnostic::duplicate_name(&t.name, &format!("variants[{tag}]"), &v.name);
                         if BUILTIN_VARIANTS.contains(&v.name.as_str()) {
                             d = d.hint(format!("`{}` belongs to the built-in Option/Result", v.name));

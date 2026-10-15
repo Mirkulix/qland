@@ -384,6 +384,31 @@ fn only_needed_host_functions_are_imported() {
 }
 
 #[test]
+fn several_entry_functions_compile_together() {
+    let m = build("fn a() -> Int = b()\nfn b() -> Int = 1\nfn c() -> Int = 2\nfn unused() -> Int = 3\ntest t = true", Entry::Fns(vec!["a".into(), "c".into(), "nope".into()]));
+    let names: Vec<&str> = m.funcs.iter().map(|f| f.name.as_str()).collect();
+    assert_eq!(names, vec!["a", "b", "c"]);
+    assert_eq!(call_i64(&m, "c", &[]), Ok(2));
+}
+
+#[test]
+fn net_and_db_calls_import_their_host_functions() {
+    let m = build(
+        "fn fetch(c: HttpCall) -> Result[HttpResponse, NetError] !net = http(c)\n\
+         fn add(t: Str) -> Result[Int, DbError] !db = db_exec(\"INSERT INTO t (a) VALUES (?)\", [SqlText(t)])\n\
+         fn all() -> Result[DbRows, DbError] !db = db_query(\"SELECT a FROM t\", [])\n\
+         fn main(args: List[Str]) -> Int !net !db = match all() { Ok(r) => len(r.rows), Err(_) => match add(\"x\") { Ok(n) => n, Err(_) => 1 } }",
+        Entry::All,
+    );
+    assert_eq!(m.imports, vec![host::FAIL, host::NET_HTTP, host::DB_EXEC, host::DB_QUERY]);
+    assert_eq!(host::signature(host::DB_QUERY), Some((&[host::ValType::I32, host::ValType::I32][..], &[host::ValType::I32][..])));
+    assert_eq!(host::effect(host::NET_HTTP), Some("net"));
+    // The prelude types travel with the module (the host decodes and encodes them).
+    assert!(m.types.iter().any(|t| t.name == "HttpResponse") && m.types.iter().any(|t| t.name == "SqlValue"));
+    wasmparser::Validator::new().validate_all(&m.wasm).unwrap();
+}
+
+#[test]
 fn match_on_an_enum_without_variants_compiles() {
     let m = build("type Never = |\nfn absurd(n: Never) -> Int = match n { }\nfn main(args: List[Str]) -> Int = 0", Entry::All);
     assert!(m.func("absurd").is_some());

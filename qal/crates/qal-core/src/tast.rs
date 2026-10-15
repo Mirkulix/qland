@@ -90,6 +90,9 @@ builtins! {
     BytesToList => "bytes_to_list",
     BytesToStr => "bytes_to_str",
     Compare => "compare",
+    Http => "http",
+    DbExec => "db_exec",
+    DbQuery => "db_query",
 }
 
 impl Builtin {
@@ -100,6 +103,8 @@ impl Builtin {
             Builtin::ReadFile | Builtin::WriteFile => Some("fs"),
             Builtin::NowMs => Some("time"),
             Builtin::RandInt => Some("rand"),
+            Builtin::Http => Some("net"),
+            Builtin::DbExec | Builtin::DbQuery => Some("db"),
             _ => None,
         }
     }
@@ -111,7 +116,7 @@ impl Builtin {
         "float_to_int", "print", "read_line", "read_file", "write_file", "now_ms", "rand_int", "read_all", "sort_str",
         "char_code", "from_char_code", "to_upper", "to_lower", "replace", "index_of", "map_new", "map_get", "map_put",
         "map_del", "map_has", "map_size", "map_keys", "map_values", "to_bytes", "bytes_len", "bytes_get", "bytes_slice",
-        "bytes_from", "bytes_to_list", "bytes_to_str", "compare",
+        "bytes_from", "bytes_to_list", "bytes_to_str", "compare", "http", "db_exec", "db_query",
     ];
 }
 
@@ -329,9 +334,10 @@ mod tests {
         names.sort_unstable();
         assert_eq!(names.len(), Builtin::NAMES.len(), "Builtin::NAMES has duplicates");
         assert_eq!(names, from_variants);
-        assert_eq!(Builtin::ALL.len(), 54);
+        assert_eq!(Builtin::ALL.len(), 57);
         assert_eq!(Builtin::ALL[0], Builtin::StrLen);
         assert_eq!(Builtin::ReadAll.effect(), Some("io"));
         assert_eq!((Builtin::SortStr.effect(), Builtin::Replace.effect()), (None, None));
+        assert_eq!((Builtin::Http.effect(), Builtin::DbExec.effect(), Builtin::DbQuery.effect()), (Some("net"), Some("db"), Some("db")));
     }
 }

@@ -224,6 +224,24 @@ impl Diagnostic {
             .hint("deeply nested generic calls multiply instances; use fewer distinct type arguments")
     }
 
+    /// A user definition takes a reserved name: a prelude type or variant (`HttpRequest`, `SqlInt`, ...).
+    pub fn reserved_name(def: &str, path: &str, name: &str) -> Self {
+        Diagnostic::new("E0240", "reserved_name", def, path, format!("`{name}` is a built-in prelude name"))
+            .hint("prelude types (HttpHeader, HttpRequest, HttpResponse, HttpCall, NetError, SqlValue, DbRows, DbError) and their variants exist in every program; choose another name")
+    }
+
+    /// The `sql` argument of `db_exec` / `db_query` is not a string literal.
+    pub fn sql_not_literal(def: &str, path: &str, callee: &str) -> Self {
+        Diagnostic::new("E0241", "sql_not_literal", def, path, format!("the SQL text of `{callee}` must be a string literal"))
+            .hint("values belong in `params` as `?` placeholders, e.g. db_query(\"SELECT * FROM t WHERE id = ?\", [SqlInt(id)]); for variants (e.g. ORDER BY) write one literal per variant and choose with `match`")
+    }
+
+    /// The SQL literal of `db_exec` / `db_query` is refused by the static check (`qal_core::sql`).
+    pub fn sql_invalid(def: &str, path: &str, reason: &str) -> Self {
+        Diagnostic::new("E0242", "sql_invalid", def, path, format!("invalid SQL literal: {reason}"))
+            .hint("one statement, positional `?` parameters only; ATTACH, DETACH, PRAGMA, VACUUM and transaction statements are not allowed (one transaction per execution is automatic)")
+    }
+
     pub fn missing_field(def: &str, path: &str, record: &str, field: &str) -> Self {
         Diagnostic::new("E0206", "type_mismatch", def, path, format!("`{record}` needs field `{field}`"))
             .hint(format!("add `{field}: ...` to the `{record} {{ ... }}` literal"))

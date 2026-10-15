@@ -25,7 +25,7 @@
 //! fn body   := n type{n} ret:type effects req:n expr{n} ens:n expr{n} body:expr   (params bound in order;
 //!              `r` is bound for `ens` without being stored)
 //! test body := expr
-//! ref       := 0 hash[32] | 1 group-index:varint
+//! ref       := 0 hash[32] | 1 group-index:varint | 2 prelude-type-name:str   (2: Phase 3, any version)
 //! effects   := n str{n}              (sorted, without duplicates)
 //! str       := len:varint utf8-bytes; varints are minimal LEB128; ints are 8 bytes little endian;
 //!              floats are their IEEE bit pattern; flags and Bools are 0 or 1
@@ -38,8 +38,11 @@
 //! lowest version that has every construct it uses (a group: the highest of its members), so a
 //! definition without Phase 2 constructs keeps its Phase 1 bytes and hash. Decoding is strict both
 //! ways: a version 1 form must not use version 2 constructs and a version 2 form must use one.
+//! A prelude reference (`R_PRELUDE`, Phase 3) is valid in both versions: before Phase 3 no
+//! definition could name a prelude type, so no existing form changes.
 
 use crate::ast::*;
+use crate::prelude;
 use crate::tast::Builtin;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -277,6 +280,8 @@ mod tag {
 
     pub const R_HASH: u8 = 0;
     pub const R_GROUP: u8 = 1;
+    /// A prelude type (`crate::prelude`), referenced by name: it has no definition to hash.
+    pub const R_PRELUDE: u8 = 2;
 }
 use tag::*;
 
@@ -400,7 +405,22 @@ impl Enc<'_, '_> {
         }
     }
 
+    /// True if `name` refers to a prelude type (user types of the program take precedence; the
+    /// checker rejects user types with prelude names anyway).
+    fn is_prelude_type(&self, name: &str) -> bool {
+        prelude::is_type(name) && !self.env.types.contains(name)
+    }
+
+    fn is_type(&self, name: &str) -> bool {
+        self.env.types.contains(name) || prelude::is_type(name)
+    }
+
     fn reference(&mut self, name: &str) {
+        if self.is_prelude_type(name) {
+            self.byte(R_PRELUDE);
+            self.str(name);
+            return;
+        }
         match (self.refs)(name) {
             Some(Ref::Hash(h)) => {
                 self.byte(R_HASH);
@@ -473,7 +493,7 @@ impl Enc<'_, '_> {
             }
             Type::Param(n) => self.fail(format!("unknown type parameter `{n}`")),
             Type::Named(n) => {
-                if !self.env.types.contains(n.as_str()) {
+                if !self.is_type(n) {
                     self.fail(format!("unknown type `{n}`"));
                 }
                 self.byte(T_NAMED);
@@ -506,7 +526,7 @@ impl Enc<'_, '_> {
         match name {
             "None" | "Some" => self.byte(V_OPTION),
             "Ok" | "Err" => self.byte(V_RESULT),
-            _ => match self.env.variants.get(name).copied() {
+            _ => match self.env.variants.get(name).copied().or_else(|| prelude::variant_owner(name)) {
                 Some(owner) => {
                     self.byte(V_ENUM);
                     self.reference(owner);
@@ -518,7 +538,7 @@ impl Enc<'_, '_> {
     }
 
     fn is_variant(&self, name: &str) -> bool {
-        matches!(name, "None" | "Some" | "Ok" | "Err") || self.env.variants.contains_key(name)
+        matches!(name, "None" | "Some" | "Ok" | "Err") || self.env.variants.contains_key(name) || prelude::variant_owner(name).is_some()
     }
 
     fn exprs(&mut self, xs: &[Expr]) {
@@ -628,7 +648,7 @@ impl Enc<'_, '_> {
             }
             Expr::Record(name, fields) => {
                 self.byte(E_RECORD);
-                if !self.env.types.contains(name.as_str()) {
+                if !self.is_type(name) {
                     self.fail(format!("unknown type `{name}`"));
                 }
                 self.reference(name);
@@ -722,7 +742,7 @@ impl Enc<'_, '_> {
             }
             Pat::Record(name, fs) => {
                 self.byte(P_RECORD);
-                if !self.env.types.contains(name.as_str()) {
+                if !self.is_type(name) {
                     self.fail(format!("unknown type `{name}`"));
                 }
                 self.reference(name);
@@ -1621,6 +1641,13 @@ impl<'b> Dec<'b> {
                 let h = Hash(bytes);
                 Ok(if self.counting && !self.collect { String::new() } else { name_of(&h) })
             }
+            R_PRELUDE => {
+                let n = self.str()?;
+                if !prelude::is_type(&n) {
+                    return Err(format!("`{n}` is not a prelude type"));
+                }
+                Ok(n)
+            }
             R_GROUP => {
                 let j = self.index()?;
                 if j >= self.size {
@@ -1748,18 +1775,24 @@ impl<'b> Dec<'b> {
     /// declared enum's variant cannot have a built-in variant's name.
     fn variant_name(&mut self, own: &str, name_of: &mut dyn FnMut(&Hash) -> String) -> R<String> {
         let owner = self.byte()?;
+        let mut prelude_owner = None;
         match owner {
             V_OPTION | V_RESULT => {}
             V_ENUM => {
-                self.reference(own, name_of)?;
+                let is_prelude = self.b.get(self.pos) == Some(&R_PRELUDE);
+                let n = self.reference(own, name_of)?;
+                if is_prelude {
+                    prelude_owner = Some(n);
+                }
             }
             t => return Err(bad_tag("variant owner", t)),
         }
         let name = self.str()?;
+        // A prelude variant belongs to its prelude enum, and no declared enum can have one.
         let ok = match name.as_str() {
             "None" | "Some" => owner == V_OPTION,
             "Ok" | "Err" => owner == V_RESULT,
-            _ => owner == V_ENUM,
+            _ => owner == V_ENUM && prelude_owner.as_deref() == prelude::variant_owner(&name),
         };
         if !ok {
             return Err(format!("variant `{name}` does not belong to its owner"));
@@ -2072,6 +2105,63 @@ mod tests {
         for (i, op) in BINOPS.iter().enumerate() {
             assert_eq!(binop_tag(*op) as usize, i, "{op:?}");
         }
+    }
+
+    #[test]
+    fn prelude_types_are_referenced_by_name() {
+        let r = Def::Fn(FnDef {
+            name: "f".into(),
+            tparams: vec![],
+            params: vec![Param { name: "req".into(), ty: Type::Named("HttpRequest".into()) }],
+            ret: Type::Named("SqlValue".into()),
+            effects: vec![],
+            req: vec![],
+            ens: vec![],
+            body: Expr::Call("SqlText".into(), vec![Expr::Field(var("req"), "path".into())]),
+        });
+        let h = Def::Fn(FnDef {
+            name: "h".into(),
+            tparams: vec![],
+            params: vec![],
+            ret: Type::Named("HttpHeader".into()),
+            effects: vec![],
+            req: vec![],
+            ens: vec![],
+            body: Expr::Record("HttpHeader".into(), vec![("name".into(), Expr::Str("a".into())), ("value".into(), Expr::Str("b".into()))]),
+        });
+        // A prelude reference is not a version 2 construct; a generic function may use one too.
+        let g = Def::Fn(FnDef {
+            name: "g".into(),
+            tparams: vec!["T".into()],
+            params: vec![Param { name: "x".into(), ty: Type::Named("T".into()) }, Param { name: "q".into(), ty: Type::Named("HttpRequest".into()) }],
+            ret: Type::Named("T".into()),
+            effects: vec![],
+            req: vec![],
+            ens: vec![],
+            body: Expr::Var("x".into()),
+        });
+        let p = Program { defs: vec![r.clone(), h.clone(), g.clone()] };
+        let c = by_name(&p);
+        for (name, def, version) in [("f", &r, 1), ("h", &h, 1), ("g", &g, 2)] {
+            assert_eq!(c[name].canonical[4], version, "{name}");
+            assert!(c[name].deps.is_empty() && c[name].refs.is_empty(), "prelude types are not dependencies");
+            assert_eq!(references_of(single(&c[name])).unwrap(), vec![]);
+            let back = decode(single(&c[name]), name, &c[name].local_names, &mut |_| "?".into()).unwrap();
+            assert_eq!(&back, def);
+        }
+        let needle = |s: &str| [&[R_PRELUDE, s.len() as u8][..], s.as_bytes()].concat();
+        assert!(c["f"].canonical.windows(13).any(|w| w == needle("HttpRequest").as_slice()));
+        // A prelude variant under another prelude enum, or an unknown prelude name, does not decode.
+        let swap = |bytes: &[u8], from: &str, to: &str| {
+            let at = bytes.windows(from.len()).rposition(|w| w == from.as_bytes()).unwrap();
+            let mut out = bytes.to_vec();
+            out[at..at + from.len()].copy_from_slice(to.as_bytes());
+            out
+        };
+        let wrong_owner = swap(&c["f"].canonical, "SqlValue", "NetError");
+        assert!(decode(Form::new(&wrong_owner, None), "f", &c["f"].local_names, &mut |_| "?".into()).unwrap_err().contains("does not belong"));
+        let unknown = swap(&c["h"].canonical, "HttpHeader", "HttpHeadeX");
+        assert!(decode(Form::new(&unknown, None), "h", &[], &mut |_| "?".into()).unwrap_err().contains("not a prelude type"));
     }
 
     #[test]

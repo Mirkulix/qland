@@ -536,6 +536,11 @@ impl<'g, 'p> FnGen<'g, 'p> {
                 self.call_rt(Rt::Variant1);
                 self.a.all([I::Else, I::I32Const(self.m.tag_addr(TAG_NONE)), I::End]);
             }
+
+            // The host reads the arguments and allocates the whole Result value.
+            B::Http => self.a.i(I::Call(self.m.import(host::NET_HTTP))),
+            B::DbExec => self.a.i(I::Call(self.m.import(host::DB_EXEC))),
+            B::DbQuery => self.a.i(I::Call(self.m.import(host::DB_QUERY))),
             B::RandInt => {
                 let site = self.site(path, "rand_int: req lo <= hi", &[("lo", Type::Int), ("hi", Type::Int)], None);
                 self.site_args(site);

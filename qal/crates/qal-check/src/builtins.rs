@@ -31,7 +31,23 @@ impl Cx<'_> {
         if let Some(e) = builtin.effect() {
             self.effect_check(path, name, &[e.to_string()]);
         }
+        if matches!(builtin, Builtin::DbExec | Builtin::DbQuery) {
+            self.sql_literal(name, &args[0], &format!("{path}.args[0]"));
+        }
         Some(TExpr { ty: ret, kind: TKind::Builtin(builtin, targs, path.into()) })
+    }
+
+    /// The SQL text of `db_exec`/`db_query` is part of the program: a string literal that passes the
+    /// static check (one statement, `?` parameters, no database or transaction control).
+    fn sql_literal(&mut self, callee: &str, arg: &Expr, path: &str) {
+        match arg {
+            Expr::Str(sql) => {
+                if let Err(reason) = qal_core::sql::check_statement(sql) {
+                    self.diags.push(Diagnostic::sql_invalid(self.def, path, &reason));
+                }
+            }
+            _ => self.diags.push(Diagnostic::sql_not_literal(self.def, path, callee)),
+        }
     }
 
     /// A function argument of map/filter/fold: its effects become effects of the call.
@@ -87,6 +103,7 @@ fn signature(name: &str, a: Type, b: Type) -> Option<(Builtin, Vec<Type>, Type)>
     use Builtin as B;
     let fun = |ps: Vec<Type>, r: Type| Type::Fn(ps, Box::new(r), vec![]);
     let list = Type::list;
+    let named = |n: &str| Type::Named(n.to_string());
     Some(match name {
         "slice" => (B::Slice, vec![Type::Str, Type::Int, Type::Int], Type::Str),
         "split" => (B::Split, vec![Type::Str, Type::Str], list(Type::Str)),
@@ -140,6 +157,9 @@ fn signature(name: &str, a: Type, b: Type) -> Option<(Builtin, Vec<Type>, Type)>
         "bytes_to_list" => (B::BytesToList, vec![Type::Bytes], list(Type::Int)),
         "bytes_to_str" => (B::BytesToStr, vec![Type::Bytes], Type::option(Type::Str)),
         "compare" => (B::Compare, vec![a.clone(), a], Type::Int),
+        "http" => (B::Http, vec![named("HttpCall")], Type::result(named("HttpResponse"), named("NetError"))),
+        "db_exec" => (B::DbExec, vec![Type::Str, list(named("SqlValue"))], Type::result(Type::Int, named("DbError"))),
+        "db_query" => (B::DbQuery, vec![Type::Str, list(named("SqlValue"))], Type::result(named("DbRows"), named("DbError"))),
         _ => return None,
     })
 }

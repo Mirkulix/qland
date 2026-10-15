@@ -78,8 +78,14 @@ pub mod host {
     pub const RAND_INT: &str = "rand.rand_int";
     /// `() -> Str ptr` of the rest of the input (empty at end of input)
     pub const READ_ALL: &str = "io.read_all";
+    /// `(call: HttpCall ptr) -> Result[HttpResponse, NetError] ptr` (the host builds the result)
+    pub const NET_HTTP: &str = "net.http";
+    /// `(sql: Str ptr, params: List[SqlValue] ptr) -> Result[Int, DbError] ptr`
+    pub const DB_EXEC: &str = "db.exec";
+    /// `(sql: Str ptr, params: List[SqlValue] ptr) -> Result[DbRows, DbError] ptr`
+    pub const DB_QUERY: &str = "db.query";
     /// Every effect host function (the index is reported for a denied call: append only).
-    pub const EFFECT_FNS: [&str; 7] = [PRINT, READ_LINE, READ_FILE, WRITE_FILE, NOW_MS, RAND_INT, READ_ALL];
+    pub const EFFECT_FNS: [&str; 10] = [PRINT, READ_LINE, READ_FILE, WRITE_FILE, NOW_MS, RAND_INT, READ_ALL, NET_HTTP, DB_EXEC, DB_QUERY];
 
     /// Parameter and result types of a host function (None for an unknown name).
     pub fn signature(name: &str) -> Option<(&'static [ValType], &'static [ValType])> {
@@ -89,6 +95,8 @@ pub mod host {
             STR_TO_FLOAT => (&[I32], &[I32, F64]),
             UTF8_VALID => (&[I32], &[I32]),
             PRINT => (&[I32], &[]),
+            NET_HTTP => (&[I32], &[I32]),
+            DB_EXEC | DB_QUERY => (&[I32, I32], &[I32]),
             READ_LINE | READ_ALL => (&[], &[I32]),
             READ_FILE => (&[I32], &[I32, I32]),
             WRITE_FILE => (&[I32, I32], &[I32, I32]),
@@ -156,6 +164,8 @@ impl CompiledModule {
 pub enum Entry {
     /// One function (e.g. `main`).
     Fn(String),
+    /// Several functions (e.g. a service's handler and its init function).
+    Fns(Vec<String>),
     /// All tests.
     Tests,
     /// All functions and tests.
@@ -167,6 +177,7 @@ pub enum Entry {
 pub fn compile(p: &TProgram, entry: &Entry) -> Result<CompiledModule, String> {
     let (fn_roots, with_tests): (Vec<usize>, bool) = match entry {
         Entry::Fn(name) => (p.fn_index(name).into_iter().collect(), false),
+        Entry::Fns(names) => (names.iter().filter_map(|n| p.fn_index(n)).collect(), false),
         Entry::Tests => (vec![], true),
         Entry::All => ((0..p.fns.len()).collect(), true),
     };
@@ -201,6 +212,9 @@ pub fn compile(p: &TProgram, entry: &Entry) -> Result<CompiledModule, String> {
             Builtin::WriteFile => host::WRITE_FILE,
             Builtin::NowMs => host::NOW_MS,
             Builtin::RandInt => host::RAND_INT,
+            Builtin::Http => host::NET_HTTP,
+            Builtin::DbExec => host::DB_EXEC,
+            Builtin::DbQuery => host::DB_QUERY,
             _ => continue,
         };
         imports.push(name);
