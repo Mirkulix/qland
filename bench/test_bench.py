@@ -131,6 +131,45 @@ class Audit(unittest.TestCase):
         ])
         self.assertEqual(a["violations"], [])
 
+    def test_source_text_is_symmetric_and_not_over_flagged(self):
+        wd = self.wd
+        qal = "# see tasks/ and ~\nfn f(x: T) -> Int = match x { A(..) => 1, _ => 0 }\nfn g() -> Str = \"..\"\nfn h() -> Str = '~'\n"
+        clean = [
+            ("Bash", {"command": f"cd {wd} && python3 qalc.py define <<'EOF'\n{qal}EOF"}),
+            ("Bash", {"command": f"cd {wd} && python3 qalc.py call qal_run '{{\"stdin\": \"..\"}}'"}),
+            ("Bash", {"command": f"cd {wd} && echo \"a .. ~ tasks/\" > data/x"}),
+            ("Write", {"file_path": f"{wd}/src/main.rs", "content": "fn main() { let v = [1, 2, 3]; let _ = &v[..2]; for i in 0..3 { let _ = !i; } // ~ tasks/\n}"}),
+            ("Edit", {"file_path": f"{wd}/src/main.rs", "old_string": "a", "new_string": "&v[1..]"}),
+        ]
+        for tool, inp in clean:
+            self.assertEqual(self.flagged([(tool, inp, "", False)]), [], (tool, inp))
+        flagged = [
+            ("Write", {"file_path": f"{wd}/src/main.rs", "content": "const P: &str = \"x/tests.json\";"}),
+            ("Edit", {"file_path": f"{wd}/src/main.rs", "old_string": "a", "new_string": "bench/tasks"}),
+            ("Bash", {"command": f"cd {wd} && python3 qalc.py define <<'EOF'\n# tests.json\nEOF"}),
+            ("Bash", {"command": f"cd {wd} && python3 qalc.py define <<'EOF'\n# solutions/x\nEOF"}),
+            ("Bash", {"command": f"cd {wd} && ls tasks/"}),
+            ("Bash", {"command": f"cd {wd} && ls .."}),
+            ("Bash", {"command": f"cd {wd} && ls ~"}),
+            ("Bash", {"command": f"cd {wd} && cd - && ls"}),
+            ("Bash", {"command": f"cd {wd} && cd"}),
+            ("Bash", {"command": f"cd {wd} && cd; ls"}),
+            ("Bash", {"command": f"cd {wd} && pushd x"}),
+            ("Bash", {"command": f"cd {wd} && popd"}),
+            ("Bash", {"command": f"cd {wd} && ls $OLDPWD"}),
+            ("Bash", {"command": f"cd {wd} && ls $(dirname {wd})"}),
+            ("Bash", {"command": f"cd {wd} && ls `dirname {wd}`"}),
+            ("Bash", {"command": f"cd {wd} && ls .*"}),
+            ("Bash", {"command": f"cd {wd} && ls .??"}),
+            ("Bash", {"command": f"cd {wd} && ls .{{a,b}}"}),
+            ("Bash", {"command": f"cd {wd} && python3 -c 'import os; print(os.listdir(os.path.dirname(os.getcwd())))'"}),
+            ("Bash", {"command": f"cd {wd} && python3 -c \"import pathlib; print(list(pathlib.Path('.').resolve().parent.iterdir()))\""}),
+            ("Bash", {"command": f"cd {wd} && python3 - <<'EOF'\nimport os\nprint(os.getcwd())\nEOF"}),
+            ("Bash", {"command": f"cd {wd} && bash -c \"ls ..\""}),
+        ]
+        for tool, inp in flagged:
+            self.assertGreaterEqual(len(self.flagged([(tool, inp, "", False)])), 1, (tool, inp))
+
     def test_missing_cd_is_a_violation(self):
         v = self.flagged([("Bash", {"command": "cargo build"}, "", False)])
         self.assertEqual(len(v), 1)

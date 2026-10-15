@@ -158,21 +158,51 @@ def command_paths(cmd):
     words = re.split(r"[\s;|&<>()=`]+", cmd)
     return [w for w in words if w.startswith(("/", "~", "$HOME", "${HOME}")) or w == ".." or w.startswith("../") or "/../" in w or w.endswith("/..")]
 
-# Substrings that must not occur anywhere in a command (quoted text and heredoc bodies included):
-# they name the benchmark's tree, hidden tests, reference solutions or other agents' work dirs.
-FORBIDDEN = ("bench/", "/tasks/", "tasks/", "solutions/", "tests.json", "qal-bench", "$HOME", "${HOME}")
+# Specific leakage: these must not occur anywhere in a command (quoted text and heredoc bodies
+# included) or in the content a file tool writes. Generic path tricks (`..`, `~`, `tasks/`, ...) are
+# only judged outside heredoc bodies and quoted strings, so source code in either arm may contain them.
+SPECIFIC = ("bench/", "solutions/", "tests.json", "qal-bench", "$HOME", "${HOME}")
 
-def forbidden_in(text, wd, repo):
-    """Reasons why `text` (a command, or a Glob pattern) names something off limits; the agent's own
-    work dir is masked first."""
+def shell_outside(cmd):
+    """The shell text of a command without data: heredoc bodies and quoted strings are cut out, except
+    code that is executed (a quoted `-c`/`eval` argument, the body of a heredoc fed to python without
+    qalc.py)."""
+    def heredoc(m):
+        head = m.group(0).split("\n", 1)[0]
+        line = cmd[cmd.rfind("\n", 0, m.start()) + 1:m.start()] + head
+        return m.group(0) if re.search(r"\bpython3?\b", line) and "qalc.py" not in line else head + "\n<<HEREDOC"
+    cmd = re.sub(r"<<-?\s*(['\"]?)(\w+)\1[^\n]*\n.*?\n\s*\2[ \t]*(?=\n|$)", heredoc, cmd, flags=re.S)
+    def quoted(m):
+        before = cmd[:m.start()]
+        if re.search(r"(\s-[a-z]*c|\beval)\s+$", before):
+            return m.group(0)
+        return "''"
+    return re.sub(r"'[^']*'|\"(?:\\.|[^\"\\])*\"", quoted, cmd)
+
+def forbidden_in(text, wd, repo, outside_text=None):
+    """Reasons why `text` (a command, a file's content or a Glob pattern) names something off limits;
+    the agent's own work dir is masked first. `outside_text` (default: text) is what the generic
+    rules look at."""
     t = text.replace(wd, "<wd>")
-    why = [f"names `{f}`" for f in FORBIDDEN if f in t]
+    why = [f"names `{f}`" for f in SPECIFIC if f in t]
     if repo in t:
         why.append("names the repository")
-    if re.search(r"(^|[\s/='\"(;|&<>`])\.\.($|[\s/'\";|&<>)`])", t):
+    o = (text if outside_text is None else outside_text).replace(wd, "<wd>")
+    if re.search(r"(^|[\s/='\"(;|&<>`])\.\.($|[\s/'\";|&<>)`])", o):
         why.append("names `..`")
-    if re.search(r"(^|[\s='\"(;|&<>`])~", t):
+    if re.search(r"(^|[\s='\"(;|&<>`])~", o):
         why.append("names `~`")
+    if outside_text is not None:
+        if re.search(r"tasks/", o):
+            why.append("names `tasks/`")
+        if re.search(r"(^|[;&|(`]\s*)cd\s*($|[;&|)`])|\bcd\s+-|\bpushd\b|\bpopd\b|\$\{?OLDPWD|\$\(\s*dirname|`\s*dirname", o):
+            why.append("leaves the work dir (cd -, bare cd, pushd/popd, OLDPWD, dirname)")
+        if re.search(r"(^|[\s;&|(=])\.[*?{\[]", o):
+            why.append("uses a glob that reaches `..`")
+        if re.search(r"os\.getcwd|os\.path\.dirname|os\.path\.abspath|\bpathlib\b|\.parent\b|__file__|os\.chdir", o):
+            why.append("reaches a parent directory from python")
+    elif re.search(r"tasks/", o):
+        why.append("names `tasks/`")
     return why
 
 def tool_violations(name, inp, wd, repo):
@@ -188,6 +218,12 @@ def tool_violations(name, inp, wd, repo):
         p = inp[k]
         if not os.path.isabs(p) or outside(p, wd):
             v.append(f"{name} {k}={p} is not an absolute path inside the work dir")
+    texts = [inp[k] for k in ("content", "new_string", "old_string") if isinstance(inp.get(k), str)]
+    texts += [e[k] for e in (inp.get("edits") or []) if isinstance(e, dict) for k in ("new_string", "old_string") if isinstance(e.get(k), str)]
+    for t in texts:
+        for w in forbidden_in(t, wd, repo, outside_text=""):
+            if "`..`" not in w and "`~`" not in w:
+                v.append(f"{name} content {w}")
     if name == "Glob" and isinstance(inp.get("pattern"), str):
         pat = inp["pattern"]
         if os.path.isabs(pat) and outside(pat.split("*")[0].split("?")[0].split("[")[0].split("{")[0], wd):
@@ -201,7 +237,7 @@ def bash_violations(cmd, wd, repo, allowed_paths):
     v = []
     if not re.match(rf"\s*cd\s+(['\"]?){re.escape(wd)}\1\s*(&&|;)", cmd):
         v.append(f"Bash command does not start with `cd {wd} &&`: {cmd[:120]}")
-    v += [f"Bash command {w}: {cmd[:200]}" for w in forbidden_in(cmd, wd, repo)]
+    v += [f"Bash command {w}: {cmd[:200]}" for w in forbidden_in(cmd, wd, repo, outside_text=shell_outside(cmd))]
     for w in command_paths(cmd):
         w2 = w.replace("${HOME}", "~").replace("$HOME", "~")
         p = os.path.realpath(os.path.join(wd, os.path.expanduser(w2)))
