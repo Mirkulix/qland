@@ -5,6 +5,7 @@ members = [
     "crates/qal-check",
     "crates/qal-wasm",
     "crates/qal-run",
+    "crates/qal-cli",
 ]
 resolver = "2"
 

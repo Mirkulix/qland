@@ -1,0 +1,19 @@
+# Phase 1a example: pure Int/Bool functions with contracts and tests.
+
+fn fact(n: Int) -> Int
+  req n >= 0
+  ens r >= 1
+= if n <= 1 then 1 else n * fact(n - 1)
+
+fn gcd(a: Int, b: Int) -> Int
+  req a >= 0 && b >= 0
+= if b == 0 then a else gcd(b, a % b)
+
+fn is_prime(n: Int) -> Bool = n >= 2 && no_divisor(n, 2)
+
+fn no_divisor(n: Int, d: Int) -> Bool = if d * d > n then true else n % d != 0 && no_divisor(n, d + 1)
+
+test fact_5 = fact(5) == 120
+test gcd_48_18 = gcd(48, 18) == 6
+test prime_97 = is_prime(97)
+test not_prime_91 = !is_prime(91)
