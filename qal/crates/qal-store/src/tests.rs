@@ -824,7 +824,7 @@ fn version_2_stores_are_upgraded_and_keep_proof_results() {
     drop(s);
     // 2 -> 3 (proofs) -> 4 (meta) in one migration.
     let mut s = Store::open(&path).unwrap();
-    assert_eq!(raw(&s).query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), 4);
+    assert_eq!(raw(&s).query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), 5);
     assert_eq!(s.meta("x").unwrap(), None);
     let h = hash(&mut s, "f");
     assert_eq!(s.proofs(&h, "p1").unwrap(), None);
@@ -1014,7 +1014,7 @@ fn an_empty_package_is_valid_and_old_stores_are_migrated() {
     assert_eq!(hashes(&mut again).len(), 1);
     assert_eq!(again.proofs(&h, "p").unwrap().as_deref(), Some("[1]"));
     let v: i64 = raw(&again).query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-    assert_eq!(v, 4);
+    assert_eq!(v, 5);
 }
 
 #[test]
@@ -1272,24 +1272,107 @@ fn the_std_package_is_imported_into_projects_once_per_version() {
 }
 
 #[test]
-fn other_packages_carry_std_definitions_only_unchanged() {
+fn project_packages_refer_to_std_without_carrying_it() {
     let mut lib = std_store();
     lib.define(STD_A, "std-a-1").unwrap();
     let std1 = lib.export("std.", "std").unwrap();
     let mut app = store();
     app.ensure_std(&std1.file, None).unwrap();
-    ok(&mut app, "fn app_main() -> Int = std.a.f(1)");
+    ok(&mut app, "fn app_main() -> Int = std.a.f(1)\nfn app_plain() -> Int = 1");
     let pkg = app.export("app_", "app").unwrap();
-    assert!(pkg.file.contains("# def std.a.f "), "dependencies are exported with the package");
-    // Into a project with the same std: fine.
+    assert!(!pkg.file.contains("# def std.") && !pkg.file.contains("fn std.a.f"), "std definitions stay out: {}", pkg.file);
+    assert!(pkg.file.contains(&format!("\n# std {}\n", std1.hash)), "the std it was built against: {}", pkg.file);
+    assert_eq!(qal_store_parse_std(&pkg.file), Some(std1.hash.clone()));
+    // A package that does not use std does not name one; neither does `qal export ""` include std.
+    assert!(!app.export("app_plain", "plain").unwrap().file.contains("# std "));
+    assert_eq!(app.export("", "all").unwrap().defs, 2);
+    // Into a project with the same std: same hashes.
     let mut same = store();
     same.ensure_std(&std1.file, None).unwrap();
-    assert_eq!(statuses(&same.import(&pkg.file).unwrap().defined), vec![("std.a.f", "unchanged"), ("app_main", "added")]);
-    // Into one without (or with another) std: the package's std definitions would be new there.
+    assert_eq!(statuses(&same.import(&pkg.file).unwrap().defined), vec![("app_main", "added"), ("app_plain", "added")]);
+    assert_eq!(hash(&mut same, "app_main"), hash(&mut app, "app_main"));
+    // Into one with another std (or none): E0243 naming both versions, nothing written.
+    lib.define("fn std.a.f(x: Int) -> Int = x + 5", "std-a-2").unwrap();
+    let std2 = lib.export("std.", "std").unwrap();
+    let mut other = store();
+    other.ensure_std(&std2.file, None).unwrap();
+    let before = count(&other, "names");
+    let d = other.import(&pkg.file).unwrap_err();
+    assert_eq!((d[0].code, d[0].kind), ("E0243", "package_mismatch"), "{d:?}");
+    assert_eq!(d[0].message, format!("package `app` was built against std {}, this project has std {}", &std1.hash[..12], &std2.hash[..12]));
+    assert_eq!(count(&other, "names"), before);
     let mut bare = store();
     let d = bare.import(&pkg.file).unwrap_err();
-    assert_eq!((d[0].code, d[0].def.as_str()), ("E0240", "std.a.f"), "{d:?}");
-    assert_eq!(count(&bare, "names"), 0);
+    assert!(d[0].code == "E0243" && d[0].message.ends_with("this project has std none"), "{d:?}");
+    // The std project itself exports std.
+    assert_eq!(lib.export("std.", "std").unwrap().defs, 6);
+}
+
+fn qal_store_parse_std(file: &str) -> Option<String> {
+    package::parse(file).unwrap().std
+}
+
+#[test]
+fn delete_removes_names_nothing_refers_to() {
+    let mut s = store();
+    ok(&mut s, "type P = { x: Int }\nfn px(p: P) -> Int = p.x\nfn main_ish() -> Int = px(P { x: 1 })\ntest t = main_ish() == 1\nfn lone() -> Int = 2");
+    let d = s.delete(&["px".into()], "agent-d").unwrap_err();
+    assert_eq!((d[0].code, d[0].kind, d[0].dependents.clone()), ("E0406", "has_dependents", vec!["main_ish".to_string()]), "{d:?}");
+    let h = hash(&mut s, "lone");
+    let out = s.delete(&["lone".into()], "agent-d").unwrap();
+    assert_eq!((out[0].name.as_str(), out[0].kind, out[0].hash.as_str()), ("lone", "fn", h.as_str()));
+    assert!(hashes(&mut s).iter().all(|(n, _)| n != "lone"));
+    assert_eq!(s.view(&["lone".into()]).unwrap_err()[0].kind, "unknown_name");
+    assert!(s.view(&[format!("#{h}")]).is_ok(), "the definition stays stored by hash");
+    let hist = s.history("lone").unwrap();
+    assert_eq!((hist.last().unwrap().action.as_str(), hist.last().unwrap().agent.as_str()), ("deleted", "agent-d"));
+    // Several names at once: the users among them do not count; all or nothing.
+    let kinds: Vec<&str> = s.delete(&["main_ish".into(), "nope".into()], "a").unwrap_err().iter().map(|d| d.kind).collect();
+    assert_eq!(kinds, ["has_dependents", "unknown_name"]);
+    assert!(hashes(&mut s).iter().any(|(n, _)| n == "main_ish"));
+    let out = s.delete(&["t".into(), "main_ish".into(), "px".into(), "P".into()], "a").unwrap();
+    assert_eq!(out.len(), 4);
+    assert!(hashes(&mut s).is_empty());
+    // A deleted name can be defined again.
+    assert_eq!(statuses(&ok(&mut s, "fn lone() -> Int = 3")), vec![("lone", "added")]);
+    assert!(!s.export("", "x").unwrap().file.contains("fn px"));
+}
+
+#[test]
+fn delete_follows_the_namespace_rules() {
+    let mut lib = std_store();
+    lib.define(STD_A, "std-a-1").unwrap();
+    let pkg = lib.export("std.", "std").unwrap();
+    let mut s = store();
+    s.ensure_std(&pkg.file, None).unwrap();
+    let d = s.delete(&["std.a.t".into()], "a").unwrap_err();
+    assert_eq!(d[0].code, "E0240");
+    assert_eq!(lib.delete(&["std.a.f".into()], "a").unwrap_err()[0].code, "E0406");
+    assert_eq!(lib.delete(&["std.a.t".into()], "std-a-2").unwrap()[0].name, "std.a.t");
+    assert_eq!(lib.export("std.", "std").unwrap().defs, 5);
+}
+
+#[test]
+fn version_4_stores_get_the_deleted_history_action() {
+    let mut s = store();
+    ok(&mut s, "fn f() -> Int = 1");
+    let c = raw(&s);
+    // The version-4 history table (no `deleted` action).
+    c.execute_batch(
+        "CREATE TABLE h4 (id INTEGER PRIMARY KEY, name TEXT NOT NULL, action TEXT NOT NULL CHECK (action IN ('added', 'replaced', 'relinked', 'renamed')), \
+         old_hash TEXT, new_hash TEXT NOT NULL, from_name TEXT, to_name TEXT, agent TEXT NOT NULL, at INTEGER NOT NULL); \
+         INSERT INTO h4 SELECT * FROM history; DROP TABLE history; ALTER TABLE h4 RENAME TO history; CREATE INDEX history_by_name ON history(name); \
+         PRAGMA user_version = 4;",
+    )
+    .unwrap();
+    drop(c);
+    let path = s.path().to_path_buf();
+    drop(s);
+    let mut s = Store::open(&path).unwrap();
+    assert_eq!(raw(&s).query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), 5);
+    assert_eq!(s.history("f").unwrap()[0].action, "added");
+    s.delete(&["f".into()], "a").unwrap();
+    assert_eq!(s.history("f").unwrap()[1].action, "deleted");
 }
 
 #[test]

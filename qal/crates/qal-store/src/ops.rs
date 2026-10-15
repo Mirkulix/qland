@@ -17,6 +17,14 @@ pub struct Renamed {
     pub hash: String,
 }
 
+/// A name removed by `delete` (its definition stays stored by hash).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Deleted {
+    pub name: String,
+    pub kind: &'static str,
+    pub hash: String,
+}
+
 /// A definition's text form plus the signatures of its direct dependencies.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct View {
@@ -59,7 +67,7 @@ pub struct Entry {
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct HistoryEntry {
-    /// `added`, `replaced`, `relinked` or `renamed`.
+    /// `added`, `replaced`, `relinked`, `renamed` or `deleted`.
     pub action: String,
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -159,6 +167,54 @@ fn valid_name(name: &str, kind: Kind) -> Result<(), Vec<Diagnostic>> {
     let rule = if kind == Kind::Type { "start with an uppercase letter" } else { "start with a lowercase letter or `_`" };
     Err(vec![Diagnostic::new("E0100", "parse", name, "", format!("`{name}` is not a valid {what} name"))
         .hint(format!("{what} names {rule} and contain only ASCII letters, digits and `_`, at most {MAX_NAME_LEN} (no keywords); standard library names are `std.<module>.<name>`"))])
+}
+
+/// Removes the names `names` (one transaction): only if no other stored definition refers to one
+/// of them (E0406 `has_dependents` otherwise), and only names the store's namespace rule allows
+/// (no `std.` names in a project; in the std project every name is one). Each gets a `deleted`
+/// history entry; the definitions stay stored by hash but have no name any more.
+pub fn delete(conn: &mut Connection, names: &[String], agent: &str) -> Result<Vec<Deleted>, Vec<Diagnostic>> {
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(sql)?;
+    let snap = Snapshot::load(&tx)?;
+    let std_store = crate::define::is_std_store(&tx)?;
+    let wanted: std::collections::BTreeSet<&str> = names.iter().map(String::as_str).collect();
+    let mut diags = Vec::new();
+    let mut out = Vec::new();
+    for &name in &wanted {
+        let Some(entry) = snap.names.get(name) else {
+            diags.push(unknown(&tx, &|n| snap.names.contains_key(n), name));
+            continue;
+        };
+        if std_store && !is_std_name(name) {
+            diags.push(Diagnostic::std_only(name, "", name, None));
+            continue;
+        }
+        if !std_store && is_std_name(name) {
+            diags.push(Diagnostic::std_reserved(name, "", name));
+            continue;
+        }
+        let users: Vec<String> = snap.dependents(name).into_iter().filter(|u| !wanted.contains(u.as_str())).collect();
+        if !users.is_empty() {
+            diags.push(Diagnostic::has_dependents(name, &users));
+            continue;
+        }
+        let kind = snap.row(&tx, &entry.hash)?.map(|r| r.kind).ok_or_else(|| vec![Diagnostic::store_error(format!("`{name}` has no definition"))])?;
+        out.push(Deleted { name: name.to_string(), kind: kind.as_str(), hash: entry.hash.to_hex() });
+    }
+    if !diags.is_empty() {
+        return Err(diags);
+    }
+    let now = now_ms();
+    for d in &out {
+        tx.execute("DELETE FROM names WHERE name = ?1", params![d.name]).map_err(sql)?;
+        tx.execute(
+            "INSERT INTO history (name, action, old_hash, new_hash, agent, at) VALUES (?1, 'deleted', ?2, ?2, ?3, ?4)",
+            params![d.name, d.hash, agent, now],
+        )
+        .map_err(sql)?;
+    }
+    tx.commit().map_err(sql)?;
+    Ok(out)
 }
 
 pub fn rename(conn: &mut Connection, old: &str, new: &str, agent: &str) -> Result<Renamed, Vec<Diagnostic>> {

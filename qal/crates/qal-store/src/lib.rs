@@ -16,7 +16,7 @@ mod schema;
 mod snapshot;
 
 pub use define::StdNames;
-pub use ops::{DepView, Entry, HistoryEntry, Query, Renamed, View};
+pub use ops::{Deleted, DepView, Entry, HistoryEntry, Query, Renamed, View};
 pub use package::{Exported, Imported};
 pub use pattern::matches as signature_matches;
 
@@ -162,6 +162,11 @@ impl Store {
     /// Renames a definition. No hash changes; the history of `old` moves to `new`.
     pub fn rename(&mut self, old: &str, new: &str, agent: &str) -> Result<Renamed, Vec<Diagnostic>> {
         ops::rename(&mut self.conn, old, new, agent)
+    }
+
+    /// Removes names nothing else refers to (see [`ops::delete`]); their history stays.
+    pub fn delete(&mut self, names: &[String], agent: &str) -> Result<Vec<Deleted>, Vec<Diagnostic>> {
+        ops::delete(&mut self.conn, names, agent)
     }
 
     /// Text, signature and direct dependencies of each name (or `#<hash>`).

@@ -186,6 +186,14 @@ impl Diagnostic {
             .hint(format!("give the {new} another name, or rename the stored {old} first"))
     }
 
+    /// Deleting `def` while stored definitions still refer to it.
+    pub fn has_dependents(def: &str, dependents: &[String]) -> Self {
+        let mut d = Diagnostic::new("E0406", "has_dependents", def, "", format!("`{def}` cannot be deleted: {} stored definition(s) refer to it: {}", dependents.len(), dependents.join(", ")))
+            .hint(format!("delete or redefine {} first (without `{def}`), or delete them in the same call", dependents.join(", ")));
+        d.dependents = dependents.to_vec();
+        d
+    }
+
     /// A `query` signature pattern that cannot match anything (unbalanced brackets, empty, too long).
     pub fn bad_pattern(pattern: &str, reason: &str) -> Self {
         Diagnostic::new("E0102", "bad_pattern", "", "", format!("invalid signature pattern `{pattern}`: {reason}"))

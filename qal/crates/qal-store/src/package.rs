@@ -42,6 +42,9 @@ pub struct Package {
     pub name: String,
     pub hash: String,
     pub defs: Vec<PackageDef>,
+    /// The std package the exporting project had (`# std <hash>`), if the package refers to
+    /// `std.` names (which it never contains, except the std package itself).
+    pub std: Option<String>,
     /// The definitions' text.
     pub text: String,
 }
@@ -88,8 +91,17 @@ pub fn parse(file: &str) -> Result<Package, Vec<Diagnostic>> {
         return Err(mismatch(format!("the checksum of package `{name}` does not match its content")));
     }
     let mut defs = Vec::new();
-    let mut lines = body.split_inclusive('\n');
     let mut offset = 0;
+    let mut std = None;
+    if let Some(line) = body.split_inclusive('\n').next().filter(|l| l.starts_with("# std ")) {
+        let h = line["# std ".len()..].trim_end_matches('\n');
+        if !(h.len() == 64 && h.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))) {
+            return Err(mismatch("malformed `# std` line: expected `# std <64 hex digits>`"));
+        }
+        std = Some(h.to_string());
+        offset = line.len();
+    }
+    let mut lines = body[offset..].split_inclusive('\n');
     for line in lines.by_ref() {
         let Some(def) = line.strip_prefix("# def ") else { break };
         offset += line.len();
@@ -109,7 +121,7 @@ pub fn parse(file: &str) -> Result<Package, Vec<Diagnostic>> {
         }
         defs.push(PackageDef { name: n.into(), hash: h.into(), agent: agent.into() });
     }
-    Ok(Package { name: name.into(), hash: hash.into(), defs, text: body[offset..].to_string() })
+    Ok(Package { name: name.into(), hash: hash.into(), defs, std, text: body[offset..].to_string() })
 }
 
 /// The first 12 characters of a hash (never splits a character).
@@ -118,8 +130,8 @@ fn short(h: &str) -> &str {
 }
 
 /// Builds the package file of `name` from the definitions in `text` and their `# def` lines.
-fn assemble(name: &str, defs: &[PackageDef], text: &str) -> (String, String) {
-    let mut body = String::new();
+fn assemble(name: &str, std: Option<&str>, defs: &[PackageDef], text: &str) -> (String, String) {
+    let mut body = std.map(|h| format!("# std {h}\n")).unwrap_or_default();
     for d in defs {
         body.push_str(&format!("# def {} {} {}\n", d.name, d.hash, d.agent));
     }
@@ -131,11 +143,15 @@ fn assemble(name: &str, defs: &[PackageDef], text: &str) -> (String, String) {
     (format!("{FORMAT_LINE}\n# package {name} {hash}\n{body}"), hash)
 }
 
-/// The names a package of `prefix` holds: the matching names and everything they depend on.
-fn closure(snap: &Snapshot, prefix: &str) -> BTreeSet<String> {
+/// The names a package of `prefix` holds: the matching names and everything they depend on;
+/// `std.` names only if `with_std` (the std project), since every project has its own std.
+fn closure(snap: &Snapshot, prefix: &str, with_std: bool) -> BTreeSet<String> {
     let mut out = BTreeSet::new();
     let mut todo: Vec<String> = snap.names.keys().filter(|n| n.starts_with(prefix)).cloned().collect();
     while let Some(n) = todo.pop() {
+        if !with_std && is_std_name(&n) {
+            continue;
+        }
         if out.insert(n.clone()) {
             if let Some(e) = snap.names.get(&n) {
                 todo.extend(e.refs.iter().cloned());
@@ -171,7 +187,11 @@ pub fn export(conn: &mut Connection, prefix: &str, package: &str) -> Result<Expo
     }
     let tx = conn.transaction().map_err(sql)?;
     let snap = Snapshot::load(&tx)?;
-    let names = closure(&snap, prefix);
+    let std_store = define::is_std_store(&tx)?;
+    let names = closure(&snap, prefix, std_store);
+    // A project's package refers to its std by name: record which std that was.
+    let uses_std = !std_store && names.iter().any(|n| snap.names[n].refs.iter().any(|r| is_std_name(r)));
+    let std = if uses_std { meta(&tx, META_STD_PACKAGE)? } else { None };
     let mut defs = Vec::new();
     for n in &names {
         let agent: Option<String> = tx
@@ -186,7 +206,7 @@ pub fn export(conn: &mut Connection, prefix: &str, package: &str) -> Result<Expo
         texts.push(qal_text::print_program(&Program { defs: vec![d] }).trim_end().to_string());
     }
     let text = if texts.is_empty() { String::new() } else { texts.join("\n\n") + "\n" };
-    let (file, hash) = assemble(package, &defs, &text);
+    let (file, hash) = assemble(package, std.as_deref(), &defs, &text);
     Ok(Exported { package: package.into(), hash, defs: defs.len(), file })
 }
 
@@ -250,7 +270,19 @@ pub fn import(conn: &mut Connection, file: &str, verify: Option<&mut Verify>) ->
         Ok(())
     };
     let policy = if is_std { StdNames::Package } else { StdNames::Unchanged };
-    let defined = define::define_checked(conn, &pkg.text, &agent, policy, verify, &check)?;
+    let ours = meta(conn, META_STD_PACKAGE)?;
+    let defined = define::define_checked(conn, &pkg.text, &agent, policy, verify, &check).map_err(|mut d| {
+        // Built against another std: say so first (the hashes or names differ because of it).
+        if let Some(theirs) = pkg.std.as_deref().filter(|h| ours.as_deref() != Some(*h)) {
+            let mine = ours.as_deref().map_or("none".to_string(), |h| short(h).to_string());
+            d.insert(
+                0,
+                Diagnostic::new("E0243", "package_mismatch", "", "", format!("package `{}` was built against std {}, this project has std {mine}", pkg.name, short(theirs)))
+                    .hint("the package refers to standard library definitions of another version: import it into a project with the same qal (std) version, or export it again from a project with this one"),
+            );
+        }
+        d
+    })?;
     Ok(Imported { package: pkg.name, hash: pkg.hash, defined })
 }
 

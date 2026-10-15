@@ -7,9 +7,10 @@ use std::path::Path;
 use std::time::Duration;
 
 /// `PRAGMA user_version` of stores this code reads and writes. Version 2 is Phase 1; version 3
-/// (Phase 2b) adds the `proofs` table; version 4 (Phase 3a) adds `meta`. Older stores are upgraded
-/// in place when they are opened ([`migrate`]: 2 -> 3 -> 4, one transaction).
-pub const SCHEMA_VERSION: i64 = 4;
+/// (Phase 2b) adds the `proofs` table; version 4 (Phase 3a) adds `meta`; version 5 (Phase 3b) allows
+/// the history action `deleted`. Older stores are upgraded in place when they are opened
+/// ([`migrate`]: 2 -> 3 -> 4 -> 5, one transaction).
+pub const SCHEMA_VERSION: i64 = 5;
 
 /// Proof results by definition hash and prover key (prover version, Z3 version, resource limit):
 /// a definition's hash fixes everything a proof depends on (its callees' contracts are referenced
@@ -31,6 +32,27 @@ pub const META: &str = "CREATE TABLE meta (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );";
+
+/// 4 -> 5: `history` again with the action `deleted` allowed (SQLite cannot change a CHECK
+/// constraint in place); ids and rows are kept.
+const HISTORY_V5: &str = "
+CREATE TABLE history_v5 (
+    id        INTEGER PRIMARY KEY,
+    name      TEXT NOT NULL,
+    action    TEXT NOT NULL CHECK (action IN ('added', 'replaced', 'relinked', 'renamed', 'deleted')),
+    old_hash  TEXT,
+    new_hash  TEXT NOT NULL,
+    from_name TEXT,
+    to_name   TEXT,
+    agent     TEXT NOT NULL,
+    at        INTEGER NOT NULL
+);
+INSERT INTO history_v5 (id, name, action, old_hash, new_hash, from_name, to_name, agent, at)
+    SELECT id, name, action, old_hash, new_hash, from_name, to_name, agent, at FROM history;
+DROP TABLE history;
+ALTER TABLE history_v5 RENAME TO history;
+CREATE INDEX history_by_name ON history(name);
+";
 
 /// How long a writer waits for another process's `define`/`rename` to finish.
 pub const BUSY_TIMEOUT: Duration = Duration::from_secs(10);
@@ -73,7 +95,7 @@ CREATE INDEX names_by_hash ON names(hash);
 CREATE TABLE history (
     id        INTEGER PRIMARY KEY,
     name      TEXT NOT NULL,
-    action    TEXT NOT NULL CHECK (action IN ('added', 'replaced', 'relinked', 'renamed')),
+    action    TEXT NOT NULL CHECK (action IN ('added', 'replaced', 'relinked', 'renamed', 'deleted')),
     old_hash  TEXT,
     new_hash  TEXT NOT NULL,
     from_name TEXT,
@@ -114,8 +136,8 @@ pub fn create(conn: &mut Connection, path: &Path) -> Result<(), Vec<Diagnostic>>
     Ok(())
 }
 
-/// Upgrades a store of version `from` (2 or 3) to [`SCHEMA_VERSION`] inside `tx`, step by step:
-/// 2 -> 3 creates `proofs`, 3 -> 4 creates `meta`.
+/// Upgrades a store of version `from` (2, 3 or 4) to [`SCHEMA_VERSION`] inside `tx`, step by step:
+/// 2 -> 3 creates `proofs`, 3 -> 4 creates `meta`, 4 -> 5 rebuilds `history`.
 fn upgrade(tx: &rusqlite::Transaction, from: i64) -> Result<(), Vec<Diagnostic>> {
     if from <= 2 {
         tx.execute_batch(PROOFS).map_err(sql)?;
@@ -125,11 +147,15 @@ fn upgrade(tx: &rusqlite::Transaction, from: i64) -> Result<(), Vec<Diagnostic>>
         tx.execute_batch(META).map_err(sql)?;
         tx.pragma_update(None, "user_version", 4).map_err(sql)?;
     }
+    if from <= 4 {
+        tx.execute_batch(HISTORY_V5).map_err(sql)?;
+        tx.pragma_update(None, "user_version", 5).map_err(sql)?;
+    }
     Ok(())
 }
 
-/// Brings a store of an older version (2 or 3) to [`SCHEMA_VERSION`] in one transaction; it only
-/// creates tables (2 -> 3 `proofs`, 3 -> 4 `meta`). Other versions are left alone (the caller
+/// Brings a store of an older version (2, 3 or 4) to [`SCHEMA_VERSION`] in one transaction (2 -> 3
+/// creates `proofs`, 3 -> 4 `meta`, 4 -> 5 rebuilds `history` with its rows). Other versions are left alone (the caller
 /// reports them).
 pub fn migrate(conn: &mut Connection) -> Result<(), Vec<Diagnostic>> {
     let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0)).map_err(sql)?;
