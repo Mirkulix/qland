@@ -52,3 +52,6 @@ nul
 
 # Claude worktrees
 .claude/worktrees/
+
+# QAL project stores and build output (qal init / qal mcp)
+.qal/

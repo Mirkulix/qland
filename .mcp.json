@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "qal": {
+      "command": "sh",
+      "args": ["qal/mcp.sh"]
+    }
+  }
+}

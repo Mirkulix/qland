@@ -19,6 +19,8 @@
 //!   qal test <file> | qal test [<name>...]           -> {"tests":[...],"passed":n,"failed":m}
 //!   qal run <file> [--allow <spec>] [--] [args..]    -> {"exit_code":n,"stdout":".."} | {"error":{...},"stdout":".."} | {"diagnostics":[...]}
 //!   qal run <name> [--allow <spec>] [--] [args..]    (store; `<name>` is any `fn(List[Str]) -> Int`)
+//! For agents:
+//!   qal mcp [--root <dir>]                           MCP server on stdin/stdout (JSON-RPC 2.0); the store is <dir>/.qal/store.db
 //!
 //! `<spec>` grants effects: `io`, `time`, `rand`, `fs:<dir>` (comma-separated, `--allow` repeatable).
 //! `--agent` names who made a change in the history (default `cli`).
@@ -36,7 +38,8 @@ const USAGE: &str = "usage: qal <check|fmt> <file>\n       \
                      qal query [--name <prefix>] [--type <pattern>] [--uses <name>]\n       \
                      qal call <file> [--allow <spec>] <fn> [args...] | call <fn> [--allow <spec>] [args...]\n       \
                      qal test [--allow <spec>] [<file> | <name>...]\n       \
-                     qal run <file|name> [--allow <spec>] [--] [args...]";
+                     qal run <file|name> [--allow <spec>] [--] [args...]\n       \
+                     qal mcp [--root <dir>]";
 
 fn usage() -> ExitCode {
     bad_usage(USAGE)
@@ -67,6 +70,7 @@ fn main() -> ExitCode {
         "check" | "fmt" => file_command(cmd, rest),
         "init" | "define" | "view" | "query" | "rename" | "history" | "build" => store_command(cmd, rest),
         "call" | "test" | "run" => run_command(cmd, rest),
+        "mcp" => mcp(rest),
         _ => usage(),
     }
 }
@@ -209,4 +213,23 @@ fn run_command(cmd: &str, args: &[String]) -> ExitCode {
             ops::run(&c, &source, perms, name, &s.rest)
         }
     })
+}
+
+fn mcp(args: &[String]) -> ExitCode {
+    let s = match split(args, &["root"], &[], &all) {
+        Ok(s) if s.targets.is_empty() => s,
+        Ok(_) => return usage(),
+        Err(code) => return code,
+    };
+    let root = match s.one("root") {
+        Some(r) => std::path::PathBuf::from(r),
+        None => match std::env::current_dir() {
+            Ok(d) => d,
+            Err(e) => return bad_usage(&format!("no current directory: {e}")),
+        },
+    };
+    match qal_cli::mcp::serve_stdio(&root) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => bad_usage(&format!("qal mcp: {e}")),
+    }
 }
