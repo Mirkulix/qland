@@ -920,3 +920,17 @@ fn verification_starts_over_when_another_writer_changes_its_input() {
     assert_eq!(seen[1], [format!("g:{g}")]);
     assert_eq!((out[0].hash.as_str(), s.proofs(&g, "k").unwrap().as_deref()), (g.as_str(), Some("[\"g\"]")));
 }
+
+#[test]
+fn the_program_and_its_hashes_come_from_one_read() {
+    // `qal prove` stores results under these hashes (re-review: two separate reads let a
+    // concurrent `define` pair the old definition's results with the new hash).
+    let mut s = store();
+    ok(&mut s, "fn f(x: Int) -> Int = x\nfn g(x: Int) -> Int = f(x)");
+    let (p, hashes) = s.program_with_hashes().unwrap();
+    let hashed = hash_program(&p).unwrap();
+    for c in &hashed.defs {
+        assert_eq!(hashes.get(&c.name), Some(&c.hash.to_hex()), "{}", c.name);
+    }
+    assert_eq!(hashes.len(), 2);
+}

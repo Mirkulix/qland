@@ -280,7 +280,9 @@ pub fn check(src: &str) -> Reply {
 /// call sites in tests are reported (the test fails when run) but do not stop the definition.
 pub fn define(ctx: &Ctx, src: &str, agent: &str) -> Reply {
     let opts = qal_prove::Options::default();
-    let mut reports: Vec<Report> = Vec::new();
+    // Reports with the hash they were proven for: a retried `define` may have verified an older
+    // version first (review finding N4).
+    let mut reports: Vec<(String, Report)> = Vec::new();
     let result = {
         let mut run = |tp: &TProgram, todo: &[(String, String)]| -> Result<Vec<(String, String)>, Vec<Diagnostic>> {
             let names: Vec<String> = todo.iter().map(|(n, _)| n.clone()).collect();
@@ -295,7 +297,12 @@ pub fn define(ctx: &Ctx, src: &str, agent: &str) -> Reply {
                 return Err(shown);
             }
             let rows = todo.iter().filter_map(|(n, h)| proofs.iter().find(|p| p.def == *n)?.record.as_ref().map(|r| (h.clone(), record_json(r)))).collect();
-            reports = proofs.into_iter().flat_map(|p| p.reports).collect();
+            let hash_of = |n: &str| todo.iter().find(|(m, _)| m == n).map(|(_, h)| h.clone()).unwrap_or_default();
+            reports.retain(|(h, r)| !todo.iter().any(|(n, _)| *n == r.def) && !h.is_empty());
+            reports.extend(proofs.into_iter().flat_map(|p| {
+                let h = hash_of(&p.def);
+                p.reports.into_iter().map(move |r| (h.clone(), r))
+            }));
             Ok(rows)
         };
         let mut verify = Verify { key: opts.key(), run: &mut run };
@@ -303,6 +310,8 @@ pub fn define(ctx: &Ctx, src: &str, agent: &str) -> Reply {
     };
     match result {
         Ok(d) => {
+            let current: std::collections::HashSet<(&str, &str)> = d.iter().map(|x| (x.name.as_str(), x.hash.as_str())).collect();
+            let reports: Vec<Report> = reports.into_iter().filter(|(h, r)| current.contains(&(r.def.as_str(), h.as_str()))).map(|(_, r)| r).collect();
             let mut out = Output { defined: Some(d), ..Output::default() };
             out.set_proofs(reports);
             Reply::new(out, 0)
@@ -367,7 +376,13 @@ fn record_json(r: &qal_prove::Record) -> String {
 /// Proves the contracts of the named functions and tests (all if `names` is empty). From the
 /// store, results stored for the same definition and prover settings are reused; new ones are stored.
 pub fn prove(ctx: &Ctx, source: &Source, names: &[String]) -> Reply {
-    let loaded = match ctx.load(source) {
+    // From the store, the program and the hashes its results are stored under come from one read
+    // (a `define` in between must not get the old definition's results under its new hash).
+    let read = match source {
+        Source::Text(src) => load(src).map(|l| (l, std::collections::HashMap::new())),
+        Source::Store => ctx.open().and_then(|mut s| s.program_with_hashes()).and_then(|(p, h)| Ok((load_program(p)?, h))),
+    };
+    let (loaded, hashes) = match read {
         Ok(l) => l,
         Err(d) => return Reply::diagnostics(d),
     };
@@ -392,7 +407,7 @@ pub fn prove(ctx: &Ctx, source: &Source, names: &[String]) -> Reply {
     let only = (!names.is_empty()).then_some(names);
     let reports = match source {
         Source::Text(_) => qal_prove::prove(tp, only, &opts),
-        Source::Store => match stored_proofs(ctx, tp, only, &opts) {
+        Source::Store => match stored_proofs(ctx, tp, &hashes, only, &opts) {
             Ok(r) => r,
             Err(d) => return Reply::diagnostics(d),
         },
@@ -407,11 +422,11 @@ pub fn prove(ctx: &Ctx, source: &Source, names: &[String]) -> Reply {
 
 /// Proof results of the stored definitions: reused per (hash, prover key) and shown with the
 /// current names, computed and stored if missing. Showing and computing share one time budget.
-fn stored_proofs(ctx: &Ctx, tp: &TProgram, only: Option<&[String]>, opts: &qal_prove::Options) -> Result<Vec<Report>, Vec<Diagnostic>> {
+/// `hashes` are the hashes of `tp`'s definitions, read with it.
+fn stored_proofs(ctx: &Ctx, tp: &TProgram, hashes: &std::collections::HashMap<String, String>, only: Option<&[String]>, opts: &qal_prove::Options) -> Result<Vec<Report>, Vec<Diagnostic>> {
     let start = Instant::now();
     let deadline = start + opts.budget;
     let mut store = ctx.open()?;
-    let hashes: std::collections::HashMap<String, String> = store.query(&Query::default())?.into_iter().map(|e| (e.name, e.hash)).collect();
     let key = opts.key();
     let targets: Vec<String> = tp
         .fns

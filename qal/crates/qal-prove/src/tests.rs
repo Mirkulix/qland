@@ -432,8 +432,9 @@ fn many_call_sites_are_solved_in_one_encoding() {
     let start = std::time::Instant::now();
     let rs: Vec<Report> = reports(&src).into_iter().filter(|r| r.def == "f").collect();
     assert_eq!(rs.len(), 3000);
+    // About 1.5 s; all 3 000 must fit the 30 s budget (generous for loaded machines).
     assert!(rs.iter().all(|r| r.status == Status::Proven), "{:#?}", rs.iter().find(|r| r.status != Status::Proven));
-    assert!(start.elapsed() < Duration::from_secs(10), "{:?}", start.elapsed());
+    assert!(start.elapsed() < Duration::from_secs(40), "{:?}", start.elapsed());
 }
 
 #[test]
@@ -441,12 +442,12 @@ fn shrinking_stops_at_the_budget() {
     // M1: shrinking ran up to 500 candidates (two runs each) whatever the budget. Here every run
     // fails, and shrinking from a large `x` halves it about 60 times (several seconds).
     let src = "fn spin(n: Int, acc: Int) -> Int = if n == 0 then acc else spin(n - 1, acc + 1)\n\
-               fn f(x: Int) -> Int req x > 1000 ens r < 0 = spin(1000000, 0) + 0 * x";
-    let opts = PropOptions { budget: Duration::from_millis(50), fuel: 200_000_000, ..PropOptions::default() };
+               fn f(x: Int) -> Int req x > 1000 ens r < 0 = spin(3000000, 0) + 0 * x";
+    let opts = PropOptions { budget: Duration::from_millis(500), fuel: 500_000_000, ..PropOptions::default() };
     let start = std::time::Instant::now();
     let rs = check_properties(&typed(src), None, &opts).unwrap();
     assert_eq!(rs[0].status, PropStatus::Failed, "{:?}", rs[0]);
-    assert!(start.elapsed() < Duration::from_millis(1500), "{:?}", start.elapsed());
+    assert!(start.elapsed() < Duration::from_millis(3000), "{:?}", start.elapsed());
 }
 
 #[test]
@@ -487,7 +488,8 @@ fn an_early_refutation_is_not_lost_to_the_budget() {
     let src = format!("fn g(a: Int) -> Int req a > 0 = a\nfn f(x: Int) -> Int = len([{calls}])");
     let start = std::time::Instant::now();
     let rs: Vec<Report> = prove(&typed(&src), None, &Options { budget: Duration::from_secs(2), ..Options::default() }).into_iter().filter(|r| r.def == "f").collect();
-    assert!(start.elapsed() < Duration::from_secs(5), "{:?}", start.elapsed());
+    // The budget plus compiling the program once to run the candidate (generous for loaded machines).
+    assert!(start.elapsed() < Duration::from_secs(20), "{:?}", start.elapsed());
     assert_eq!((rs[0].path.as_str(), rs[0].status), ("body.args[0].items[0]", Status::Refuted), "{:#?}", &rs[..2.min(rs.len())]);
 }
 

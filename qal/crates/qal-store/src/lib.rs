@@ -129,6 +129,15 @@ impl Store {
         snap.program(&tx, &|_| false)
     }
 
+    /// The whole named codebase and the hash of every name, read in one transaction: the hashes
+    /// are those of exactly these definitions, whatever another writer does meanwhile.
+    pub fn program_with_hashes(&mut self) -> Result<(Program, std::collections::HashMap<String, String>), Vec<Diagnostic>> {
+        let tx = self.conn.transaction().map_err(sql)?;
+        let snap = Snapshot::load(&tx)?;
+        let hashes = snap.names.iter().map(|(n, e)| (n.clone(), e.hash.to_hex())).collect();
+        Ok((snap.program(&tx, &|_| false)?, hashes))
+    }
+
     /// Adds or replaces the definitions in `src` (spec §6). Either everything is stored and the
     /// result lists every name that changed or was given, or nothing is stored and the diagnostics
     /// say why. `agent` is recorded in the history.
