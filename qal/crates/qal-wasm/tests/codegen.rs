@@ -119,6 +119,13 @@ fn ens_in_recursive_function_checks_each_call() {
 }
 
 #[test]
+fn ens_is_checked_even_when_body_is_a_call_in_tail_position() {
+    // `id(n)` would be a tail call; under `ens` it must not be, or the contract is skipped.
+    let m = build("fn id(n: Int) -> Int = n\nfn bad(n: Int) -> Int ens r > n = id(n)");
+    assert_eq!(call(&m, "bad", &[3]), Err((FAIL_ENS, 1, 0)));
+}
+
+#[test]
 fn deep_tail_recursion_does_not_overflow_the_stack() {
     let m = build("fn count(n: Int, acc: Int) -> Int = if n == 0 then acc else count(n - 1, acc + 1)");
     assert_eq!(call(&m, "count", &[1_000_000, 0]), Ok(1_000_000));
