@@ -708,7 +708,8 @@ fn old_names_point_to_the_new_name() {
     assert_eq!(s.renamed_to("c").unwrap(), Some("b".to_string()));
     let long = "x".repeat(129);
     assert_eq!(s.rename("b", &long, "a").unwrap_err()[0].kind, "parse");
-    // A name that was renamed away and then reused is current again: no hint.
+    // A name that was renamed away and then reused still reports where the renamed definition went
+    // (`renamed_to` is history-based); `view` of the name shows the new definition, not the hint.
     ok(&mut s, "fn one() -> Int = 11");
     assert_eq!(s.renamed_to("one").unwrap(), Some("eins".to_string()));
     assert_eq!(text(&mut s, "one"), "fn one() -> Int\n= 11");

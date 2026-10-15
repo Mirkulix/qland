@@ -135,7 +135,9 @@ impl Store {
     }
 
     /// The current name of a definition that was renamed from `old` (None if it was not, or if
-    /// the definition no longer has a name).
+    /// the definition no longer has a name). Based on the history: it still answers when `old`
+    /// has since been reused for a different definition, so callers use it only for names that
+    /// do not exist.
     pub fn renamed_to(&mut self, old: &str) -> Result<Option<String>, Vec<Diagnostic>> {
         let conn = &self.conn;
         let current = |n: &str| conn.query_row("SELECT 1 FROM names WHERE name = ?1", [n], |_| Ok(())).is_ok();
