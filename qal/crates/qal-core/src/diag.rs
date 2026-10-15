@@ -14,6 +14,9 @@ pub struct Diagnostic {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub found: Option<String>,
     pub hints: Vec<String>,
+    /// For `signature_change`: the stored definitions that would break (to include in the call).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub dependents: Vec<String>,
 }
 
 impl Diagnostic {
@@ -27,6 +30,7 @@ impl Diagnostic {
             expected: None,
             found: None,
             hints: Vec::new(),
+            dependents: Vec::new(),
         }
     }
 
@@ -90,6 +94,56 @@ impl Diagnostic {
             .hint("declare a record or enum type for the nested data instead of nesting List/Option/Result this deeply")
     }
 
+    pub fn type_too_large(def: &str, path: &str, max: u32) -> Self {
+        Diagnostic::new("E0208", "type_too_large", def, path, format!("inferred type is too large (max {max} nodes)"))
+            .hint("annotate the values with `let x: T = ...` or declare a record or enum type; shared `Ok`/`Err`/`None` values can make inferred types grow exponentially")
+    }
+
+    /// Replacing `def` changes its signature while stored definitions still depend on it.
+    pub fn signature_change(def: &str, old: &str, new: &str, dependents: &[String]) -> Self {
+        let mut d = Diagnostic::new(
+            "E0401",
+            "signature_change",
+            def,
+            "",
+            format!("changing the signature of `{def}` breaks {} dependent definition(s): {}", dependents.len(), dependents.join(", ")),
+        )
+        .expected_found(old, new)
+        .hint(format!("define updated versions of {} in the same call, or keep the signature `{old}`", dependents.join(", ")));
+        d.dependents = dependents.to_vec();
+        d
+    }
+
+    /// Mutually recursive definitions that are interchangeable (the same definition under several
+    /// names) cannot get name-independent hashes.
+    pub fn symmetric_group(names: &[String]) -> Self {
+        let list = names.iter().map(|n| format!("`{n}`")).collect::<Vec<_>>().join(", ");
+        Diagnostic::new("E0209", "duplicate_name", names.first().map_or("", |n| n.as_str()), "", format!("the recursive definitions {list} are interchangeable: they are the same definition under different names"))
+            .hint("define the logic once (one function that calls itself), or make the definitions differ")
+    }
+
+    /// A recursive group too large and uniform for the canonical labelling search.
+    pub fn group_too_large(names: &[String]) -> Self {
+        Diagnostic::new(
+            "E0210",
+            "group_too_large",
+            names.first().map_or("", |n| n.as_str()),
+            "",
+            format!("the {} mutually recursive definitions starting with `{}` are too many and too alike to hash", names.len(), names.first().map_or("", |n| n.as_str())),
+        )
+        .hint("split the recursion: let most of the definitions call helpers outside the cycle, or give them distinguishing bodies")
+    }
+
+    /// A stored definition refers to a hash that has no name (the store is inconsistent).
+    pub fn missing_dep(def: &str, hash: &str) -> Self {
+        Diagnostic::new("E0402", "missing_dep", def, "", format!("`{def}` refers to definition #{hash}, which has no name in the store"))
+    }
+
+    /// The store itself failed: SQLite error, unreadable or corrupt file, hash mismatch.
+    pub fn store_error(message: impl Into<String>) -> Self {
+        Diagnostic::new("E0601", "store_error", "", "", message)
+    }
+
     pub fn missing_field(def: &str, path: &str, record: &str, field: &str) -> Self {
         Diagnostic::new("E0206", "type_mismatch", def, path, format!("`{record}` needs field `{field}`"))
             .hint(format!("add `{field}: ...` to the `{record} {{ ... }}` literal"))
@@ -124,5 +178,21 @@ mod tests {
         assert_eq!(d.hints, vec!["add an arm `Some(_) => ...` or a final `_ => ...` arm".to_string()]);
         let d = Diagnostic::missing_field("f", "body", "User", "id");
         assert_eq!((d.code, d.kind), ("E0206", "type_mismatch"));
+    }
+
+    #[test]
+    fn store_diagnostics() {
+        let d = Diagnostic::signature_change("f", "fn(Int) -> Int", "fn(Str) -> Int", &["g".into(), "t".into()]);
+        let json = serde_json::to_value(&d).unwrap();
+        assert_eq!(json["code"], "E0401");
+        assert_eq!(json["kind"], "signature_change");
+        assert_eq!(json["dependents"], serde_json::json!(["g", "t"]));
+        assert_eq!((json["expected"].as_str(), json["found"].as_str()), (Some("fn(Int) -> Int"), Some("fn(Str) -> Int")));
+        assert!(serde_json::to_value(Diagnostic::store_error("x")).unwrap().get("dependents").is_none());
+        assert_eq!(Diagnostic::type_too_large("f", "body", 4096).code, "E0208");
+        assert_eq!(Diagnostic::missing_dep("f", "ab").kind, "missing_dep");
+        let d = Diagnostic::symmetric_group(&["f".into(), "g".into()]);
+        assert_eq!((d.code, d.kind, d.def.as_str()), ("E0209", "duplicate_name", "f"));
+        assert_eq!(Diagnostic::group_too_large(&["a".into()]).code, "E0210");
     }
 }

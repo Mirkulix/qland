@@ -12,77 +12,63 @@ pub const TAG_SOME: u32 = 1;
 pub const TAG_OK: u32 = 0;
 pub const TAG_ERR: u32 = 1;
 
-/// Built-in functions (spec §3.5, plus `int_to_float` / `float_to_int`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub enum Builtin {
-    StrLen,
-    ListLen,
-    Slice,
-    Split,
-    Join,
-    Trim,
-    Contains,
-    StartsWith,
-    ToInt,
-    ToFloat,
-    FromInt,
-    FromFloat,
-    Chars,
-    Get,
-    Push,
-    Concat,
-    Map,
-    Filter,
-    Fold,
-    Range,
-    Reverse,
-    SortInt,
-    IntToFloat,
-    FloatToInt,
-    Print,
-    ReadLine,
-    ReadFile,
-    WriteFile,
-    NowMs,
-    RandInt,
+/// Declares `Builtin` with its source names from one list, so `Builtin::ALL` cannot miss a variant.
+macro_rules! builtins {
+    ($($variant:ident => $name:literal,)*) => {
+        /// Built-in functions (spec §3.5, plus `int_to_float` / `float_to_int`).
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+        pub enum Builtin {
+            $($variant,)*
+        }
+
+        impl Builtin {
+            /// Every built-in, in declaration order.
+            pub const ALL: &'static [Builtin] = &[$(Builtin::$variant,)*];
+
+            /// Source name. `StrLen` and `ListLen` are both `len`.
+            pub fn name(self) -> &'static str {
+                match self {
+                    $(Builtin::$variant => $name,)*
+                }
+            }
+        }
+    };
+}
+
+builtins! {
+    StrLen => "len",
+    ListLen => "len",
+    Slice => "slice",
+    Split => "split",
+    Join => "join",
+    Trim => "trim",
+    Contains => "contains",
+    StartsWith => "starts_with",
+    ToInt => "to_int",
+    ToFloat => "to_float",
+    FromInt => "from_int",
+    FromFloat => "from_float",
+    Chars => "chars",
+    Get => "get",
+    Push => "push",
+    Concat => "concat",
+    Map => "map",
+    Filter => "filter",
+    Fold => "fold",
+    Range => "range",
+    Reverse => "reverse",
+    SortInt => "sort_int",
+    IntToFloat => "int_to_float",
+    FloatToInt => "float_to_int",
+    Print => "print",
+    ReadLine => "read_line",
+    ReadFile => "read_file",
+    WriteFile => "write_file",
+    NowMs => "now_ms",
+    RandInt => "rand_int",
 }
 
 impl Builtin {
-    /// Source name. `StrLen` and `ListLen` are both `len`.
-    pub fn name(self) -> &'static str {
-        match self {
-            Builtin::StrLen | Builtin::ListLen => "len",
-            Builtin::Slice => "slice",
-            Builtin::Split => "split",
-            Builtin::Join => "join",
-            Builtin::Trim => "trim",
-            Builtin::Contains => "contains",
-            Builtin::StartsWith => "starts_with",
-            Builtin::ToInt => "to_int",
-            Builtin::ToFloat => "to_float",
-            Builtin::FromInt => "from_int",
-            Builtin::FromFloat => "from_float",
-            Builtin::Chars => "chars",
-            Builtin::Get => "get",
-            Builtin::Push => "push",
-            Builtin::Concat => "concat",
-            Builtin::Map => "map",
-            Builtin::Filter => "filter",
-            Builtin::Fold => "fold",
-            Builtin::Range => "range",
-            Builtin::Reverse => "reverse",
-            Builtin::SortInt => "sort_int",
-            Builtin::IntToFloat => "int_to_float",
-            Builtin::FloatToInt => "float_to_int",
-            Builtin::Print => "print",
-            Builtin::ReadLine => "read_line",
-            Builtin::ReadFile => "read_file",
-            Builtin::WriteFile => "write_file",
-            Builtin::NowMs => "now_ms",
-            Builtin::RandInt => "rand_int",
-        }
-    }
-
     /// The effect a call needs (map/filter/fold need the effects of their function argument).
     pub fn effect(self) -> Option<&'static str> {
         match self {
@@ -263,5 +249,20 @@ mod tests {
         assert_eq!(Builtin::StrLen.name(), "len");
         assert_eq!(Builtin::WriteFile.effect(), Some("fs"));
         assert!(Builtin::NAMES.contains(&Builtin::RandInt.name()));
+    }
+
+    #[test]
+    fn builtin_names_match_the_variants() {
+        // `ALL` and `name()` come from one list (the `builtins!` macro); `NAMES` is written out
+        // because user functions are checked against it, and must be exactly the set of names.
+        let mut from_variants: Vec<&str> = Builtin::ALL.iter().map(|b| b.name()).collect();
+        from_variants.sort_unstable();
+        from_variants.dedup();
+        let mut names = Builtin::NAMES.to_vec();
+        names.sort_unstable();
+        assert_eq!(names.len(), Builtin::NAMES.len(), "Builtin::NAMES has duplicates");
+        assert_eq!(names, from_variants);
+        assert_eq!(Builtin::ALL.len(), 30);
+        assert_eq!(Builtin::ALL[0], Builtin::StrLen);
     }
 }
