@@ -1,31 +1,81 @@
-//! QAL runtime: executes compiled modules in wasmtime and reports failures as data.
+//! QAL runtime: executes compiled modules in wasmtime with capability-gated host functions and
+//! reports every failure as data in the diagnostic format (code, kind, def, path, message, values, hints).
 
+mod host;
+mod value;
+
+pub use host::Permissions;
+pub use value::{Value, Values};
+
+use host::{Failure, HostState};
 use qal_core::ast::Type;
+use qal_core::tast::TProgram;
 use qal_text::print_expr;
-use qal_wasm::{CompiledModule, FAIL_DIV_ZERO, FAIL_ENS, FAIL_OVERFLOW, FAIL_REQ};
+use qal_wasm::{CompiledModule, FuncMeta, FAIL_BUILTIN, FAIL_DIV_ZERO, FAIL_ENS, FAIL_INDEX, FAIL_OOM, FAIL_OVERFLOW, FAIL_REQ, OOM_SCRATCH};
 use serde::Serialize;
-use wasmtime::{Caller, Config, Engine, Linker, Module, Store, Trap, Val};
+use std::io::Cursor;
+use wasmtime::{Config, Engine, Linker, Memory, Module, Store, StoreLimitsBuilder, Trap, Val};
 
 /// Instruction budget per call; exhausting it reports `timeout` instead of hanging.
 pub const DEFAULT_FUEL: u64 = 2_000_000_000;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(untagged)]
-pub enum Value {
-    Int(i64),
-    Bool(bool),
-    /// Serialized as JSON `null`.
-    Unit(()),
-}
+/// Memory limit per execution (spec §8).
+pub const DEFAULT_MEMORY_LIMIT: usize = 256 << 20;
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct RunError {
-    /// contract_violation | int_overflow | div_by_zero | stack_overflow | timeout | bad_args | unknown_function | trap
+    pub code: &'static str,
+    /// contract_violation | int_overflow | div_by_zero | out_of_memory | index | stack_overflow | timeout
+    /// | permission_denied | bad_args | unknown_function | trap
     pub kind: &'static str,
+    /// Name of the definition where the failure happened (never an export name like `test:x`).
     pub def: String,
+    /// AST path inside `def` (e.g. `req[0]`, `body.left`); empty if unknown.
+    pub path: String,
     pub message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub contract: Option<String>,
+    /// Values involved: parameters (and `r`) for contracts, operands for arithmetic, arguments for built-ins.
+    #[serde(skip_serializing_if = "Values::is_empty")]
+    pub values: Values,
+    pub hints: Vec<String>,
+}
+
+impl RunError {
+    pub fn new(kind: &'static str, def: &str, message: impl Into<String>) -> RunError {
+        let code = match kind {
+            "contract_violation" => "E0501",
+            "int_overflow" => "E0502",
+            "div_by_zero" => "E0503",
+            "out_of_memory" => "E0504",
+            "index" => "E0505",
+            "stack_overflow" => "E0506",
+            "timeout" => "E0507",
+            "permission_denied" => "E0508",
+            "bad_args" => "E0509",
+            "unknown_function" => "E0510",
+            _ => "E0599",
+        };
+        RunError {
+            code,
+            kind,
+            def: def.strip_prefix("test:").unwrap_or(def).to_string(),
+            path: String::new(),
+            message: message.into(),
+            contract: None,
+            values: Values::default(),
+            hints: Vec::new(),
+        }
+    }
+
+    fn at(mut self, path: &str) -> RunError {
+        self.path = path.to_string();
+        self
+    }
+
+    fn hint(mut self, h: impl Into<String>) -> RunError {
+        self.hints.push(h.into());
+        self
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -36,11 +86,22 @@ pub struct TestResult {
     pub error: Option<RunError>,
 }
 
+/// Result of one execution plus everything the program printed.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Outcome {
+    pub result: Result<Value, RunError>,
+    pub stdout: String,
+}
+
 pub struct Runner {
     engine: Engine,
     module: Module,
     meta: CompiledModule,
+    types: TProgram,
     fuel: u64,
+    memory_limit: usize,
+    perms: Permissions,
+    stdin: Option<Vec<u8>>,
 }
 
 impl Runner {
@@ -50,7 +111,8 @@ impl Runner {
         config.consume_fuel(true);
         let engine = Engine::new(&config).map_err(|e| e.to_string())?;
         let module = Module::new(&engine, &meta.wasm).map_err(|e| e.to_string())?;
-        Ok(Runner { engine, module, meta, fuel: DEFAULT_FUEL })
+        let types = TProgram { types: meta.types.clone(), ..TProgram::default() };
+        Ok(Runner { engine, module, meta, types, fuel: DEFAULT_FUEL, memory_limit: DEFAULT_MEMORY_LIMIT, perms: Permissions::default(), stdin: None })
     }
 
     pub fn with_fuel(mut self, fuel: u64) -> Runner {
@@ -58,71 +120,35 @@ impl Runner {
         self
     }
 
-    /// Calls the function exported as `export` (a fn name, or `test:<name>`).
-    pub fn call(&self, export: &str, args: &[Value]) -> Result<Value, RunError> {
-        let err = |kind, message: String| RunError { kind, def: export.to_string(), message, contract: None };
-        let meta = self.meta.func(export).ok_or_else(|| err("unknown_function", format!("no function `{export}`")))?;
-        if meta.params.len() != args.len() {
-            return Err(err("bad_args", format!("`{export}` takes {} argument(s), {} given", meta.params.len(), args.len())));
-        }
-        let mut params = Vec::new();
-        for (i, (a, t)) in args.iter().zip(&meta.params).enumerate() {
-            params.push(match (a, t) {
-                (Value::Int(v), Type::Int) => Val::I64(*v),
-                (Value::Bool(b), Type::Bool) => Val::I32(*b as i32),
-                (Value::Unit(()), Type::Unit) => Val::I32(0),
-                _ => return Err(err("bad_args", format!("argument {i} must be {}", t.name()))),
-            });
-        }
-
-        let mut store: Store<Option<(i32, i32, i32)>> = Store::new(&self.engine, None);
-        store.set_fuel(self.fuel).map_err(|e| err("trap", e.to_string()))?;
-        let mut linker = Linker::new(&self.engine);
-        linker
-            .func_wrap("qal_host", "fail", |mut c: Caller<'_, Option<(i32, i32, i32)>>, kind: i32, func: i32, index: i32| {
-                *c.data_mut() = Some((kind, func, index));
-                Err::<(), _>(wasmtime::Error::msg("qal failure"))
-            })
-            .map_err(|e| err("trap", e.to_string()))?;
-        let instance = linker.instantiate(&mut store, &self.module).map_err(|e| err("trap", e.to_string()))?;
-        let func = instance.get_func(&mut store, export).ok_or_else(|| err("unknown_function", format!("no export `{export}`")))?;
-        let mut results = [Val::I32(0)];
-        match func.call(&mut store, &params, &mut results) {
-            Ok(()) => Ok(match (meta.ret, &results[0]) {
-                (Type::Int, Val::I64(v)) => Value::Int(*v),
-                (Type::Bool, Val::I32(v)) => Value::Bool(*v != 0),
-                (Type::Unit, _) => Value::Unit(()),
-                (t, v) => return Err(err("trap", format!("result {v:?} does not match {}", t.name()))),
-            }),
-            Err(e) => Err(match *store.data() {
-                Some(failure) => self.describe_failure(failure),
-                None => match e.downcast_ref::<Trap>() {
-                    Some(Trap::StackOverflow) => err("stack_overflow", "call stack exhausted (non-tail recursion too deep?)".into()),
-                    Some(Trap::OutOfFuel) => err("timeout", format!("instruction budget of {} exhausted", self.fuel)),
-                    _ => err("trap", e.to_string()),
-                },
-            }),
-        }
+    pub fn with_memory_limit(mut self, bytes: usize) -> Runner {
+        self.memory_limit = bytes;
+        self
     }
 
-    fn describe_failure(&self, (kind, func, index): (i32, i32, i32)) -> RunError {
-        let meta = &self.meta.funcs[func as usize];
-        let def = meta.name.clone();
-        match kind {
-            FAIL_REQ | FAIL_ENS => {
-                let (label, list) = if kind == FAIL_REQ { ("req", &meta.req) } else { ("ens", &meta.ens) };
-                let text = print_expr(&list[index as usize]);
-                RunError {
-                    kind: "contract_violation",
-                    message: format!("`{label} {text}` of `{def}` is false"),
-                    contract: Some(format!("{label}[{index}]: {text}")),
-                    def,
-                }
-            }
-            FAIL_OVERFLOW => RunError { kind: "int_overflow", message: format!("Int overflow in `{def}`"), def, contract: None },
-            FAIL_DIV_ZERO => RunError { kind: "div_by_zero", message: format!("division by zero in `{def}`"), def, contract: None },
-            other => RunError { kind: "trap", message: format!("unknown failure kind {other}"), def, contract: None },
-        }
+    pub fn with_permissions(mut self, perms: Permissions) -> Runner {
+        self.perms = perms;
+        self
+    }
+
+    /// Feeds `read_line` from these bytes instead of the process's stdin.
+    pub fn with_stdin(mut self, input: impl Into<Vec<u8>>) -> Runner {
+        self.stdin = Some(input.into());
+        self
+    }
+
+    pub fn meta(&self) -> &CompiledModule {
+        &self.meta
+    }
+
+    /// Calls the function exported as `export` (a fn name, or `test:<name>`).
+    pub fn call(&self, export: &str, args: &[Value]) -> Result<Value, RunError> {
+        self.invoke(export, args).result
+    }
+
+    /// Runs the entry point `main(args: List[Str]) -> Int`; the result is the exit code.
+    pub fn run_main(&self, args: &[String]) -> Outcome {
+        let list = Value::List(args.iter().map(|a| Value::Str(a.clone())).collect());
+        self.invoke("main", &[list])
     }
 
     /// Runs every test definition in program order.
@@ -138,77 +164,183 @@ impl Runner {
             })
             .collect()
     }
+
+    pub fn invoke(&self, export: &str, args: &[Value]) -> Outcome {
+        let stdin: Box<dyn std::io::BufRead + Send> = match &self.stdin {
+            Some(bytes) => Box::new(Cursor::new(bytes.clone())),
+            None => Box::new(std::io::BufReader::new(std::io::stdin())),
+        };
+        let state = HostState {
+            failure: None,
+            stdout: Vec::new(),
+            stdin,
+            perms: self.perms.clone(),
+            rng: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos() as u64).unwrap_or(1),
+            limits: StoreLimitsBuilder::new().memory_size(self.memory_limit).build(),
+        };
+        let mut store = Store::new(&self.engine, state);
+        store.limiter(|s| &mut s.limits);
+        let result = self.invoke_in(&mut store, export, args);
+        let stdout = String::from_utf8_lossy(&store.data().stdout).into_owned();
+        Outcome { result, stdout }
+    }
+
+    fn invoke_in(&self, store: &mut Store<HostState>, export: &str, args: &[Value]) -> Result<Value, RunError> {
+        let meta = self.meta.func(export).ok_or_else(|| {
+            RunError::new("unknown_function", export, format!("no function `{export}` in this module"))
+                .hint("only functions reachable from the compiled entry point can be called")
+        })?;
+        let missing: Vec<&String> = meta.effects.iter().filter(|e| !self.perms.allows(e)).collect();
+        if !missing.is_empty() {
+            let list: Vec<&str> = missing.iter().map(|s| s.as_str()).collect();
+            let flag = list.iter().map(|e| if *e == "fs" { "fs:<dir>" } else { e }).collect::<Vec<_>>().join(",");
+            return Err(RunError::new("permission_denied", &meta.name, format!("`{}` needs effect(s) {} which were not granted", meta.name, list.join(", ")))
+                .hint(format!("grant them with `--allow {flag}`")));
+        }
+        if meta.params.len() != args.len() {
+            return Err(RunError::new("bad_args", &meta.name, format!("`{}` takes {} argument(s), {} given", meta.name, meta.params.len(), args.len())));
+        }
+        store.set_fuel(self.fuel).map_err(|e| RunError::new("trap", &meta.name, e.to_string()))?;
+        let mut linker = Linker::new(&self.engine);
+        host::link(&mut linker, &self.perms).map_err(|e| RunError::new("trap", &meta.name, e.to_string()))?;
+        let instance = linker.instantiate(&mut *store, &self.module).map_err(|e| RunError::new("trap", &meta.name, e.to_string()))?;
+        let mem = instance.get_memory(&mut *store, "memory").expect("memory export");
+        let mut params = Vec::new();
+        for (i, (a, (pname, t))) in args.iter().zip(&meta.params).enumerate() {
+            let slot = match self.encode(store, &instance, t, a) {
+                Ok(slot) => slot,
+                Err(_) if store.data().failure.is_some() => {
+                    let f = store.data().failure.expect("checked");
+                    return Err(self.describe(store, mem, &meta.name, f));
+                }
+                Err(m) => return Err(RunError::new("bad_args", &meta.name, format!("argument {i} (`{pname}`): {m}"))),
+            };
+            params.push(match t {
+                Type::Int => Val::I64(slot),
+                Type::Float => Val::F64(slot as u64),
+                _ => Val::I32(slot as i32),
+            });
+        }
+        let func = instance.get_func(&mut *store, export).ok_or_else(|| RunError::new("unknown_function", export, format!("no export `{export}`")))?;
+        let mut results = [Val::I32(0)];
+        match func.call(&mut *store, &params, &mut results) {
+            Ok(()) => {
+                let slot = match results[0] {
+                    Val::I64(v) => v,
+                    Val::F64(bits) => bits as i64,
+                    Val::I32(v) => v as u32 as i64,
+                    ref other => return Err(RunError::new("trap", &meta.name, format!("unexpected result {other:?}"))),
+                };
+                Ok(value::decode(&self.types, mem.data(&*store), &meta.ret, slot))
+            }
+            Err(e) => Err(match store.data().failure {
+                Some(f) => self.describe(store, mem, &meta.name, f),
+                None => match e.downcast_ref::<Trap>() {
+                    Some(Trap::StackOverflow) => RunError::new("stack_overflow", &meta.name, "call stack exhausted")
+                        .hint("make the recursion tail-recursive: the recursive call must be the last thing the function does (functions with `ens` never use tail calls)"),
+                    Some(Trap::OutOfFuel) => RunError::new("timeout", &meta.name, format!("instruction budget of {} exhausted", self.fuel))
+                        .hint("look for unbounded recursion"),
+                    _ => RunError::new("trap", &meta.name, e.to_string()),
+                },
+            }),
+        }
+    }
+
+    /// Writes an argument into guest memory (Str and List[...] are allocated) and returns its slot.
+    fn encode(&self, store: &mut Store<HostState>, instance: &wasmtime::Instance, t: &Type, v: &Value) -> Result<i64, String> {
+        Ok(match (t, v) {
+            (Type::Int, Value::Int(n)) => *n,
+            (Type::Float, Value::Float(x)) => x.to_bits() as i64,
+            (Type::Bool, Value::Bool(b)) => *b as i64,
+            (Type::Unit, Value::Unit) => 0,
+            (Type::Str, Value::Str(s)) => {
+                let p = self.alloc(store, instance, 4 + s.len() as i64)?;
+                let mem = instance.get_memory(&mut *store, "memory").expect("memory export");
+                mem.write(&mut *store, p as usize, &(s.len() as u32).to_le_bytes()).map_err(|e| e.to_string())?;
+                mem.write(&mut *store, p as usize + 4, s.as_bytes()).map_err(|e| e.to_string())?;
+                p as i64
+            }
+            (Type::List(elem), Value::List(xs)) => {
+                let mut slots = Vec::new();
+                for x in xs {
+                    slots.push(self.encode(store, instance, elem, x)?);
+                }
+                let p = self.alloc(store, instance, 8 + 8 * xs.len() as i64)?;
+                let mem = instance.get_memory(&mut *store, "memory").expect("memory export");
+                mem.write(&mut *store, p as usize, &(xs.len() as u32).to_le_bytes()).map_err(|e| e.to_string())?;
+                for (k, s) in slots.iter().enumerate() {
+                    mem.write(&mut *store, p as usize + 8 + 8 * k, &s.to_le_bytes()).map_err(|e| e.to_string())?;
+                }
+                p as i64
+            }
+            (t, v) => return Err(format!("expected {t}, got {}", serde_json::to_string(v).unwrap_or_default())),
+        })
+    }
+
+    fn alloc(&self, store: &mut Store<HostState>, instance: &wasmtime::Instance, size: i64) -> Result<i32, String> {
+        let f = instance.get_typed_func::<i64, i32>(&mut *store, "qal_alloc").map_err(|e| e.to_string())?;
+        f.call(&mut *store, size).map_err(|e| e.to_string())
+    }
+
+    fn values(&self, store: &Store<HostState>, mem: Memory, names: &[(String, Type)], ptr: i32) -> Values {
+        let data = mem.data(store);
+        Values(
+            names
+                .iter()
+                .enumerate()
+                .map(|(k, (n, t))| {
+                    let slot = value::slot_at(data, ptr as usize + 8 * k).unwrap_or(0);
+                    (n.clone(), value::decode(&self.types, data, t, slot))
+                })
+                .collect(),
+        )
+    }
+
+    /// Turns a failure reported through `qal_host.fail` into a RunError with values read from guest memory.
+    fn describe(&self, store: &Store<HostState>, mem: Memory, entry: &str, f: Failure) -> RunError {
+        if f.kind == FAIL_OOM {
+            let requested = value::slot_at(mem.data(store), OOM_SCRATCH as usize);
+            let mut e = RunError::new("out_of_memory", entry, format!("out of memory: the limit is {} bytes per execution", self.memory_limit))
+                .hint("memory is never freed in Phase 1; avoid building large intermediate lists or strings in loops (`push` and `++` copy)");
+            if let Some(r) = requested {
+                e.values = Values(vec![("requested_bytes".into(), Value::Int(r)), ("limit_bytes".into(), Value::Int(self.memory_limit as i64))]);
+            }
+            return e;
+        }
+        let meta: &FuncMeta = &self.meta.funcs[f.func as usize];
+        let site = &meta.sites[f.site as usize];
+        let values = self.values(store, mem, &site.values, f.vals);
+        let def = meta.name.as_str();
+        let mut e = match f.kind {
+            FAIL_REQ | FAIL_ENS => {
+                let (label, list) = if f.kind == FAIL_REQ { ("req", &meta.req) } else { ("ens", &meta.ens) };
+                let index = site.contract.expect("contract site");
+                let text = print_expr(&list[index]);
+                let mut e = RunError::new("contract_violation", def, format!("`{label} {text}` of `{def}` is false"));
+                e.contract = Some(format!("{label}[{index}]: {text}"));
+                if f.kind == FAIL_REQ {
+                    e.hint(format!("the caller must ensure `{text}` before calling `{def}`"))
+                } else {
+                    e.hint(format!("`{def}` returned a result that violates its postcondition; fix the body or the contract"))
+                }
+            }
+            FAIL_OVERFLOW => RunError::new("int_overflow", def, format!("Int overflow in `{}` (64-bit)", site.label))
+                .hint("check the operand range before the operation"),
+            FAIL_DIV_ZERO => RunError::new("div_by_zero", def, format!("division by zero in `{}`", site.label))
+                .hint("check the divisor first, e.g. `if b == 0 then ... else a / b`"),
+            FAIL_INDEX => RunError::new("index", def, format!("`{}` index out of range", site.label))
+                .hint("valid character indices satisfy 0 <= start <= end <= len(s)"),
+            FAIL_BUILTIN => {
+                let mut e = RunError::new("contract_violation", def, format!("precondition of a built-in was violated: `{}`", site.label));
+                e.contract = Some(site.label.clone());
+                e
+            }
+            other => RunError::new("trap", def, format!("unknown failure kind {other}")),
+        };
+        e.values = values;
+        e.at(&site.path)
+    }
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn runner(src: &str) -> Runner {
-        let p = qal_text::parse_program(src).unwrap();
-        assert!(qal_check::check_program(&p).is_empty());
-        Runner::new(qal_wasm::compile(&p)).unwrap()
-    }
-
-    #[test]
-    fn calls_with_typed_values() {
-        let r = runner("fn pick(c: Bool, a: Int, b: Int) -> Int = if c then a else b\nfn u() -> Unit = ()\nfn neg(b: Bool) -> Bool = !b");
-        assert_eq!(r.call("pick", &[Value::Bool(false), Value::Int(1), Value::Int(2)]), Ok(Value::Int(2)));
-        assert_eq!(r.call("u", &[]), Ok(Value::Unit(())));
-        assert_eq!(r.call("neg", &[Value::Bool(true)]), Ok(Value::Bool(false)));
-    }
-
-    #[test]
-    fn rejects_bad_arguments_and_unknown_functions() {
-        let r = runner("fn f(a: Int) -> Int = a");
-        assert_eq!(r.call("f", &[]).unwrap_err().kind, "bad_args");
-        assert_eq!(r.call("f", &[Value::Bool(true)]).unwrap_err().kind, "bad_args");
-        assert_eq!(r.call("g", &[]).unwrap_err().kind, "unknown_function");
-    }
-
-    #[test]
-    fn contract_violation_names_def_and_contract() {
-        let r = runner("fn half(n: Int) -> Int req n % 2 == 0 = n / 2");
-        let e = r.call("half", &[Value::Int(3)]).unwrap_err();
-        assert_eq!(e.kind, "contract_violation");
-        assert_eq!(e.def, "half");
-        assert_eq!(e.contract.as_deref(), Some("req[0]: n % 2 == 0"));
-        assert_eq!(
-            serde_json::to_value(&e).unwrap(),
-            serde_json::json!({"kind": "contract_violation", "def": "half",
-                "message": "`req n % 2 == 0` of `half` is false", "contract": "req[0]: n % 2 == 0"})
-        );
-    }
-
-    #[test]
-    fn arithmetic_failures_name_the_def() {
-        let r = runner("fn inner(a: Int) -> Int = a / 0\nfn outer() -> Int = inner(1) + 1");
-        let e = r.call("outer", &[]).unwrap_err();
-        assert_eq!((e.kind, e.def.as_str()), ("div_by_zero", "inner"));
-    }
-
-    #[test]
-    fn infinite_loop_times_out() {
-        let r = runner("fn spin(n: Int) -> Int = spin(n)").with_fuel(10_000_000);
-        assert_eq!(r.call("spin", &[Value::Int(0)]).unwrap_err().kind, "timeout");
-    }
-
-    #[test]
-    fn deep_non_tail_recursion_reports_stack_overflow() {
-        let r = runner("fn down(n: Int) -> Int = if n == 0 then 0 else 1 + down(n - 1)");
-        assert_eq!(r.call("down", &[Value::Int(100_000_000)]).unwrap_err().kind, "stack_overflow");
-    }
-
-    #[test]
-    fn runs_tests_in_order() {
-        let r = runner("test a = 1 == 1\ntest b = 1 == 2\ntest c = 1 / 0 == 0");
-        let res = r.run_tests();
-        assert_eq!(res.iter().map(|t| (t.name.as_str(), t.passed)).collect::<Vec<_>>(), vec![("a", true), ("b", false), ("c", false)]);
-        assert_eq!(res[2].error.as_ref().unwrap().kind, "div_by_zero");
-    }
-
-    #[test]
-    fn values_serialize_as_plain_json() {
-        assert_eq!(serde_json::to_string(&[Value::Int(-3), Value::Bool(true), Value::Unit(())]).unwrap(), "[-3,true,null]");
-    }
-}
+mod tests;
