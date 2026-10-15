@@ -387,7 +387,7 @@ impl Server {
                 if src.len() > MAX_SOURCE_BYTES {
                     return Err(format!("`source` is longer than {MAX_SOURCE_BYTES} bytes; define the code in several calls"));
                 }
-                ops::define(&ctx, &src, &agent(&a)?)
+                ops::define(&ctx, &src, &agent(&a)?, false)
             }
             "qal_view" => {
                 let names = a.names("names")?;
@@ -427,7 +427,7 @@ impl Server {
             "qal_delete" => {
                 let mut names = vec![a.required("name")?];
                 names.extend(a.names("with")?);
-                ops::delete(&ctx, &names, &agent(&a)?)
+                ops::delete(&ctx, &names, &agent(&a)?, false)
             }
             "qal_request" => {
                 let handler = a.string("handler")?.unwrap_or_else(|| "handle".into());

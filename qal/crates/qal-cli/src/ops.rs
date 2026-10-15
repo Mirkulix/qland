@@ -92,6 +92,9 @@ pub struct Output {
     /// Hash of the standard library package this write imported first (it was new to the project).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub std_imported: Option<String>,
+    /// Why this write could not import the standard library of this qal first (it went ahead).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub std_warnings: Option<Vec<Diagnostic>>,
     /// The results of `request`, one per request, in order.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub responses: Option<Vec<RequestResult>>,
@@ -380,44 +383,74 @@ impl Ctx {
 pub fn init(dir: &Path, std: bool) -> Reply {
     let opened = if std {
         Store::init_std(dir).and_then(|mut s| {
+            s.set_release(crate::STD_PACKAGE)?;
             let fresh = s.query(&Query::default())?.is_empty() && s.meta(qal_store::package::META_STD_PACKAGE)?.is_none();
-            let imported = if fresh { proving(|v| s.import_verified(crate::STD_PACKAGE, v)).0?.hash } else { String::new() };
-            Ok((s, (!imported.is_empty()).then_some(imported)))
+            let imported = if fresh { Some(proving(|v| s.import_verified(crate::STD_PACKAGE, v)).0?.hash) } else { None };
+            Ok((s, StdImport { imported, warnings: None }))
         })
     } else {
-        Store::init(dir).and_then(|mut s| {
-            let imported = with_std(&mut s)?;
-            Ok((s, imported))
+        Store::init(dir).map(|mut s| {
+            let std = with_std(&mut s);
+            (s, std)
         })
     };
     match opened {
-        Ok((s, std_imported)) => Reply::new(Output { ok: Some(Value::Bool(true)), store: Some(s.path().display().to_string()), std_imported, ..Output::default() }, 0),
+        Ok((s, std)) => {
+            let mut out = Output { ok: Some(Value::Bool(true)), store: Some(s.path().display().to_string()), ..Output::default() };
+            std.report(&mut out);
+            Reply::new(out, 0)
+        }
         Err(d) => Reply::diagnostics(d),
+    }
+}
+
+/// What the automatic std import before a write did.
+#[derive(Debug, Default)]
+pub struct StdImport {
+    /// The package hash, if it imported.
+    imported: Option<String>,
+    /// Why it could not import (the project keeps its previous std).
+    warnings: Option<Vec<Diagnostic>>,
+}
+
+impl StdImport {
+    fn report(self, out: &mut Output) {
+        out.std_imported = self.imported;
+        out.std_warnings = self.warnings;
+    }
+
+    /// A failed write: the std diagnostics follow the write's own (they may be the reason).
+    fn failed(self, mut d: Vec<Diagnostic>) -> Reply {
+        d.extend(self.warnings.unwrap_or_default());
+        Reply::diagnostics(d)
     }
 }
 
 /// Imports the embedded standard library into the project's store if it does not have this
 /// version yet (spec Phase 3 §4.3): before every write, in its own transaction, never in the std
-/// project's store. Returns the package hash if it imported. Its contracts are proven as by any
-/// import; the proof reports are not part of the write's result.
-fn with_std(store: &mut Store) -> Result<Option<String>, Vec<Diagnostic>> {
+/// project's store. Its contracts are proven as by any import; the proof reports are not part of
+/// the write's result. A failed import never blocks the project (review finding C1): it changed
+/// nothing, the project keeps its previous std, and the write goes ahead with a warning.
+fn with_std(store: &mut Store) -> StdImport {
     let (result, _) = proving(|v| store.ensure_std(crate::STD_PACKAGE, Some(v)));
     match result {
-        Ok(imported) => Ok(imported.map(|i| i.hash)),
+        Ok(imported) => StdImport { imported: imported.map(|i| i.hash), warnings: None },
         Err(mut d) => {
+            let kept = store.meta(qal_store::package::META_STD_PACKAGE).ok().flatten().map_or("none".to_string(), |h| h.chars().take(12).collect());
             for x in &mut d {
-                x.hints.push("the standard library of this qal could not be imported into the project first, so nothing was changed".into());
+                x.hints.push(format!("the standard library of this qal could not be imported, so the project keeps its previous one (std {kept}); this write went ahead; fix the cause above and any later write imports it"));
             }
-            Err(d)
+            StdImport { imported: None, warnings: Some(d) }
         }
     }
 }
 
-/// The store for a write (`create`: make it if missing), with the standard library imported.
-fn open_for_write(ctx: &Ctx, create: bool) -> Result<(Store, Option<String>), Vec<Diagnostic>> {
+/// The store for a write (`create`: make it if missing), with the standard library imported
+/// (or a warning why not).
+fn open_for_write(ctx: &Ctx, create: bool) -> Result<(Store, StdImport), Vec<Diagnostic>> {
     let mut store = ctx.open_store(create)?;
-    let imported = with_std(&mut store)?;
-    Ok((store, imported))
+    let std = with_std(&mut store);
+    Ok((store, std))
 }
 
 /// Parses and checks text without storing anything.
@@ -431,20 +464,23 @@ pub fn check(src: &str) -> Reply {
 /// Adds or replaces definitions; their contracts are proven before anything is stored. A function
 /// with a refuted contract (its `ens`, or the `req` of a function it calls) is not stored; refuted
 /// call sites in tests are reported (the test fails when run) but do not stop the definition.
-pub fn define(ctx: &Ctx, src: &str, agent: &str) -> Reply {
-    let (mut store, std_imported) = match open_for_write(ctx, true) {
+/// `breaking` (CLI `--breaking`, std store only): released std names may change their signature.
+pub fn define(ctx: &Ctx, src: &str, agent: &str, breaking: bool) -> Reply {
+    let (mut store, std) = match open_for_write(ctx, true) {
         Ok(s) => s,
         Err(d) => return Reply::diagnostics(d),
     };
+    store.set_breaking(breaking);
     let (result, reports) = proving(|verify| store.define_verified(src, agent, verify));
     match result {
         Ok(d) => {
             let reports = current_reports(&d, reports);
-            let mut out = Output { defined: Some(d), std_imported, ..Output::default() };
+            let mut out = Output { defined: Some(d), ..Output::default() };
             out.set_proofs(reports);
+            std.report(&mut out);
             Reply::new(out, 0)
         }
-        Err(d) => Reply::diagnostics(d),
+        Err(d) => std.failed(d),
     }
 }
 
@@ -691,17 +727,35 @@ pub fn query(ctx: &Ctx, q: &Query) -> Reply {
 }
 
 pub fn rename(ctx: &Ctx, old: &str, new: &str, agent: &str) -> Reply {
-    match open_for_write(ctx, false).and_then(|(mut s, std_imported)| Ok((s.rename(old, new, agent)?, std_imported))) {
-        Ok((r, std_imported)) => Reply::new(Output { renamed: Some(r), std_imported, ..Output::default() }, 0),
-        Err(d) => Reply::diagnostics(d),
+    let (mut store, std) = match open_for_write(ctx, false) {
+        Ok(s) => s,
+        Err(d) => return Reply::diagnostics(d),
+    };
+    match store.rename(old, new, agent) {
+        Ok(r) => {
+            let mut out = Output { renamed: Some(r), ..Output::default() };
+            std.report(&mut out);
+            Reply::new(out, 0)
+        }
+        Err(d) => std.failed(d),
     }
 }
 
 /// Removes names nothing else refers to (all or nothing).
-pub fn delete(ctx: &Ctx, names: &[String], agent: &str) -> Reply {
-    match open_for_write(ctx, false).and_then(|(mut s, std_imported)| Ok((s.delete(names, agent)?, std_imported))) {
-        Ok((d, std_imported)) => Reply::new(Output { deleted: Some(d), std_imported, ..Output::default() }, 0),
-        Err(d) => Reply::diagnostics(d),
+/// `breaking` (CLI `--breaking`, std store only): released std names may be deleted.
+pub fn delete(ctx: &Ctx, names: &[String], agent: &str, breaking: bool) -> Reply {
+    let (mut store, std) = match open_for_write(ctx, false) {
+        Ok(s) => s,
+        Err(d) => return Reply::diagnostics(d),
+    };
+    store.set_breaking(breaking);
+    match store.delete(names, agent) {
+        Ok(d) => {
+            let mut out = Output { deleted: Some(d), ..Output::default() };
+            std.report(&mut out);
+            Reply::new(out, 0)
+        }
+        Err(d) => std.failed(d),
     }
 }
 
@@ -986,7 +1040,7 @@ pub fn export(ctx: &Ctx, prefix: &str, out: &Path, name: Option<&str>) -> Reply 
 /// Imports a package file into the store (atomically; every hash is checked and the contracts are
 /// proven as by `define`: a refuted one rejects the import).
 pub fn import(ctx: &Ctx, file: &str) -> Reply {
-    let (mut store, std_imported) = match open_for_write(ctx, true) {
+    let (mut store, std) = match open_for_write(ctx, true) {
         Ok(s) => s,
         Err(d) => return Reply::diagnostics(d),
     };
@@ -994,11 +1048,12 @@ pub fn import(ctx: &Ctx, file: &str) -> Reply {
     match result {
         Ok(i) => {
             let reports = current_reports(&i.defined, reports);
-            let mut out = Output { imported: Some(i), std_imported, ..Output::default() };
+            let mut out = Output { imported: Some(i), ..Output::default() };
             out.set_proofs(reports);
+            std.report(&mut out);
             Reply::new(out, 0)
         }
-        Err(d) => Reply::diagnostics(d),
+        Err(d) => std.failed(d),
     }
 }
 

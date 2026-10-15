@@ -8,15 +8,20 @@
 //!   qal init [--std]                                 -> {"ok":true,"store":"<path>","std_imported":"<hash>"?}
 //!                                                       (imports the embedded std package; `--std`: the std project's
 //!                                                       store, which defines only `std.` names and imports nothing later)
-//! Every write (define, rename, import) first imports the embedded std package if the project lacks this
-//! version (`std_imported` in its result); reads never write.
-//!   qal define <file> [--agent <name>]               -> {"defined":[{name,kind,hash,status,old_hash?}],"proofs":[...]?} | {"diagnostics":[...]}
+//! `--breaking` (std project only): a name of the released std (the package embedded in this qal) may change its
+//! signature (define) or be deleted (delete); without it both are E0244 std_signature_change. Not offered over MCP.
+//! Opening a store of an older schema upgrades it (any command; schema 5 since Phase 3b), after which older qal
+//! binaries refuse it.
+//! Every write (define, rename, delete, import) first imports the embedded std package if the project lacks this
+//! version (`std_imported` in its result; if that fails, the
+//! write still goes ahead with the previous std and `std_warnings` says why); reads never change the codebase.
+//!   qal define <file> [--agent <name>] [--breaking]  -> {"defined":[{name,kind,hash,status,old_hash?}],"proofs":[...]?} | {"diagnostics":[...]}
 //!                                                       (a function with a refuted contract is not stored: E0801)
 //!   qal view <name|#hash>...                         -> {"views":[{name,kind,hash,signature,effects,text,deps}]}
 //!   qal query [--name <prefix>] [--type <pattern>] [--uses <name|#hash>]
 //!                                                    -> {"results":[{name,kind,hash,signature,effects}]}
 //!   qal rename <old> <new> [--agent <name>]          -> {"renamed":{name,kind,hash}}
-//!   qal delete <name>... [--agent <name>]           -> {"deleted":[{name,kind,hash}]} | {"diagnostics":[...]} (E0406 has_dependents:
+//!   qal delete <name>... [--agent <name>] [--breaking] -> {"deleted":[{name,kind,hash}]} | {"diagnostics":[...]} (E0406 has_dependents:
 //!                                                       names other stored definitions refer to; all or nothing)
 //!   qal history <name>                               -> {"history":[{action,name,from_name?,to_name?,old_hash?,new_hash,agent,at}]}
 //!   qal build <name>                                 -> {"built":{name,hash,wasm,manifest,effects,bytes}} (paths relative to the project)
@@ -59,7 +64,7 @@ use std::process::ExitCode;
 use std::sync::Arc;
 
 const USAGE: &str = "usage: qal <check|fmt> <file>\n       \
-                     qal init [--std] | define <file> [--agent <name>] | view <name>... | rename <old> <new> [--agent <name>] | delete <name>... [--agent <name>] | history <name> | build <name>\n       \
+                     qal init [--std] | define <file> [--agent <name>] [--breaking] | view <name>... | rename <old> <new> [--agent <name>] | delete <name>... [--agent <name>] [--breaking] | history <name> | build <name>\n       \
                      qal export <prefix> --out <file> [--name <pkg>] | import <file>\n       \
                      qal query [--name <prefix>] [--type <pattern>] [--uses <name>]\n       \
                      qal call <file> [--allow <spec>] <fn> [args...] | call <fn> [--allow <spec>] [args...]\n       \
@@ -155,10 +160,17 @@ fn init(std: bool) -> ExitCode {
 }
 
 fn store_command(cmd: &str, args: &[String]) -> ExitCode {
-    // `--std` is a flag (the option parser only knows options with values).
-    if cmd == "init" && matches!(args, [flag] if flag == "--std") {
-        return init(true);
+    // `--std` and `--breaking` are flags (the option parser only knows options with values).
+    if cmd == "init" {
+        return match args {
+            [] => init(false),
+            [flag] if flag == "--std" => init(true),
+            _ => bad_usage("usage: qal init [--std]"),
+        };
     }
+    let breaking = matches!(cmd, "define" | "delete") && args.iter().any(|a| a == "--breaking");
+    let without: Vec<String> = args.iter().filter(|a| !(breaking && *a == "--breaking")).cloned().collect();
+    let args = without.as_slice();
     let options: &[&str] = match cmd {
         "define" | "rename" | "delete" => &["agent"],
         "query" => &["name", "type", "uses"],
@@ -173,14 +185,13 @@ fn store_command(cmd: &str, args: &[String]) -> ExitCode {
     let agent = s.one("agent").unwrap_or("cli");
     let targets = s.targets.as_slice();
     match (cmd, targets) {
-        ("init", []) => init(false),
         ("define", [file]) => {
             let src = match read(file) {
                 Ok(s) => s,
                 Err(code) => return code,
             };
             match ctx() {
-                Ok(c) => emit(ops::define(&c, &src, agent)),
+                Ok(c) => emit(ops::define(&c, &src, agent, breaking)),
                 Err(code) => code,
             }
         }
@@ -191,7 +202,7 @@ fn store_command(cmd: &str, args: &[String]) -> ExitCode {
         }
         ("rename", [old, new]) => with_ctx(|c| ops::rename(c, old, new, agent)),
         ("history", [name]) => with_ctx(|c| ops::history(c, name)),
-        ("delete", names) if !names.is_empty() => with_ctx(|c| ops::delete(c, names, agent)),
+        ("delete", names) if !names.is_empty() => with_ctx(|c| ops::delete(c, names, agent, breaking)),
         ("build", [name]) => with_ctx(|c| ops::build(c, name)),
         ("export", [prefix]) => match s.one("out") {
             Some(out) => with_ctx(|c| ops::export(c, prefix, std::path::Path::new(out), s.one("name"))),

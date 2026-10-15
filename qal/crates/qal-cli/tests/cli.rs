@@ -641,7 +641,7 @@ fn the_checked_in_std_package_has_agent_provenance() {
     // It imports into a fresh project with exactly the recorded hashes.
     let dir = project("std-fresh");
     let mut s = qal_store::Store::init(&dir).unwrap();
-    let i = s.import(qal_cli::STD_PACKAGE).unwrap();
+    let i = s.ensure_std(qal_cli::STD_PACKAGE, None).unwrap().unwrap();
     assert_eq!(i.defined.len(), pkg.defs.len());
     let stored: std::collections::BTreeMap<String, String> = s.query(&qal_store::Query::default()).unwrap().into_iter().map(|e| (e.name, e.hash)).collect();
     for d in &pkg.defs {
@@ -723,14 +723,13 @@ fn the_std_project_store_defines_only_std_names_and_exports_the_package() {
     for d in &embedded {
         assert!(defs.contains(&format!("# def {} {} {}", d.name, d.hash, d.agent).as_str()), "{}", d.name);
     }
-    // A project importing that package gets the same hashes and cannot change them.
+    // A project gets std only from its qal: that unreleased package is refused (review I1).
     let user = project("std-user");
     qal_in(&user, &["init"]);
     let (code, v) = qal_in(&user, &["import", dir.join("std.qalpkg").to_str().unwrap()]);
-    assert_eq!(code, 0, "{v}");
-    assert_eq!(qal_in(&user, &["view", "std.a.f"]).1["views"][0]["hash"], qal_in(&dir, &["view", "std.a.f"]).1["views"][0]["hash"]);
+    assert_eq!((code, v["diagnostics"][0]["code"].as_str()), (1, Some("E0243")), "{v}");
     // `--std` on an ordinary project with code is refused.
-    let f = write(&user, "u.qal", "fn u() -> Int = std.a.f(std.a.One)");
+    let f = write(&user, "u.qal", "fn u() -> Int = 1");
     assert_eq!(qal_in(&user, &["define", &f]).0, 0);
     let (code, v) = qal_in(&user, &["init", "--std"]);
     assert_eq!((code, v["diagnostics"][0]["kind"].as_str()), (2, Some("store_error")), "{v}");
@@ -815,4 +814,103 @@ fn concurrent_first_writes_both_import_the_std_package() {
     assert_eq!(own_names(&dir).len(), 5);
     let (_, v) = qal_in(&dir, &["query", "--name", "std."]);
     assert_eq!(v["results"].as_array().unwrap().len() as u64, std_defs());
+}
+
+// ---------------------------------------------------------------------------------------------
+// Phase 3b final review: C1 (a failed std import never blocks the project), I1, I2.
+
+#[test]
+fn a_failing_std_import_never_blocks_the_project() {
+    // A project with an older std in which `std.db.first` had another signature: importing this
+    // qal's std is E0244. Every write still goes ahead with the old std and says why.
+    let lib_dir = project("old-std-lib");
+    let mut lib = qal_store::Store::init_std(&lib_dir).unwrap();
+    lib.define("fn std.db.first(x: Int) -> Int = x", "std-db-0").unwrap();
+    let old = lib.export("std.", "std").unwrap();
+    drop(lib);
+    let dir = project("old-std");
+    let mut s = qal_store::Store::init(&dir).unwrap();
+    s.ensure_std(&old.file, None).unwrap();
+    drop(s);
+    let f = write(&dir, "f.qal", "fn f() -> Int = std.db.first(1)\nfn g() -> Int = 2");
+    let (code, v) = qal_in(&dir, &["define", &f]);
+    assert_eq!(code, 0, "{v}");
+    assert_eq!((v["std_warnings"][0]["code"].as_str(), v["std_warnings"][0]["def"].as_str()), (Some("E0244"), Some("std.db.first")), "{v}");
+    assert!(v["std_warnings"][0]["hints"].as_array().unwrap().iter().any(|h| h.as_str().unwrap().contains("keeps its previous one")), "{v}");
+    assert_eq!(meta(&dir, "std_package"), Some(old.hash.clone()), "nothing of the failed import was written");
+    let (code, v) = qal_in(&dir, &["rename", "g", "h"]);
+    assert_eq!((code, v["renamed"]["name"].as_str()), (0, Some("h")), "{v}");
+    let (code, v) = qal_in(&dir, &["delete", "h"]);
+    assert_eq!((code, v["deleted"][0]["name"].as_str()), (0, Some("h")), "{v}");
+    // A write that needs the new std fails, and the std warning comes with its diagnostics.
+    let n = write(&dir, "n.qal", "fn n() -> Bool = std.str.ends_with(\"ab\", \"b\")");
+    let (code, v) = qal_in(&dir, &["define", &n]);
+    let codes: Vec<&str> = v["diagnostics"].as_array().unwrap().iter().map(|d| d["code"].as_str().unwrap()).collect();
+    assert!(code == 1 && codes.first() == Some(&"E0201") && codes.contains(&"E0244"), "{v}");
+}
+
+#[test]
+fn a_project_imports_no_std_but_its_own() {
+    // I1: a package named `std` that is not this qal's std is refused in a project.
+    let lib_dir = project("fake-std-lib");
+    let mut lib = qal_store::Store::init_std(&lib_dir).unwrap();
+    lib.define("fn std.evil.x() -> Int = 1", "std-evil-1").unwrap();
+    let fake = lib.export("std.", "std").unwrap();
+    drop(lib);
+    let fake_file = write(&lib_dir, "fake.qalpkg", &fake.file);
+    let dir = project("fake-std");
+    qal_in(&dir, &["init"]);
+    let (code, v) = qal_in(&dir, &["import", &fake_file]);
+    assert_eq!((code, v["diagnostics"][0]["code"].as_str()), (1, Some("E0243")), "{v}");
+    assert!(v["diagnostics"][0]["message"].as_str().unwrap().contains("is not the standard library of this qal"), "{v}");
+    assert_eq!(qal_in(&dir, &["view", "std.evil.x"]).1["diagnostics"][0]["kind"], "unknown_name");
+    // Its own std is accepted again (nothing changes).
+    let own = write(&dir, "own.qalpkg", qal_cli::STD_PACKAGE);
+    assert_eq!(qal_in(&dir, &["import", &own]).0, 0);
+}
+
+#[test]
+fn released_std_names_change_only_with_breaking() {
+    // I2: in the std project the embedded package is the release.
+    let dir = project("std-breaking");
+    assert_eq!(qal_in(&dir, &["init", "--std"]).0, 0);
+    let change = write(&dir, "c.qal", "fn std.db.first(rows: DbRows) -> Int = len(rows.rows)\ntest std.db.test_first = std.db.first(DbRows { columns: [], rows: [] }) == 0");
+    let (code, v) = qal_in(&dir, &["define", &change]);
+    assert_eq!((code, v["diagnostics"][0]["code"].as_str(), v["diagnostics"][0]["def"].as_str()), (1, Some("E0244"), Some("std.db.first")), "{v}");
+    let (code, v) = qal_in(&dir, &["delete", "std.db.test_first"]);
+    assert_eq!((code, v["diagnostics"][0]["code"].as_str()), (1, Some("E0244")), "{v}");
+    // New names and same-signature bodies are fine.
+    let add = write(&dir, "a.qal", "fn std.zz.new() -> Int = 1");
+    assert_eq!(qal_in(&dir, &["define", &add]).0, 0);
+    assert_eq!(qal_in(&dir, &["delete", "std.zz.new"]).0, 0);
+    // Deliberately breaking (CLI only).
+    let (code, v) = qal_in(&dir, &["define", &change, "--breaking"]);
+    assert_eq!(code, 0, "{v}");
+    let (code, v) = qal_in(&dir, &["delete", "--breaking", "std.db.test_first"]);
+    assert_eq!(code, 0, "{v}");
+    // `qal init` takes only `--std`.
+    let out = Command::new(env!("CARGO_BIN_EXE_qal")).current_dir(&dir).args(["init", "--std", "extra"]).output().unwrap();
+    assert_eq!(out.status.code(), Some(2));
+}
+
+#[test]
+fn a_project_type_shaped_like_a_std_type_does_not_block_std() {
+    // C1 as reported: a pre-std project with `{ name: Str, value: Str }` (std has std.url.Param).
+    let dir = project("c1-header");
+    let mut s = qal_store::Store::init(&dir).unwrap();
+    s.define("type Header = { name: Str, value: Str }\nfn h(n: Str) -> Header = Header { name: n, value: \"\" }", "test").unwrap();
+    drop(s);
+    let f = write(&dir, "b.qal", "fn b() -> Str = h(\"x\").name");
+    let (code, v) = qal_in(&dir, &["define", &f]);
+    assert!(code == 0 && v["std_imported"].as_str() == Some(std_hash().as_str()) && v.get("std_warnings").is_none(), "{v}");
+    assert_eq!(qal_in(&dir, &["rename", "h", "h2"]).0, 0);
+}
+
+#[test]
+fn the_std_project_rebuilds_to_the_identical_package() {
+    let dir = project("std-rebuild");
+    assert_eq!(qal_in(&dir, &["init", "--std"]).0, 0);
+    let (code, v) = qal_in(&dir, &["export", "std.", "--out", "std.qalpkg"]);
+    assert_eq!(code, 0, "{v}");
+    assert_eq!(std::fs::read_to_string(dir.join("std.qalpkg")).unwrap(), qal_cli::STD_PACKAGE);
 }
