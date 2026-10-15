@@ -2,8 +2,9 @@
 //! and `fs` only reaches files inside granted directories.
 
 use crate::value::read_str;
-use qal_wasm::{host, HOST_MODULE};
-use std::io::BufRead;
+use qal_wasm::{host, FAIL_OOM, HOST_MODULE, OOM_SCRATCH};
+use std::fs::File;
+use std::io::{BufRead, Read, Write};
 use std::path::{Path, PathBuf};
 use wasmtime::{Caller, Extern, Linker, Memory, StoreLimits};
 
@@ -52,30 +53,131 @@ impl Permissions {
         }
     }
 
+    fn inside(&self, p: &Path) -> bool {
+        self.fs.iter().any(|root| p.starts_with(root))
+    }
+
+    /// Uniform refusal: identical for paths that exist and paths that do not, so file existence
+    /// outside the granted directories cannot be probed.
+    fn denied(path: &str) -> String {
+        format!("permission denied: `{path}` is outside the allowed directories")
+    }
+
+    /// A path that could not be resolved: the real error is only shown if the nearest existing
+    /// ancestor lies inside a granted directory, otherwise it is the uniform refusal.
+    fn unresolved(&self, p: &Path, path: &str, err: std::io::Error) -> String {
+        for anc in p.ancestors().skip(1) {
+            let anc = if anc.as_os_str().is_empty() { Path::new(".") } else { anc };
+            if let Ok(c) = anc.canonicalize() {
+                return if self.inside(&c) { format!("{path}: {err}") } else { Self::denied(path) };
+            }
+        }
+        Self::denied(path)
+    }
+
     /// Resolves `path` (relative to the working directory) and checks it lies inside a granted directory.
     /// For writing, the file itself may not exist yet, but its directory must.
     pub fn check_path(&self, path: &str, for_write: bool) -> Result<PathBuf, String> {
         let p = Path::new(path);
-        let resolved = if for_write && !p.exists() {
-            // A dangling symlink "does not exist" but writing would follow it, possibly outside.
-            if std::fs::symlink_metadata(p).is_ok() {
-                return Err(format!("permission denied: `{path}` is a dangling symbolic link"));
+        let resolved = match p.canonicalize() {
+            Ok(c) => c,
+            Err(e) if !for_write => return Err(self.unresolved(p, path, e)),
+            Err(e) => {
+                let parent = match p.parent() {
+                    Some(d) if !d.as_os_str().is_empty() => d,
+                    _ => Path::new("."),
+                };
+                let Some(name) = p.file_name() else { return Err(self.unresolved(p, path, e)) };
+                let full = match parent.canonicalize() {
+                    Ok(d) => d.join(name),
+                    Err(e) => return Err(self.unresolved(p, path, e)),
+                };
+                if self.inside(&full) && std::fs::symlink_metadata(p).is_ok() {
+                    // A dangling symlink "does not exist" but writing would follow it, possibly outside.
+                    return Err(format!("permission denied: `{path}` is a dangling symbolic link"));
+                }
+                full
             }
-            let parent = match p.parent() {
-                Some(d) if !d.as_os_str().is_empty() => d,
-                _ => Path::new("."),
-            };
-            let name = p.file_name().ok_or_else(|| format!("`{path}` is not a file path"))?;
-            parent.canonicalize().map_err(|e| format!("{path}: {e}"))?.join(name)
-        } else {
-            p.canonicalize().map_err(|e| format!("{path}: {e}"))?
         };
-        if self.fs.iter().any(|root| resolved.starts_with(root)) {
+        if self.inside(&resolved) {
             Ok(resolved)
         } else {
-            Err(format!("permission denied: `{path}` is outside the allowed directories"))
+            Err(Self::denied(path))
         }
     }
+
+    /// After opening, re-resolves `resolved` and requires that it is still inside a granted directory
+    /// and is the very file that was opened (guards against links swapped in after `check_path`).
+    pub fn verify_opened(&self, file: &File, resolved: &Path) -> Result<(), String> {
+        let changed = || format!("permission denied: `{}` changed while being opened", resolved.display());
+        let now = resolved.canonicalize().map_err(|_| changed())?;
+        if !self.inside(&now) {
+            return Err(changed());
+        }
+        let (a, b) = (file.metadata().map_err(|_| changed())?, std::fs::metadata(&now).map_err(|_| changed())?);
+        if same_file(&a, &b) {
+            Ok(())
+        } else {
+            Err(changed())
+        }
+    }
+
+    /// Checks, opens without following a final symlink, and verifies the opened file.
+    fn open(&self, path: &str, for_write: bool) -> Result<File, String> {
+        let full = self.check_path(path, for_write)?;
+        let file = open_nofollow(&full, for_write).map_err(|e| format!("{path}: {e}"))?;
+        self.verify_opened(&file, &full)?;
+        Ok(file)
+    }
+}
+
+#[cfg(unix)]
+fn same_file(a: &std::fs::Metadata, b: &std::fs::Metadata) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    a.dev() == b.dev() && a.ino() == b.ino()
+}
+
+#[cfg(not(unix))]
+fn same_file(_: &std::fs::Metadata, _: &std::fs::Metadata) -> bool {
+    true
+}
+
+#[cfg(all(unix, any(target_os = "macos", target_os = "ios", target_os = "freebsd")))]
+const O_NOFOLLOW: i32 = 0x0100;
+#[cfg(all(unix, any(target_os = "linux", target_os = "android"), any(target_arch = "aarch64", target_arch = "arm")))]
+const O_NOFOLLOW: i32 = 0o100000;
+#[cfg(all(unix, any(target_os = "linux", target_os = "android"), not(any(target_arch = "aarch64", target_arch = "arm"))))]
+const O_NOFOLLOW: i32 = 0o400000;
+
+/// Opens for reading, or for writing (created if missing, not truncated: the caller truncates once verified).
+fn open_nofollow(path: &Path, write: bool) -> std::io::Result<File> {
+    let mut o = std::fs::OpenOptions::new();
+    if write {
+        o.write(true).create(true);
+    } else {
+        o.read(true);
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        o.custom_flags(O_NOFOLLOW);
+    }
+    o.open(path)
+}
+
+fn read_text(file: File, path: &str, limit: usize) -> Result<Result<String, String>, usize> {
+    let len = file.metadata().map(|m| m.len()).unwrap_or(0) as usize;
+    if len > limit {
+        return Err(len);
+    }
+    let mut bytes = Vec::new();
+    if let Err(e) = file.take(limit as u64 + 1).read_to_end(&mut bytes) {
+        return Ok(Err(format!("{path}: {e}")));
+    }
+    if bytes.len() > limit {
+        return Err(bytes.len());
+    }
+    Ok(String::from_utf8(bytes).map_err(|_| format!("{path}: not valid UTF-8")))
 }
 
 /// A failure reported by the guest through `qal_host.fail`.
@@ -94,6 +196,8 @@ pub struct HostState {
     pub perms: Permissions,
     pub rng: u64,
     pub limits: StoreLimits,
+    /// Memory limit in bytes; also caps captured stdout and host-side reads.
+    pub limit: usize,
 }
 
 fn memory(c: &mut Caller<'_, HostState>) -> Result<Memory, wasmtime::Error> {
@@ -106,6 +210,15 @@ fn memory(c: &mut Caller<'_, HostState>) -> Result<Memory, wasmtime::Error> {
 fn guest_str(c: &mut Caller<'_, HostState>, ptr: i32) -> Result<String, wasmtime::Error> {
     let mem = memory(c)?;
     read_str(mem.data(&c), ptr as u32).ok_or_else(|| wasmtime::Error::msg("invalid string pointer"))
+}
+
+/// Reports a host-side allocation over the memory limit exactly like a guest allocation failure.
+fn host_oom(c: &mut Caller<'_, HostState>, requested: usize) -> wasmtime::Error {
+    if let Ok(mem) = memory(c) {
+        let _ = mem.write(&mut *c, OOM_SCRATCH as usize, &(requested as i64).to_le_bytes());
+    }
+    c.data_mut().failure = Some(Failure { kind: FAIL_OOM, func: 0, site: 0, vals: 0 });
+    wasmtime::Error::msg("out of memory")
 }
 
 /// Allocates a Str in guest memory via the exported allocator (which may fail with out_of_memory).
@@ -143,16 +256,27 @@ pub fn link(linker: &mut Linker<HostState>, perms: &Permissions) -> Result<(), w
     if perms.io {
         linker.func_wrap(HOST_MODULE, host::PRINT, |mut c: Caller<'_, HostState>, p: i32| {
             let s = guest_str(&mut c, p)?;
+            let limit = c.data().limit;
             let out = &mut c.data_mut().stdout;
-            out.extend_from_slice(s.as_bytes());
-            out.push(b'\n');
+            let mut line = s.into_bytes();
+            line.push(b'\n');
+            let requested = out.len() + line.len();
+            if requested > limit {
+                out.extend_from_slice(&line[..limit.saturating_sub(out.len())]);
+                return Err(host_oom(&mut c, requested));
+            }
+            out.extend_from_slice(&line);
             Ok(())
         })?;
         linker.func_wrap(HOST_MODULE, host::READ_LINE, |mut c: Caller<'_, HostState>| {
             let mut buf = Vec::new();
-            let n = c.data_mut().stdin.read_until(b'\n', &mut buf).map_err(wasmtime::Error::msg)?;
+            let limit = c.data().limit;
+            let n = c.data_mut().stdin.by_ref().take(limit as u64 + 1).read_until(b'\n', &mut buf).map_err(wasmtime::Error::msg)?;
             if n == 0 {
                 return Ok(-1);
+            }
+            if n > limit {
+                return Err(host_oom(&mut c, n));
             }
             if buf.ends_with(b"\n") {
                 buf.pop();
@@ -166,10 +290,14 @@ pub fn link(linker: &mut Linker<HostState>, perms: &Permissions) -> Result<(), w
     if !perms.fs.is_empty() {
         linker.func_wrap(HOST_MODULE, host::READ_FILE, |mut c: Caller<'_, HostState>, p: i32| {
             let path = guest_str(&mut c, p)?;
-            let result = c.data().perms.check_path(&path, false).and_then(|full| {
-                let bytes = std::fs::read(&full).map_err(|e| format!("{path}: {e}"))?;
-                String::from_utf8(bytes).map_err(|_| format!("{path}: not valid UTF-8"))
-            });
+            let limit = c.data().limit;
+            let result = match c.data().perms.open(&path, false) {
+                Ok(file) => match read_text(file, &path, limit) {
+                    Ok(r) => r,
+                    Err(size) => return Err(host_oom(&mut c, size)),
+                },
+                Err(e) => Err(e),
+            };
             let (ok, text) = match result {
                 Ok(s) => (1, s),
                 Err(e) => (0, e),
@@ -179,7 +307,9 @@ pub fn link(linker: &mut Linker<HostState>, perms: &Permissions) -> Result<(), w
         linker.func_wrap(HOST_MODULE, host::WRITE_FILE, |mut c: Caller<'_, HostState>, p: i32, content: i32| {
             let path = guest_str(&mut c, p)?;
             let text = guest_str(&mut c, content)?;
-            let result = c.data().perms.check_path(&path, true).and_then(|full| std::fs::write(&full, text).map_err(|e| format!("{path}: {e}")));
+            let result = c.data().perms.open(&path, true).and_then(|mut file| {
+                file.set_len(0).and_then(|_| file.write_all(text.as_bytes())).map_err(|e| format!("{path}: {e}"))
+            });
             match result {
                 Ok(()) => Ok((1, 0)),
                 Err(e) => Ok((0, new_str(&mut c, &e)?)),
@@ -243,6 +373,29 @@ mod tests {
             std::os::unix::fs::symlink(root.join("secret.txt"), &back).unwrap();
             assert!(p.check_path(&back.to_string_lossy(), false).unwrap_err().starts_with("permission denied"));
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn opening_refuses_final_symlinks_and_detects_swapped_files() {
+        let root = std::env::temp_dir().join(format!("qal-open-{}", std::process::id()));
+        let inside = root.join("data");
+        std::fs::create_dir_all(&inside).unwrap();
+        std::fs::write(root.join("secret.txt"), "x").unwrap();
+        std::fs::write(inside.join("a.txt"), "a").unwrap();
+        let link = inside.join("swap");
+        let _ = std::fs::remove_file(&link);
+        std::os::unix::fs::symlink(root.join("secret.txt"), &link).unwrap();
+        assert!(open_nofollow(&link, false).is_err());
+        assert!(open_nofollow(&link, true).is_err());
+        assert!(open_nofollow(&inside.join("a.txt"), false).is_ok());
+        let p = Permissions::parse(&format!("fs:{}", inside.display())).unwrap();
+        let a = open_nofollow(&inside.join("a.txt"), false).unwrap();
+        let outside = open_nofollow(&root.join("secret.txt"), false).unwrap();
+        let canon = inside.join("a.txt").canonicalize().unwrap();
+        assert!(p.verify_opened(&a, &canon).is_ok());
+        assert!(p.verify_opened(&outside, &canon).unwrap_err().starts_with("permission denied"));
+        assert!(p.verify_opened(&outside, &root.join("secret.txt").canonicalize().unwrap()).unwrap_err().starts_with("permission denied"));
     }
 
     #[test]

@@ -247,3 +247,58 @@ fn deep_values_are_truncated_in_json() {
     assert!(json.starts_with(r#"{"Link":[1,{"Link":[2,"#), "{}", &json[..40]);
     assert!(json.contains(r#""...""#));
 }
+
+#[test]
+fn fs_errors_do_not_reveal_whether_outside_paths_exist() {
+    let root = std::env::temp_dir().join(format!("qal-run-oracle-{}", std::process::id()));
+    let data = root.join("data");
+    std::fs::create_dir_all(&data).unwrap();
+    std::fs::write(root.join("exists.txt"), "x").unwrap();
+    let src = "fn main(args: List[Str]) -> Int !fs !io = {\n\
+                 print(show(read_file(\"/nonexistent-dir-qal/missing\")));\n\
+                 print(show(read_file(\"/etc/hosts\")));\n\
+                 print(show(read_file(\"/nonexistent-dir-qal/../etc/hosts\")));\n\
+                 print(show(read_file(\"/etc/hosts/x\")));\n\
+                 0 }\n\
+               fn show(r: Result[Str, Str]) -> Str = match r { Ok(_) => \"ok\", Err(e) => e }";
+    let out = main_runner(src, &format!("io,fs:{}", data.display())).run_main(&[]);
+    let lines: Vec<String> = out.stdout.lines().map(|l| l.split('`').next().unwrap().to_string() + l.rsplit('`').next().unwrap()).collect();
+    assert_eq!(lines.len(), 4, "{out:?}");
+    assert!(lines[0].starts_with("permission denied:"), "{}", lines[0]);
+    assert!(lines.iter().all(|l| *l == lines[0]), "{lines:?}");
+}
+
+#[test]
+fn stdout_is_capped_at_the_memory_limit() {
+    let src = "fn main(args: List[Str]) -> Int !io = emit(0)\n\
+               fn emit(i: Int) -> Int !io = { print(\"0123456789012345678901234567890123456789\"); emit(i + 1) }";
+    let out = main_runner(src, "io").with_memory_limit(1 << 20).run_main(&[]);
+    let e = out.result.unwrap_err();
+    assert_eq!((e.kind, e.def.as_str()), ("out_of_memory", "main"));
+    assert_eq!(out.stdout.len(), 1 << 20);
+}
+
+#[test]
+fn shared_values_decode_within_a_node_budget() {
+    let src = "type T = Leaf | Node(T, T)\n\
+               fn build(n: Int) -> T = if n == 0 then Leaf else (let t = build(n - 1) in Node(t, t))\n\
+               fn f(n: Int) -> T = build(n)";
+    let r = runner(src);
+    let t = std::time::Instant::now();
+    let v = r.call("f", &[Value::Int(40)]).unwrap();
+    let json = serde_json::to_string(&v).unwrap();
+    assert!(t.elapsed() < std::time::Duration::from_secs(5));
+    assert!(json.contains(r#""...""#));
+    assert!(json.len() < 10_000_000, "{}", json.len());
+}
+
+#[test]
+fn oversized_file_is_out_of_memory() {
+    let root = std::env::temp_dir().join(format!("qal-run-big-{}", std::process::id()));
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("big.txt"), vec![b'x'; 2 << 20]).unwrap();
+    let src = "fn main(args: List[Str]) -> Int !fs = match read_file(match get(args, 0) { Some(p) => p, None => \"\" }) { Ok(s) => len(s), Err(_) => 0 - 1 }";
+    let r = main_runner(src, &format!("fs:{}", root.display())).with_memory_limit(1 << 20);
+    let e = r.run_main(&[root.join("big.txt").to_string_lossy().into_owned()]).result.unwrap_err();
+    assert_eq!((e.kind, e.def.as_str()), ("out_of_memory", "main"));
+}

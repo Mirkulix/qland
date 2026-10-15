@@ -7,6 +7,8 @@ use serde::Serialize;
 
 /// Values deeper than this are shown as `"..."` (guards the host stack against huge recursive values).
 const MAX_DEPTH: usize = 200;
+/// Total nodes per decoded value; shared substructure can otherwise expand exponentially.
+const MAX_NODES: usize = 100_000;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
@@ -86,11 +88,12 @@ pub fn read_str(mem: &[u8], ptr: u32) -> Option<String> {
 
 /// Decodes a value of type `ty` from its slot form (see `qal_wasm` layout).
 pub fn decode(tp: &TProgram, mem: &[u8], ty: &Type, slot: i64) -> Value {
-    decode_at(tp, mem, ty, slot, 0)
+    decode_at(tp, mem, ty, slot, 0, &mut 0)
 }
 
-fn decode_at(tp: &TProgram, mem: &[u8], ty: &Type, slot: i64, depth: usize) -> Value {
-    if depth > MAX_DEPTH {
+fn decode_at(tp: &TProgram, mem: &[u8], ty: &Type, slot: i64, depth: usize, nodes: &mut usize) -> Value {
+    *nodes += 1;
+    if depth > MAX_DEPTH || *nodes > MAX_NODES {
         return Value::Str("...".into());
     }
     let ptr = slot as u32;
@@ -107,7 +110,7 @@ fn decode_at(tp: &TProgram, mem: &[u8], ty: &Type, slot: i64, depth: usize) -> V
             let mut out = Vec::new();
             for k in 0..len as usize {
                 let Some(s) = slot_at(mem, ptr as usize + 8 + 8 * k) else { return bad() };
-                out.push(decode_at(tp, mem, elem, s, depth + 1));
+                out.push(decode_at(tp, mem, elem, s, depth + 1, nodes));
             }
             Value::List(out)
         }
@@ -116,7 +119,7 @@ fn decode_at(tp: &TProgram, mem: &[u8], ty: &Type, slot: i64, depth: usize) -> V
             let mut fields = Vec::new();
             for (k, (f, ft)) in tp.record_fields(ty).iter().enumerate() {
                 let Some(s) = slot_at(mem, ptr as usize + 8 * k) else { return bad() };
-                fields.push((f.clone(), decode_at(tp, mem, ft, s, depth + 1)));
+                fields.push((f.clone(), decode_at(tp, mem, ft, s, depth + 1, nodes)));
             }
             Value::Record(name.clone(), fields)
         }
@@ -127,7 +130,7 @@ fn decode_at(tp: &TProgram, mem: &[u8], ty: &Type, slot: i64, depth: usize) -> V
             let mut payload = Vec::new();
             for (k, ft) in tp.variant_fields(ty, tag).iter().enumerate() {
                 let Some(s) = slot_at(mem, ptr as usize + 8 + 8 * k) else { return bad() };
-                payload.push(decode_at(tp, mem, ft, s, depth + 1));
+                payload.push(decode_at(tp, mem, ft, s, depth + 1, nodes));
             }
             Value::Variant(name.clone(), payload)
         }

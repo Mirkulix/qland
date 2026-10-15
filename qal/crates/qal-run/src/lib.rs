@@ -177,6 +177,7 @@ impl Runner {
             perms: self.perms.clone(),
             rng: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos() as u64).unwrap_or(1),
             limits: StoreLimitsBuilder::new().memory_size(self.memory_limit).build(),
+            limit: self.memory_limit,
         };
         let mut store = Store::new(&self.engine, state);
         store.limiter(|s| &mut s.limits);
