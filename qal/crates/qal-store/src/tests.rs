@@ -811,3 +811,67 @@ fn phase1_definitions_keep_their_hashes() {
     assert_eq!(c.canonical[4], 1);
     assert_eq!(hash(&mut s, "f"), c.hash.to_hex());
 }
+
+#[test]
+fn version_2_stores_are_upgraded_and_keep_proof_results() {
+    let mut s = store();
+    ok(&mut s, "fn f(x: Int) -> Int = x");
+    // Downgrade to the Phase 1 layout, then open again.
+    let c = raw(&s);
+    c.execute_batch("DROP TABLE proofs; PRAGMA user_version = 2;").unwrap();
+    drop(c);
+    let path = s.path().to_path_buf();
+    drop(s);
+    let mut s = Store::open(&path).unwrap();
+    assert_eq!(raw(&s).query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), 3);
+    let h = hash(&mut s, "f");
+    assert_eq!(s.proofs(&h, "p1").unwrap(), None);
+    s.save_proofs(&h, "p1", "[1]").unwrap();
+    s.save_proofs(&h, "p1", "[2]").unwrap();
+    assert_eq!(s.proofs(&h, "p1").unwrap().as_deref(), Some("[2]"));
+    assert_eq!(s.proofs(&h, "p2").unwrap(), None);
+    // Results only exist for stored definitions.
+    assert!(s.save_proofs(&"0".repeat(64), "p1", "[]").is_err());
+}
+
+#[test]
+fn verification_runs_inside_define_and_can_reject_it() {
+    let mut s = store();
+    let mut seen: Vec<Vec<String>> = Vec::new();
+    let verify_with = |s: &mut Store, src: &str, reject: Option<&str>, seen: &mut Vec<Vec<String>>| {
+        let mut run = |tp: &qal_core::tast::TProgram, todo: &[(String, String)]| {
+            assert!(todo.iter().all(|(n, _)| tp.fn_index(n).is_some() || tp.tests.iter().any(|t| &t.name == n)));
+            seen.push(todo.iter().map(|(n, _)| n.clone()).collect());
+            match reject {
+                Some(n) if todo.iter().any(|(m, _)| m == n) => Err(vec![Diagnostic::new("E0801", "contract_refuted", n, "ens[0]", "refuted")]),
+                _ => Ok(todo.iter().map(|(n, h)| (h.clone(), format!("[\"{n}\"]"))).collect()),
+            }
+        };
+        let mut v = Verify { key: "k1".into(), run: &mut run };
+        s.define_verified(src, "test", &mut v)
+    };
+    verify_with(&mut s, "type P = { x: Int }\nfn f(x: Int) -> Int = x\nfn g(x: Int) -> Int = f(x)\ntest t = g(1) == 1", None, &mut seen).unwrap();
+    assert_eq!(seen.pop().unwrap(), ["f", "g", "t"], "types are not verified");
+    let (f, g) = (hash(&mut s, "f"), hash(&mut s, "g"));
+    assert_eq!(s.proofs(&f, "k1").unwrap().as_deref(), Some("[\"f\"]"));
+    // Unchanged definitions with results are not verified again; relinked dependents are.
+    verify_with(&mut s, "fn f(x: Int) -> Int = x + 0", None, &mut seen).unwrap();
+    assert_eq!(seen.pop().unwrap(), ["f", "g", "t"]);
+    assert_ne!(hash(&mut s, "g"), g);
+    verify_with(&mut s, "fn f(x: Int) -> Int = x + 0", None, &mut seen).unwrap();
+    assert!(seen.is_empty(), "nothing changed: the verifier is not called");
+    // A rejection stores nothing: no definition, no name, no result.
+    let before = hashes(&mut s);
+    let d = verify_with(&mut s, "fn f(x: Int) -> Int = x + 1\nfn h(x: Int) -> Int = x", Some("g"), &mut seen).unwrap_err();
+    assert_eq!(d[0].kind, "contract_refuted");
+    assert_eq!(hashes(&mut s), before);
+    assert_eq!(count(&s, "proofs"), 6);
+    // Unchanged definitions without a result for this key are verified.
+    let mut run = |_: &qal_core::tast::TProgram, todo: &[(String, String)]| Ok(todo.iter().map(|(_, h)| (h.clone(), "[]".to_string())).collect());
+    let mut v = Verify { key: "k2".into(), run: &mut run };
+    let out = s.define_verified("fn g(x: Int) -> Int = f(x)", "test", &mut v).unwrap();
+    assert_eq!(out[0].status, "unchanged");
+    let g = hash(&mut s, "g");
+    assert_eq!(s.proofs(&g, "k2").unwrap().as_deref(), Some("[]"));
+    assert_eq!(s.proofs(&f, "k2").unwrap(), None);
+}

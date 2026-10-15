@@ -18,6 +18,7 @@ pub use ops::{DepView, Entry, HistoryEntry, Query, Renamed, View};
 pub use pattern::matches as signature_matches;
 
 use qal_core::ast::Program;
+use qal_core::tast::TProgram;
 use qal_core::diag::Diagnostic;
 use rusqlite::Connection;
 use serde::Serialize;
@@ -45,6 +46,19 @@ pub struct Defined {
 pub struct Store {
     conn: Connection,
     path: PathBuf,
+}
+
+/// The checked codebase and the (name, hash) of the definitions to verify.
+pub type VerifyFn<'a> = dyn FnMut(&TProgram, &[(String, String)]) -> Result<Vec<(String, String)>, Vec<Diagnostic>> + 'a;
+
+/// A verification step of `define` (the contract prover): `run` gets the checked codebase including
+/// the new definitions and the functions and tests that are new, got a new hash (given or relinked),
+/// or have no result for `key` yet; it returns their results as (hash, JSON) for the `proofs` table,
+/// or diagnostics that reject the whole `define`.
+pub struct Verify<'a> {
+    /// Identifies the verifier and its settings; results are stored per key.
+    pub key: String,
+    pub run: &'a mut VerifyFn<'a>,
 }
 
 pub(crate) fn sql(e: rusqlite::Error) -> Vec<Diagnostic> {
@@ -89,7 +103,8 @@ impl Store {
         Err(vec![Diagnostic::store_error(format!("no QAL store in {} or its parents", start.display())).hint("create one with `qal init`")])
     }
 
-    fn checked(conn: Connection, path: PathBuf) -> Result<Store, Vec<Diagnostic>> {
+    fn checked(mut conn: Connection, path: PathBuf) -> Result<Store, Vec<Diagnostic>> {
+        schema::migrate(&mut conn)?;
         let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0)).map_err(sql)?;
         if version != schema::SCHEMA_VERSION {
             return Err(vec![Diagnostic::store_error(format!(
@@ -116,7 +131,12 @@ impl Store {
     /// result lists every name that changed or was given, or nothing is stored and the diagnostics
     /// say why. `agent` is recorded in the history.
     pub fn define(&mut self, src: &str, agent: &str) -> Result<Vec<Defined>, Vec<Diagnostic>> {
-        define::define(&mut self.conn, src, agent)
+        define::define(&mut self.conn, src, agent, None)
+    }
+
+    /// Like `define`, with a verification step before anything is committed (see [`Verify`]).
+    pub fn define_verified(&mut self, src: &str, agent: &str, verify: &mut Verify) -> Result<Vec<Defined>, Vec<Diagnostic>> {
+        define::define(&mut self.conn, src, agent, Some(verify))
     }
 
     /// Renames a definition. No hash changes; the history of `old` moves to `new`.
@@ -142,6 +162,27 @@ impl Store {
         let conn = &self.conn;
         let current = |n: &str| conn.query_row("SELECT 1 FROM names WHERE name = ?1", [n], |_| Ok(())).is_ok();
         ops::renamed_to(conn, &current, old)
+    }
+
+    /// Stored proof results (JSON) of definition `hash` for prover key `prover`.
+    pub fn proofs(&self, hash: &str, prover: &str) -> Result<Option<String>, Vec<Diagnostic>> {
+        use rusqlite::OptionalExtension;
+        self.conn
+            .query_row("SELECT results FROM proofs WHERE hash = ?1 AND prover = ?2", rusqlite::params![hash, prover], |r| r.get(0))
+            .optional()
+            .map_err(sql)
+    }
+
+    /// Records proof results (JSON) of the stored definition `hash`; replaces earlier ones for `prover`.
+    pub fn save_proofs(&mut self, hash: &str, prover: &str, results: &str) -> Result<(), Vec<Diagnostic>> {
+        self.conn
+            .execute(
+                "INSERT INTO proofs (hash, prover, results, at) VALUES (?1, ?2, ?3, ?4) \
+                 ON CONFLICT(hash, prover) DO UPDATE SET results = excluded.results, at = excluded.at",
+                rusqlite::params![hash, prover, results, now_ms()],
+            )
+            .map(|_| ())
+            .map_err(sql)
     }
 
     /// Every recorded change of `name`, oldest first.

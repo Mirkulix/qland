@@ -2,11 +2,12 @@
 //! and write everything in one transaction (spec §6).
 
 use crate::snapshot::Snapshot;
-use crate::{now_ms, sql, Defined};
+use crate::{now_ms, sql, Defined, Verify};
 use qal_core::ast::{Def, Program};
 use qal_core::canon::{self, Canon, Hash, HashError, Hashed, Kind};
 use qal_core::diag::Diagnostic;
-use rusqlite::{params, Connection, Transaction, TransactionBehavior};
+use qal_core::tast::TProgram;
+use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 /// A definition's signature as the replacement rule compares it: kind plus the signature text
@@ -32,7 +33,7 @@ pub(crate) fn hash(p: &Program) -> Result<Hashed, Vec<Diagnostic>> {
     })
 }
 
-pub fn define(conn: &mut Connection, src: &str, agent: &str) -> Result<Vec<Defined>, Vec<Diagnostic>> {
+pub fn define(conn: &mut Connection, src: &str, agent: &str, verify: Option<&mut Verify>) -> Result<Vec<Defined>, Vec<Diagnostic>> {
     let input = qal_text::parse_program(src).map_err(|d| vec![d])?;
     // IMMEDIATE takes the write lock before reading, so two concurrent `define`s serialize instead of
     // both deciding on the same old state.
@@ -47,7 +48,7 @@ pub fn define(conn: &mut Connection, src: &str, agent: &str) -> Result<Vec<Defin
     let stored = snap.program(&tx, &|n| input_names.contains(n))?;
     let mut combined = stored;
     combined.defs.extend(input.defs.iter().cloned());
-    qal_check::check(&combined)?;
+    let typed = qal_check::check(&combined)?;
 
     let hashed = hash(&combined)?;
     identical_types(&hashed.defs)?;
@@ -56,8 +57,36 @@ pub fn define(conn: &mut Connection, src: &str, agent: &str) -> Result<Vec<Defin
     canonical_check(&snap, &input_names, &hashed.defs)?;
 
     let out = write(&tx, &snap, &input, &hashed, agent)?;
+    if let Some(v) = verify {
+        verified(&tx, &typed, &out, v)?;
+    }
     tx.commit().map_err(sql)?;
     Ok(out)
+}
+
+/// Runs the verifier on the definitions that are new, got a new hash, or have no stored result for
+/// its key, and stores its results — inside the `define` transaction, so diagnostics reject everything.
+fn verified(tx: &Transaction, typed: &TProgram, out: &[Defined], v: &mut Verify) -> Result<(), Vec<Diagnostic>> {
+    let mut todo = Vec::new();
+    for d in out.iter().filter(|d| d.kind != "type") {
+        let stored: Option<i64> = tx.query_row("SELECT 1 FROM proofs WHERE hash = ?1 AND prover = ?2", params![d.hash, v.key], |r| r.get(0)).optional().map_err(sql)?;
+        if d.status != "unchanged" || stored.is_none() {
+            todo.push((d.name.clone(), d.hash.clone()));
+        }
+    }
+    if todo.is_empty() {
+        return Ok(());
+    }
+    let now = now_ms();
+    for (hash, results) in (v.run)(typed, &todo)? {
+        tx.execute(
+            "INSERT INTO proofs (hash, prover, results, at) VALUES (?1, ?2, ?3, ?4) \
+             ON CONFLICT(hash, prover) DO UPDATE SET results = excluded.results, at = excluded.at",
+            params![hash, v.key, results, now],
+        )
+        .map_err(sql)?;
+    }
+    Ok(())
 }
 
 /// A stored definition records one name per referenced definition, so a definition that refers to

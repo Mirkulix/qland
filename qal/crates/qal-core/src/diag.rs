@@ -17,6 +17,9 @@ pub struct Diagnostic {
     /// For `signature_change`: the stored definitions that would break (to include in the call).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub dependents: Vec<String>,
+    /// For refuted or unproven contracts and failed properties: the input (parameter name -> value).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub counterexample: Option<serde_json::Value>,
 }
 
 impl Diagnostic {
@@ -31,6 +34,7 @@ impl Diagnostic {
             found: None,
             hints: Vec::new(),
             dependents: Vec::new(),
+            counterexample: None,
         }
     }
 
