@@ -1,0 +1,16 @@
+[package]
+name = "qal-run"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+qal-core = { workspace = true }
+qal-text = { workspace = true }
+qal-wasm = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+wasmtime = { workspace = true }
+
+[dev-dependencies]
+qal-check = { workspace = true }
