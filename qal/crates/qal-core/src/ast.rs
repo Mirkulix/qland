@@ -16,8 +16,17 @@ pub enum Type {
     List(Box<Type>),
     Option(Box<Type>),
     Result(Box<Type>, Box<Type>),
-    /// A record or enum declared with `type`.
+    /// A record or enum declared with `type` without type parameters. Inside a generic definition
+    /// the parser also produces `Named("T")` for a type parameter `T`; the checker turns it into `Param`.
     Named(String),
+    /// A generic record or enum applied to type arguments: `Pair[Int, Str]`.
+    App(String, Vec<Type>),
+    /// A type parameter of the enclosing generic definition (checker-internal and in typed programs).
+    Param(String),
+    /// `Map[K, V]`: immutable map ordered by key.
+    Map(Box<Type>, Box<Type>),
+    /// `Bytes`: immutable byte string.
+    Bytes,
     /// `fn(A, B) -> R !e`: a reference to a top-level function (no captures).
     Fn(Vec<Type>, Box<Type>, Vec<String>),
     /// Inference variable (checker-internal).
@@ -37,8 +46,54 @@ impl Type {
         Type::Result(Box::new(t), Box::new(e))
     }
 
+    pub fn map(k: Type, v: Type) -> Type {
+        Type::Map(Box::new(k), Box::new(v))
+    }
+
+    /// Replaces every `Param(p)` by `f(p)` (None keeps the parameter).
+    pub fn subst(&self, f: &dyn Fn(&str) -> Option<Type>) -> Type {
+        match self {
+            Type::Param(p) => f(p).unwrap_or_else(|| self.clone()),
+            Type::List(x) => Type::list(x.subst(f)),
+            Type::Option(x) => Type::option(x.subst(f)),
+            Type::Result(a, b) => Type::result(a.subst(f), b.subst(f)),
+            Type::Map(a, b) => Type::map(a.subst(f), b.subst(f)),
+            Type::App(n, args) => Type::App(n.clone(), args.iter().map(|a| a.subst(f)).collect()),
+            Type::Fn(ps, r, e) => Type::Fn(ps.iter().map(|p| p.subst(f)).collect(), Box::new(r.subst(f)), e.clone()),
+            t => t.clone(),
+        }
+    }
+
+    /// Substitutes the parameters `params` by `args` (positionally).
+    pub fn instantiate(&self, params: &[String], args: &[Type]) -> Type {
+        self.subst(&|p| params.iter().position(|q| q == p).and_then(|i| args.get(i).cloned()))
+    }
+
+    /// True if a type parameter occurs in `self`.
+    pub fn has_param(&self) -> bool {
+        match self {
+            Type::Param(_) => true,
+            Type::List(x) | Type::Option(x) => x.has_param(),
+            Type::Result(a, b) | Type::Map(a, b) => a.has_param() || b.has_param(),
+            Type::App(_, args) => args.iter().any(Type::has_param),
+            Type::Fn(ps, r, _) => ps.iter().any(Type::has_param) || r.has_param(),
+            _ => false,
+        }
+    }
+
+    /// Number of nodes of the type tree.
+    pub fn size(&self) -> usize {
+        1 + match self {
+            Type::List(x) | Type::Option(x) => x.size(),
+            Type::Result(a, b) | Type::Map(a, b) => a.size() + b.size(),
+            Type::App(_, args) => args.iter().map(Type::size).sum(),
+            Type::Fn(ps, r, _) => ps.iter().map(Type::size).sum::<usize>() + r.size(),
+            _ => 0,
+        }
+    }
+
     /// Type names that cannot be declared with `type`.
-    pub const BUILTIN_NAMES: &'static [&'static str] = &["Int", "Float", "Bool", "Unit", "Str", "List", "Option", "Result"];
+    pub const BUILTIN_NAMES: &'static [&'static str] = &["Int", "Float", "Bool", "Unit", "Str", "List", "Option", "Result", "Map", "Bytes"];
 }
 
 impl fmt::Display for Type {
@@ -52,7 +107,13 @@ impl fmt::Display for Type {
             Type::List(t) => write!(f, "List[{t}]"),
             Type::Option(t) => write!(f, "Option[{t}]"),
             Type::Result(t, e) => write!(f, "Result[{t}, {e}]"),
-            Type::Named(n) => write!(f, "{n}"),
+            Type::Named(n) | Type::Param(n) => write!(f, "{n}"),
+            Type::App(n, args) => {
+                let args: Vec<String> = args.iter().map(|a| a.to_string()).collect();
+                write!(f, "{n}[{}]", args.join(", "))
+            }
+            Type::Map(k, v) => write!(f, "Map[{k}, {v}]"),
+            Type::Bytes => write!(f, "Bytes"),
             Type::Fn(ps, r, effs) => {
                 let ps: Vec<String> = ps.iter().map(|p| p.to_string()).collect();
                 // A function-typed result is parenthesized so its effects stay distinguishable from ours.
@@ -158,6 +219,8 @@ pub enum Expr {
     Match(Box<Expr>, Vec<Arm>),
     /// `{ a; b; c }`: evaluates all, discards the (Unit) values of all but the last.
     Seq(Vec<Expr>),
+    /// `fn(x, y: T) => body`: an anonymous function; it captures the locals it uses (by value).
+    Lambda(Vec<(String, Option<Type>)>, Box<Expr>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -192,6 +255,8 @@ pub struct Param {
 #[derive(Debug, Clone, PartialEq)]
 pub struct FnDef {
     pub name: String,
+    /// Type parameters `fn f[T, U](...)`; empty for a monomorphic function.
+    pub tparams: Vec<String>,
     pub params: Vec<Param>,
     pub ret: Type,
     pub effects: Vec<String>,
@@ -221,6 +286,8 @@ pub enum TypeBody {
 #[derive(Debug, Clone, PartialEq)]
 pub struct TypeDef {
     pub name: String,
+    /// Type parameters `type Pair[A, B] = ...`; empty for a monomorphic type.
+    pub params: Vec<String>,
     pub body: TypeBody,
 }
 
@@ -257,6 +324,17 @@ mod tests {
         assert_eq!(Type::option(Type::Float).to_string(), "Option[Float]");
         let inner = Type::Fn(vec![], Box::new(Type::Int), vec!["io".into()]);
         assert_eq!(Type::Fn(vec![], Box::new(inner), vec![]).to_string(), "fn() -> (fn() -> Int !io)");
+        let pair = Type::App("Pair".into(), vec![Type::Param("T".into()), Type::map(Type::Str, Type::Bytes)]);
+        assert_eq!(pair.to_string(), "Pair[T, Map[Str, Bytes]]");
+    }
+
+    #[test]
+    fn substitution_replaces_parameters() {
+        let t = Type::Fn(vec![Type::list(Type::Param("T".into()))], Box::new(Type::App("Box".into(), vec![Type::Param("U".into())])), vec![]);
+        let s = t.instantiate(&["T".into(), "U".into()], &[Type::Int, Type::Str]);
+        assert_eq!(s.to_string(), "fn(List[Int]) -> Box[Str]");
+        assert!(t.has_param() && !s.has_param());
+        assert_eq!(s.size(), 5);
     }
 
     #[test]

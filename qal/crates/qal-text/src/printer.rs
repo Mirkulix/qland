@@ -16,33 +16,17 @@ pub fn print_program(p: &Program) -> String {
 fn print_def(d: &Def) -> String {
     match d {
         Def::Test(t) => format!("test {} = {}", t.name, print_expr(&t.body)),
-        Def::Type(t) => match &t.body {
-            TypeBody::Record(fields) => {
-                let fs: Vec<String> = fields.iter().map(|(n, ty)| format!("{n}: {ty}")).collect();
-                format!("type {} = {}", t.name, braces(&fs))
-            }
-            TypeBody::Enum(variants) if variants.is_empty() => format!("type {} = |", t.name),
-            TypeBody::Enum(variants) => {
-                let vs: Vec<String> = variants
-                    .iter()
-                    .map(|v| {
-                        if v.fields.is_empty() {
-                            v.name.clone()
-                        } else {
-                            let fs: Vec<String> = v.fields.iter().map(|f| f.to_string()).collect();
-                            format!("{}({})", v.name, fs.join(", "))
-                        }
-                    })
-                    .collect();
-                format!("type {} = {}", t.name, vs.join(" | "))
-            }
-        },
+        Def::Type(t) => {
+            let head = format!("type {}{}", t.name, tparams(&t.params));
+            type_body(&head, &t.body)
+        }
         Def::Fn(f) => {
             let params: Vec<String> = f.params.iter().map(|p| format!("{}: {}", p.name, p.ty)).collect();
+            let name = format!("{}{}", f.name, tparams(&f.tparams));
             let mut s = match f.ret {
                 // `fn f() -> fn() -> Int !io` would give `!io` to the result type; parenthesize it.
-                Type::Fn(..) => format!("fn {}({}) -> ({})", f.name, params.join(", "), f.ret),
-                _ => format!("fn {}({}) -> {}", f.name, params.join(", "), f.ret),
+                Type::Fn(..) => format!("fn {name}({}) -> ({})", params.join(", "), f.ret),
+                _ => format!("fn {name}({}) -> {}", params.join(", "), f.ret),
             };
             for e in &f.effects {
                 s.push_str(&format!(" !{e}"));
@@ -59,10 +43,43 @@ fn print_def(d: &Def) -> String {
     }
 }
 
+/// `[A, B]`, or nothing for a monomorphic definition.
+fn tparams(ps: &[String]) -> String {
+    if ps.is_empty() {
+        String::new()
+    } else {
+        format!("[{}]", ps.join(", "))
+    }
+}
+
+fn type_body(head: &str, body: &TypeBody) -> String {
+    match body {
+        TypeBody::Record(fields) => {
+            let fs: Vec<String> = fields.iter().map(|(n, ty)| format!("{n}: {ty}")).collect();
+            format!("{head} = {}", braces(&fs))
+        }
+        TypeBody::Enum(variants) if variants.is_empty() => format!("{head} = |"),
+        TypeBody::Enum(variants) => {
+            let vs: Vec<String> = variants
+                .iter()
+                .map(|v| {
+                    if v.fields.is_empty() {
+                        v.name.clone()
+                    } else {
+                        let fs: Vec<String> = v.fields.iter().map(|f| f.to_string()).collect();
+                        format!("{}({})", v.name, fs.join(", "))
+                    }
+                })
+                .collect();
+            format!("{head} = {}", vs.join(" | "))
+        }
+    }
+}
+
 /// Precedence of an expression's outermost construct (higher binds tighter).
 fn prec(e: &Expr) -> u8 {
     match e {
-        Expr::Let(..) | Expr::If(..) | Expr::Match(..) => 0,
+        Expr::Let(..) | Expr::If(..) | Expr::Match(..) | Expr::Lambda(..) => 0,
         Expr::Bin(op, ..) => op.precedence(),
         Expr::Un(..) => 6,
         Expr::Field(..) => 8,
@@ -87,6 +104,7 @@ fn has_bare_record(e: &Expr) -> bool {
         Expr::Un(_, x) | Expr::Field(x, _) => has_bare_record(x),
         Expr::If(c, t, f) => has_bare_record(c) || has_bare_record(t) || has_bare_record(f),
         Expr::Let(_, _, v, b) => has_bare_record(v) || has_bare_record(b),
+        Expr::Lambda(_, b) => has_bare_record(b),
         Expr::Match(s, arms) => {
             has_bare_record(s) || arms.iter().any(|a| a.guard.as_ref().is_some_and(has_bare_record) || has_bare_record(&a.body))
         }
@@ -221,6 +239,16 @@ pub fn print_expr(e: &Expr) -> String {
                 .collect();
             format!("match {} {}", wrap(s, has_bare_record(s)), braces(&arms))
         }
+        Expr::Lambda(params, body) => {
+            let ps: Vec<String> = params
+                .iter()
+                .map(|(n, ann)| match ann {
+                    Some(t) => format!("{n}: {t}"),
+                    None => n.clone(),
+                })
+                .collect();
+            format!("fn({}) => {}", ps.join(", "), print_expr(body))
+        }
     }
 }
 
@@ -281,6 +309,19 @@ mod tests {
         roundtrip("test t = match x { -9223372036854775808 => 1, -1 => 2, _ => 3 }");
     }
 
+    #[test]
+    fn roundtrips_generics_closures_maps_and_bytes() {
+        roundtrip("type Pair[A, B] = { fst: A, snd: B }
+type Tree[T] = Leaf | Node(Tree[T], T, Tree[T])");
+        roundtrip("fn swap[A, B](p: Pair[A, B]) -> Pair[B, A] = Pair { fst: p.snd, snd: p.fst }");
+        roundtrip("fn m(x: Map[Str, List[Int]], b: Bytes) -> Option[Bytes] = None");
+        roundtrip("fn adder(n: Int) -> fn(Int) -> Int = fn(x) => x + n");
+        roundtrip("test t = map([1], fn(x: Int, y) => { print(\"a\"); x }) == [] && f(fn(g: fn(Int) -> Int !io) => g)");
+        roundtrip("test t = let f = (fn(x) => x) in 1 + f(2) == (fn(x) => x + 1 == 2) && g(fn() => fn() => 1)");
+        let p = parse_program("fn  id[T](x:T)->T=x\ntest t = apply(fn(a)=>a+1, 2)").unwrap();
+        assert_eq!(print_program(&p), "fn id[T](x: T) -> T\n= x\n\ntest t = apply(fn(a) => a + 1, 2)\n");
+    }
+
     fn body(src: &str) -> Expr {
         let Def::Test(t) = &parse_program(&format!("test t = {src}")).unwrap().defs[0] else { panic!() };
         t.body.clone()
@@ -304,7 +345,7 @@ mod tests {
             assert_eq!(print_expr(&e), text);
             assert_eq!(body(text), reparsed, "{text}");
         }
-        let empty = Program { defs: vec![Def::Type(TypeDef { name: "E".into(), body: TypeBody::Enum(vec![]) })] };
+        let empty = Program { defs: vec![Def::Type(TypeDef { name: "E".into(), params: vec![], body: TypeBody::Enum(vec![]) })] };
         assert_eq!(print_program(&empty), "type E = |\n");
         assert_eq!(parse_program(&print_program(&empty)).unwrap(), empty);
         assert_eq!(print_pat(&Pat::Int(i64::MIN)), "-9223372036854775808");

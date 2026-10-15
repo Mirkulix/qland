@@ -4,7 +4,7 @@
 //! definition (`Local(id)`; parameters are ids `0..n`), functions are indices into `TProgram::fns`,
 //! variants are tags and record fields are declaration-order indices.
 
-use crate::ast::{BinOp, FnDef, Type, TypeBody, TypeDef, UnOp};
+use crate::ast::{BinOp, FnDef, Type, TypeBody, TypeDef, UnOp, Variant};
 
 /// Variant tags of the built-in sum types.
 pub const TAG_NONE: u32 = 0;
@@ -74,6 +74,22 @@ builtins! {
     ToLower => "to_lower",
     Replace => "replace",
     IndexOf => "index_of",
+    MapNew => "map_new",
+    MapGet => "map_get",
+    MapPut => "map_put",
+    MapDel => "map_del",
+    MapHas => "map_has",
+    MapSize => "map_size",
+    MapKeys => "map_keys",
+    MapValues => "map_values",
+    ToBytes => "to_bytes",
+    BytesLen => "bytes_len",
+    BytesGet => "bytes_get",
+    BytesSlice => "bytes_slice",
+    BytesFrom => "bytes_from",
+    BytesToList => "bytes_to_list",
+    BytesToStr => "bytes_to_str",
+    Compare => "compare",
 }
 
 impl Builtin {
@@ -93,7 +109,9 @@ impl Builtin {
         "len", "slice", "split", "join", "trim", "contains", "starts_with", "to_int", "to_float", "from_int", "from_float",
         "chars", "get", "push", "concat", "map", "filter", "fold", "range", "reverse", "sort_int", "int_to_float",
         "float_to_int", "print", "read_line", "read_file", "write_file", "now_ms", "rand_int", "read_all", "sort_str",
-        "char_code", "from_char_code", "to_upper", "to_lower", "replace", "index_of",
+        "char_code", "from_char_code", "to_upper", "to_lower", "replace", "index_of", "map_new", "map_get", "map_put",
+        "map_del", "map_has", "map_size", "map_keys", "map_values", "to_bytes", "bytes_len", "bytes_get", "bytes_slice",
+        "bytes_from", "bytes_to_list", "bytes_to_str", "compare",
     ];
 }
 
@@ -120,6 +138,13 @@ pub enum TKind {
     Let(u32, Box<TExpr>, Box<TExpr>),
     /// Direct call of `TProgram::fns[index]`.
     Call(usize, Vec<TExpr>),
+    /// Call of the generic function `TProgram::generics[index]` with these type arguments
+    /// (only before monomorphisation: `check` returns programs whose `fns` never contain it).
+    CallG(usize, Vec<Type>, Vec<TExpr>),
+    /// The generic function `TProgram::generics[index]` used as a value (before monomorphisation).
+    FnRefG(usize, Vec<Type>),
+    /// An anonymous function (closure).
+    Lambda(Box<TLambda>),
     /// Call through a fn-typed value.
     CallIndirect(Box<TExpr>, Vec<TExpr>),
     Builtin(Builtin, Vec<TExpr>, String),
@@ -133,6 +158,15 @@ pub enum TKind {
     Field(Box<TExpr>, u32),
     Match(Box<TExpr>, Vec<TArm>),
     Seq(Vec<TExpr>),
+}
+
+/// `fn(params) => body`: `params` and every local bound inside `body` are locals of the enclosing
+/// definition; `captures` are the enclosing locals the body uses (sorted), copied into the closure.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TLambda {
+    pub params: Vec<u32>,
+    pub captures: Vec<u32>,
+    pub body: TExpr,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -166,6 +200,8 @@ pub struct TFn {
     /// Local id of the result variable `r` (only when `ens` is non-empty).
     pub result_local: Option<u32>,
     pub body: TExpr,
+    /// For an instance of a generic function: the index in `TProgram::generics` and the type arguments.
+    pub instance: Option<(usize, Vec<Type>)>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -177,9 +213,14 @@ pub struct TTest {
 
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct TProgram {
+    /// Declared types; the field types of a generic type use `Type::Param`.
     pub types: Vec<TypeDef>,
+    /// Monomorphic functions: the program's non-generic functions in program order, then the
+    /// instances of generic functions.
     pub fns: Vec<TFn>,
     pub tests: Vec<TTest>,
+    /// Generic functions as checked (types use `Type::Param`); never compiled, only instantiated.
+    pub generics: Vec<TFn>,
 }
 
 impl TProgram {
@@ -191,16 +232,33 @@ impl TProgram {
         self.fns.iter().position(|f| f.def.name == name)
     }
 
+    /// The body of the declared type `ty` (`Named` or `App`) with its parameters substituted.
+    pub fn decl(&self, ty: &Type) -> Option<TypeBody> {
+        let (name, args): (&str, &[Type]) = match ty {
+            Type::Named(n) => (n, &[]),
+            Type::App(n, args) => (n, args),
+            _ => return None,
+        };
+        let d = self.type_def(name)?;
+        if d.params.len() != args.len() {
+            return None;
+        }
+        let sub = |t: &Type| t.instantiate(&d.params, args);
+        Some(match &d.body {
+            TypeBody::Record(fs) => TypeBody::Record(fs.iter().map(|(f, t)| (f.clone(), sub(t))).collect()),
+            TypeBody::Enum(vs) => TypeBody::Enum(vs.iter().map(|v| Variant { name: v.name.clone(), fields: v.fields.iter().map(sub).collect() }).collect()),
+        })
+    }
+
     /// Variant names of a sum type, by tag. Empty for non-sum types.
     pub fn variant_names(&self, ty: &Type) -> Vec<String> {
         match ty {
             Type::Option(_) => vec!["None".into(), "Some".into()],
             Type::Result(..) => vec!["Ok".into(), "Err".into()],
-            Type::Named(n) => match self.type_def(n).map(|d| &d.body) {
+            _ => match self.decl(ty) {
                 Some(TypeBody::Enum(vs)) => vs.iter().map(|v| v.name.clone()).collect(),
                 _ => vec![],
             },
-            _ => vec![],
         }
     }
 
@@ -211,41 +269,36 @@ impl TProgram {
             (Type::Option(t), _) => vec![(**t).clone()],
             (Type::Result(t, _), TAG_OK) => vec![(**t).clone()],
             (Type::Result(_, e), _) => vec![(**e).clone()],
-            (Type::Named(n), _) => match self.type_def(n).map(|d| &d.body) {
-                Some(TypeBody::Enum(vs)) => vs.get(tag as usize).map(|v| v.fields.clone()).unwrap_or_default(),
+            _ => match self.decl(ty) {
+                Some(TypeBody::Enum(mut vs)) => vs.get_mut(tag as usize).map(|v| std::mem::take(&mut v.fields)).unwrap_or_default(),
                 _ => Vec::new(),
             },
-            _ => Vec::new(),
         }
     }
 
     /// Field names and types of the record type `ty` (empty if it is not a record).
     pub fn record_fields(&self, ty: &Type) -> Vec<(String, Type)> {
-        match ty {
-            Type::Named(n) => match self.type_def(n).map(|d| &d.body) {
-                Some(TypeBody::Record(fs)) => fs.clone(),
-                _ => Vec::new(),
-            },
+        match self.decl(ty) {
+            Some(TypeBody::Record(fs)) => fs,
             _ => Vec::new(),
         }
     }
 
     pub fn is_record(&self, ty: &Type) -> bool {
-        matches!(ty, Type::Named(n) if matches!(self.type_def(n).map(|d| &d.body), Some(TypeBody::Record(_))))
+        matches!(self.decl(ty), Some(TypeBody::Record(_)))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ast::Variant;
 
     #[test]
     fn variant_and_record_lookup() {
         let p = TProgram {
             types: vec![
-                TypeDef { name: "E".into(), body: TypeBody::Enum(vec![Variant { name: "A".into(), fields: vec![] }, Variant { name: "B".into(), fields: vec![Type::Int, Type::Str] }]) },
-                TypeDef { name: "R".into(), body: TypeBody::Record(vec![("x".into(), Type::Float)]) },
+                TypeDef { name: "E".into(), params: vec![], body: TypeBody::Enum(vec![Variant { name: "A".into(), fields: vec![] }, Variant { name: "B".into(), fields: vec![Type::Int, Type::Str] }]) },
+                TypeDef { name: "R".into(), params: vec![], body: TypeBody::Record(vec![("x".into(), Type::Float)]) },
             ],
             ..TProgram::default()
         };
@@ -255,6 +308,11 @@ mod tests {
         assert_eq!(p.variant_fields(&Type::option(Type::Int), TAG_NONE), vec![]);
         assert_eq!(p.record_fields(&Type::Named("R".into())), vec![("x".to_string(), Type::Float)]);
         assert!(p.is_record(&Type::Named("R".into())) && !p.is_record(&Type::Named("E".into())));
+        let mut g = p.clone();
+        g.types.push(TypeDef { name: "Pair".into(), params: vec!["A".into(), "B".into()], body: TypeBody::Record(vec![("fst".into(), Type::Param("A".into())), ("snd".into(), Type::list(Type::Param("B".into())))]) });
+        let pair = Type::App("Pair".into(), vec![Type::Int, Type::Str]);
+        assert_eq!(g.record_fields(&pair), vec![("fst".to_string(), Type::Int), ("snd".to_string(), Type::list(Type::Str))]);
+        assert!(g.decl(&Type::App("Pair".into(), vec![Type::Int])).is_none(), "wrong arity");
         assert_eq!(Builtin::StrLen.name(), "len");
         assert_eq!(Builtin::WriteFile.effect(), Some("fs"));
         assert!(Builtin::NAMES.contains(&Builtin::RandInt.name()));
@@ -271,7 +329,7 @@ mod tests {
         names.sort_unstable();
         assert_eq!(names.len(), Builtin::NAMES.len(), "Builtin::NAMES has duplicates");
         assert_eq!(names, from_variants);
-        assert_eq!(Builtin::ALL.len(), 38);
+        assert_eq!(Builtin::ALL.len(), 54);
         assert_eq!(Builtin::ALL[0], Builtin::StrLen);
         assert_eq!(Builtin::ReadAll.effect(), Some("io"));
         assert_eq!((Builtin::SortStr.effect(), Builtin::Replace.effect()), (None, None));

@@ -106,6 +106,11 @@ impl<'g, 'p> FnGen<'g, 'p> {
                 let table = self.table_index(*i);
                 self.a.i(I::I32Const(table as i32));
             }
+            // Closures and generic nodes are compiled from Task 2 on (checked programs contain no generic nodes).
+            TKind::Lambda(_) | TKind::CallG(..) | TKind::FnRefG(..) => {
+                self.m.bug("closures are not compiled yet");
+                self.a.i(I::Unreachable);
+            }
             TKind::Un(UnOp::Not, x, _) => {
                 self.expr(x, false);
                 self.a.i(I::I32Eqz);
@@ -398,6 +403,11 @@ impl<'g, 'p> FnGen<'g, 'p> {
                 let site = self.site(path, "rand_int: req lo <= hi", &[("lo", Type::Int), ("hi", Type::Int)], None);
                 self.site_args(site);
                 self.call_rt(Rt::RandChecked);
+            }
+            // Compiled from Task 2 on.
+            B::MapNew | B::MapGet | B::MapPut | B::MapDel | B::MapHas | B::MapSize | B::MapKeys | B::MapValues | B::ToBytes | B::BytesLen | B::BytesGet | B::BytesSlice | B::BytesFrom | B::BytesToList | B::BytesToStr | B::Compare => {
+                self.m.bug(format!("built-in `{}` is not compiled yet", b.name()));
+                self.a.i(I::Unreachable);
             }
         }
     }

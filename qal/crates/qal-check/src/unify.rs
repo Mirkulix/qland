@@ -69,6 +69,8 @@ impl Subst {
             Type::List(x) => Type::list(self.finish(&x)),
             Type::Option(x) => Type::option(self.finish(&x)),
             Type::Result(a, b) => Type::result(self.finish(&a), self.finish(&b)),
+            Type::Map(a, b) => Type::map(self.finish(&a), self.finish(&b)),
+            Type::App(n, args) => Type::App(n, args.iter().map(|a| self.finish(a)).collect()),
             Type::Fn(ps, r, e) => Type::Fn(ps.iter().map(|p| self.finish(p)).collect(), Box::new(self.finish(&r)), e),
             t => t,
         }
@@ -79,7 +81,8 @@ impl Subst {
         match t {
             Type::Var(v) => self.depth[*v as usize],
             Type::List(x) | Type::Option(x) => 1 + self.depth_of(x),
-            Type::Result(a, b) => 1 + self.depth_of(a).max(self.depth_of(b)),
+            Type::Result(a, b) | Type::Map(a, b) => 1 + self.depth_of(a).max(self.depth_of(b)),
+            Type::App(_, args) => 1 + args.iter().map(|a| self.depth_of(a)).max().unwrap_or(0),
             Type::Fn(ps, r, _) => 1 + ps.iter().map(|p| self.depth_of(p)).max().unwrap_or(0).max(self.depth_of(r)),
             _ => 1,
         }
@@ -90,7 +93,8 @@ impl Subst {
         let n = match t {
             Type::Var(v) => self.size[*v as usize],
             Type::List(x) | Type::Option(x) => 1 + self.size_of(x),
-            Type::Result(a, b) => 1 + self.size_of(a) + self.size_of(b),
+            Type::Result(a, b) | Type::Map(a, b) => (1 + self.size_of(a)).saturating_add(self.size_of(b)),
+            Type::App(_, args) => args.iter().fold(1u32, |n, a| n.saturating_add(self.size_of(a))),
             Type::Fn(ps, r, _) => ps.iter().fold(1 + self.size_of(r), |n, p| n.saturating_add(self.size_of(p))),
             _ => 1,
         };
@@ -115,10 +119,11 @@ impl Subst {
         match t {
             Type::Var(v) => out.push(*v),
             Type::List(x) | Type::Option(x) => Self::vars_in(x, out),
-            Type::Result(a, b) => {
+            Type::Result(a, b) | Type::Map(a, b) => {
                 Self::vars_in(a, out);
                 Self::vars_in(b, out);
             }
+            Type::App(_, args) => args.iter().for_each(|a| Self::vars_in(a, out)),
             Type::Fn(ps, r, _) => ps.iter().chain([&**r]).for_each(|p| Self::vars_in(p, out)),
             _ => {}
         }
@@ -171,7 +176,8 @@ impl Subst {
                 self.vars[*w as usize].as_ref().is_some_and(|b| self.occurs(v, b, seen))
             }
             Type::List(x) | Type::Option(x) => self.occurs(v, x, seen),
-            Type::Result(a, b) => self.occurs(v, a, seen) || self.occurs(v, b, seen),
+            Type::Result(a, b) | Type::Map(a, b) => self.occurs(v, a, seen) || self.occurs(v, b, seen),
+            Type::App(_, args) => args.iter().any(|a| self.occurs(v, a, seen)),
             Type::Fn(ps, r, _) => ps.iter().any(|p| self.occurs(v, p, seen)) || self.occurs(v, r, seen),
             _ => false,
         }
@@ -179,6 +185,11 @@ impl Subst {
 
     /// Makes `expected` and `found` equal. A function value may have fewer effects than expected.
     /// On failure, bindings made so far are kept (the caller reports a diagnostic and stops).
+    ///
+    /// Effect subtyping goes through List/Option/Result/Map (immutable, no function-parameter
+    /// position) covariantly and through function types with flipped parameters. The arguments of a
+    /// user generic type are invariant: `type Sink[T] = { put: fn(T) -> Unit }` uses `T` in a
+    /// parameter position, so `Sink[fn() -> Unit]` must not pass as `Sink[fn() -> Unit !io]`.
     pub fn unify(&mut self, expected: &Type, found: &Type) -> bool {
         let (a, b) = (self.resolve(expected), self.resolve(found));
         match (&a, &b) {
@@ -190,7 +201,10 @@ impl Subst {
                 self.bind(*x, t.clone())
             }
             (Type::List(x), Type::List(y)) | (Type::Option(x), Type::Option(y)) => self.unify(x, y),
-            (Type::Result(a1, b1), Type::Result(a2, b2)) => self.unify(a1, a2) && self.unify(b1, b2),
+            (Type::Result(a1, b1), Type::Result(a2, b2)) | (Type::Map(a1, b1), Type::Map(a2, b2)) => self.unify(a1, a2) && self.unify(b1, b2),
+            (Type::App(n1, x1), Type::App(n2, x2)) => {
+                n1 == n2 && x1.len() == x2.len() && x1.iter().zip(x2).all(|(a, b)| self.unify(a, b) && self.unify(b, a))
+            }
             (Type::Fn(p1, r1, e1), Type::Fn(p2, r2, e2)) => {
                 p1.len() == p2.len()
                     // Parameters are contravariant: effect subtyping flips.
@@ -239,6 +253,22 @@ mod tests {
         let v = s.fresh();
         assert!(!s.unify(&v, &Type::result(t.clone(), t.clone())), "4095 * 2 + 1 nodes exceed 4096");
         assert!(s.too_large && !s.too_deep);
+    }
+
+    #[test]
+    fn generic_type_arguments_are_invariant_in_effects() {
+        let mut s = Subst::default();
+        let pure = Type::Fn(vec![], Box::new(Type::Unit), vec![]);
+        let io = Type::Fn(vec![], Box::new(Type::Unit), vec!["io".into()]);
+        let app = |t: &Type| Type::App("Sink".into(), vec![t.clone()]);
+        assert!(!s.unify(&app(&io), &app(&pure)));
+        assert!(!s.unify(&app(&pure), &app(&io)));
+        assert!(s.unify(&app(&io), &app(&io)));
+        // Built-in containers stay covariant.
+        assert!(s.unify(&Type::list(io.clone()), &Type::list(pure.clone())));
+        let v = s.fresh();
+        assert!(s.unify(&app(&v), &app(&Type::Int)));
+        assert_eq!(s.finish(&v), Type::Int);
     }
 
     #[test]

@@ -2,10 +2,11 @@
 
 use crate::exhaust::missing_pattern;
 use crate::unify::{Subst, MAX_TYPE_DEPTH, MAX_TYPE_SIZE};
-use crate::{validate_type, Globals};
+use crate::{resolve_type, Globals, Sig};
 use qal_core::ast::*;
 use qal_core::diag::Diagnostic;
 use qal_core::tast::*;
+use std::collections::BTreeSet;
 
 /// Checks that need fully inferred types; run by `finish`.
 enum Deferred {
@@ -22,6 +23,11 @@ pub(crate) struct Cx<'a> {
     pub def: &'a str,
     /// Effects the current expression may use (empty for contracts and tests).
     pub effects: &'a [String],
+    /// Type parameters of the definition (rigid inside it).
+    pub tps: &'a [String],
+    /// Effects used by the bodies of the closures being checked, innermost last: inside a closure,
+    /// effects are collected into its type instead of being checked against `effects`.
+    frames: Vec<BTreeSet<String>>,
     /// Declared result type while checking a fn body (for effect hints).
     pub ret: Option<&'a Type>,
     pub diags: &'a mut Vec<Diagnostic>,
@@ -38,7 +44,7 @@ pub(crate) struct Cx<'a> {
 impl<'a> Cx<'a> {
     pub fn new(g: &'a Globals, def: &'a str, effects: &'a [String], diags: &'a mut Vec<Diagnostic>) -> Self {
         let start = diags.len();
-        Cx { g, def, effects, ret: None, diags, start, sub: Subst::default(), locals: Vec::new(), scope: Vec::new(), deferred: Vec::new() }
+        Cx { g, def, effects, tps: &[], frames: Vec::new(), ret: None, diags, start, sub: Subst::default(), locals: Vec::new(), scope: Vec::new(), deferred: Vec::new() }
     }
 
     pub fn bind(&mut self, name: &str, ty: Type) -> u32 {
@@ -100,12 +106,30 @@ impl<'a> Cx<'a> {
     }
 
     pub fn expect(&mut self, e: &Expr, want: &Type, path: &str) -> TExpr {
-        let t = self.infer(e, path);
+        // A closure checked against a known function type takes its parameter types from it
+        // (bidirectional), so `fn(x) => x * 2.0` where `fn(Float) -> Float` is expected works.
+        // (Kept out of line: `expect` is on the recursion path of every nested expression.)
+        let t = match e {
+            Expr::Lambda(params, body) => self.lambda_against(params, body, want, path),
+            _ => self.infer(e, path),
+        };
         self.unify_at(path, want, &t.ty);
         t
     }
 
+    #[inline(never)]
+    fn lambda_against(&mut self, params: &[(String, Option<Type>)], body: &Expr, want: &Type, path: &str) -> TExpr {
+        match self.sub.resolve(want) {
+            Type::Fn(ps, _, _) if ps.len() == params.len() => self.lambda(params, body, path, Some(&ps)),
+            _ => self.lambda(params, body, path, None),
+        }
+    }
+
     pub fn effect_check(&mut self, path: &str, callee: &str, needed: &[String]) {
+        if let Some(frame) = self.frames.last_mut() {
+            frame.extend(needed.iter().cloned());
+            return;
+        }
         let missing: Vec<String> = needed.iter().filter(|e| !self.effects.contains(e)).cloned().collect();
         if missing.is_empty() {
             return;
@@ -155,11 +179,10 @@ impl<'a> Cx<'a> {
                 (t.ty.clone(), TKind::If(Box::new(c), Box::new(t), Box::new(f)))
             }
             Expr::Let(name, ann, v, body) => {
+                let ann = ann.as_ref().and_then(|t| resolve_type(self.g, t, self.tps, self.def, &format!("{path}.type"), self.diags));
                 let v = match ann {
-                    Some(t) if validate_type(self.g, t, self.def, &format!("{path}.type"), self.diags) => {
-                        self.expect(v, t, &format!("{path}.value"))
-                    }
-                    _ => self.infer(v, &format!("{path}.value")),
+                    Some(t) => self.expect(v, &t, &format!("{path}.value")),
+                    None => self.infer(v, &format!("{path}.value")),
                 };
                 // Even if the value had errors, the body is checked with the (possibly unknown) type.
                 let id = self.bind(name, v.ty.clone());
@@ -194,8 +217,59 @@ impl<'a> Cx<'a> {
             Expr::Record(name, fields) => return self.record(name, fields, path),
             Expr::Field(target, field) => return self.field(target, field, path),
             Expr::Match(s, arms) => return self.match_expr(s, arms, path),
+            Expr::Lambda(params, body) => return self.lambda(params, body, path, None),
         };
         TExpr { ty, kind }
+    }
+
+    /// `fn(params) => body`: parameter types are annotated or inferred; the body's effects become
+    /// the effects of the closure's type (they are checked where the closure is called).
+    pub(crate) fn lambda(&mut self, params: &[(String, Option<Type>)], body: &Expr, path: &str, expected: Option<&[Type]>) -> TExpr {
+        let depth = self.scope.len();
+        let (mut ids, mut ptys) = (Vec::new(), Vec::new());
+        for (i, (n, ann)) in params.iter().enumerate() {
+            let pp = format!("{path}.params[{i}]");
+            if params[..i].iter().any(|(m, _)| m == n) {
+                self.diags.push(Diagnostic::duplicate_name(self.def, &pp, n));
+            }
+            let t = match (ann, expected) {
+                (Some(a), _) => resolve_type(self.g, a, self.tps, self.def, &pp, self.diags).unwrap_or_else(|| self.sub.fresh()),
+                // The closure's parameter takes the expected parameter type; effect subtyping is
+                // still checked when the closure's type is unified with the expected one.
+                (None, Some(ps)) => ps[i].clone(),
+                (None, None) => self.sub.fresh(),
+            };
+            ids.push(self.bind(n, t.clone()));
+            ptys.push(t);
+        }
+        self.frames.push(BTreeSet::new());
+        let saved_ret = self.ret.take();
+        let body = self.infer(body, &format!("{path}.body"));
+        self.ret = saved_ret;
+        let effs: Vec<String> = self.frames.pop().unwrap_or_default().into_iter().collect();
+        self.scope.truncate(depth);
+        let ty = self.sub.wrap(Type::Fn(ptys, Box::new(body.ty.clone()), effs));
+        TExpr { ty, kind: TKind::Lambda(Box::new(TLambda { params: ids, captures: Vec::new(), body })) }
+    }
+
+    /// Fresh type arguments for a generic signature: (type arguments, parameter types, result type).
+    fn instantiate(&mut self, sig: &Sig) -> (Vec<Type>, Vec<Type>, Type) {
+        let targs: Vec<Type> = sig.tparams.iter().map(|_| self.sub.fresh()).collect();
+        let params = sig.params.iter().map(|p| self.sub.wrap(p.instantiate(&sig.tparams, &targs))).collect();
+        let ret = self.sub.wrap(sig.ret.instantiate(&sig.tparams, &targs));
+        (targs, params, ret)
+    }
+
+    /// The type of a declared type applied to fresh arguments, with its body instantiated.
+    fn fresh_decl(&mut self, name: &str) -> Option<(Type, TypeBody)> {
+        let d = self.g.tp.type_def(name)?;
+        if d.params.is_empty() {
+            return Some((Type::Named(name.into()), d.body.clone()));
+        }
+        let args: Vec<Type> = d.params.iter().map(|_| self.sub.fresh()).collect();
+        let ty = Type::App(name.into(), args);
+        let body = self.g.tp.decl(&ty)?;
+        Some((self.sub.wrap(ty), body))
     }
 
     /// The type of a numeric operand: Int or Float (an unknown type defaults to Int).
@@ -270,7 +344,13 @@ impl<'a> Cx<'a> {
             return TExpr { ty: self.locals[id as usize].clone(), kind: TKind::Local(id) };
         }
         if let Some((idx, sig)) = self.g.fns.get(v) {
-            return TExpr { ty: sig.fn_type(), kind: TKind::FnRef(*idx) };
+            let (idx, sig) = (*idx, sig.clone());
+            if sig.tparams.is_empty() {
+                return TExpr { ty: sig.fn_type(), kind: TKind::FnRef(idx) };
+            }
+            let (targs, params, ret) = self.instantiate(&sig);
+            let ty = self.sub.wrap(Type::Fn(params, Box::new(ret), sig.effects.clone()));
+            return TExpr { ty, kind: TKind::FnRefG(idx, targs) };
         }
         if let Some((ty, tag, fields)) = self.variant(v) {
             if !fields.is_empty() {
@@ -299,8 +379,10 @@ impl<'a> Cx<'a> {
             "Ok" => (self.sub.wrap(Type::result(a.clone(), b)), TAG_OK, vec![a]),
             "Err" => (self.sub.wrap(Type::result(a, b.clone())), TAG_ERR, vec![b]),
             _ => {
-                let (enum_name, tag, fields) = self.g.variants.get(name)?;
-                (Type::Named(enum_name.clone()), *tag, fields.clone())
+                let (enum_name, tag, _) = self.g.variants.get(name)?.clone();
+                let (ty, body) = self.fresh_decl(&enum_name)?;
+                let TypeBody::Enum(vs) = body else { return None };
+                (ty, tag, vs[tag as usize].fields.clone())
             }
         })
     }
@@ -320,6 +402,12 @@ impl<'a> Cx<'a> {
         }
         if let Some((idx, sig)) = self.g.fns.get(name) {
             let (idx, sig) = (*idx, sig.clone());
+            if !sig.tparams.is_empty() {
+                let (targs, params, ret) = self.instantiate(&sig);
+                let args = self.args(name, args, &params, path);
+                self.effect_check(path, name, &sig.effects);
+                return TExpr { ty: ret, kind: TKind::CallG(idx, targs, args) };
+            }
             let args = self.args(name, args, &sig.params, path);
             self.effect_check(path, name, &sig.effects);
             return TExpr { ty: sig.ret, kind: TKind::Call(idx, args) };
@@ -337,8 +425,8 @@ impl<'a> Cx<'a> {
     }
 
     fn record(&mut self, name: &str, fields: &[(String, Expr)], path: &str) -> TExpr {
-        let decl = match self.g.tp.type_def(name).map(|d| &d.body) {
-            Some(TypeBody::Record(fs)) => fs.clone(),
+        let (rty, decl) = match self.fresh_decl(name) {
+            Some((ty, TypeBody::Record(fs))) => (ty, fs),
             other => {
                 let mut d = Diagnostic::unknown_name(self.def, path, name);
                 if other.is_some() {
@@ -373,17 +461,14 @@ impl<'a> Cx<'a> {
                 self.diags.push(Diagnostic::missing_field(self.def, path, name, f));
             }
         }
-        TExpr { ty: Type::Named(name.into()), kind: TKind::Record(out) }
+        TExpr { ty: rty, kind: TKind::Record(out) }
     }
 
     fn field(&mut self, target: &Expr, field: &str, path: &str) -> TExpr {
         let t = self.infer(target, &format!("{path}.target"));
         let ty = self.sub.resolve(&t.ty);
-        let fields = match &ty {
-            Type::Named(n) => match self.g.tp.type_def(n).map(|d| &d.body) {
-                Some(TypeBody::Record(fs)) => Some(fs.clone()),
-                _ => None,
-            },
+        let fields = match self.g.tp.decl(&ty) {
+            Some(TypeBody::Record(fs)) => Some(fs),
             _ => None,
         };
         let Some(fields) = fields else {
@@ -461,14 +546,14 @@ impl<'a> Cx<'a> {
                 TPat::Variant(tag, sub)
             }
             Pat::Record(name, fs) => {
-                let decl = match self.g.tp.type_def(name).map(|d| &d.body) {
-                    Some(TypeBody::Record(decl)) => decl.clone(),
+                let (rty, decl) = match self.fresh_decl(name) {
+                    Some((rty, TypeBody::Record(decl))) => (rty, decl),
                     _ => {
                         self.diags.push(Diagnostic::unknown_name(self.def, path, name));
                         return TPat::Wild;
                     }
                 };
-                if !self.unify_at(path, ty, &Type::Named(name.clone())) {
+                if !self.unify_at(path, ty, &rty) {
                     return TPat::Wild;
                 }
                 let mut out = Vec::new();
@@ -506,8 +591,8 @@ impl<'a> Cx<'a> {
                 }
                 Deferred::Concat(path, t) => {
                     let t = self.sub.resolve(&t);
-                    if !matches!(t, Type::Str | Type::List(_)) {
-                        self.diags.push(Diagnostic::type_mismatch(self.def, &path, "Str or List[_]", &self.sub.finish(&t).to_string()));
+                    if !matches!(t, Type::Str | Type::List(_) | Type::Bytes) {
+                        self.diags.push(Diagnostic::type_mismatch(self.def, &path, "Str, Bytes or List[_]", &self.sub.finish(&t).to_string()));
                     }
                 }
                 Deferred::Exhaust(path, t, rows) => {
@@ -533,6 +618,18 @@ impl<'a> Cx<'a> {
         e.ty = self.sub.finish(&e.ty);
         match &mut e.kind {
             TKind::Int(_) | TKind::Float(_) | TKind::Bool(_) | TKind::Str(_) | TKind::Unit | TKind::Local(_) | TKind::FnRef(_) => {}
+            TKind::FnRefG(_, targs) => targs.iter_mut().for_each(|t| *t = self.sub.finish(t)),
+            TKind::CallG(_, targs, xs) => {
+                targs.iter_mut().for_each(|t| *t = self.sub.finish(t));
+                xs.iter_mut().for_each(|x| self.zonk(x));
+            }
+            TKind::Lambda(l) => {
+                self.zonk(&mut l.body);
+                let mut used = BTreeSet::new();
+                let mut bound: BTreeSet<u32> = l.params.iter().copied().collect();
+                locals_of(&l.body, &mut used, &mut bound);
+                l.captures = used.difference(&bound).copied().collect();
+            }
             TKind::Un(_, x, _) | TKind::Field(x, _) => self.zonk(x),
             TKind::Bin(_, l, r, _) | TKind::Let(_, l, r) => {
                 self.zonk(l);
@@ -577,15 +674,79 @@ impl<'a> Cx<'a> {
     }
 }
 
+/// Locals a closure body uses (`used`, including the captures of nested closures) and binds itself (`bound`).
+pub(crate) fn locals_of(e: &TExpr, used: &mut BTreeSet<u32>, bound: &mut BTreeSet<u32>) {
+    fn pat(p: &TPat, bound: &mut BTreeSet<u32>) {
+        match p {
+            TPat::Bind(id) => {
+                bound.insert(*id);
+            }
+            TPat::Variant(_, ps) => ps.iter().for_each(|p| pat(p, bound)),
+            TPat::Record(fs) => fs.iter().for_each(|(_, p)| pat(p, bound)),
+            _ => {}
+        }
+    }
+    match &e.kind {
+        TKind::Local(id) => {
+            used.insert(*id);
+        }
+        TKind::Lambda(l) => {
+            used.extend(l.captures.iter().copied());
+        }
+        TKind::Let(id, v, b) => {
+            bound.insert(*id);
+            locals_of(v, used, bound);
+            locals_of(b, used, bound);
+        }
+        TKind::Match(s, arms) => {
+            locals_of(s, used, bound);
+            for a in arms {
+                pat(&a.pat, bound);
+                if let Some(g) = &a.guard {
+                    locals_of(g, used, bound);
+                }
+                locals_of(&a.body, used, bound);
+            }
+        }
+        _ => children(e).into_iter().for_each(|c| locals_of(c, used, bound)),
+    }
+}
+
+/// The direct subexpressions of `e` (closure bodies excluded; patterns are not expressions).
+pub fn children(e: &TExpr) -> Vec<&TExpr> {
+    match &e.kind {
+        TKind::Int(_) | TKind::Float(_) | TKind::Bool(_) | TKind::Str(_) | TKind::Unit | TKind::Local(_) | TKind::FnRef(_) | TKind::FnRefG(..) | TKind::Lambda(_) => vec![],
+        TKind::Un(_, x, _) | TKind::Field(x, _) => vec![x],
+        TKind::Bin(_, l, r, _) | TKind::Let(_, l, r) => vec![l, r],
+        TKind::If(c, t, f) => vec![c, t, f],
+        TKind::Call(_, xs) | TKind::CallG(_, _, xs) | TKind::List(xs) | TKind::Variant(_, xs) | TKind::Seq(xs) | TKind::Builtin(_, xs, _) => xs.iter().collect(),
+        TKind::CallIndirect(f, xs) => std::iter::once(&**f).chain(xs.iter()).collect(),
+        TKind::Record(fs) => fs.iter().map(|(_, x)| x).collect(),
+        TKind::Match(s, arms) => std::iter::once(&**s).chain(arms.iter().flat_map(|a| a.guard.iter().chain([&a.body]))).collect(),
+    }
+}
+
+/// Distinct declared types a type walk expands at most (see `contains_fn`).
+pub(crate) const MAX_EXPANSIONS: usize = 256;
+
 /// True if a value of type `t` can contain a function (`seen` guards recursive types).
-fn contains_fn(tp: &TProgram, t: &Type, seen: &mut Vec<String>) -> bool {
+pub(crate) fn contains_fn(tp: &TProgram, t: &Type, seen: &mut Vec<String>) -> bool {
+    // Regular recursion has few distinct instances; more only arise from irregular types (E0212),
+    // which are rejected anyway: answer conservatively instead of expanding forever.
+    if seen.len() >= MAX_EXPANSIONS {
+        return true;
+    }
     match t {
         Type::Fn(..) => true,
         Type::List(x) | Type::Option(x) => contains_fn(tp, x, seen),
-        Type::Result(a, b) => contains_fn(tp, a, seen) || contains_fn(tp, b, seen),
-        Type::Named(n) if !seen.contains(n) => {
-            seen.push(n.clone());
-            match tp.type_def(n).map(|d| &d.body) {
+        Type::Result(a, b) | Type::Map(a, b) => contains_fn(tp, a, seen) || contains_fn(tp, b, seen),
+        Type::Named(_) | Type::App(..) => {
+            let key = t.to_string();
+            if seen.contains(&key) {
+                return false;
+            }
+            seen.push(key);
+            match tp.decl(t) {
                 Some(TypeBody::Record(fs)) => fs.iter().any(|(_, f)| contains_fn(tp, f, seen)),
                 Some(TypeBody::Enum(vs)) => vs.iter().any(|v| v.fields.iter().any(|f| contains_fn(tp, f, seen))),
                 None => false,

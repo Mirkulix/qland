@@ -1,15 +1,17 @@
 //! Recursive-descent parser: tokens -> Program.
 //!
-//! Grammar (Phase 1b). LOWER = name starting with a lowercase letter or `_`, UPPER = with an uppercase letter.
+//! Grammar (Phase 2a). LOWER = name starting with a lowercase letter or `_`, UPPER = with an uppercase letter.
 //!   program  := def*
-//!   def      := "fn" LOWER "(" params ")" "->" type effect* contract* "=" expr
+//!   def      := "fn" LOWER tparams? "(" params ")" "->" type effect* contract* "=" expr
 //!             | "test" LOWER "=" expr
-//!             | "type" UPPER "=" ( "{" fields "}" | "|"? variant ("|" variant)* | "|" )   (a lone `|`: enum without variants)
+//!             | "type" UPPER tparams? "=" ( "{" fields "}" | "|"? variant ("|" variant)* | "|" )   (a lone `|`: enum without variants)
+//!   tparams  := "[" UPPER ("," UPPER)* ","? "]"                (type parameters)
 //!   params   := (LOWER ":" type ("," LOWER ":" type)* ","?)?
 //!   fields   := (LOWER ":" type ("," LOWER ":" type)* ","?)?
 //!   variant  := UPPER ("(" type ("," type)* ","? ")")?
 //!   type     := "Int" | "Float" | "Bool" | "Unit" | "Str" | "List" "[" type "]" | "Option" "[" type "]"
-//!             | "Result" "[" type "," type "]" | UPPER | "fn" "(" (type ("," type)*)? ")" "->" type effect*
+//!             | "Result" "[" type "," type "]" | "Map" "[" type "," type "]" | "Bytes"
+//!             | UPPER | UPPER "[" type ("," type)* ","? "]" | "fn" "(" (type ("," type)*)? ")" "->" type effect*
 //!             | "(" type ")"
 //!   effect   := "!" LOWER                                    (effects are kept as a sorted set without duplicates)
 //!   contract := ("req" | "ens") expr
@@ -17,6 +19,7 @@
 //!             | "if" expr "then" expr "else" expr
 //!             | "match" expr "{" (arm ("," arm)* ","?)? "}"   (no `Name {` record literal directly in the scrutinee;
 //!                                                             no arms only type-checks for an enum without variants)
+//!             | "fn" "(" (LOWER (":" type)? ("," LOWER (":" type)?)* ","?)? ")" "=>" expr   (closure)
 //!             | binary
 //!   arm      := pattern ("if" expr)? "=>" expr
 //!   pattern  := "_" | LOWER | "-"? INT | STR | "true" | "false" | "(" ")"     (`-9223372036854775808` is allowed here)
@@ -226,12 +229,21 @@ impl Parser {
                 self.expect_sym("]")?;
                 if name == "List" { Type::list(t) } else { Type::option(t) }
             }
-            "Result" => {
+            "Result" | "Map" => {
                 let t = arg(self)?;
                 self.expect_sym(",")?;
                 let e = self.ty()?;
                 self.expect_sym("]")?;
-                Type::result(t, e)
+                if name == "Result" { Type::result(t, e) } else { Type::map(t, e) }
+            }
+            "Bytes" => Type::Bytes,
+            _ if self.is_sym("[") => {
+                self.next();
+                let args = self.list_of("]", |p| p.ty())?;
+                if args.is_empty() {
+                    return Err(self.err_here(format!("`{name}[]` needs at least one type argument")));
+                }
+                Type::App(name, args)
             }
             _ => Type::Named(name),
         })
@@ -267,8 +279,22 @@ impl Parser {
         }
     }
 
+    /// `[A, B]` after a definition name (none: empty).
+    fn tparams(&mut self) -> Result<Vec<String>, Diagnostic> {
+        if !self.is_sym("[") {
+            return Ok(Vec::new());
+        }
+        self.next();
+        let ps = self.list_of("]", |p| p.upper("type parameter"))?;
+        if ps.is_empty() {
+            return Err(self.err_here("`[]` needs at least one type parameter"));
+        }
+        Ok(ps)
+    }
+
     fn type_def(&mut self) -> Result<TypeDef, Diagnostic> {
         let name = self.upper("type")?;
+        let params = self.tparams()?;
         self.expect_sym("=")?;
         if self.is_sym("{") {
             self.next();
@@ -277,13 +303,13 @@ impl Parser {
                 p.expect_sym(":")?;
                 Ok((f, p.ty()?))
             })?;
-            return Ok(TypeDef { name, body: TypeBody::Record(fields) });
+            return Ok(TypeDef { name, params, body: TypeBody::Record(fields) });
         }
         if self.is_sym("|") {
             self.next();
             // A lone `|` (followed by the next definition or the end) is an enum without variants.
             if self.peek() == &Tok::Eof || self.is_kw("fn") || self.is_kw("type") || self.is_kw("test") {
-                return Ok(TypeDef { name, body: TypeBody::Enum(Vec::new()) });
+                return Ok(TypeDef { name, params, body: TypeBody::Enum(Vec::new()) });
             }
         }
         let mut variants = Vec::new();
@@ -301,11 +327,12 @@ impl Parser {
             }
             self.next();
         }
-        Ok(TypeDef { name, body: TypeBody::Enum(variants) })
+        Ok(TypeDef { name, params, body: TypeBody::Enum(variants) })
     }
 
     fn fn_def(&mut self) -> Result<FnDef, Diagnostic> {
         let name = self.lower("function")?;
+        let tparams = self.tparams()?;
         self.expect_sym("(")?;
         let params = self.list_of(")", |p| {
             let pname = p.lower("parameter")?;
@@ -329,7 +356,7 @@ impl Parser {
         }
         self.expect_sym("=")?;
         let body = self.expr()?;
-        Ok(FnDef { name, params, ret, effects, req, ens, body })
+        Ok(FnDef { name, tparams, params, ret, effects, req, ens, body })
     }
 
     fn expr(&mut self) -> Result<Expr, Diagnostic> {
@@ -600,6 +627,7 @@ impl Parser {
             Tok::Sym("(") => self.nested(Self::paren),
             Tok::Sym("[") => self.nested(Self::list_lit),
             Tok::Sym("{") => self.nested(Self::seq),
+            Tok::Ident(s) if s == "fn" && self.peek_at(1) == &Tok::Sym("(") => self.nested(Self::lambda),
             Tok::Ident(s) if KEYWORDS.contains(&s.as_str()) => Err(self.expected_expr(&Tok::Ident(s))),
             Tok::Ident(s) if is_upper(&s) && !self.no_struct && self.peek_at(1) == &Tok::Sym("{") => self.nested(Self::record_lit),
             Tok::Ident(_) => self.nested(Self::name_or_call),
@@ -665,6 +693,26 @@ impl Parser {
         self.expect_sym("}")?;
         self.node(h)?;
         Ok(Expr::Seq(items))
+    }
+
+    /// `fn(x, y: T) => body`; the body extends as far as possible (like `let`).
+    fn lambda(&mut self) -> Result<Expr, Diagnostic> {
+        self.next();
+        self.expect_sym("(")?;
+        let params = self.list_of(")", |p| {
+            let n = p.lower("parameter")?;
+            let ann = if p.is_sym(":") {
+                p.next();
+                Some(p.ty()?)
+            } else {
+                None
+            };
+            Ok((n, ann))
+        })?;
+        self.expect_sym("=>")?;
+        let body = self.expr()?;
+        self.node(self.height)?;
+        Ok(Expr::Lambda(params, Box::new(body)))
     }
 
     fn record_lit(&mut self) -> Result<Expr, Diagnostic> {
@@ -761,7 +809,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             p.defs[0],
-            Def::Type(TypeDef { name: "User".into(), body: TypeBody::Record(vec![("id".into(), Type::Int), ("name".into(), Type::Str)]) })
+            Def::Type(TypeDef { name: "User".into(), params: vec![], body: TypeBody::Record(vec![("id".into(), Type::Int), ("name".into(), Type::Str)]) })
         );
         let Def::Type(TypeDef { body: TypeBody::Enum(vs), .. }) = &p.defs[1] else { panic!() };
         assert_eq!(vs.iter().map(|v| (v.name.as_str(), v.fields.len())).collect::<Vec<_>>(), vec![("Empty", 0), ("NotNumber", 1), ("Pair", 2)]);
@@ -858,10 +906,10 @@ mod tests {
     #[test]
     fn empty_enums_and_matches() {
         let p = parse_program("type Never = |\nfn absurd(n: Never) -> Int = match n { }\ntype Last = |").unwrap();
-        assert_eq!(p.defs[0], Def::Type(TypeDef { name: "Never".into(), body: TypeBody::Enum(vec![]) }));
+        assert_eq!(p.defs[0], Def::Type(TypeDef { name: "Never".into(), params: vec![], body: TypeBody::Enum(vec![]) }));
         let Def::Fn(f) = &p.defs[1] else { panic!() };
         assert_eq!(f.body, Expr::Match(var("n"), vec![]));
-        assert_eq!(p.defs[2], Def::Type(TypeDef { name: "Last".into(), body: TypeBody::Enum(vec![]) }));
+        assert_eq!(p.defs[2], Def::Type(TypeDef { name: "Last".into(), params: vec![], body: TypeBody::Enum(vec![]) }));
         // A leading `|` before variants still works, and a lowercase variant is still reported.
         assert!(parse_program("type U = | a").unwrap_err().message.contains("variant names start with an uppercase letter"));
     }

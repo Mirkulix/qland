@@ -50,6 +50,22 @@ impl Cx<'_> {
             "to_lower" => (B::ToLower, vec![Type::Str], Type::Str),
             "replace" => (B::Replace, vec![Type::Str, Type::Str, Type::Str], Type::Str),
             "index_of" => (B::IndexOf, vec![Type::Str, Type::Str], Type::option(Type::Int)),
+            "map_new" => (B::MapNew, vec![], Type::map(a, b)),
+            "map_get" => (B::MapGet, vec![Type::map(a.clone(), b.clone()), a], Type::option(b)),
+            "map_put" => (B::MapPut, vec![Type::map(a.clone(), b.clone()), a.clone(), b.clone()], Type::map(a, b)),
+            "map_del" => (B::MapDel, vec![Type::map(a.clone(), b.clone()), a.clone()], Type::map(a, b)),
+            "map_has" => (B::MapHas, vec![Type::map(a.clone(), b), a], Type::Bool),
+            "map_size" => (B::MapSize, vec![Type::map(a, b)], Type::Int),
+            "map_keys" => (B::MapKeys, vec![Type::map(a.clone(), b)], list(a)),
+            "map_values" => (B::MapValues, vec![Type::map(a, b.clone())], list(b)),
+            "to_bytes" => (B::ToBytes, vec![Type::Str], Type::Bytes),
+            "bytes_len" => (B::BytesLen, vec![Type::Bytes], Type::Int),
+            "bytes_get" => (B::BytesGet, vec![Type::Bytes, Type::Int], Type::option(Type::Int)),
+            "bytes_slice" => (B::BytesSlice, vec![Type::Bytes, Type::Int, Type::Int], Type::Bytes),
+            "bytes_from" => (B::BytesFrom, vec![list(Type::Int)], Type::Bytes),
+            "bytes_to_list" => (B::BytesToList, vec![Type::Bytes], list(Type::Int)),
+            "bytes_to_str" => (B::BytesToStr, vec![Type::Bytes], Type::option(Type::Str)),
+            "compare" => (B::Compare, vec![a.clone(), a], Type::Int),
             _ => return None,
         };
         // Bound before the arguments bind `a`/`b`, so the result's depth stays tracked.
@@ -75,7 +91,10 @@ impl Cx<'_> {
 
     /// A function argument of map/filter/fold: its effects become effects of the call.
     fn fn_arg(&mut self, callee: &str, arg: &Expr, params: &[Type], ret: &Type, path: &str) -> TExpr {
-        let t = self.infer(arg, path);
+        let t = match arg {
+            Expr::Lambda(ps, body) if ps.len() == params.len() => self.lambda(ps, body, path, Some(params)),
+            _ => self.infer(arg, path),
+        };
         let effects = match self.sub.resolve(&t.ty) {
             Type::Fn(_, _, effs) => effs,
             _ => vec![],

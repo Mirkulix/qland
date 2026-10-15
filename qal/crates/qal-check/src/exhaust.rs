@@ -62,7 +62,7 @@ fn ctors(tp: &TProgram, ty: &Type) -> Option<Vec<Ctor>> {
         Type::Bool => Some(vec![simple(Key::Bool(false), "false"), simple(Key::Bool(true), "true")]),
         Type::Unit => Some(vec![simple(Key::Unit, "()")]),
         Type::Option(_) | Type::Result(..) => Some(variants(tp, ty)),
-        Type::Named(n) => match tp.type_def(n).map(|d| &d.body) {
+        Type::Named(n) | Type::App(n, _) => match tp.decl(ty) {
             Some(TypeBody::Enum(_)) => Some(variants(tp, ty)),
             Some(TypeBody::Record(fs)) => Some(vec![Ctor {
                 key: Key::Record,
@@ -175,12 +175,13 @@ mod tests {
             types: vec![
                 TypeDef {
                     name: "E".into(),
+                    params: vec![],
                     body: TypeBody::Enum(vec![
                         Variant { name: "A".into(), fields: vec![] },
                         Variant { name: "B".into(), fields: vec![Type::Bool, Type::Int] },
                     ]),
                 },
-                TypeDef { name: "R".into(), body: TypeBody::Record(vec![("x".into(), Type::Bool), ("y".into(), Type::Int)]) },
+                TypeDef { name: "R".into(), params: vec![], body: TypeBody::Record(vec![("x".into(), Type::Bool), ("y".into(), Type::Int)]) },
             ],
             ..TProgram::default()
         }

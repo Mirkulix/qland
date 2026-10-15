@@ -193,6 +193,33 @@ impl Diagnostic {
         Diagnostic::new("E0601", "store_error", "", "", message)
     }
 
+    /// A type parameter of a function that its parameter and result types do not mention: its type
+    /// argument could never be inferred.
+    pub fn unused_type_param(def: &str, path: &str, param: &str) -> Self {
+        Diagnostic::new("E0211", "unused_type_parameter", def, path, format!("type parameter `{param}` does not occur in the parameter or result types"))
+            .hint(format!("remove `{param}` or use it in a parameter type"))
+    }
+
+    /// A generic type refers to itself (or its recursive group) with arguments other than plain
+    /// type parameters, e.g. `type Nest[T] = Nil | Cons(T, Nest[List[T]])`: it would need infinitely many instances.
+    pub fn irregular_recursion(def: &str, path: &str, used: &str) -> Self {
+        Diagnostic::new("E0212", "irregular_recursion", def, path, format!("recursive use `{used}` must pass plain type parameters"))
+            .hint("inside its own definition, a recursive generic type can only be applied to type parameters, e.g. `Tree[T]`")
+    }
+
+    /// A generic function calls itself (or its recursive group) with type arguments other than
+    /// plain type parameters: monomorphisation would not terminate.
+    pub fn polymorphic_recursion(def: &str, path: &str, callee: &str, targs: &str) -> Self {
+        Diagnostic::new("E0213", "polymorphic_recursion", def, path, format!("recursive call of `{callee}` at type [{targs}]"))
+            .hint("recursive calls of a generic function must use its own type parameters (e.g. `f[T]` calls `f[T]`)")
+    }
+
+    /// Monomorphisation produced too many instances or too large type arguments.
+    pub fn instantiation_limit(def: &str, path: &str, instance: &str, max: usize) -> Self {
+        Diagnostic::new("E0214", "instantiation_limit", def, path, format!("instantiating `{instance}` exceeds the limit of {max} generic instances, the type size limit or the size limit of all instances"))
+            .hint("deeply nested generic calls multiply instances; use fewer distinct type arguments")
+    }
+
     pub fn missing_field(def: &str, path: &str, record: &str, field: &str) -> Self {
         Diagnostic::new("E0206", "type_mismatch", def, path, format!("`{record}` needs field `{field}`"))
             .hint(format!("add `{field}: ...` to the `{record} {{ ... }}` literal"))

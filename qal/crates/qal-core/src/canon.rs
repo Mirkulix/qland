@@ -19,6 +19,8 @@
 //!            | "QAL\0" version:u8 size:varint index:varint group-hash[32]   (member of a group, size >= 2)
 //! group     := "QAL\0" version:u8 size:varint member{size}        (stored once per group)
 //! member    := kind:u8 (0 type | 1 fn | 2 test) body
+//!            | 3 tparams:n type-body | 4 tparams:n fn-body           (generic type / fn: n >= 1 type parameters,
+//!              bound in order; a type parameter is written `T_PARAM index`)
 //! type body := 0 n (field:str type){n}  |  1 n (variant:str k type{k}){n}
 //! fn body   := n type{n} ret:type effects req:n expr{n} ens:n expr{n} body:expr   (params bound in order;
 //!              `r` is bound for `ens` without being stored)
@@ -30,6 +32,12 @@
 //! ```
 //!
 //! The expression, pattern and type tags are the constants in `tag` below.
+//!
+//! Versions: version 1 is the Phase 1 format. Version 2 adds generic members (kinds 3, 4), the types
+//! `T_APP`, `T_PARAM`, `T_MAP`, `T_BYTES` and the expression `E_LAMBDA`. A form is written with the
+//! lowest version that has every construct it uses (a group: the highest of its members), so a
+//! definition without Phase 2 constructs keeps its Phase 1 bytes and hash. Decoding is strict both
+//! ways: a version 1 form must not use version 2 constructs and a version 2 form must use one.
 
 use crate::ast::*;
 use crate::tast::Builtin;
@@ -38,7 +46,8 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fmt;
 
 pub const MAGIC: &[u8; 4] = b"QAL\0";
-pub const VERSION: u8 = 1;
+/// The highest canonical format version this code reads and writes (see the module documentation).
+pub const VERSION: u8 = 2;
 
 /// Nesting accepted while decoding: the parser's bounds (expression and pattern height 256, type
 /// nesting 256), so nothing decodes that the text form could not express.
@@ -225,6 +234,10 @@ mod tag {
     pub const T_RESULT: u8 = 7;
     pub const T_NAMED: u8 = 8;
     pub const T_FN: u8 = 9;
+    pub const T_APP: u8 = 10;
+    pub const T_PARAM: u8 = 11;
+    pub const T_MAP: u8 = 12;
+    pub const T_BYTES: u8 = 13;
 
     pub const E_INT: u8 = 0;
     pub const E_FLOAT: u8 = 1;
@@ -246,6 +259,7 @@ mod tag {
     pub const E_FIELD: u8 = 17;
     pub const E_MATCH: u8 = 18;
     pub const E_SEQ: u8 = 19;
+    pub const E_LAMBDA: u8 = 20;
 
     pub const P_WILD: u8 = 0;
     pub const P_BIND: u8 = 1;
@@ -349,8 +363,12 @@ struct Enc<'a, 'r> {
     out: Vec<u8>,
     /// Visible local names, innermost last.
     scope: Vec<String>,
-    /// Every binder's name in binding order.
+    /// Every binder's name in binding order (type parameters first).
     locals: Vec<String>,
+    /// Type parameters of the encoded definition.
+    tparams: Vec<String>,
+    /// A version 2 construct was written.
+    v2: bool,
     err: Option<String>,
 }
 
@@ -425,6 +443,35 @@ impl Enc<'_, '_> {
                 self.ty(a);
                 self.ty(b);
             }
+            Type::Named(n) | Type::Param(n) if self.tparams.contains(n) => {
+                self.v2 = true;
+                self.byte(T_PARAM);
+                let i = self.tparams.iter().position(|p| p == n).unwrap_or(0);
+                self.len(i);
+            }
+            Type::App(n, args) => {
+                self.v2 = true;
+                if !self.env.types.contains(n.as_str()) {
+                    self.fail(format!("unknown type `{n}`"));
+                }
+                self.byte(T_APP);
+                self.reference(n);
+                self.len(args.len());
+                for a in args {
+                    self.ty(a);
+                }
+            }
+            Type::Map(k, v) => {
+                self.v2 = true;
+                self.byte(T_MAP);
+                self.ty(k);
+                self.ty(v);
+            }
+            Type::Bytes => {
+                self.v2 = true;
+                self.byte(T_BYTES);
+            }
+            Type::Param(n) => self.fail(format!("unknown type parameter `{n}`")),
             Type::Named(n) => {
                 if !self.env.types.contains(n.as_str()) {
                     self.fail(format!("unknown type `{n}`"));
@@ -618,6 +665,27 @@ impl Enc<'_, '_> {
                 self.byte(E_SEQ);
                 self.exprs(items);
             }
+            Expr::Lambda(params, body) => {
+                self.v2 = true;
+                self.byte(E_LAMBDA);
+                self.len(params.len());
+                for (_, ann) in params {
+                    match ann {
+                        Some(t) => {
+                            self.byte(1);
+                            self.ty(t);
+                        }
+                        None => self.byte(0),
+                    }
+                }
+                for (n, _) in params {
+                    self.bind(n);
+                }
+                self.expr(body);
+                for _ in params {
+                    self.scope.pop();
+                }
+            }
         }
     }
 
@@ -667,8 +735,21 @@ impl Enc<'_, '_> {
         }
     }
 
+    /// Type parameters: the member kind says the definition is generic; their names are locals.
+    fn tparams(&mut self, kind: u8, names: &[String]) {
+        self.v2 = true;
+        self.byte(kind);
+        self.len(names.len());
+        self.tparams = names.to_vec();
+        self.locals.extend(names.iter().cloned());
+    }
+
     fn member(&mut self, d: &Def) {
-        self.byte(Kind::of(d).tag());
+        match d {
+            Def::Type(t) if !t.params.is_empty() => self.tparams(3, &t.params),
+            Def::Fn(f) if !f.tparams.is_empty() => self.tparams(4, &fn_tparams(f)),
+            _ => self.byte(Kind::of(d).tag()),
+        }
         match d {
             Def::Type(t) => match &t.body {
                 TypeBody::Record(fields) => {
@@ -720,11 +801,16 @@ impl Enc<'_, '_> {
 
 /// Encodes `d` (its member part only), returning (bytes, local names) or the first unresolved name.
 fn encode_member(env: &Env, d: &Def, refs: &mut dyn FnMut(&str) -> Option<Ref>) -> Result<(Vec<u8>, Vec<String>), String> {
-    let mut enc = Enc { env, refs, out: Vec::new(), scope: Vec::new(), locals: Vec::new(), err: None };
+    encode_versioned(env, d, refs).map(|(b, l, _)| (b, l))
+}
+
+/// Like [`encode_member`], also returning the format version the member needs.
+fn encode_versioned(env: &Env, d: &Def, refs: &mut dyn FnMut(&str) -> Option<Ref>) -> Result<(Vec<u8>, Vec<String>, u8), String> {
+    let mut enc = Enc { env, refs, out: Vec::new(), scope: Vec::new(), locals: Vec::new(), tparams: Vec::new(), v2: false, err: None };
     enc.member(d);
     match enc.err {
         Some(e) => Err(format!("`{}`: {e}", d.name())),
-        None => Ok((enc.out, enc.locals)),
+        None => Ok((enc.out, enc.locals, if enc.v2 { 2 } else { 1 })),
     }
 }
 
@@ -751,31 +837,31 @@ fn put_varint(out: &mut Vec<u8>, mut n: u64) {
     }
 }
 
-fn prefix(size: usize) -> Vec<u8> {
+fn prefix(size: usize, version: u8) -> Vec<u8> {
     let mut out = MAGIC.to_vec();
-    out.push(VERSION);
+    out.push(version);
     put_varint(&mut out, size as u64);
     out
 }
 
 /// Canonical form of a definition outside any group.
-fn single_form(member: &[u8]) -> Vec<u8> {
-    let mut out = prefix(1);
+fn single_form(member: &[u8], version: u8) -> Vec<u8> {
+    let mut out = prefix(1, version);
     out.push(0);
     out.extend_from_slice(member);
     out
 }
 
-fn group_form(members: &[Vec<u8>]) -> Vec<u8> {
-    let mut out = prefix(members.len());
+fn group_form(members: &[Vec<u8>], version: u8) -> Vec<u8> {
+    let mut out = prefix(members.len(), version);
     for m in members {
         out.extend_from_slice(m);
     }
     out
 }
 
-fn member_form(size: usize, index: usize, group: &Hash) -> Vec<u8> {
-    let mut out = prefix(size);
+fn member_form(size: usize, index: usize, group: &Hash, version: u8) -> Vec<u8> {
+    let mut out = prefix(size, version);
     put_varint(&mut out, index as u64);
     out.extend_from_slice(&group.0);
     out
@@ -863,19 +949,21 @@ pub fn hash_program(p: &Program) -> Result<Hashed, HashError> {
         let pos: HashMap<usize, u32> = order.iter().enumerate().map(|(k, &d)| (d, k as u32)).collect();
         let mut members = Vec::new();
         let mut locals = Vec::new();
+        let mut version = 1;
         for &d in &order {
             let mut refs = |n: &str| resolve(n, &by_name, &pos, &hashes);
-            let (bytes, names) = encode_member(&env, &p.defs[d], &mut refs).map_err(internal)?;
+            let (bytes, names, v) = encode_versioned(&env, &p.defs[d], &mut refs).map_err(internal)?;
             members.push(bytes);
             locals.push(names);
+            version = version.max(v);
         }
         let (forms, group): (Vec<Vec<u8>>, Option<Hash>) = if order.len() == 1 {
-            (vec![single_form(&members[0])], None)
+            (vec![single_form(&members[0], version)], None)
         } else {
-            let g = group_form(&members);
+            let g = group_form(&members, version);
             let gh = Hash::of(&g);
             groups.insert(gh, g);
-            ((0..order.len()).map(|k| member_form(order.len(), k, &gh)).collect(), Some(gh))
+            ((0..order.len()).map(|k| member_form(order.len(), k, &gh, version)).collect(), Some(gh))
         };
         for (k, &d) in order.iter().enumerate() {
             hashes[d] = Some(Hash::of(&forms[k]));
@@ -1041,10 +1129,49 @@ fn order_group(env: &Env, p: &Program, comp: &[usize], by_name: &HashMap<&str, u
     l.best.map(|(_, order)| order).ok_or_else(|| HashError::Internal("no labelling".into()))
 }
 
+/// The type parameters of a generic function in canonical order: by first occurrence in the
+/// parameter types, then the result type (then any others, in written order). Type arguments of a
+/// function are always inferred, never written, so their order carries no meaning.
+pub fn fn_tparams(f: &FnDef) -> Vec<String> {
+    fn walk(t: &Type, tps: &[String], out: &mut Vec<String>) {
+        match t {
+            Type::Named(n) | Type::Param(n) => {
+                if tps.contains(n) && !out.contains(n) {
+                    out.push(n.clone());
+                }
+            }
+            Type::List(x) | Type::Option(x) => walk(x, tps, out),
+            Type::Result(a, b) | Type::Map(a, b) => {
+                walk(a, tps, out);
+                walk(b, tps, out);
+            }
+            Type::App(_, args) => args.iter().for_each(|a| walk(a, tps, out)),
+            Type::Fn(ps, r, _) => {
+                ps.iter().for_each(|p| walk(p, tps, out));
+                walk(r, tps, out);
+            }
+            _ => {}
+        }
+    }
+    let mut out = Vec::new();
+    for p in &f.params {
+        walk(&p.ty, &f.tparams, &mut out);
+    }
+    walk(&f.ret, &f.tparams, &mut out);
+    for p in &f.tparams {
+        if !out.contains(p) {
+            out.push(p.clone());
+        }
+    }
+    out
+}
+
 /// Replaces every `Named` type name through `f`.
 fn map_named(t: &Type, f: &dyn Fn(&str) -> String) -> Type {
     match t {
         Type::Named(n) => Type::Named(f(n)),
+        Type::App(n, args) => Type::App(f(n), args.iter().map(|a| map_named(a, f)).collect()),
+        Type::Map(k, v) => Type::map(map_named(k, f), map_named(v, f)),
         Type::List(x) => Type::list(map_named(x, f)),
         Type::Option(x) => Type::option(map_named(x, f)),
         Type::Result(a, b) => Type::result(map_named(a, f), map_named(b, f)),
@@ -1061,8 +1188,20 @@ fn sorted_effects(e: &[String]) -> Vec<String> {
 pub fn signature_text(d: &Def, f: &dyn Fn(&str) -> String) -> String {
     match d {
         Def::Fn(fd) => {
+            let keep = |n: &str| if fd.tparams.iter().any(|p| p == n) { n.to_string() } else { f(n) };
             let t = Type::Fn(fd.params.iter().map(|p| p.ty.clone()).collect(), Box::new(fd.ret.clone()), fd.effects.clone());
-            map_named(&t, f).to_string()
+            let s = map_named(&t, &keep).to_string();
+            if fd.tparams.is_empty() {
+                s
+            } else {
+                // `fn[T](T) -> T`
+                format!("fn[{}]{}", fn_tparams(fd).join(", "), &s[2..])
+            }
+        }
+        Def::Type(t) if !t.params.is_empty() => {
+            let keep = |n: &str| if t.params.iter().any(|p| p == n) { n.to_string() } else { f(n) };
+            let mono = Def::Type(TypeDef { name: t.name.clone(), params: vec![], body: t.body.clone() });
+            format!("[{}] {}", t.params.join(", "), signature_text(&mono, &keep))
         }
         Def::Type(t) => match &t.body {
             TypeBody::Record(fields) => {
@@ -1125,9 +1264,7 @@ pub fn count_binders(form: Form) -> Result<usize, String> {
             found = Some(d.binders - before);
         }
     }
-    if d.pos != d.b.len() {
-        return Err("trailing bytes after the last group member".into());
-    }
+    d.finish()?;
     found.ok_or_else(|| "member index out of range".into())
 }
 
@@ -1204,9 +1341,7 @@ fn decode_raw(form: Form, name: &str, local_names: &[String], name_of: &mut dyn 
             d.member_def(name, &mut |_| String::new())?;
         }
     }
-    if d.pos != d.b.len() {
-        return Err("trailing bytes after the last group member".into());
-    }
+    d.finish()?;
     result.ok_or_else(|| "member index out of range".into())
 }
 
@@ -1235,7 +1370,7 @@ impl GroupIndex {
         }
         let mut d = Dec::new(group);
         let size = d.prefix()?;
-        let hashes: Vec<Hash> = (0..size).map(|j| Hash::of(&member_form(size, j, gh))).collect();
+        let hashes: Vec<Hash> = (0..size).map(|j| Hash::of(&member_form(size, j, gh, d.version))).collect();
         d.size = size;
         d.others = hashes.iter().map(|h| Some(*h)).collect();
         d.collect = true;
@@ -1253,9 +1388,7 @@ impl GroupIndex {
             seen.dedup();
             members.push(MemberInfo { binders: d.binders - before, refs: seen });
         }
-        if d.pos != d.b.len() {
-            return Err("trailing bytes after the last group member".into());
-        }
+        d.finish()?;
         Ok(GroupIndex { members, offsets, hashes })
     }
 
@@ -1264,6 +1397,7 @@ impl GroupIndex {
         let offset = *self.offsets.get(index).ok_or("member index out of range")?;
         let raw = |name: &str, locals: &[String], f: &mut dyn FnMut(&Hash) -> String| -> Result<(Def, bool), String> {
             let mut d = Dec::new(group);
+            d.prefix()?;
             d.pos = offset;
             d.size = self.hashes.len();
             d.index = index;
@@ -1298,6 +1432,11 @@ struct Dec<'b> {
     names: Vec<String>,
     next_name: usize,
     scope: Vec<String>,
+    /// Type parameters of the member being decoded.
+    tparams: Vec<String>,
+    /// Format version of the form (1 or 2), and whether a version 2 construct was read.
+    version: u8,
+    saw_v2: bool,
 }
 
 type R<T> = Result<T, String>;
@@ -1324,16 +1463,40 @@ impl<'b> Dec<'b> {
             names: Vec::new(),
             next_name: 0,
             scope: Vec::new(),
+            tparams: Vec::new(),
+            version: 1,
+            saw_v2: false,
         }
+    }
+
+    /// A version 2 construct: not allowed in a version 1 form.
+    fn v2(&mut self) -> R<()> {
+        if self.version < 2 {
+            return Err("version 2 construct in a version 1 canonical form".into());
+        }
+        self.saw_v2 = true;
+        Ok(())
+    }
+
+    /// After the last member: no trailing bytes, and a version 2 form must need version 2.
+    fn finish(&self) -> R<()> {
+        if self.pos != self.b.len() {
+            return Err("trailing bytes after the last group member".into());
+        }
+        if self.version == 2 && !self.saw_v2 {
+            return Err("version 2 canonical form without version 2 constructs (not canonical)".into());
+        }
+        Ok(())
     }
 
     fn prefix(&mut self) -> R<usize> {
         if self.b.len() < 5 || &self.b[..4] != MAGIC {
             return Err("not a QAL canonical form".into());
         }
-        if self.b[4] != VERSION {
+        if !(1..=VERSION).contains(&self.b[4]) {
             return Err(format!("unsupported canonical form version {}", self.b[4]));
         }
+        self.version = self.b[4];
         self.pos = 5;
         let size = self.index()?;
         if size == 0 {
@@ -1373,10 +1536,11 @@ impl<'b> Dec<'b> {
             return Err("the group form does not match its hash".into());
         }
         self.b = group;
-        if self.prefix()? != h.size {
-            return Err("the group form has another size".into());
+        let version = self.version;
+        if self.prefix()? != h.size || self.version != version {
+            return Err("the group form has another size or version".into());
         }
-        self.others = (0..h.size).map(|j| if j == h.index { None } else { Some(Hash::of(&member_form(h.size, j, &gh))) }).collect();
+        self.others = (0..h.size).map(|j| if j == h.index { None } else { Some(Hash::of(&member_form(h.size, j, &gh, version))) }).collect();
         Ok(())
     }
 
@@ -1511,6 +1675,30 @@ impl<'b> Dec<'b> {
             }
             T_NAMED => Type::Named(self.reference(own, name_of)?),
             T_FN => return self.ty_fn(own, name_of),
+            T_APP => {
+                self.v2()?;
+                let n = self.reference(own, name_of)?;
+                let k = self.count()?;
+                if k == 0 {
+                    return Err("type application without arguments".into());
+                }
+                let args = (0..k).map(|_| self.ty(own, name_of)).collect::<R<Vec<_>>>()?;
+                Type::App(n, args)
+            }
+            T_PARAM => {
+                self.v2()?;
+                let i = self.index()?;
+                Type::Named(self.tparams.get(i).cloned().ok_or_else(|| format!("type parameter {i} out of range"))?)
+            }
+            T_MAP => {
+                self.v2()?;
+                let k = self.ty(own, name_of)?;
+                Type::map(k, self.ty(own, name_of)?)
+            }
+            T_BYTES => {
+                self.v2()?;
+                Type::Bytes
+            }
             t => return Err(bad_tag("type", t)),
         })
     }
@@ -1602,8 +1790,42 @@ impl<'b> Dec<'b> {
             E_FIELD => return self.e_field(own, name_of),
             E_MATCH => return self.e_match(own, name_of),
             E_SEQ => Expr::Seq(self.exprs(own, name_of)?),
+            E_LAMBDA => return self.e_lambda(own, name_of),
             t => return Err(bad_tag("expression", t)),
         })
+    }
+
+    fn e_lambda(&mut self, own: &str, name_of: &mut dyn FnMut(&Hash) -> String) -> R<Expr> {
+        self.v2()?;
+        let n = self.count()?;
+        let mut anns = Vec::with_capacity(n.min(16));
+        for _ in 0..n {
+            anns.push(if self.flag()? { Some(self.ty(own, name_of)?) } else { None });
+        }
+        let mut params = Vec::with_capacity(n.min(16));
+        for ann in anns {
+            params.push((self.bind()?, ann));
+        }
+        let body = self.expr(own, name_of)?;
+        for _ in 0..n {
+            self.scope.pop();
+        }
+        Ok(Expr::Lambda(params, Box::new(body)))
+    }
+
+    /// Type parameters of a generic member (kind 3 or 4): at least one; their names are locals.
+    fn tparams(&mut self) -> R<Vec<String>> {
+        self.v2()?;
+        let n = self.count()?;
+        if n == 0 {
+            return Err("generic definition without type parameters".into());
+        }
+        for _ in 0..n {
+            let name = self.bind()?;
+            self.scope.pop();
+            self.tparams.push(name);
+        }
+        Ok(self.tparams.clone())
     }
 
     fn e_variant(&mut self, own: &str, name_of: &mut dyn FnMut(&Hash) -> String) -> R<Expr> {
@@ -1734,9 +1956,19 @@ impl<'b> Dec<'b> {
 
     fn member_def(&mut self, name: &str, name_of: &mut dyn FnMut(&Hash) -> String) -> R<Def> {
         self.scope.clear();
-        Ok(match self.byte()? {
+        self.tparams.clear();
+        let mut kind = self.byte()?;
+        let tparams = match kind {
+            3 | 4 => {
+                kind -= 3;
+                self.tparams()?
+            }
+            _ => Vec::new(),
+        };
+        Ok(match kind {
             0 => Def::Type(TypeDef {
                 name: name.to_string(),
+                params: tparams,
                 body: match self.byte()? {
                     0 => {
                         let n = self.count()?;
@@ -1776,9 +2008,9 @@ impl<'b> Dec<'b> {
                 let ens = (0..m).map(|_| self.expr(name, name_of)).collect::<R<Vec<_>>>()?;
                 self.scope.pop();
                 let body = self.expr(name, name_of)?;
-                Def::Fn(FnDef { name: name.to_string(), params, ret, effects, req, ens, body })
+                Def::Fn(FnDef { name: name.to_string(), tparams, params, ret, effects, req, ens, body })
             }
-            2 => Def::Test(TestDef { name: name.to_string(), body: self.expr(name, name_of)? }),
+            2 if tparams.is_empty() => Def::Test(TestDef { name: name.to_string(), body: self.expr(name, name_of)? }),
             t => return Err(bad_tag("definition kind", t)),
         })
     }
@@ -1793,7 +2025,7 @@ mod tests {
     }
 
     fn func(name: &str, param: &str, body: Expr) -> Def {
-        Def::Fn(FnDef { name: name.into(), params: vec![Param { name: param.into(), ty: Type::Int }], ret: Type::Int, effects: vec![], req: vec![], ens: vec![], body })
+        Def::Fn(FnDef { name: name.into(), tparams: vec![], params: vec![Param { name: param.into(), ty: Type::Int }], ret: Type::Int, effects: vec![], req: vec![], ens: vec![], body })
     }
 
     fn by_name(p: &Program) -> HashMap<String, Canon> {
@@ -1893,7 +2125,7 @@ mod tests {
         assert!(dec(&bad, &c.local_names).is_err());
         assert!(dec(&c.canonical, &[]).is_err());
         let test_form = |body: &[u8]| {
-            let mut v = single_form(&[2]);
+            let mut v = single_form(&[2], 1);
             v.extend_from_slice(body);
             v
         };
@@ -1910,10 +2142,89 @@ mod tests {
         // a variant that does not belong to its owner.
         assert!(dec(&test_form(&[E_LIST, 0x80, 0x00]), &[]).unwrap_err().contains("non-minimal"));
         assert!(dec(&test_form(&[E_BOOL, 2]), &[]).is_err());
-        let mut f = single_form(&[1, 0, T_UNIT, 2, 2, b'i', b'o', 2, b'f', b's', 0, 0, E_UNIT]);
+        let mut f = single_form(&[1, 0, T_UNIT, 2, 2, b'i', b'o', 2, b'f', b's', 0, 0, E_UNIT], 1);
         assert!(dec(&f, &[]).unwrap_err().contains("sorted set"));
         f = test_form(&[E_VARIANT, V_OPTION, 2, b'O', b'k', 0]);
         assert!(dec(&f, &[]).unwrap_err().contains("does not belong"));
+    }
+
+    fn generic_id(tp: &str, x: &str) -> Def {
+        let t = Type::Named(tp.into());
+        Def::Fn(FnDef { name: "id".into(), tparams: vec![tp.into()], params: vec![Param { name: x.into(), ty: t.clone() }], ret: t, effects: vec![], req: vec![], ens: vec![], body: Expr::Var(x.into()) })
+    }
+
+    #[test]
+    fn phase1_definitions_keep_their_version_1_bytes() {
+        let p = Program { defs: vec![func("f", "x", Expr::Var("x".into()))] };
+        let c = &by_name(&p)["f"];
+        // magic, version 1, size 1, index 0, kind fn, 1 param Int, ret Int, no effects, no req, no ens, local 0
+        assert_eq!(c.canonical, [b'Q', b'A', b'L', 0, 1, 1, 0, 1, 1, T_INT, T_INT, 0, 0, 0, E_LOCAL, 0]);
+    }
+
+    #[test]
+    fn generic_hashes_ignore_type_parameter_names_and_order() {
+        let a = &by_name(&Program { defs: vec![generic_id("T", "x")] })["id"];
+        let b = &by_name(&Program { defs: vec![generic_id("U", "y")] })["id"];
+        assert_eq!(a.hash, b.hash);
+        assert_eq!(a.canonical[4], 2, "generic definitions need version 2");
+        assert_eq!(a.local_names, vec!["T".to_string(), "x".to_string()]);
+        assert_eq!(a.signature, "fn[T](T) -> T");
+        let back = decode(single(a), "id", &a.local_names, &mut |_| String::new()).unwrap();
+        assert_eq!(back, generic_id("T", "x"));
+        // Function type parameters are inferred, never written: their order does not matter.
+        let k = |tps: [&str; 2]| {
+            let (a, b) = (Type::Named("A".into()), Type::Named("B".into()));
+            Def::Fn(FnDef { name: "k".into(), tparams: tps.iter().map(|s| s.to_string()).collect(), params: vec![Param { name: "a".into(), ty: a.clone() }, Param { name: "b".into(), ty: b }], ret: a, effects: vec![], req: vec![], ens: vec![], body: Expr::Var("a".into()) })
+        };
+        let (k1, k2) = (&by_name(&Program { defs: vec![k(["A", "B"])] })["k"], &by_name(&Program { defs: vec![k(["B", "A"])] })["k"]);
+        assert_eq!(k1.hash, k2.hash);
+        assert_eq!(k1.signature, k2.signature);
+    }
+
+    #[test]
+    fn generic_types_lambdas_maps_and_bytes_round_trip() {
+        let pair = Def::Type(TypeDef { name: "Pair".into(), params: vec!["A".into(), "B".into()], body: TypeBody::Record(vec![("fst".into(), Type::Named("A".into())), ("snd".into(), Type::map(Type::Named("B".into()), Type::Bytes))]) });
+        let lam = Expr::Lambda(vec![("y".into(), Some(Type::Int)), ("z".into(), None)], Box::new(Expr::Bin(BinOp::Add, var("y"), var("n"))));
+        let user = Def::Fn(FnDef {
+            name: "mk".into(),
+            tparams: vec![],
+            params: vec![Param { name: "n".into(), ty: Type::Int }, Param { name: "p".into(), ty: Type::App("Pair".into(), vec![Type::Int, Type::Str]) }],
+            ret: Type::Fn(vec![Type::Int, Type::Bool], Box::new(Type::Int), vec![]),
+            effects: vec![],
+            req: vec![],
+            ens: vec![],
+            body: lam,
+        });
+        let p = Program { defs: vec![pair.clone(), user.clone()] };
+        let cs = by_name(&p);
+        assert_eq!(cs["Pair"].signature, "[A, B] { fst: A, snd: Map[B, Bytes] }");
+        assert_eq!(cs["mk"].local_names, vec!["n", "p", "y", "z"]);
+        let names = |h: &Hash| if *h == cs["Pair"].hash { "Pair".to_string() } else { "?".into() };
+        assert_eq!(decode(single(&cs["Pair"]), "Pair", &cs["Pair"].local_names, &mut |h| names(h)).unwrap(), pair);
+        assert_eq!(decode(single(&cs["mk"]), "mk", &cs["mk"].local_names, &mut |h| names(h)).unwrap(), user);
+        // Renaming the lambda's parameters changes no hash.
+        let mut renamed = p.clone();
+        if let Def::Fn(f) = &mut renamed.defs[1] {
+            f.body = Expr::Lambda(vec![("a".into(), Some(Type::Int)), ("b".into(), None)], Box::new(Expr::Bin(BinOp::Add, var("a"), var("n"))));
+        }
+        assert_eq!(by_name(&renamed)["mk"].hash, cs["mk"].hash);
+    }
+
+    #[test]
+    fn versions_are_strict_both_ways() {
+        let p = Program { defs: vec![func("f", "x", Expr::Var("x".into()))] };
+        let c = &by_name(&p)["f"];
+        let dec = |bytes: &[u8], locals: &[String]| decode(Form::new(bytes, None), "f", locals, &mut |_| String::new());
+        let mut as_v2 = c.canonical.clone();
+        as_v2[4] = 2;
+        assert!(dec(&as_v2, &c.local_names).unwrap_err().contains("not canonical"));
+        // `test t = let b: Bytes = ... ` style: a version 2 type inside a version 1 form.
+        let mut v1 = single_form(&[2, E_LET, 1, T_BYTES, E_UNIT, E_UNIT], 1);
+        assert!(dec(&v1, &["b".into()]).unwrap_err().contains("version 2 construct"));
+        v1[4] = 2;
+        assert!(dec(&v1, &["b".into()]).is_ok());
+        v1[4] = 3;
+        assert!(dec(&v1, &["b".into()]).unwrap_err().contains("unsupported"));
     }
 
     #[test]

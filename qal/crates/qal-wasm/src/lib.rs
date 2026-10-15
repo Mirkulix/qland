@@ -267,6 +267,9 @@ fn walk(e: &TExpr, fns: &mut Vec<usize>, builtins: &mut BTreeSet<Builtin>) {
     match &e.kind {
         TKind::Int(_) | TKind::Float(_) | TKind::Bool(_) | TKind::Str(_) | TKind::Unit | TKind::Local(_) => {}
         TKind::FnRef(i) => fns.push(*i),
+        TKind::Lambda(l) => walk(&l.body, fns, builtins),
+        // Checked programs are monomorphic; code generation reports a generic node as a bug.
+        TKind::CallG(..) | TKind::FnRefG(..) => {}
         TKind::Un(_, x, _) | TKind::Field(x, _) => walk(x, fns, builtins),
         TKind::Bin(_, l, r, _) | TKind::Let(_, l, r) => {
             walk(l, fns, builtins);
