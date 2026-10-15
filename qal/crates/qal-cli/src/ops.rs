@@ -86,6 +86,9 @@ pub struct Output {
     pub exported: Option<Exported>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub imported: Option<qal_store::Imported>,
+    /// Hash of the standard library package this write imported first (it was new to the project).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub std_imported: Option<String>,
     /// The results of `request`, one per request, in order.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub responses: Option<Vec<RequestResult>>,
@@ -368,12 +371,50 @@ impl Ctx {
     }
 }
 
-/// Creates `<dir>/.qal/store.db` (idempotent).
-pub fn init(dir: &Path) -> Reply {
-    match Store::init(dir) {
-        Ok(s) => Reply::new(Output { ok: Some(Value::Bool(true)), store: Some(s.path().display().to_string()), ..Output::default() }, 0),
+/// Creates `<dir>/.qal/store.db` (idempotent) and imports the embedded standard library into it.
+/// `std`: the store of the std project instead (`meta.role = 'std'`, only `std.` names, no
+/// automatic import); a new one is filled from the embedded package with its recorded agents.
+pub fn init(dir: &Path, std: bool) -> Reply {
+    let opened = if std {
+        Store::init_std(dir).and_then(|mut s| {
+            let fresh = s.query(&Query::default())?.is_empty() && s.meta(qal_store::package::META_STD_PACKAGE)?.is_none();
+            let imported = if fresh { proving(|v| s.import_verified(crate::STD_PACKAGE, v)).0?.hash } else { String::new() };
+            Ok((s, (!imported.is_empty()).then_some(imported)))
+        })
+    } else {
+        Store::init(dir).and_then(|mut s| {
+            let imported = with_std(&mut s)?;
+            Ok((s, imported))
+        })
+    };
+    match opened {
+        Ok((s, std_imported)) => Reply::new(Output { ok: Some(Value::Bool(true)), store: Some(s.path().display().to_string()), std_imported, ..Output::default() }, 0),
         Err(d) => Reply::diagnostics(d),
     }
+}
+
+/// Imports the embedded standard library into the project's store if it does not have this
+/// version yet (spec Phase 3 §4.3): before every write, in its own transaction, never in the std
+/// project's store. Returns the package hash if it imported. Its contracts are proven as by any
+/// import; the proof reports are not part of the write's result.
+fn with_std(store: &mut Store) -> Result<Option<String>, Vec<Diagnostic>> {
+    let (result, _) = proving(|v| store.ensure_std(crate::STD_PACKAGE, Some(v)));
+    match result {
+        Ok(imported) => Ok(imported.map(|i| i.hash)),
+        Err(mut d) => {
+            for x in &mut d {
+                x.hints.push("the standard library of this qal could not be imported into the project first, so nothing was changed".into());
+            }
+            Err(d)
+        }
+    }
+}
+
+/// The store for a write (`create`: make it if missing), with the standard library imported.
+fn open_for_write(ctx: &Ctx, create: bool) -> Result<(Store, Option<String>), Vec<Diagnostic>> {
+    let mut store = ctx.open_store(create)?;
+    let imported = with_std(&mut store)?;
+    Ok((store, imported))
 }
 
 /// Parses and checks text without storing anything.
@@ -388,11 +429,15 @@ pub fn check(src: &str) -> Reply {
 /// with a refuted contract (its `ens`, or the `req` of a function it calls) is not stored; refuted
 /// call sites in tests are reported (the test fails when run) but do not stop the definition.
 pub fn define(ctx: &Ctx, src: &str, agent: &str) -> Reply {
-    let (result, reports) = proving(|verify| ctx.open_store(true).and_then(|mut s| s.define_verified(src, agent, verify)));
+    let (mut store, std_imported) = match open_for_write(ctx, true) {
+        Ok(s) => s,
+        Err(d) => return Reply::diagnostics(d),
+    };
+    let (result, reports) = proving(|verify| store.define_verified(src, agent, verify));
     match result {
         Ok(d) => {
             let reports = current_reports(&d, reports);
-            let mut out = Output { defined: Some(d), ..Output::default() };
+            let mut out = Output { defined: Some(d), std_imported, ..Output::default() };
             out.set_proofs(reports);
             Reply::new(out, 0)
         }
@@ -626,8 +671,8 @@ pub fn query(ctx: &Ctx, q: &Query) -> Reply {
 }
 
 pub fn rename(ctx: &Ctx, old: &str, new: &str, agent: &str) -> Reply {
-    match ctx.open().and_then(|mut s| s.rename(old, new, agent)) {
-        Ok(r) => Reply::new(Output { renamed: Some(r), ..Output::default() }, 0),
+    match open_for_write(ctx, false).and_then(|(mut s, std_imported)| Ok((s.rename(old, new, agent)?, std_imported))) {
+        Ok((r, std_imported)) => Reply::new(Output { renamed: Some(r), std_imported, ..Output::default() }, 0),
         Err(d) => Reply::diagnostics(d),
     }
 }
@@ -903,11 +948,15 @@ pub fn export(ctx: &Ctx, prefix: &str, out: &Path, name: Option<&str>) -> Reply 
 /// Imports a package file into the store (atomically; every hash is checked and the contracts are
 /// proven as by `define`: a refuted one rejects the import).
 pub fn import(ctx: &Ctx, file: &str) -> Reply {
-    let (result, reports) = proving(|verify| ctx.open_store(true).and_then(|mut s| s.import_verified(file, verify)));
+    let (mut store, std_imported) = match open_for_write(ctx, true) {
+        Ok(s) => s,
+        Err(d) => return Reply::diagnostics(d),
+    };
+    let (result, reports) = proving(|verify| store.import_verified(file, verify));
     match result {
         Ok(i) => {
             let reports = current_reports(&i.defined, reports);
-            let mut out = Output { imported: Some(i), ..Output::default() };
+            let mut out = Output { imported: Some(i), std_imported, ..Output::default() };
             out.set_proofs(reports);
             Reply::new(out, 0)
         }

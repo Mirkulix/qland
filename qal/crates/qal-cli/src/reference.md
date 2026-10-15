@@ -64,6 +64,8 @@ Services (prelude types exist in every program; their names and variants are res
     SqlValue = SqlNull | SqlInt(Int) | SqlFloat(Float) | SqlText(Str)  DbRows = { columns: List[Str], rows: List[List[SqlValue]] }
     DbError = DbConstraint(Str) | DbSql(Str) | DbBusy | DbFull | DbTooLarge. One transaction per execution, committed only for status 200-399 (qal_call: no error, qal_run: exit 0).
   http(call) -> Result[HttpResponse, NetError] !net  NetError = NetDenied(Str) | NetInvalid(Str) | NetConnect(Str) | NetTimeout | NetTooLarge; redirects are not followed.
-  Grant "db:mem" (fresh in-memory database), "db" or "db:<name>" (.qal/db/<name>.sqlite), "net:<host>[:port]". Library: qal_query name "std.".
+  Grant "db:mem" (fresh in-memory database), "db" or "db:<name>" (.qal/db/<name>.sqlite), "net:<host>[:port]".
+Standard library: `std.<module>.<name>` is one name (fn std.json.parse, type std.json.Json, std.json.Str("a"), pattern std.json.Int(n), std.route.Route[A]).
+  It is read-only in a project (defining or renaming a `std.` name is E0240) and imported automatically; list it with qal_query name "std.".
 Store rules: defining an existing name replaces it. Same signature: everything using it is relinked and re-checked automatically. Changed signature: rejected (`signature_change`, lists `dependents`) unless the same call also redefines those dependents. A name keeps its kind (fn, test, type). References bind to names: qal_rename changes no hash and users follow the new name. Two names can hold the identical definition, but one definition cannot refer to both (E0404 `alias_reference`): use one name.
 Workflow: qal_define -> qal_test -> qal_run (entry point; grant effects with allow: ["io"], "fs:<dir>" grants read AND write of all non-hidden files under that project dir, e.g. Cargo.toml: grant the narrowest dir) or qal_call (any fn, JSON args). qal_prove shows the proof status. Read the codebase with qal_query and qal_view.

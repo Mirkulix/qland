@@ -24,9 +24,18 @@ struct Client {
 impl Client {
     /// A server on a fresh, empty project directory.
     fn start() -> Client {
+        Client::start_at(Client::fresh_root())
+    }
+
+    fn fresh_root() -> PathBuf {
         let root = std::env::temp_dir().join(format!("qal-mcp-test-{}-{}", std::process::id(), NEXT.fetch_add(1, Ordering::SeqCst)));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
+        root
+    }
+
+    /// A server on the project directory `root`.
+    fn start_at(root: PathBuf) -> Client {
         let mut child = Command::new(env!("CARGO_BIN_EXE_qal"))
             .args(["mcp", "--root"])
             .arg(&root)
@@ -122,7 +131,8 @@ fn handshake_lists_the_tools_with_the_language_reference() {
     let reference = tools[0]["description"].as_str().unwrap();
     assert!(reference.contains("QAL language reference") && reference.contains("alias_reference") && reference.contains("signature_change"));
     // "At most one page": a bounded size.
-    // Phase 2 (generics, closures, maps, bytes, proofs) and Phase 3a (a "Services" section of 12 lines) add to it.
+    // Phase 2 (generics, closures, maps, bytes, proofs), Phase 3a (a "Services" section of 12 lines)
+    // and Phase 3b (two lines on `std.` names) add to it.
     assert!(qal_cli::mcp::REFERENCE.lines().count() <= 72 && qal_cli::mcp::REFERENCE.len() <= 9500, "{} lines, {} bytes", qal_cli::mcp::REFERENCE.lines().count(), qal_cli::mcp::REFERENCE.len());
     // An unknown version gets the newest legacy one.
     let r = c.request("initialize", json!({"protocolVersion": "1999-01-01", "capabilities": {}, "clientInfo": {"name": "x", "version": "1"}}));
@@ -599,5 +609,48 @@ fn agents_test_services_with_qal_request() {
     for needle in ["fn handle(rq: HttpRequest) -> HttpResponse", "string literal with `?` placeholders", "committed only for status 200-399", "\"db:mem\"", "qal_query name \"std.\""] {
         assert!(reference.contains(needle), "{needle}");
     }
+    assert_eq!(c.finish(), Some(0));
+}
+
+#[test]
+fn the_std_project_is_its_own_mcp_root() {
+    // `sh qal/mcp.sh std`: the root is the std project, whose store `qal init --std` made.
+    let root = Client::fresh_root();
+    let out = Command::new(env!("CARGO_BIN_EXE_qal")).arg("init").arg("--std").current_dir(&root).output().unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stdout));
+    let mut c = Client::start_at(root);
+    c.initialize();
+    let src = "type std.json.Json = std.json.Null | std.json.Int(Int)\n\
+               fn std.json.int(n: Int) -> std.json.Json = std.json.Int(n)\n\
+               test std.json.t_int = match std.json.int(1) { std.json.Int(n) => n == 1, std.json.Null => false }";
+    let (err, v) = c.call("qal_define", json!({"source": src, "agent": "std-json-1"}));
+    assert!(!err && v.get("std_imported").is_none(), "{v}");
+    let (err, v) = c.call("qal_define", json!({"source": "fn helper() -> Int = 1"}));
+    assert!(err && v["diagnostics"][0]["code"] == "E0240", "{v}");
+    let (_, v) = c.call("qal_query", json!({"name": "std.json."}));
+    let names: Vec<&str> = v["results"].as_array().unwrap().iter().map(|e| e["name"].as_str().unwrap()).collect();
+    assert_eq!(names, ["std.json.Json", "std.json.int", "std.json.t_int"]);
+    let (_, v) = c.call("qal_history", json!({"name": "std.json.int"}));
+    assert_eq!(v["history"][0]["agent"], "std-json-1");
+    let (err, v) = c.call("qal_test", json!({"names": ["std.json.t_int"]}));
+    assert!(!err && v["passed"] == 1, "{v}");
+    let (_, v) = c.call("qal_view", json!({"names": ["std.json.int"]}));
+    assert_eq!(v["views"][0]["text"], "fn std.json.int(n: Int) -> std.json.Json\n= std.json.Int(n)");
+    assert_eq!(c.finish(), Some(0));
+}
+
+#[test]
+fn a_projects_first_write_imports_the_std_package() {
+    let mut c = Client::start();
+    c.initialize();
+    let std_hash = qal_store::package::parse(qal_cli::STD_PACKAGE).unwrap().hash;
+    let (err, v) = c.call("qal_define", json!({"source": "fn f() -> Int = 1"}));
+    assert!(!err && v["std_imported"] == std_hash.as_str(), "{v}");
+    let (err, v) = c.call("qal_define", json!({"source": "fn g() -> Int = 2"}));
+    assert!(!err && v.get("std_imported").is_none(), "{v}");
+    let (err, v) = c.call("qal_define", json!({"source": "fn std.json.parse(s: Str) -> Int = 1"}));
+    assert!(err && v["diagnostics"][0]["code"] == "E0240" && v["diagnostics"][0]["kind"] == "reserved_name", "{v}");
+    let (err, v) = c.call("qal_rename", json!({"old": "g", "new": "std.json.g"}));
+    assert!(err && v["diagnostics"][0]["code"] == "E0240", "{v}");
     assert_eq!(c.finish(), Some(0));
 }

@@ -5,7 +5,11 @@
 //!   qal check <file>                                 -> {"ok":true} | {"diagnostics":[...]}
 //!   qal fmt <file>                                   -> canonical text
 //! The project's store (`.qal/store.db` in the current directory or a parent):
-//!   qal init                                         -> {"ok":true,"store":"<path>"}
+//!   qal init [--std]                                 -> {"ok":true,"store":"<path>","std_imported":"<hash>"?}
+//!                                                       (imports the embedded std package; `--std`: the std project's
+//!                                                       store, which defines only `std.` names and imports nothing later)
+//! Every write (define, rename, import) first imports the embedded std package if the project lacks this
+//! version (`std_imported` in its result); reads never write.
 //!   qal define <file> [--agent <name>]               -> {"defined":[{name,kind,hash,status,old_hash?}],"proofs":[...]?} | {"diagnostics":[...]}
 //!                                                       (a function with a refuted contract is not stored: E0801)
 //!   qal view <name|#hash>...                         -> {"views":[{name,kind,hash,signature,effects,text,deps}]}
@@ -53,7 +57,7 @@ use std::process::ExitCode;
 use std::sync::Arc;
 
 const USAGE: &str = "usage: qal <check|fmt> <file>\n       \
-                     qal init | define <file> [--agent <name>] | view <name>... | rename <old> <new> [--agent <name>] | history <name> | build <name>\n       \
+                     qal init [--std] | define <file> [--agent <name>] | view <name>... | rename <old> <new> [--agent <name>] | history <name> | build <name>\n       \
                      qal export <prefix> --out <file> [--name <pkg>] | import <file>\n       \
                      qal query [--name <prefix>] [--type <pattern>] [--uses <name>]\n       \
                      qal call <file> [--allow <spec>] <fn> [args...] | call <fn> [--allow <spec>] [args...]\n       \
@@ -141,7 +145,18 @@ fn file_command(cmd: &str, args: &[String]) -> ExitCode {
     }
 }
 
+fn init(std: bool) -> ExitCode {
+    match std::env::current_dir() {
+        Ok(dir) => emit(ops::init(&dir, std)),
+        Err(e) => bad_usage(&format!("no current directory: {e}")),
+    }
+}
+
 fn store_command(cmd: &str, args: &[String]) -> ExitCode {
+    // `--std` is a flag (the option parser only knows options with values).
+    if cmd == "init" && matches!(args, [flag] if flag == "--std") {
+        return init(true);
+    }
     let options: &[&str] = match cmd {
         "define" | "rename" => &["agent"],
         "query" => &["name", "type", "uses"],
@@ -156,10 +171,7 @@ fn store_command(cmd: &str, args: &[String]) -> ExitCode {
     let agent = s.one("agent").unwrap_or("cli");
     let targets = s.targets.as_slice();
     match (cmd, targets) {
-        ("init", []) => match std::env::current_dir() {
-            Ok(dir) => emit(ops::init(&dir)),
-            Err(e) => bad_usage(&format!("no current directory: {e}")),
-        },
+        ("init", []) => init(false),
         ("define", [file]) => {
             let src = match read(file) {
                 Ok(s) => s,

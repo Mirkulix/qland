@@ -590,10 +590,12 @@ fn packages_round_trip_between_projects() {
     }
     assert_eq!(qal_json_in(&a, &["define", &example("math.qal")]).0, 0);
     let (code, v) = qal_json_in(&a, &["export", "", "--out", "out/math.qalpkg"]);
-    assert_eq!((code, v["exported"]["package"].as_str(), v["exported"]["defs"].as_u64()), (0, Some("math"), Some(8)));
+    // The empty prefix also exports the standard library imported into the project.
+    let n = 8 + std_defs().len();
+    assert_eq!((code, v["exported"]["package"].as_str(), v["exported"]["defs"].as_u64()), (0, Some("math"), Some(n as u64)));
     let file = a.join("out/math.qalpkg");
     let (code, v) = qal_json_in(&b, &["import", file.to_str().unwrap()]);
-    assert_eq!((code, v["imported"]["defined"].as_array().map(|d| d.len())), (0, Some(8)), "{v}");
+    assert_eq!((code, v["imported"]["defined"].as_array().map(|d| d.len())), (0, Some(n)), "{v}");
     let (_, qa) = qal_json_in(&a, &["query"]);
     let (_, qb) = qal_json_in(&b, &["query"]);
     assert_eq!(qa, qb, "identical names and hashes");
@@ -602,4 +604,138 @@ fn packages_round_trip_between_projects() {
     assert_eq!((code, v["diagnostics"][0]["code"].as_str()), (1, Some("E0243")));
     let out = Command::new(env!("CARGO_BIN_EXE_qal")).current_dir(&a).args(["export", "x"]).output().unwrap();
     assert_eq!(out.status.code(), Some(2), "--out is required");
+}
+
+// ---------------------------------------------------------------------------------------------
+// Phase 3b: the standard library namespace and package.
+
+/// The `# def` lines of the embedded (checked-in) std package.
+fn std_defs() -> Vec<qal_store::package::PackageDef> {
+    qal_store::package::parse(qal_cli::STD_PACKAGE).unwrap().defs
+}
+
+fn std_hash() -> String {
+    qal_store::package::parse(qal_cli::STD_PACKAGE).unwrap().hash
+}
+
+fn meta(dir: &std::path::Path, key: &str) -> Option<String> {
+    qal_store::Store::open(&dir.join(".qal/store.db")).unwrap().meta(key).unwrap()
+}
+
+#[test]
+fn the_checked_in_std_package_has_agent_provenance() {
+    // Spec Phase 3 §4.4 step 5: every std definition was written by an agent through MCP, never by
+    // the CLI, and the package says who.
+    let on_disk = std::fs::read_to_string(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../std/std.qalpkg")).unwrap();
+    assert_eq!(on_disk, qal_cli::STD_PACKAGE, "the binary embeds the checked-in file");
+    let pkg = qal_store::package::parse(qal_cli::STD_PACKAGE).unwrap();
+    assert_eq!(pkg.name, "std");
+    for d in &pkg.defs {
+        assert!(!d.agent.trim().is_empty() && d.agent != "cli" && d.agent != "unknown", "`{}` has agent `{}`", d.name, d.agent);
+        assert!(qal_text::lexer::is_std_name(&d.name), "`{}` is not a std. name", d.name);
+    }
+    // It imports into a fresh project with exactly the recorded hashes.
+    let dir = project("std-fresh");
+    let mut s = qal_store::Store::init(&dir).unwrap();
+    let i = s.import(qal_cli::STD_PACKAGE).unwrap();
+    assert_eq!(i.defined.len(), pkg.defs.len());
+    let stored: std::collections::BTreeMap<String, String> = s.query(&qal_store::Query::default()).unwrap().into_iter().map(|e| (e.name, e.hash)).collect();
+    for d in &pkg.defs {
+        assert_eq!(stored.get(&d.name), Some(&d.hash), "{}", d.name);
+    }
+}
+
+#[test]
+fn init_and_every_write_import_the_std_package_but_reads_do_not() {
+    let dir = project("std-auto");
+    let (code, v) = qal_in(&dir, &["init"]);
+    assert_eq!((code, v["std_imported"].as_str()), (0, Some(std_hash().as_str())), "{v}");
+    assert_eq!(meta(&dir, "std_package"), Some(std_hash()));
+    let (_, v) = qal_in(&dir, &["init"]);
+    assert!(v.get("std_imported").is_none(), "already there: {v}");
+    // A store made without `qal init` (e.g. by an older qal): reads leave it alone, writes import.
+    for (tag, op) in [("define", &["define", "f.qal"][..]), ("rename", &["rename", "f", "g"][..]), ("import", &["import", "p.qalpkg"][..])] {
+        let dir = project(&format!("std-auto-{tag}"));
+        let mut s = qal_store::Store::init(&dir).unwrap();
+        s.define("fn f() -> Int = 1", "test").unwrap();
+        std::fs::write(dir.join("p.qalpkg"), s.export("f", "p").unwrap().file).unwrap();
+        drop(s);
+        write(&dir, "f.qal", "fn f() -> Int = 2");
+        for read in [&["view", "f"][..], &["query"][..], &["history", "f"][..], &["test"][..]] {
+            assert_eq!(qal_in(&dir, read).0, 0, "{read:?}");
+        }
+        assert_eq!(meta(&dir, "std_package"), None, "reads never write");
+        let (code, v) = qal_in(&dir, op);
+        assert_eq!((code, v["std_imported"].as_str()), (0, Some(std_hash().as_str())), "{tag}: {v}");
+        assert_eq!(meta(&dir, "std_package"), Some(std_hash()), "{tag}");
+    }
+}
+
+#[test]
+fn std_names_are_read_only_in_projects() {
+    let dir = project("std-readonly");
+    qal_in(&dir, &["init"]);
+    let f = write(&dir, "s.qal", "fn std.json.parse(s: Str) -> Int = 1");
+    let (code, v) = qal_in(&dir, &["define", &f]);
+    assert_eq!((code, v["diagnostics"][0]["code"].as_str(), v["diagnostics"][0]["kind"].as_str()), (1, Some("E0240"), Some("reserved_name")), "{v}");
+    let f = write(&dir, "p.qal", "type HttpRequest = { a: Int }");
+    assert_eq!(qal_in(&dir, &["define", &f]).1["diagnostics"][0]["code"], "E0240");
+    let f = write(&dir, "g.qal", "fn g() -> Int = 1");
+    assert_eq!(qal_in(&dir, &["define", &f]).0, 0);
+    let (code, v) = qal_in(&dir, &["rename", "g", "std.json.g"]);
+    assert_eq!((code, v["diagnostics"][0]["code"].as_str()), (1, Some("E0240")), "{v}");
+}
+
+#[test]
+fn the_std_project_store_defines_only_std_names_and_exports_the_package() {
+    let dir = project("std-project");
+    // A new std store is filled from the embedded package (with its recorded agents).
+    let (code, v) = qal_in(&dir, &["init", "--std"]);
+    assert_eq!((code, v["std_imported"].as_str()), (0, Some(std_hash().as_str())), "{v}");
+    assert_eq!(meta(&dir, "role").as_deref(), Some("std"));
+    let (_, v) = qal_in(&dir, &["init", "--std"]);
+    assert!(v.get("std_imported").is_none(), "only a new std store is filled: {v}");
+    let f = write(&dir, "a.qal", "type std.a.T = std.a.One | std.a.Two(Int)\nfn std.a.f(t: std.a.T) -> Int = match t { std.a.One => 1, std.a.Two(n) => n }\ntest std.a.t = std.a.f(std.a.Two(2)) == 2\nfn std.a.inc(x: Int) -> Int = x + 1");
+    let (code, v) = qal_in(&dir, &["define", &f, "--agent", "std-a-1"]);
+    assert_eq!(code, 0, "{v}");
+    assert!(v.get("std_imported").is_none(), "no automatic import in the std project: {v}");
+    let f = write(&dir, "b.qal", "fn helper() -> Int = 1");
+    let (code, v) = qal_in(&dir, &["define", &f]);
+    assert_eq!((code, v["diagnostics"][0]["code"].as_str()), (1, Some("E0240")), "{v}");
+    // Qualified names are store names, not files, on the command line.
+    let (code, v) = qal_in(&dir, &["view", "std.a.f"]);
+    assert_eq!((code, v["views"][0]["name"].as_str()), (0, Some("std.a.f")), "{v}");
+    let (code, v) = qal_in(&dir, &["test", "std.a.t"]);
+    assert_eq!((code, v["passed"].as_u64()), (0, Some(1)), "{v}");
+    let (code, v) = qal_in(&dir, &["call", "std.a.inc", "2"]);
+    assert_eq!((code, &v["ok"]), (0, &json!(3)), "{v}");
+    let (code, v) = qal_in(&dir, &["export", "std.", "--out", "std.qalpkg"]);
+    assert_eq!((code, v["exported"]["package"].as_str(), v["exported"]["defs"].as_u64()), (0, Some("std"), Some(4)), "{v}");
+    let file = std::fs::read_to_string(dir.join("std.qalpkg")).unwrap();
+    assert!(file.lines().filter(|l| l.starts_with("# def ")).all(|l| l.ends_with(" std-a-1")), "{file}");
+    // A project importing that package gets the same hashes and cannot change them.
+    let user = project("std-user");
+    qal_in(&user, &["init"]);
+    let (code, v) = qal_in(&user, &["import", dir.join("std.qalpkg").to_str().unwrap()]);
+    assert_eq!(code, 0, "{v}");
+    assert_eq!(qal_in(&user, &["view", "std.a.f"]).1["views"][0]["hash"], qal_in(&dir, &["view", "std.a.f"]).1["views"][0]["hash"]);
+    // `--std` on an ordinary project with code is refused.
+    let f = write(&user, "u.qal", "fn u() -> Int = std.a.f(std.a.One)");
+    assert_eq!(qal_in(&user, &["define", &f]).0, 0);
+    let (code, v) = qal_in(&user, &["init", "--std"]);
+    assert_eq!((code, v["diagnostics"][0]["kind"].as_str()), (2, Some("store_error")), "{v}");
+}
+
+#[test]
+fn the_std_launcher_and_registration_exist() {
+    let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    let script = std::fs::read_to_string(repo.join("qal/mcp.sh")).unwrap();
+    assert!(script.contains("std)") && script.contains("init --std") && script.contains("$here/std"), "{script}");
+    let mcp: Value = serde_json::from_str(&std::fs::read_to_string(repo.join(".mcp.json")).unwrap()).unwrap();
+    assert_eq!(mcp["mcpServers"]["qal-std"]["args"], json!(["qal/mcp.sh", "std"]));
+    assert_eq!(std::fs::read_to_string(repo.join("qal/std/.gitignore")).unwrap().lines().last(), Some(".qal/"));
+    let r = qal_cli::mcp::REFERENCE;
+    for needle in ["`std.<module>.<name>` is one name", "std.json.Str(\"a\")", "read-only in a project", "E0240", "imported automatically"] {
+        assert!(r.contains(needle), "{needle}");
+    }
 }

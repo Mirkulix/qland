@@ -4,8 +4,9 @@
 pub mod mcp;
 pub mod ops;
 
-/// The standard library package (spec Phase 3 §4.3), embedded in the binary. Phase 3a ships it
-/// empty (headers only); Phase 3b fills it and imports it into projects.
+/// The standard library package (spec Phase 3 §4.3), embedded in the binary: `qal init` and every
+/// write to a project store import it when the project does not have this version yet
+/// (`meta.std_package`); the std project's own store (`qal init --std`) never does.
 pub const STD_PACKAGE: &str = include_str!("../../../std/std.qalpkg");
 
 use qal_core::ast::{Program, Type};
@@ -36,9 +37,10 @@ pub fn load_program(program: Program) -> Result<Loaded, Vec<Diagnostic>> {
 }
 
 /// A command's target is a source file if it ends in `.qal` or contains a path separator
-/// (`./foo`, `dir/foo`), otherwise a name in the store (names never contain `.` or `/`).
+/// (`./foo`, `dir/foo`), otherwise a name in the store (names never contain `/`; the only names
+/// with `.` are `std.<module>.<name>`, which are names even if they end in `.qal`).
 pub fn is_file(target: &str) -> bool {
-    target.ends_with(".qal") || target.contains('/') || target.contains('\\')
+    !qal_text::lexer::is_std_name(target) && (target.ends_with(".qal") || target.contains('/') || target.contains('\\'))
 }
 
 /// The store of the project around the current directory.
