@@ -4,12 +4,12 @@
 //!
 //! Termination: a generic function may call the members of its own recursive group only with plain
 //! type parameters (`polymorphic_recursion` rejects the rest), so every chain of instantiations is
-//! finite. The total number of instances, the size of type arguments and the expression nodes copied
-//! into instances are capped as well ([`MAX_INSTANCES`], [`MAX_TYPE_SIZE`], [`MAX_INSTANCE_NODES`]),
+//! finite. The total number of instances, the size and depth of type arguments and the expression nodes copied
+//! into instances are capped as well ([`MAX_INSTANCES`], [`MAX_TYPE_SIZE`], [`MAX_TYPE_DEPTH`], [`MAX_INSTANCE_NODES`]),
 //! which bounds the work for non-recursive nesting.
 
 use crate::infer::{children, contains_fn};
-use crate::unify::MAX_TYPE_SIZE;
+use crate::unify::{MAX_TYPE_DEPTH, MAX_TYPE_SIZE};
 use crate::MAX_INSTANCES;
 use qal_core::ast::{BinOp, Type, TypeBody};
 use qal_core::diag::Diagnostic;
@@ -35,6 +35,17 @@ fn show(targs: &[Type]) -> String {
     targs.iter().map(|t| t.to_string()).collect::<Vec<_>>().join(", ")
 }
 
+/// Nesting depth of `t` (called on types of at most `MAX_TYPE_SIZE` nodes).
+fn depth(t: &Type) -> usize {
+    1 + match t {
+        Type::List(x) | Type::Option(x) => depth(x),
+        Type::Result(a, b) | Type::Map(a, b) => depth(a).max(depth(b)),
+        Type::App(_, args) => args.iter().map(depth).max().unwrap_or(0),
+        Type::Fn(ps, r, _) => ps.iter().map(depth).max().unwrap_or(0).max(depth(r)),
+        _ => 0,
+    }
+}
+
 /// Rejects recursive calls of generic functions with type arguments other than plain type parameters.
 pub(crate) fn polymorphic_recursion(tp: &TProgram, diags: &mut Vec<Diagnostic>) {
     let n = tp.generics.len();
@@ -47,19 +58,11 @@ pub(crate) fn polymorphic_recursion(tp: &TProgram, diags: &mut Vec<Diagnostic>) 
             });
         }
     }
-    let mut reach = vec![vec![false; n]; n];
-    for (g, row) in reach.iter_mut().enumerate() {
-        let mut stack: Vec<usize> = calls[g].iter().map(|(h, _)| *h).collect();
-        while let Some(h) = stack.pop() {
-            if !row[h] {
-                row[h] = true;
-                stack.extend(calls[h].iter().map(|(k, _)| *k));
-            }
-        }
-    }
+    let succ: Vec<Vec<usize>> = calls.iter().map(|cs| cs.iter().map(|(h, _)| *h).filter(|h| *h < n).collect()).collect();
+    let comp = crate::scc(&succ);
     for (g, f) in tp.generics.iter().enumerate() {
         for (h, targs) in &calls[g] {
-            let same_group = *h == g || (reach[g][*h] && reach[*h][g]);
+            let same_group = comp.get(*h).is_some_and(|c| *c == comp[g]);
             if same_group && !targs.iter().all(|t| matches!(t, Type::Param(_))) {
                 diags.push(Diagnostic::polymorphic_recursion(&f.def.name, "", &tp.generics[*h].def.name, &show(targs)));
                 return;
@@ -107,7 +110,11 @@ impl Mono<'_> {
         let name = format!("{}[{}]", gf.def.name, show(targs));
         // Every copied node carries a substituted type: weigh the nodes by the type arguments' size.
         let size = self.sizes.get(g).copied().unwrap_or(0).saturating_mul(1 + targs.iter().map(Type::size).sum::<usize>());
-        if self.instances.len() >= MAX_INSTANCES || targs.iter().any(|t| t.size() > MAX_TYPE_SIZE as usize) || self.copied + size > MAX_INSTANCE_NODES {
+        // Inference keeps types within MAX_TYPE_DEPTH, but a chain of generic calls can nest type
+        // arguments further at every step (below the size limit); code generation keeps per-type
+        // helpers whose cost grows with the square of the depth.
+        let too_big = |t: &Type| t.size() > MAX_TYPE_SIZE as usize || depth(t) > MAX_TYPE_DEPTH as usize;
+        if self.instances.len() >= MAX_INSTANCES || targs.iter().any(too_big) || self.copied + size > MAX_INSTANCE_NODES {
             self.failed.get_or_insert((caller.to_string(), name));
             return 0;
         }

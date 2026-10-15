@@ -191,7 +191,17 @@ impl Subst {
     /// user generic type are invariant: `type Sink[T] = { put: fn(T) -> Unit }` uses `T` in a
     /// parameter position, so `Sink[fn() -> Unit]` must not pass as `Sink[fn() -> Unit !io]`.
     pub fn unify(&mut self, expected: &Type, found: &Type) -> bool {
+        self.unify_in(expected, found, false)
+    }
+
+    /// Unification visits every node of both types once: an invariant position is unified once in
+    /// `exact` mode (equal effect sets), not once in each direction, which would cost 2^depth for
+    /// nested type applications such as `B[B[B[Int]]]`.
+    fn unify_in(&mut self, expected: &Type, found: &Type, exact: bool) -> bool {
         let (a, b) = (self.resolve(expected), self.resolve(found));
+        if a == b && !Self::has_vars(&a) {
+            return true;
+        }
         match (&a, &b) {
             (Type::Var(x), Type::Var(y)) if x == y => true,
             (Type::Var(x), t) | (t, Type::Var(x)) => {
@@ -200,19 +210,30 @@ impl Subst {
                 }
                 self.bind(*x, t.clone())
             }
-            (Type::List(x), Type::List(y)) | (Type::Option(x), Type::Option(y)) => self.unify(x, y),
-            (Type::Result(a1, b1), Type::Result(a2, b2)) | (Type::Map(a1, b1), Type::Map(a2, b2)) => self.unify(a1, a2) && self.unify(b1, b2),
-            (Type::App(n1, x1), Type::App(n2, x2)) => {
-                n1 == n2 && x1.len() == x2.len() && x1.iter().zip(x2).all(|(a, b)| self.unify(a, b) && self.unify(b, a))
-            }
+            (Type::List(x), Type::List(y)) | (Type::Option(x), Type::Option(y)) => self.unify_in(x, y, exact),
+            (Type::Result(a1, b1), Type::Result(a2, b2)) | (Type::Map(a1, b1), Type::Map(a2, b2)) => self.unify_in(a1, a2, exact) && self.unify_in(b1, b2, exact),
+            (Type::App(n1, x1), Type::App(n2, x2)) => n1 == n2 && x1.len() == x2.len() && x1.iter().zip(x2).all(|(a, b)| self.unify_in(a, b, true)),
             (Type::Fn(p1, r1, e1), Type::Fn(p2, r2, e2)) => {
                 p1.len() == p2.len()
                     // Parameters are contravariant: effect subtyping flips.
-                    && p1.iter().zip(p2).all(|(x, y)| self.unify(y, x))
-                    && self.unify(r1, r2)
+                    && p1.iter().zip(p2).all(|(x, y)| self.unify_in(y, x, exact))
+                    && self.unify_in(r1, r2, exact)
                     && e2.iter().all(|e| e1.contains(e))
+                    && (!exact || e1.iter().all(|e| e2.contains(e)))
             }
             _ => a == b,
+        }
+    }
+
+    /// True if `t` (as written) mentions an inference variable.
+    fn has_vars(t: &Type) -> bool {
+        match t {
+            Type::Var(_) => true,
+            Type::List(x) | Type::Option(x) => Self::has_vars(x),
+            Type::Result(a, b) | Type::Map(a, b) => Self::has_vars(a) || Self::has_vars(b),
+            Type::App(_, args) => args.iter().any(Self::has_vars),
+            Type::Fn(ps, r, _) => ps.iter().any(Self::has_vars) || Self::has_vars(r),
+            _ => false,
         }
     }
 }

@@ -567,3 +567,75 @@ fn instances_at_large_types_are_bounded() {
     assert!(start.elapsed() < std::time::Duration::from_secs(10), "{:?}", start.elapsed());
     assert_eq!((d.len(), d[0].kind), (1, "instantiation_limit"), "{d:#?}");
 }
+
+/// `B[B[...B[Int]...]]` with `depth` applications.
+fn nested_boxes(depth: usize) -> String {
+    format!("{}Int{}", "B[".repeat(depth), "]".repeat(depth))
+}
+
+#[test]
+fn nested_type_applications_unify_in_linear_time() {
+    // Review finding C1: invariant arguments were unified once in each direction, 2^depth in all.
+    let t = nested_boxes(200);
+    let src = format!("type B[T] = {{ v: T }}\nfn f(x: {t}) -> {t} = x\nfn g(x: {t}) -> {t} = let y = f(x) in if true then y else f(y)");
+    let start = std::time::Instant::now();
+    assert_eq!(check_src(&src), vec![]);
+    assert!(start.elapsed() < std::time::Duration::from_secs(1), "took {:?}", start.elapsed());
+}
+
+#[test]
+fn deep_instance_type_arguments_are_rejected() {
+    // Review finding I1: each call wraps the type argument in 241 more levels; inference stays
+    // within 256 levels per definition, but the instances nest about 3 900 levels deep.
+    let mut src = format!("fn w[T](x: T) -> Option[{}T{}] = None\n", "List[".repeat(240), "]".repeat(240));
+    for i in 0..16 {
+        src += &format!("fn f{i}[T](x: T) -> Bool = f{}(w(x))\n", i + 1);
+    }
+    src += "fn f16[T](x: T) -> Bool = map_has(map_put(map_new(), x, 1), x) && x == x && compare(x, x) == 0\n";
+    src += "fn main(args: List[Str]) -> Int = if f0(1) && f0(\"s\") then 0 else 1";
+    let start = std::time::Instant::now();
+    let d = check_src(&src);
+    assert!(start.elapsed() < std::time::Duration::from_secs(2), "took {:?}", start.elapsed());
+    assert_eq!(d.len(), 1, "{d:#?}");
+    assert_eq!((d[0].code, d[0].kind), ("E0214", "instantiation_limit"));
+    // One wrapping level fits.
+    assert_eq!(check_src(&src.replace("fn f1[T](x: T) -> Bool = f2(w(x))", "fn f1[T](x: T) -> Bool = f16(x)")), vec![]);
+}
+
+#[test]
+fn long_chains_of_types_and_generic_functions_check_in_linear_time() {
+    // Review finding I2: n x n reachability matrices (690 MB for 24 000 types without generics).
+    let n = 24_000;
+    let mut types: String = (0..n).map(|i| format!("type U{i} = M{i}(U{})\n", i + 1)).collect();
+    types += &format!("type U{n} = Z(Int)\n");
+    let start = std::time::Instant::now();
+    assert_eq!(check_src(&types), vec![]);
+    let plain = start.elapsed();
+    // The same chain with a generic type at the end (so the irregularity check runs).
+    let generic = format!("{types}type G[T] = {{ v: T }}\n").replace(&format!("type U{n} = Z(Int)"), &format!("type U{n} = Z(G[Int])"));
+    let start = std::time::Instant::now();
+    assert_eq!(check_src(&generic), vec![]);
+    let with_generic = start.elapsed();
+    let m = 24_000;
+    let mut fns: String = (0..m).map(|i| format!("fn g{i}[T](x: T) -> T = g{}(x)\n", i + 1)).collect();
+    fns += &format!("fn g{m}[T](x: T) -> T = x\n");
+    let start = std::time::Instant::now();
+    assert_eq!(check_src(&fns), vec![]);
+    let generic_fns = start.elapsed();
+    let limit = std::time::Duration::from_secs(5);
+    assert!(plain + with_generic + generic_fns < limit, "{plain:?} {with_generic:?} {generic_fns:?}");
+}
+
+#[test]
+fn strongly_connected_components() {
+    // 0 -> 1 -> 2 -> 0, 2 -> 3, 3 -> 4 -> 3, 5 alone.
+    let c = crate::scc(&[vec![1], vec![2], vec![0, 3], vec![4], vec![3], vec![]]);
+    assert!(c[0] == c[1] && c[1] == c[2] && c[3] == c[4]);
+    assert!(c[0] != c[3] && c[5] != c[0] && c[5] != c[3]);
+    // A long chain and a long cycle: no recursion, so no stack overflow on a test thread.
+    let chain: Vec<Vec<usize>> = (0..200_000).map(|i| if i + 1 < 200_000 { vec![i + 1] } else { vec![] }).collect();
+    let c = crate::scc(&chain);
+    assert_eq!(c.iter().collect::<std::collections::HashSet<_>>().len(), 200_000);
+    let ring: Vec<Vec<usize>> = (0..200_000).map(|i| vec![(i + 1) % 200_000]).collect();
+    assert!(crate::scc(&ring).iter().all(|&x| x == 0));
+}

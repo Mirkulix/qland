@@ -51,6 +51,14 @@ pub(crate) struct Globals {
     pub fns: HashMap<String, (usize, Sig)>,
     /// User variant name -> (enum name, tag, payload types; `Type::Param` for the enum's parameters).
     pub variants: HashMap<String, (String, u32, Vec<Type>)>,
+    /// Type name -> index into `tp.types` (a linear search per lookup made checking quadratic).
+    pub type_index: HashMap<String, usize>,
+}
+
+impl Globals {
+    pub fn type_def(&self, name: &str) -> Option<&TypeDef> {
+        self.type_index.get(name).and_then(|&i| self.tp.types.get(i))
+    }
 }
 
 /// Checks a whole program. An empty result means the program may be compiled.
@@ -117,21 +125,21 @@ fn check_tparams(g: &Globals, def: &str, tps: &[String], diags: &mut Vec<Diagnos
         let path = format!("tparams[{i}]");
         if tps[..i].contains(tp) {
             diags.push(Diagnostic::duplicate_name(def, &path, tp));
-        } else if Type::BUILTIN_NAMES.contains(&tp.as_str()) || g.tp.type_def(tp).is_some() {
+        } else if Type::BUILTIN_NAMES.contains(&tp.as_str()) || g.type_def(tp).is_some() {
             diags.push(Diagnostic::duplicate_name(def, &path, tp).hint(format!("`{tp}` is already a type; choose another type parameter name")));
         }
     }
 }
 
 fn globals(p: &Program, diags: &mut Vec<Diagnostic>) -> Globals {
-    let mut g = Globals { tp: TProgram::default(), fns: HashMap::new(), variants: HashMap::new() };
+    let mut g = Globals { tp: TProgram::default(), fns: HashMap::new(), variants: HashMap::new(), type_index: HashMap::new() };
     for d in &p.defs {
         let Def::Type(t) = d else { continue };
         if Type::BUILTIN_NAMES.contains(&t.name.as_str()) {
             diags.push(Diagnostic::duplicate_name(&t.name, "", &t.name).hint(format!("`{}` is a built-in type", t.name)));
             continue;
         }
-        if g.tp.type_def(&t.name).is_some() {
+        if g.type_def(&t.name).is_some() {
             diags.push(Diagnostic::duplicate_name(&t.name, "", &t.name));
             continue;
         }
@@ -158,6 +166,7 @@ fn globals(p: &Program, diags: &mut Vec<Diagnostic>) -> Globals {
                 }
             }
         }
+        g.type_index.insert(t.name.clone(), g.tp.types.len());
         g.tp.types.push(t.clone());
     }
     for k in 0..g.tp.types.len() {
@@ -254,6 +263,10 @@ fn irregular_recursion(tp: &TProgram, diags: &mut Vec<Diagnostic>) {
             TypeBody::Enum(vs) => vs.iter().flat_map(|v| v.fields.clone()).collect(),
         }
     };
+    // Only a generic type can be applied irregularly.
+    if tp.types.iter().all(|d| d.params.is_empty()) {
+        return;
+    }
     let n = tp.types.len();
     let index: HashMap<&str, usize> = tp.types.iter().enumerate().map(|(i, d)| (d.name.as_str(), i)).collect();
     let mut edges: Vec<Vec<(usize, Type)>> = vec![Vec::new(); n];
@@ -264,20 +277,10 @@ fn irregular_recursion(tp: &TProgram, diags: &mut Vec<Diagnostic>) {
         }
         edges[i] = out.into_iter().filter_map(|(m, t)| index.get(m.as_str()).map(|&j| (j, t))).collect();
     }
-    // reach[i][j]: type j is reachable from type i.
-    let mut reach = vec![vec![false; n]; n];
-    for (i, row) in reach.iter_mut().enumerate() {
-        let mut stack: Vec<usize> = edges[i].iter().map(|(j, _)| *j).collect();
-        while let Some(j) = stack.pop() {
-            if !row[j] {
-                row[j] = true;
-                stack.extend(edges[j].iter().map(|(k, _)| *k));
-            }
-        }
-    }
+    let comp = scc(&edges.iter().map(|es| es.iter().map(|(j, _)| *j).collect()).collect::<Vec<_>>());
     for (i, d) in tp.types.iter().enumerate() {
         for (j, t) in &edges[i] {
-            let same_group = *j == i || (reach[i][*j] && reach[*j][i]);
+            let same_group = comp[*j] == comp[i];
             if let Type::App(_, args) = t {
                 if same_group && !args.iter().all(|a| matches!(a, Type::Param(_))) {
                     diags.push(Diagnostic::irregular_recursion(&d.name, "", &t.to_string()));
@@ -285,6 +288,60 @@ fn irregular_recursion(tp: &TProgram, diags: &mut Vec<Diagnostic>) {
             }
         }
     }
+}
+
+/// The strongly connected component of every node of a graph (`succ[i]`: the successors of node
+/// `i`, all `< succ.len()`), as a component number per node: iterative Tarjan, O(nodes + edges)
+/// time and no recursion, so long chains of definitions cannot overflow the stack.
+pub(crate) fn scc(succ: &[Vec<usize>]) -> Vec<usize> {
+    const NONE: usize = usize::MAX;
+    let n = succ.len();
+    let (mut index, mut low, mut comp) = (vec![NONE; n], vec![0; n], vec![NONE; n]);
+    let (mut on_stack, mut stack) = (vec![false; n], Vec::new());
+    let (mut next, mut comps) = (0, 0);
+    for root in 0..n {
+        if index[root] != NONE {
+            continue;
+        }
+        // (node, position of the next successor to visit)
+        let mut work = vec![(root, 0)];
+        index[root] = next;
+        low[root] = next;
+        next += 1;
+        stack.push(root);
+        on_stack[root] = true;
+        while let Some(&mut (v, ref mut k)) = work.last_mut() {
+            if let Some(&w) = succ[v].get(*k) {
+                *k += 1;
+                if index[w] == NONE {
+                    index[w] = next;
+                    low[w] = next;
+                    next += 1;
+                    stack.push(w);
+                    on_stack[w] = true;
+                    work.push((w, 0));
+                } else if on_stack[w] {
+                    low[v] = low[v].min(index[w]);
+                }
+                continue;
+            }
+            work.pop();
+            if let Some(&(u, _)) = work.last() {
+                low[u] = low[u].min(low[v]);
+            }
+            if low[v] == index[v] {
+                while let Some(w) = stack.pop() {
+                    on_stack[w] = false;
+                    comp[w] = comps;
+                    if w == v {
+                        break;
+                    }
+                }
+                comps += 1;
+            }
+        }
+    }
+    comp
 }
 
 /// Resolves a written type: type parameters (`tps`) become `Type::Param`, declared types must exist
@@ -300,7 +357,7 @@ fn resolve_inner(g: &Globals, t: &Type, tps: &[String], def: &str, path: &str, d
     let r = |t: &Type, diags: &mut Vec<Diagnostic>| resolve_inner(g, t, tps, def, path, diags);
     match t {
         Type::Named(n) | Type::Param(n) if tps.contains(n) => Type::Param(n.clone()),
-        Type::Named(n) => match g.tp.type_def(n) {
+        Type::Named(n) => match g.type_def(n) {
             Some(d) if d.params.is_empty() => t.clone(),
             Some(d) => {
                 diags.push(Diagnostic::arity(def, path, n, d.params.len(), 0).hint(format!("write `{n}[{}]`", vec!["..."; d.params.len()].join(", "))));
@@ -317,7 +374,7 @@ fn resolve_inner(g: &Globals, t: &Type, tps: &[String], def: &str, path: &str, d
         },
         Type::App(n, args) => {
             let args: Vec<Type> = args.iter().map(|a| r(a, diags)).collect();
-            match g.tp.type_def(n) {
+            match g.type_def(n) {
                 Some(d) if d.params.len() == args.len() => Type::App(n.clone(), args),
                 Some(d) => {
                     diags.push(Diagnostic::arity(def, path, n, d.params.len(), args.len()));

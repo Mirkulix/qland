@@ -262,7 +262,7 @@ impl<'a> Cx<'a> {
 
     /// The type of a declared type applied to fresh arguments, with its body instantiated.
     fn fresh_decl(&mut self, name: &str) -> Option<(Type, TypeBody)> {
-        let d = self.g.tp.type_def(name)?;
+        let d = self.g.type_def(name)?;
         if d.params.is_empty() {
             return Some((Type::Named(name.into()), d.body.clone()));
         }

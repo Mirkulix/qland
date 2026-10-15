@@ -220,7 +220,7 @@ impl Diagnostic {
 
     /// Monomorphisation produced too many instances or too large type arguments.
     pub fn instantiation_limit(def: &str, path: &str, instance: &str, max: usize) -> Self {
-        Diagnostic::new("E0214", "instantiation_limit", def, path, format!("instantiating `{instance}` exceeds the limit of {max} generic instances, the type size limit or the size limit of all instances"))
+        Diagnostic::new("E0214", "instantiation_limit", def, path, format!("instantiating `{instance}` exceeds the limit of {max} generic instances, the type size or depth limit or the size limit of all instances"))
             .hint("deeply nested generic calls multiply instances; use fewer distinct type arguments")
     }
 
