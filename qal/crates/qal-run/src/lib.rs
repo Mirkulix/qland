@@ -98,6 +98,9 @@ pub struct Outcome {
     pub stdout_bytes: usize,
 }
 
+/// Wasm call stack limit; hosts need a native stack larger than this.
+pub const WASM_STACK_BYTES: usize = 64 << 20;
+
 pub struct Runner {
     engine: Engine,
     module: Module,
@@ -123,6 +126,11 @@ impl Runner {
         // allocation. Phase 1 programs are bounded by fuel, not by speed.
         config.cranelift_opt_level(wasmtime::OptLevel::None);
         config.cranelift_regalloc_algorithm(wasmtime::RegallocAlgorithm::SinglePass);
+        // The unoptimized frames are large: allow ~20 000+ nested non-tail calls. Hosts must run
+        // guest code on a thread whose native stack is bigger than this (the CLI and the MCP
+        // worker use 256 MiB); deeper recursion reports `stack_overflow`.
+        config.max_wasm_stack(WASM_STACK_BYTES);
+        config.async_stack_size(WASM_STACK_BYTES); // only validated against the limit; calls are synchronous
         let engine = Engine::new(&config).map_err(|e| e.to_string())?;
         let module = Module::new(&engine, &meta.wasm).map_err(|e| e.to_string())?;
         let types = TProgram { types: meta.types.clone(), ..TProgram::default() };

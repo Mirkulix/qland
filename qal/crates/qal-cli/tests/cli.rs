@@ -420,3 +420,11 @@ fn a_closed_stdout_is_not_a_panic() {
     let status = Command::new(env!("CARGO_BIN_EXE_qal")).args(["fmt", &example("math.qal")]).stdout(writer).output().unwrap();
     assert_eq!(status.status.code(), Some(0));
 }
+
+#[test]
+fn deep_recursion_works_and_overflow_is_reported() {
+    let f = temp_file("recursion.qal", "fn deep(n: Int) -> Int = if n == 0 then 0 else 1 + deep(n - 1)\n");
+    assert_eq!(qal_json(&["call", &f, "deep", "10000"]), (0, json!({"ok": 10000, "stdout": ""})));
+    let (code, v) = qal_json(&["call", &f, "deep", "100000000"]);
+    assert_eq!((code, v["error"]["kind"].as_str()), (1, Some("stack_overflow")));
+}

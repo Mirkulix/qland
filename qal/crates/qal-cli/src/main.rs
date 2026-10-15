@@ -69,7 +69,14 @@ fn main() -> ExitCode {
     match cmd.as_str() {
         "check" | "fmt" => file_command(cmd, rest),
         "init" | "define" | "view" | "query" | "rename" | "history" | "build" => store_command(cmd, rest),
-        "call" | "test" | "run" => run_command(cmd, rest),
+        "call" | "test" | "run" => {
+            // Guest code needs more native stack than the main thread's 8 MiB (see `qal_run::WASM_STACK_BYTES`).
+            let (cmd, rest) = (cmd.clone(), rest.to_vec());
+            match std::thread::Builder::new().name("qal-run".into()).stack_size(256 << 20).spawn(move || run_command(&cmd, &rest)) {
+                Ok(h) => h.join().unwrap_or_else(|_| bad_usage("internal error: the run thread failed")),
+                Err(e) => bad_usage(&format!("cannot start the run thread: {e}")),
+            }
+        }
         "mcp" => mcp(rest),
         _ => usage(),
     }

@@ -124,6 +124,21 @@ fn deep_non_tail_recursion_reports_stack_overflow() {
     assert!(e.hints[0].contains("tail-recursive"));
 }
 
+/// Runs `f` on a thread with a large native stack, as the hosts do (CLI and MCP worker).
+fn on_big_stack<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T {
+    std::thread::Builder::new().stack_size(256 << 20).spawn(f).unwrap().join().unwrap()
+}
+
+#[test]
+fn recursion_depth_of_ten_thousand_works() {
+    let (ok, overflow) = on_big_stack(|| {
+        let r = runner("fn deep(n: Int) -> Int = if n == 0 then 0 else 1 + deep(n - 1)");
+        (r.call("deep", &[Value::Int(20_000)]), r.call("deep", &[Value::Int(100_000_000)]))
+    });
+    assert_eq!(ok, Ok(Value::Int(20_000)));
+    assert_eq!(overflow.unwrap_err().kind, "stack_overflow");
+}
+
 #[test]
 fn runs_tests_in_order() {
     let r = Runner::new(compile("test a = 1 == 1\ntest b = 1 == 2\ntest c = 1 / 0 == 0", Entry::Tests)).unwrap();
