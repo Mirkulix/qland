@@ -50,10 +50,7 @@ pub struct StructValue {
 
 impl StructValue {
     /// Create a new struct value, validating fields against the definition.
-    pub fn new(
-        def: &TypeDef,
-        field_values: HashMap<String, Value>,
-    ) -> Result<Self, VmError> {
+    pub fn new(def: &TypeDef, field_values: HashMap<String, Value>) -> Result<Self, VmError> {
         match def {
             TypeDef::Struct { name, fields } => {
                 // Check for unknown fields.
@@ -125,17 +122,11 @@ pub struct EnumValue {
 
 impl EnumValue {
     /// Create a new enum value, validating against the definition.
-    pub fn new(
-        def: &TypeDef,
-        variant: &str,
-        data: Option<Value>,
-    ) -> Result<Self, VmError> {
+    pub fn new(def: &TypeDef, variant: &str, data: Option<Value>) -> Result<Self, VmError> {
         match def {
             TypeDef::Enum { name, variants } => {
                 let vdef = variants.iter().find(|v| v.name == variant).ok_or_else(|| {
-                    VmError::TypeError(format!(
-                        "unknown variant `{variant}` on enum `{name}`"
-                    ))
+                    VmError::TypeError(format!("unknown variant `{variant}` on enum `{name}`"))
                 })?;
                 if vdef.has_data && data.is_none() {
                     return Err(VmError::TypeError(format!(
@@ -370,9 +361,10 @@ impl TypeRegistry {
         type_name: &str,
         field_values: HashMap<String, Value>,
     ) -> Result<StructValue, VmError> {
-        let def = self.types.get(type_name).ok_or_else(|| {
-            VmError::TypeError(format!("unknown type `{type_name}`"))
-        })?;
+        let def = self
+            .types
+            .get(type_name)
+            .ok_or_else(|| VmError::TypeError(format!("unknown type `{type_name}`")))?;
         StructValue::new(def, field_values)
     }
 
@@ -383,9 +375,10 @@ impl TypeRegistry {
         variant: &str,
         data: Option<Value>,
     ) -> Result<EnumValue, VmError> {
-        let def = self.types.get(type_name).ok_or_else(|| {
-            VmError::TypeError(format!("unknown type `{type_name}`"))
-        })?;
+        let def = self
+            .types
+            .get(type_name)
+            .ok_or_else(|| VmError::TypeError(format!("unknown type `{type_name}`")))?;
         EnumValue::new(def, variant, data)
     }
 
@@ -433,9 +426,18 @@ mod tests {
         reg.register_enum(
             "Color",
             vec![
-                EnumVariantDef { name: "Red".into(), has_data: false },
-                EnumVariantDef { name: "Green".into(), has_data: false },
-                EnumVariantDef { name: "Blue".into(), has_data: false },
+                EnumVariantDef {
+                    name: "Red".into(),
+                    has_data: false,
+                },
+                EnumVariantDef {
+                    name: "Green".into(),
+                    has_data: false,
+                },
+                EnumVariantDef {
+                    name: "Blue".into(),
+                    has_data: false,
+                },
             ],
         )
         .unwrap();
@@ -447,8 +449,14 @@ mod tests {
         reg.register_enum(
             "Option",
             vec![
-                EnumVariantDef { name: "Some".into(), has_data: true },
-                EnumVariantDef { name: "None".into(), has_data: false },
+                EnumVariantDef {
+                    name: "Some".into(),
+                    has_data: true,
+                },
+                EnumVariantDef {
+                    name: "None".into(),
+                    has_data: false,
+                },
             ],
         )
         .unwrap();

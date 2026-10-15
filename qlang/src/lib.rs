@@ -6,9 +6,9 @@
 //!
 //! Built on IGQK (Information-Geometric Quantum Compression) theory.
 
+pub use qlang_agent as agent;
 pub use qlang_core as core;
 pub use qlang_runtime as runtime;
-pub use qlang_agent as agent;
 
 /// C FFI — execute a QLANG graph via the runtime.
 ///
@@ -35,6 +35,16 @@ pub mod ffi_runtime {
     /// - `output_len`: length of the output buffer.
     ///
     /// Returns 0 on success, -1 on null/invalid args, -2 on execution error.
+    ///
+    /// # Safety
+    ///
+    /// - `graph` must be null or point to a valid `Graph` (e.g. from
+    ///   `qlang_graph_new`) with no concurrent mutable access during the call.
+    /// - `input_names`, `input_data` and `input_lens` must each point to at
+    ///   least `n_inputs` readable elements.
+    /// - Each name must be null or a valid NUL-terminated C string, and each
+    ///   data pointer must be null or point to `input_lens[i]` readable `f32`s.
+    /// - `output_data` must point to at least `output_len` writable `f32`s.
     #[unsafe(no_mangle)]
     pub unsafe extern "C" fn qlang_runtime_execute(
         graph: *mut Graph,
@@ -45,8 +55,11 @@ pub mod ffi_runtime {
         output_data: *mut f32,
         output_len: usize,
     ) -> i32 {
-        if graph.is_null() || input_names.is_null() || input_data.is_null()
-            || input_lens.is_null() || output_data.is_null()
+        if graph.is_null()
+            || input_names.is_null()
+            || input_data.is_null()
+            || input_lens.is_null()
+            || output_data.is_null()
         {
             return -1;
         }
@@ -82,7 +95,7 @@ pub mod ffi_runtime {
 
         // Write first output to buffer
         let mut written = 0usize;
-        for (_name, tensor) in &result.outputs {
+        for tensor in result.outputs.values() {
             if let Some(values) = tensor.as_f32_slice() {
                 for &v in &values {
                     if written >= output_len {

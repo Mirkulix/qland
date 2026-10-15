@@ -357,7 +357,10 @@ fn write_op(buf: &mut Vec<u8>, op: &Op) {
             buf.extend_from_slice(&(*n_heads as u32).to_le_bytes());
             buf.extend_from_slice(&(*d_model as u32).to_le_bytes());
         }
-        Op::Embedding { vocab_size, d_model } => {
+        Op::Embedding {
+            vocab_size,
+            d_model,
+        } => {
             buf.push(OP_EMBEDDING);
             buf.extend_from_slice(&(*vocab_size as u32).to_le_bytes());
             buf.extend_from_slice(&(*d_model as u32).to_le_bytes());
@@ -601,7 +604,10 @@ fn read_op(data: &[u8], pos: &mut usize) -> Result<Op, BinaryError> {
         OP_EMBEDDING => {
             let vocab_size = read_u32(data, pos)? as usize;
             let d_model = read_u32(data, pos)? as usize;
-            Ok(Op::Embedding { vocab_size, d_model })
+            Ok(Op::Embedding {
+                vocab_size,
+                d_model,
+            })
         }
         OP_RESIDUAL => Ok(Op::Residual),
         OP_GELU => Ok(Op::Gelu),
@@ -737,11 +743,7 @@ mod tests {
         let mut g = Graph::new("roundtrip-test");
         let inp = g.add_node(Op::Input { name: "x".into() }, vec![], vec![f32_vec(4)]);
         let relu = g.add_node(Op::Relu, vec![f32_vec(4)], vec![f32_vec(4)]);
-        let out = g.add_node(
-            Op::Output { name: "y".into() },
-            vec![f32_vec(4)],
-            vec![],
-        );
+        let out = g.add_node(Op::Output { name: "y".into() }, vec![f32_vec(4)], vec![]);
         g.add_edge(inp, 0, relu, 0, f32_vec(4));
         g.add_edge(relu, 0, out, 0, f32_vec(4));
 
@@ -784,8 +786,13 @@ mod tests {
             Op::Neg,
             Op::MatMul,
             Op::Transpose,
-            Op::Reshape { target_shape: vec![2, 3, 4] },
-            Op::Slice { start: vec![0, 1], end: vec![2, 3] },
+            Op::Reshape {
+                target_shape: vec![2, 3, 4],
+            },
+            Op::Slice {
+                start: vec![0, 1],
+                end: vec![2, 3],
+            },
             Op::Concat { axis: 1 },
             Op::ReduceSum { axis: Some(0) },
             Op::ReduceSum { axis: None },
@@ -796,7 +803,10 @@ mod tests {
             Op::Tanh,
             Op::Softmax { axis: 1 },
             Op::Superpose,
-            Op::Evolve { gamma: 0.01, dt: 0.001 },
+            Op::Evolve {
+                gamma: 0.01,
+                dt: 0.001,
+            },
             Op::Measure,
             Op::Entangle,
             Op::Collapse,
@@ -805,21 +815,43 @@ mod tests {
             Op::ToLowRank { rank: 16 },
             Op::ToSparse { sparsity: 0.9 },
             Op::FisherMetric,
-            Op::Project { manifold: Manifold::Ternary },
-            Op::Project { manifold: Manifold::LowRank { max_rank: 8 } },
-            Op::Project { manifold: Manifold::Sparse { max_nonzero: 100 } },
-            Op::Project { manifold: Manifold::Custom { name: "my_manifold".into() } },
+            Op::Project {
+                manifold: Manifold::Ternary,
+            },
+            Op::Project {
+                manifold: Manifold::LowRank { max_rank: 8 },
+            },
+            Op::Project {
+                manifold: Manifold::Sparse { max_nonzero: 100 },
+            },
+            Op::Project {
+                manifold: Manifold::Custom {
+                    name: "my_manifold".into(),
+                },
+            },
             Op::LayerNorm { eps: 1e-5 },
-            Op::Attention { n_heads: 8, d_model: 512 },
-            Op::Embedding { vocab_size: 50000, d_model: 768 },
+            Op::Attention {
+                n_heads: 8,
+                d_model: 512,
+            },
+            Op::Embedding {
+                vocab_size: 50000,
+                d_model: 768,
+            },
             Op::Residual,
             Op::Gelu,
             Op::Dropout { rate: 0.1 },
-            Op::OllamaGenerate { model: "llama3".into() },
-            Op::OllamaChat { model: "mistral".into() },
+            Op::OllamaGenerate {
+                model: "llama3".into(),
+            },
+            Op::OllamaChat {
+                model: "mistral".into(),
+            },
             Op::Cond,
             Op::Scan { n_iterations: 10 },
-            Op::SubGraph { graph_id: "sub1".into() },
+            Op::SubGraph {
+                graph_id: "sub1".into(),
+            },
         ];
 
         for (i, op) in ops.iter().enumerate() {
@@ -868,15 +900,15 @@ mod tests {
         if data.len() > 10 {
             data[8] ^= 0xFF;
         }
-        assert!(matches!(
-            from_binary(&data),
-            Err(BinaryError::HashMismatch)
-        ));
+        assert!(matches!(from_binary(&data), Err(BinaryError::HashMismatch)));
     }
 
     #[test]
     fn binary_too_short() {
-        assert!(matches!(from_binary(&[0x51, 0x4C]), Err(BinaryError::TooShort)));
+        assert!(matches!(
+            from_binary(&[0x51, 0x4C]),
+            Err(BinaryError::TooShort)
+        ));
     }
 
     #[test]
@@ -898,11 +930,7 @@ mod tests {
             vec![f32_mat(128, 64), f32_mat(64, 32)],
             vec![f32_mat(128, 32)],
         );
-        let relu = g.add_node(
-            Op::Relu,
-            vec![f32_mat(128, 32)],
-            vec![f32_mat(128, 32)],
-        );
+        let relu = g.add_node(Op::Relu, vec![f32_mat(128, 32)], vec![f32_mat(128, 32)]);
         let ln = g.add_node(
             Op::LayerNorm { eps: 1e-5 },
             vec![f32_mat(128, 32)],
@@ -940,7 +968,10 @@ mod tests {
             vec![f32_mat(32, 512)],
         );
         let attn = g.add_node(
-            Op::Attention { n_heads: 8, d_model: 512 },
+            Op::Attention {
+                n_heads: 8,
+                d_model: 512,
+            },
             vec![f32_mat(32, 512), f32_mat(32, 512), f32_mat(32, 512)],
             vec![f32_mat(32, 512)],
         );

@@ -126,7 +126,10 @@ impl CostTracker {
 
     pub fn record(&mut self, provider_id: &str, cost: f64) {
         self.total_spent += cost;
-        *self.by_provider.entry(provider_id.to_string()).or_insert(0.0) += cost;
+        *self
+            .by_provider
+            .entry(provider_id.to_string())
+            .or_insert(0.0) += cost;
         self.request_count += 1;
     }
 
@@ -193,8 +196,7 @@ impl ProviderRegistry {
                             "http://{}:{}",
                             std::env::var("QLANG_OLLAMA_HOST")
                                 .unwrap_or_else(|_| "127.0.0.1".into()),
-                            std::env::var("QLANG_OLLAMA_PORT")
-                                .unwrap_or_else(|_| "11434".into()),
+                            std::env::var("QLANG_OLLAMA_PORT").unwrap_or_else(|_| "11434".into()),
                         ),
                         api_key: None,
                         available: true,

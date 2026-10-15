@@ -63,15 +63,24 @@ pub struct ChatMessage {
 
 impl ChatMessage {
     pub fn user(content: impl Into<String>) -> Self {
-        Self { role: "user".into(), content: content.into() }
+        Self {
+            role: "user".into(),
+            content: content.into(),
+        }
     }
 
     pub fn system(content: impl Into<String>) -> Self {
-        Self { role: "system".into(), content: content.into() }
+        Self {
+            role: "system".into(),
+            content: content.into(),
+        }
     }
 
     pub fn assistant(content: impl Into<String>) -> Self {
-        Self { role: "assistant".into(), content: content.into() }
+        Self {
+            role: "assistant".into(),
+            content: content.into(),
+        }
     }
 }
 
@@ -98,14 +107,16 @@ impl Default for OllamaClient {
 impl OllamaClient {
     /// Create a client with explicit host and port.
     pub fn new(host: impl Into<String>, port: u16) -> Self {
-        Self { host: host.into(), port }
+        Self {
+            host: host.into(),
+            port,
+        }
     }
 
     /// Create a client from `QLANG_OLLAMA_HOST` / `QLANG_OLLAMA_PORT` env
     /// vars, falling back to the defaults (`127.0.0.1:11434`).
     pub fn from_env() -> Self {
-        let host = std::env::var("QLANG_OLLAMA_HOST")
-            .unwrap_or_else(|_| "127.0.0.1".into());
+        let host = std::env::var("QLANG_OLLAMA_HOST").unwrap_or_else(|_| "127.0.0.1".into());
         let port = std::env::var("QLANG_OLLAMA_PORT")
             .ok()
             .and_then(|s| s.parse::<u16>().ok())
@@ -141,12 +152,7 @@ impl OllamaClient {
     /// Run a one-shot generation (non-streaming).
     ///
     /// Returns the full generated text.
-    pub fn generate(
-        &self,
-        model: &str,
-        prompt: &str,
-        system: Option<&str>,
-    ) -> Result<String> {
+    pub fn generate(&self, model: &str, prompt: &str, system: Option<&str>) -> Result<String> {
         let mut payload = serde_json::json!({
             "model": model,
             "prompt": prompt,
@@ -164,11 +170,7 @@ impl OllamaClient {
     /// Run a multi-turn chat completion (non-streaming).
     ///
     /// Returns the assistant's reply text.
-    pub fn chat(
-        &self,
-        model: &str,
-        messages: Vec<ChatMessage>,
-    ) -> Result<String> {
+    pub fn chat(&self, model: &str, messages: Vec<ChatMessage>) -> Result<String> {
         let payload = serde_json::json!({
             "model": model,
             "messages": messages,
@@ -261,10 +263,8 @@ impl OllamaClient {
                     .split(':')
                     .nth(1)
                     .and_then(|s| s.trim().parse::<usize>().ok());
-            } else if lower.starts_with("transfer-encoding:") {
-                if lower.contains("chunked") {
-                    chunked = true;
-                }
+            } else if lower.starts_with("transfer-encoding:") && lower.contains("chunked") {
+                chunked = true;
             }
         }
 
@@ -323,9 +323,8 @@ fn read_chunked_body(reader: &mut BufReader<TcpStream>) -> Result<String> {
         // Chunk extensions (`;...`) are allowed by HTTP but Ollama doesn't
         // use them. Strip them just in case.
         let size_hex = size_str.split(';').next().unwrap_or("0").trim();
-        let size = usize::from_str_radix(size_hex, 16).map_err(|_| {
-            OllamaError::InvalidResponse(format!("bad chunk size: {size_str:?}"))
-        })?;
+        let size = usize::from_str_radix(size_hex, 16)
+            .map_err(|_| OllamaError::InvalidResponse(format!("bad chunk size: {size_str:?}")))?;
 
         if size == 0 {
             // Terminal chunk — consume optional trailers + final CRLF.

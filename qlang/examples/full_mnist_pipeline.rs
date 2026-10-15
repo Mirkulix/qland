@@ -64,8 +64,15 @@ fn main() {
     let mut model = MlpWeights3::new(input_dim, hidden1_dim, hidden2_dim, output_dim);
     let total_params = model.param_count();
 
-    println!("  Architecture: {}->{}->{}->{}  (3-layer MLP)", input_dim, hidden1_dim, hidden2_dim, output_dim);
-    println!("  Parameters:   {} ({:.1} KB as f32)", total_params, total_params as f64 * 4.0 / 1024.0);
+    println!(
+        "  Architecture: {}->{}->{}->{}  (3-layer MLP)",
+        input_dim, hidden1_dim, hidden2_dim, output_dim
+    );
+    println!(
+        "  Parameters:   {} ({:.1} KB as f32)",
+        total_params,
+        total_params as f64 * 4.0 / 1024.0
+    );
 
     // ================================================================
     // 4. Train with backpropagation
@@ -79,7 +86,10 @@ fn main() {
 
     println!("  Epochs:        {}", epochs);
     println!("  Batch size:    {}", batch_size);
-    println!("  Learning rate: {} (decay {}x every {} epochs)", lr, lr_decay, lr_decay_every);
+    println!(
+        "  Learning rate: {} (decay {}x every {} epochs)",
+        lr, lr_decay, lr_decay_every
+    );
     println!();
 
     let train_start = Instant::now();
@@ -104,8 +114,14 @@ fn main() {
         if epoch % 5 == 0 || epoch == epochs - 1 {
             let train_probs = model.forward(&data.train_images);
             let train_acc = model.accuracy(&train_probs, &data.train_labels);
-            println!("  Epoch {:>3}/{}: loss={:.4}  train_acc={:.1}%  lr={:.4}",
-                epoch + 1, epochs, epoch_loss, train_acc * 100.0, lr);
+            println!(
+                "  Epoch {:>3}/{}: loss={:.4}  train_acc={:.1}%  lr={:.4}",
+                epoch + 1,
+                epochs,
+                epoch_loss,
+                train_acc * 100.0,
+                lr
+            );
         }
     }
 
@@ -139,8 +155,16 @@ fn main() {
     let compressed_bytes = ternary_weight_bytes + bias_bytes;
     let compression_ratio = original_bytes as f64 / compressed_bytes as f64;
 
-    println!("  Before: {:.1}% accuracy, {:.1} KB", test_acc * 100.0, original_bytes as f64 / 1024.0);
-    println!("  After:  {:.1}% accuracy, {:.1} KB", comp_acc * 100.0, compressed_bytes as f64 / 1024.0);
+    println!(
+        "  Before: {:.1}% accuracy, {:.1} KB",
+        test_acc * 100.0,
+        original_bytes as f64 / 1024.0
+    );
+    println!(
+        "  After:  {:.1}% accuracy, {:.1} KB",
+        comp_acc * 100.0,
+        compressed_bytes as f64 / 1024.0
+    );
     println!("  Accuracy drop: {:.1}%", (test_acc - comp_acc) * 100.0);
     println!("  Compression ratio: {:.1}x", compression_ratio);
 
@@ -150,7 +174,8 @@ fn main() {
     println!("\n--- [6/8] ONNX JSON EXPORT ---");
 
     // Build a QLANG graph representing the model
-    let qlang_source = format!(r#"graph mnist_3layer {{
+    let qlang_source = format!(
+        r#"graph mnist_3layer {{
   input x: f32[1, 784]
   input W1: f32[784, {hidden1_dim}]
   input b1: f32[1, {hidden1_dim}]
@@ -169,7 +194,8 @@ fn main() {
 
   output predictions = probs
   output compressed = comp
-}}"#);
+}}"#
+    );
 
     match qlang_compile::parser::parse(&qlang_source) {
         Ok(graph) => {
@@ -220,9 +246,19 @@ fn main() {
     println!("================================================================");
     println!("  Total time:         {:?}", total_time);
     println!("  Training time:      {:?}", train_time);
-    println!("  Architecture:       {}->{}->{}->{}  (3-layer MLP)", input_dim, hidden1_dim, hidden2_dim, output_dim);
-    println!("  Parameters:         {} ({:.1} KB)", total_params, total_params as f64 * 4.0 / 1024.0);
-    println!("  Training:           {} epochs, batch_size={}", epochs, batch_size);
+    println!(
+        "  Architecture:       {}->{}->{}->{}  (3-layer MLP)",
+        input_dim, hidden1_dim, hidden2_dim, output_dim
+    );
+    println!(
+        "  Parameters:         {} ({:.1} KB)",
+        total_params,
+        total_params as f64 * 4.0 / 1024.0
+    );
+    println!(
+        "  Training:           {} epochs, batch_size={}",
+        epochs, batch_size
+    );
     println!("  Test accuracy:      {:.1}%", test_acc * 100.0);
     println!("  Compressed acc:     {:.1}%", comp_acc * 100.0);
     println!("  Compression ratio:  {:.1}x", compression_ratio);

@@ -12,7 +12,7 @@
 //! Uses `crate::accel::matmul` for hardware-accelerated matrix operations.
 
 use crate::accel;
-use std::io::{Read, Write, BufReader, BufWriter};
+use std::io::{BufReader, BufWriter, Read, Write};
 
 // ---------------------------------------------------------------------------
 // Activation & normalization helpers
@@ -63,7 +63,11 @@ fn layer_norm(x: &mut [f32], gamma: &[f32], beta: &[f32], d: usize, eps: f32) {
         let slice = &x[offset..offset + d];
 
         let mean: f32 = slice.iter().sum::<f32>() / d as f32;
-        let var: f32 = slice.iter().map(|&val| (val - mean) * (val - mean)).sum::<f32>() / d as f32;
+        let var: f32 = slice
+            .iter()
+            .map(|&val| (val - mean) * (val - mean))
+            .sum::<f32>()
+            / d as f32;
         let std_inv = 1.0 / (var + eps).sqrt();
 
         for j in 0..d {
@@ -163,10 +167,10 @@ impl LayerNormParams {
 struct TransformerBlock {
     ln1: LayerNormParams,
     attn_qkv: Vec<f32>, // [d_model, 3 * d_model]
-    attn_out: Vec<f32>,  // [d_model, d_model]
+    attn_out: Vec<f32>, // [d_model, d_model]
     ln2: LayerNormParams,
-    ffn_up: Vec<f32>,    // [d_model, 4 * d_model]
-    ffn_down: Vec<f32>,  // [4 * d_model, d_model]
+    ffn_up: Vec<f32>,   // [d_model, 4 * d_model]
+    ffn_down: Vec<f32>, // [4 * d_model, d_model]
 }
 
 impl TransformerBlock {
@@ -197,19 +201,34 @@ impl TransformerBlock {
     /// Collect mutable references to all parameters.
     fn params_mut(&mut self) -> Vec<&mut f32> {
         let mut v = self.ln1.params_mut();
-        for p in self.attn_qkv.iter_mut() { v.push(p); }
-        for p in self.attn_out.iter_mut() { v.push(p); }
+        for p in self.attn_qkv.iter_mut() {
+            v.push(p);
+        }
+        for p in self.attn_out.iter_mut() {
+            v.push(p);
+        }
         v.extend(self.ln2.params_mut());
-        for p in self.ffn_up.iter_mut() { v.push(p); }
-        for p in self.ffn_down.iter_mut() { v.push(p); }
+        for p in self.ffn_up.iter_mut() {
+            v.push(p);
+        }
+        for p in self.ffn_down.iter_mut() {
+            v.push(p);
+        }
         v
     }
 
     /// Forward pass through one block.
     ///
     /// `x` is [seq_len, d_model], returned as new [seq_len, d_model].
-    fn forward(&self, x: &[f32], seq_len: usize, d_model: usize, n_heads: usize,
-               use_rms: bool, use_silu_act: bool) -> Vec<f32> {
+    fn forward(
+        &self,
+        x: &[f32],
+        seq_len: usize,
+        d_model: usize,
+        n_heads: usize,
+        use_rms: bool,
+        use_silu_act: bool,
+    ) -> Vec<f32> {
         let d_head = d_model / n_heads;
 
         // --- Pre-norm attention ---
@@ -236,15 +255,18 @@ impl TransformerBlock {
         }
 
         // Multi-head causal attention
-        let attn_out = causal_multi_head_attention(
-            &q, &k, &v_mat, n_heads, seq_len, d_model, d_head,
-        );
+        let attn_out =
+            causal_multi_head_attention(&q, &k, &v_mat, n_heads, seq_len, d_model, d_head);
 
         // Output projection: [seq_len, d_model] x [d_model, d_model] -> [seq_len, d_model]
         let projected = accel::matmul(&attn_out, &self.attn_out, seq_len, d_model, d_model);
 
         // Residual connection
-        let mut residual: Vec<f32> = x.iter().zip(projected.iter()).map(|(&a, &b)| a + b).collect();
+        let mut residual: Vec<f32> = x
+            .iter()
+            .zip(projected.iter())
+            .map(|(&a, &b)| a + b)
+            .collect();
 
         // --- Pre-norm FFN ---
         let mut normed2 = residual.clone();
@@ -313,8 +335,7 @@ fn causal_multi_head_attention(
                 } else {
                     let mut dot = 0.0f32;
                     for d in 0..d_head {
-                        dot += q[i * d_model + h_offset + d]
-                            * k[j * d_model + h_offset + d];
+                        dot += q[i * d_model + h_offset + d] * k[j * d_model + h_offset + d];
                     }
                     scores[i * seq_len + j] = dot * scale;
                 }
@@ -454,8 +475,8 @@ impl MiniGPT {
         for (pos, &tok) in tokens.iter().take(actual_len).enumerate() {
             let tok_idx = (tok as usize).min(v - 1);
             for j in 0..d {
-                x[pos * d + j] = self.token_embedding[tok_idx * d + j]
-                    + self.position_embedding[pos * d + j];
+                x[pos * d + j] =
+                    self.token_embedding[tok_idx * d + j] + self.position_embedding[pos * d + j];
             }
         }
 
@@ -463,7 +484,14 @@ impl MiniGPT {
         let use_rms = self.config.use_rms_norm;
         let use_silu_act = self.config.use_silu;
         for block in &self.blocks {
-            x = block.forward(&x, actual_len, d, self.config.n_heads, use_rms, use_silu_act);
+            x = block.forward(
+                &x,
+                actual_len,
+                d,
+                self.config.n_heads,
+                use_rms,
+                use_silu_act,
+            );
         }
 
         // 3. Final layer norm
@@ -910,14 +938,24 @@ pub fn train_language_model(
     println!("=== QLANG Language Model Training ===\n");
 
     // 1. Train tokenizer
-    println!("[1/4] Training BPE tokenizer (vocab_size={})...", vocab_size);
+    println!(
+        "[1/4] Training BPE tokenizer (vocab_size={})...",
+        vocab_size
+    );
     let tokenizer = BpeTokenizer::train(text, vocab_size);
-    println!("  Tokenizer ready: {} tokens in vocabulary", tokenizer.vocab_size());
+    println!(
+        "  Tokenizer ready: {} tokens in vocabulary",
+        tokenizer.vocab_size()
+    );
 
     // 2. Tokenize the corpus
     println!("[2/4] Tokenizing corpus...");
     let all_tokens = tokenizer.encode(text);
-    println!("  Corpus: {} chars -> {} tokens", text.len(), all_tokens.len());
+    println!(
+        "  Corpus: {} chars -> {} tokens",
+        text.len(),
+        all_tokens.len()
+    );
     let compression = text.len() as f32 / all_tokens.len() as f32;
     println!("  Compression ratio: {:.2}x", compression);
 
@@ -935,8 +973,10 @@ pub fn train_language_model(
 
     println!("[3/4] Creating MiniGPT model...");
     let mut model = MiniGPT::new(config);
-    println!("  Architecture: d_model={}, heads={}, layers={}, seq_len={}",
-             d_model, n_heads, n_layers, max_seq_len);
+    println!(
+        "  Architecture: d_model={}, heads={}, layers={}, seq_len={}",
+        d_model, n_heads, n_layers, max_seq_len
+    );
     println!("  Parameters: {}", format_param_count(model.param_count()));
 
     // 4. Training loop
@@ -976,8 +1016,14 @@ pub fn train_language_model(
             epoch_steps += 1;
 
             if step == 0 || (step + 1) % 10 == 0 {
-                print!("  epoch {}/{}, step {}/{}: loss = {:.4}\r",
-                       epoch + 1, epochs, step + 1, steps_per_epoch, loss);
+                print!(
+                    "  epoch {}/{}, step {}/{}: loss = {:.4}\r",
+                    epoch + 1,
+                    epochs,
+                    step + 1,
+                    steps_per_epoch,
+                    loss
+                );
                 let _ = std::io::stdout().flush();
             }
         }
@@ -987,8 +1033,12 @@ pub fn train_language_model(
         } else {
             0.0
         };
-        println!("  Epoch {}/{}: avg_loss = {:.4}                    ",
-                 epoch + 1, epochs, avg_loss);
+        println!(
+            "  Epoch {}/{}: avg_loss = {:.4}                    ",
+            epoch + 1,
+            epochs,
+            avg_loss
+        );
     }
 
     println!("\nTraining complete!");
@@ -1091,7 +1141,11 @@ mod tests {
 
         // Mean should be beta[0] = 1.0 (since gamma scales centered values)
         let mean: f32 = x.iter().sum::<f32>() / d as f32;
-        assert!((mean - 1.0).abs() < 0.1, "Mean should be ~1.0 (beta), got {}", mean);
+        assert!(
+            (mean - 1.0).abs() < 0.1,
+            "Mean should be ~1.0 (beta), got {}",
+            mean
+        );
     }
 
     #[test]
@@ -1103,19 +1157,18 @@ mod tests {
         let d_head = d_model / n_heads;
 
         // Q = K = V = identity-like
-        let q = vec![1.0, 0.0, 0.0, 0.0,
-                     0.0, 1.0, 0.0, 0.0,
-                     0.0, 0.0, 1.0, 0.0];
+        let q = vec![1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0];
         let k = q.clone();
-        let v = vec![1.0, 0.0, 0.0, 0.0,
-                     0.0, 1.0, 0.0, 0.0,
-                     0.0, 0.0, 1.0, 0.0];
+        let v = vec![1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0];
 
         let out = causal_multi_head_attention(&q, &k, &v, n_heads, seq_len, d_model, d_head);
 
         // Position 0 can only see position 0, so output[0] should equal V[0]
-        assert!((out[0] - 1.0).abs() < 1e-3,
-                "Position 0 should only attend to itself: got {}", out[0]);
+        assert!(
+            (out[0] - 1.0).abs() < 1e-3,
+            "Position 0 should only attend to itself: got {}",
+            out[0]
+        );
     }
 
     #[test]
@@ -1132,7 +1185,10 @@ mod tests {
             seq_len * config.vocab_size,
             "Output shape should be [seq_len, vocab_size]"
         );
-        assert!(logits.iter().all(|x| x.is_finite()), "All logits should be finite");
+        assert!(
+            logits.iter().all(|x| x.is_finite()),
+            "All logits should be finite"
+        );
     }
 
     #[test]
@@ -1155,7 +1211,11 @@ mod tests {
         // lm_head: 16*32 = 512
         // Total: 512 + 128 + 3136 + 32 + 512 = 4320
         let expected = 512 + 128 + (32 + 768 + 256 + 32 + 1024 + 1024) + 32 + 512;
-        assert_eq!(count, expected, "Param count should be {}, got {}", expected, count);
+        assert_eq!(
+            count, expected,
+            "Param count should be {}, got {}",
+            expected, count
+        );
     }
 
     #[test]
@@ -1204,8 +1264,11 @@ mod tests {
         let prompt = vec![3u32, 7, 15];
         let output = model.generate(&prompt, 3, 1.0);
 
-        assert_eq!(&output[..prompt.len()], &prompt[..],
-                   "Generated sequence should start with prompt");
+        assert_eq!(
+            &output[..prompt.len()],
+            &prompt[..],
+            "Generated sequence should start with prompt"
+        );
     }
 
     #[test]

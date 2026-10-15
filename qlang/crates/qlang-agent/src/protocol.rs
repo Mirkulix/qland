@@ -8,10 +8,10 @@
 //! No JSON. No text. Binary graph exchange with typed metadata.
 //! Each message is a complete, verifiable computation graph.
 
-use serde::{Deserialize, Serialize};
 use qlang_core::crypto::{self, Keypair};
 use qlang_core::graph::Graph;
 use qlang_core::tensor::TensorData;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 /// Serde helper for `Option<[u8; 32]>`: serialize as byte array, skip if None.
@@ -84,13 +84,25 @@ pub struct GraphMessage {
     /// Response to a previous message (if applicable)
     pub in_reply_to: Option<u64>,
     /// Optional cryptographic signature (64 bytes) over the graph hash
-    #[serde(default, skip_serializing_if = "Option::is_none", with = "opt_bytes_64")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "opt_bytes_64"
+    )]
     pub signature: Option<[u8; 64]>,
     /// Optional signer public key (32 bytes)
-    #[serde(default, skip_serializing_if = "Option::is_none", with = "opt_bytes_32")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "opt_bytes_32"
+    )]
     pub signer_pubkey: Option<[u8; 32]>,
     /// Optional SHA-256 hash of the graph at signing time
-    #[serde(default, skip_serializing_if = "Option::is_none", with = "opt_bytes_32")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "opt_bytes_32"
+    )]
     pub graph_hash: Option<[u8; 32]>,
 }
 
@@ -123,7 +135,7 @@ impl GraphMessage {
                 Keypair::verify(pubkey, &current_hash, sig)
             }
             (None, None, None) => true, // Unsigned message is valid
-            _ => false, // Partial signature fields = invalid
+            _ => false,                 // Partial signature fields = invalid
         }
     }
 }
@@ -383,7 +395,9 @@ mod tests {
         // Trainer builds a model graph and sends it to compressor
         let mut graph = Graph::new("model_weights");
         graph.add_node(
-            Op::Input { name: "weights".into() },
+            Op::Input {
+                name: "weights".into(),
+            },
             vec![],
             vec![TensorType::f32_matrix(128, 64)],
         );
@@ -391,10 +405,7 @@ mod tests {
         let mut inputs = HashMap::new();
         inputs.insert(
             "weights".into(),
-            TensorData::from_f32(
-                Shape::matrix(2, 2),
-                &[0.5, -0.3, 0.8, -0.1],
-            ),
+            TensorData::from_f32(Shape::matrix(2, 2), &[0.5, -0.3, 0.8, -0.1]),
         );
 
         // Message 1: Trainer → Compressor: "compress these weights"
@@ -403,7 +414,9 @@ mod tests {
             compressor_agent(),
             graph,
             inputs,
-            MessageIntent::Compress { method: "ternary".into() },
+            MessageIntent::Compress {
+                method: "ternary".into(),
+            },
             None,
         );
         assert_eq!(msg1, 0);
@@ -415,7 +428,9 @@ mod tests {
             trainer_agent(),
             compressed_graph,
             HashMap::new(),
-            MessageIntent::Result { original_message_id: msg1 },
+            MessageIntent::Result {
+                original_message_id: msg1,
+            },
             Some(msg1),
         );
         assert_eq!(msg2, 1);
@@ -570,11 +585,7 @@ mod tests {
             AgentRole::Trainer,
             Some("deepseek-r1:1.5b".into()),
         );
-        team.add_member(
-            compressor_agent(),
-            AgentRole::Compressor,
-            None,
-        );
+        team.add_member(compressor_agent(), AgentRole::Compressor, None);
 
         assert_eq!(team.agents.len(), 2);
         assert_eq!(team.agents[0].role, AgentRole::Trainer);
@@ -601,18 +612,36 @@ mod tests {
             progress: 0.42,
             description: "Training epoch 5/10".into(),
         };
-        if let AgentStatus::Working { progress, description } = &member.status {
+        if let AgentStatus::Working {
+            progress,
+            description,
+        } = &member.status
+        {
             assert!((progress - 0.42).abs() < f32::EPSILON);
             assert_eq!(description, "Training epoch 5/10");
         } else {
             panic!("expected Working status");
         }
 
-        member.status = AgentStatus::Done { result: "accuracy=0.97".into() };
-        assert_eq!(member.status, AgentStatus::Done { result: "accuracy=0.97".into() });
+        member.status = AgentStatus::Done {
+            result: "accuracy=0.97".into(),
+        };
+        assert_eq!(
+            member.status,
+            AgentStatus::Done {
+                result: "accuracy=0.97".into()
+            }
+        );
 
-        member.status = AgentStatus::Error { message: "OOM".into() };
-        assert_eq!(member.status, AgentStatus::Error { message: "OOM".into() });
+        member.status = AgentStatus::Error {
+            message: "OOM".into(),
+        };
+        assert_eq!(
+            member.status,
+            AgentStatus::Error {
+                message: "OOM".into()
+            }
+        );
     }
 
     #[test]
@@ -650,7 +679,11 @@ mod tests {
     #[test]
     fn agent_coordination_serde_roundtrip() {
         let mut team = Team::new("serde-team", "roundtrip test");
-        team.add_member(trainer_agent(), AgentRole::Trainer, Some("phi3:mini".into()));
+        team.add_member(
+            trainer_agent(),
+            AgentRole::Trainer,
+            Some("phi3:mini".into()),
+        );
         team.status = AgentStatus::Working {
             progress: 0.5,
             description: "half done".into(),
@@ -664,7 +697,11 @@ mod tests {
         assert_eq!(deserialized.agents.len(), 1);
         assert_eq!(deserialized.agents[0].role, AgentRole::Trainer);
         assert_eq!(deserialized.agents[0].model, Some("phi3:mini".into()));
-        if let AgentStatus::Working { progress, description } = &deserialized.status {
+        if let AgentStatus::Working {
+            progress,
+            description,
+        } = &deserialized.status
+        {
             assert!((progress - 0.5).abs() < f32::EPSILON);
             assert_eq!(description, "half done");
         } else {
@@ -676,9 +713,16 @@ mod tests {
         let role_back: AgentRole = serde_json::from_str(&role_json).unwrap();
         assert_eq!(role_back, AgentRole::Coordinator);
 
-        let status = AgentStatus::Error { message: "test error".into() };
+        let status = AgentStatus::Error {
+            message: "test error".into(),
+        };
         let status_json = serde_json::to_string(&status).unwrap();
         let status_back: AgentStatus = serde_json::from_str(&status_json).unwrap();
-        assert_eq!(status_back, AgentStatus::Error { message: "test error".into() });
+        assert_eq!(
+            status_back,
+            AgentStatus::Error {
+                message: "test error".into()
+            }
+        );
     }
 }

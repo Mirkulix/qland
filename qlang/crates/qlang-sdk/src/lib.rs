@@ -21,15 +21,15 @@ pub mod prelude;
 
 // Re-export core types
 pub use qlang_core::graph::Graph;
-pub use qlang_core::tensor::{TensorData, Dtype, Shape, Dim, TensorType};
 pub use qlang_core::ops::Op;
+pub use qlang_core::tensor::{Dim, Dtype, Shape, TensorData, TensorType};
 
 // Re-export crypto from qlang-core
-pub use qlang_core::crypto::{Keypair, SignedGraph, sha256, hash_graph};
+pub use qlang_core::crypto::{hash_graph, sha256, Keypair, SignedGraph};
 
 // Re-export agent types
-pub use qlang_agent::protocol::{GraphMessage, AgentId, MessageIntent, Capability};
 pub use qlang_agent::emitter::GraphEmitter;
+pub use qlang_agent::protocol::{AgentId, Capability, GraphMessage, MessageIntent};
 
 // Top-level convenience functions
 
@@ -48,11 +48,18 @@ pub fn verify(signed: &SignedGraph) -> bool {
 /// Values with absolute magnitude below 0.5 map to 0,
 /// positive values map to 1, negative values map to -1.
 pub fn compress_ternary(weights: &[f32]) -> Vec<i8> {
-    weights.iter().map(|&w| {
-        if w.abs() < 0.5 { 0i8 }
-        else if w > 0.0 { 1i8 }
-        else { -1i8 }
-    }).collect()
+    weights
+        .iter()
+        .map(|&w| {
+            if w.abs() < 0.5 {
+                0i8
+            } else if w > 0.0 {
+                1i8
+            } else {
+                -1i8
+            }
+        })
+        .collect()
 }
 
 /// SDK version string.

@@ -50,6 +50,12 @@ impl From<serde_json::Error> for RegistryError {
     }
 }
 
+impl Default for Registry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Registry {
     /// Create a new registry at the default location (~/.qlang/models).
     pub fn new() -> Self {
@@ -98,7 +104,11 @@ impl Registry {
     }
 
     /// Load a model from the registry.
-    pub fn load(&self, name: &str, version: &str) -> Result<(ModelEntry, Checkpoint), RegistryError> {
+    pub fn load(
+        &self,
+        name: &str,
+        version: &str,
+    ) -> Result<(ModelEntry, Checkpoint), RegistryError> {
         let dir = self.model_dir(name, version);
         if !dir.exists() {
             return Err(RegistryError::NotFound(name.into(), version.into()));
@@ -206,9 +216,9 @@ pub struct ModelComparison {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
     use crate::checkpoint::{Checkpoint, CompressionState, TrainingMetadata};
     use qlang_core::graph::Graph;
+    use std::collections::HashMap;
 
     fn test_entry(name: &str, version: &str) -> ModelEntry {
         ModelEntry {

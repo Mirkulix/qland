@@ -114,7 +114,10 @@ impl<'ctx> ScriptJit<'ctx> {
     pub fn compile_and_run(&mut self, stmts: &[Stmt]) -> Result<(f64, Vec<String>), String> {
         // First pass: compile user-defined functions
         for stmt in stmts {
-            if let Stmt::FnDef { name, params, body, .. } = stmt {
+            if let Stmt::FnDef {
+                name, params, body, ..
+            } = stmt
+            {
                 self.compile_function(name, params, body)?;
             }
         }
@@ -163,11 +166,14 @@ impl<'ctx> ScriptJit<'ctx> {
         };
 
         // Collect print output
-        let output = PRINT_BUFFER.lock().map(|mut buf| {
-            let out = buf.clone();
-            buf.clear();
-            out
-        }).unwrap_or_default();
+        let output = PRINT_BUFFER
+            .lock()
+            .map(|mut buf| {
+                let out = buf.clone();
+                buf.clear();
+                out
+            })
+            .unwrap_or_default();
 
         Ok((result, output))
     }
@@ -248,7 +254,7 @@ impl<'ctx> ScriptJit<'ctx> {
     ) -> Result<Option<FloatValue<'ctx>>, String> {
         match stmt {
             Stmt::Let { name, value, .. } => {
-                let val = self.compile_expr(value, function)?;
+                let val = self.compile_expr(value)?;
                 let ptr = self.builder.build_alloca(self.f64_type, name).unwrap();
                 self.builder.build_store(ptr, val).unwrap();
                 self.variables.insert(name.clone(), ptr);
@@ -256,7 +262,7 @@ impl<'ctx> ScriptJit<'ctx> {
             }
 
             Stmt::Assign { name, value } => {
-                let val = self.compile_expr(value, function)?;
+                let val = self.compile_expr(value)?;
                 if let Some(ptr) = self.variables.get(name) {
                     self.builder.build_store(*ptr, val).unwrap();
                     Ok(None)
@@ -270,7 +276,7 @@ impl<'ctx> ScriptJit<'ctx> {
                 then_body,
                 else_body,
             } => {
-                let cond_val = self.compile_expr(cond, function)?;
+                let cond_val = self.compile_expr(cond)?;
                 let zero = self.f64_type.const_float(0.0);
                 let cmp = self
                     .builder
@@ -333,7 +339,7 @@ impl<'ctx> ScriptJit<'ctx> {
 
                 // Condition block
                 self.builder.position_at_end(loop_cond_bb);
-                let cond_val = self.compile_expr(cond, function)?;
+                let cond_val = self.compile_expr(cond)?;
                 let zero = self.f64_type.const_float(0.0);
                 let cmp = self
                     .builder
@@ -372,8 +378,8 @@ impl<'ctx> ScriptJit<'ctx> {
                 body,
             } => {
                 // Compile as: let var = start; while var < end { body; var = var + 1 }
-                let start_val = self.compile_expr(start, function)?;
-                let end_val = self.compile_expr(end, function)?;
+                let start_val = self.compile_expr(start)?;
+                let end_val = self.compile_expr(end)?;
 
                 // Allocate loop variable
                 let var_ptr = self.builder.build_alloca(self.f64_type, var).unwrap();
@@ -436,7 +442,7 @@ impl<'ctx> ScriptJit<'ctx> {
             }
 
             Stmt::Print(expr) => {
-                let val = self.compile_expr(expr, function)?;
+                let val = self.compile_expr(expr)?;
                 let print_fn = self
                     .module
                     .get_function("qlang_jit_print_f64")
@@ -448,13 +454,13 @@ impl<'ctx> ScriptJit<'ctx> {
             }
 
             Stmt::Return(expr) => {
-                let val = self.compile_expr(expr, function)?;
+                let val = self.compile_expr(expr)?;
                 self.builder.build_return(Some(&val)).unwrap();
                 Ok(Some(val))
             }
 
             Stmt::ExprStmt(expr) => {
-                let val = self.compile_expr(expr, function)?;
+                let val = self.compile_expr(expr)?;
                 Ok(Some(val))
             }
 
@@ -468,11 +474,7 @@ impl<'ctx> ScriptJit<'ctx> {
     }
 
     /// Compile an expression to LLVM IR, returning its f64 value.
-    fn compile_expr(
-        &mut self,
-        expr: &Expr,
-        function: FunctionValue<'ctx>,
-    ) -> Result<FloatValue<'ctx>, String> {
+    fn compile_expr(&mut self, expr: &Expr) -> Result<FloatValue<'ctx>, String> {
         match expr {
             Expr::NumberLit(n) => Ok(self.f64_type.const_float(*n)),
 
@@ -491,13 +493,13 @@ impl<'ctx> ScriptJit<'ctx> {
             }
 
             Expr::BinOp { op, left, right } => {
-                let l = self.compile_expr(left, function)?;
-                let r = self.compile_expr(right, function)?;
+                let l = self.compile_expr(left)?;
+                let r = self.compile_expr(right)?;
                 self.compile_binop(*op, l, r)
             }
 
             Expr::UnaryOp { op, operand } => {
-                let v = self.compile_expr(operand, function)?;
+                let v = self.compile_expr(operand)?;
                 self.compile_unaryop(*op, v)
             }
 
@@ -505,7 +507,7 @@ impl<'ctx> ScriptJit<'ctx> {
                 // Compile arguments
                 let mut compiled_args: Vec<inkwell::values::BasicMetadataValueEnum> = Vec::new();
                 for arg in args {
-                    let val = self.compile_expr(arg, function)?;
+                    let val = self.compile_expr(arg)?;
                     compiled_args.push(val.into());
                 }
 
@@ -750,10 +752,7 @@ impl<'ctx> ScriptJit<'ctx> {
                     .builder
                     .build_float_to_signed_int(r, i64_type, "ri")
                     .unwrap();
-                let res = self
-                    .builder
-                    .build_right_shift(li, ri, true, "shr")
-                    .unwrap();
+                let res = self.builder.build_right_shift(li, ri, true, "shr").unwrap();
                 Ok(self
                     .builder
                     .build_signed_int_to_float(res, self.f64_type, "shr_f")
@@ -820,18 +819,12 @@ fn is_stmt_jit_compatible(stmt: &Stmt) -> bool {
             cond,
             then_body,
             else_body,
-        } => {
-            is_expr_numeric(cond)
-                && is_jit_compatible(then_body)
-                && is_jit_compatible(else_body)
-        }
+        } => is_expr_numeric(cond) && is_jit_compatible(then_body) && is_jit_compatible(else_body),
         Stmt::While { cond, body } => is_expr_numeric(cond) && is_jit_compatible(body),
         Stmt::For {
             start, end, body, ..
         } => is_expr_numeric(start) && is_expr_numeric(end) && is_jit_compatible(body),
-        Stmt::FnDef { body, .. } => {
-            is_jit_compatible(body)
-        }
+        Stmt::FnDef { body, .. } => is_jit_compatible(body),
         Stmt::Return(expr) => is_expr_numeric(expr),
         Stmt::Print(expr) => is_expr_numeric(expr),
         Stmt::ExprStmt(expr) => is_expr_numeric(expr),
@@ -906,17 +899,14 @@ mod tests {
 
     #[test]
     fn test_if_else() {
-        let (_, output) = jit_run(
-            "let x = 10\nif x > 5 {\n  print(1)\n} else {\n  print(0)\n}",
-        );
+        let (_, output) = jit_run("let x = 10\nif x > 5 {\n  print(1)\n} else {\n  print(0)\n}");
         assert_eq!(output, vec!["1"]);
     }
 
     #[test]
     fn test_while_loop() {
-        let (val, _) = jit_run(
-            "let sum = 0\nlet i = 0\nwhile i < 10 {\n  sum = sum + i\n  i = i + 1\n}\nsum",
-        );
+        let (val, _) =
+            jit_run("let sum = 0\nlet i = 0\nwhile i < 10 {\n  sum = sum + i\n  i = i + 1\n}\nsum");
         assert_eq!(val, 45.0); // 0+1+2+...+9 = 45
     }
 
@@ -928,9 +918,7 @@ mod tests {
 
     #[test]
     fn test_function() {
-        let (val, _) = jit_run(
-            "fn square(x) {\n  return x * x\n}\nsquare(7)",
-        );
+        let (val, _) = jit_run("fn square(x) {\n  return x * x\n}\nsquare(7)");
         assert_eq!(val, 49.0);
     }
 

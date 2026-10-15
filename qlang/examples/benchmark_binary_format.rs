@@ -53,12 +53,17 @@ fn build_transformer_graph() -> Graph {
     let mut g = Graph::new("transformer-bench");
 
     let x = g.add_node(
-        Op::Input { name: "tokens".into() },
+        Op::Input {
+            name: "tokens".into(),
+        },
         vec![],
         vec![f32_mat(32, 512)],
     );
     let emb = g.add_node(
-        Op::Embedding { vocab_size: 50000, d_model: 512 },
+        Op::Embedding {
+            vocab_size: 50000,
+            d_model: 512,
+        },
         vec![f32_mat(32, 512)],
         vec![f32_mat(32, 512)],
     );
@@ -68,7 +73,10 @@ fn build_transformer_graph() -> Graph {
     // 6 transformer blocks
     for _ in 0..6 {
         let attn = g.add_node(
-            Op::Attention { n_heads: 8, d_model: 512 },
+            Op::Attention {
+                n_heads: 8,
+                d_model: 512,
+            },
             vec![f32_mat(32, 512), f32_mat(32, 512), f32_mat(32, 512)],
             vec![f32_mat(32, 512)],
         );
@@ -91,18 +99,16 @@ fn build_transformer_graph() -> Graph {
         );
         g.add_edge(res, 0, ln, 0, f32_mat(32, 512));
 
-        let gelu = g.add_node(
-            Op::Gelu,
-            vec![f32_mat(32, 512)],
-            vec![f32_mat(32, 512)],
-        );
+        let gelu = g.add_node(Op::Gelu, vec![f32_mat(32, 512)], vec![f32_mat(32, 512)]);
         g.add_edge(ln, 0, gelu, 0, f32_mat(32, 512));
 
         prev = gelu;
     }
 
     let out = g.add_node(
-        Op::Output { name: "logits".into() },
+        Op::Output {
+            name: "logits".into(),
+        },
         vec![f32_mat(32, 512)],
         vec![],
     );
@@ -234,14 +240,8 @@ fn main() {
     let hash_time = start.elapsed();
 
     let hash = binary::content_hash(&bench_graph);
-    println!(
-        "  Hash:         {}",
-        crypto::hex(&hash)
-    );
-    println!(
-        "  Time (total): {:.2}ms",
-        hash_time.as_secs_f64() * 1000.0
-    );
+    println!("  Hash:         {}", crypto::hex(&hash));
+    println!("  Time (total): {:.2}ms", hash_time.as_secs_f64() * 1000.0);
     println!(
         "  Time (per):   {:.2}us",
         hash_time.as_secs_f64() * 1_000_000.0 / iterations as f64
@@ -258,8 +258,7 @@ fn main() {
     let graph_hash = binary::content_hash(&bench_graph);
     let input_data = TensorData::from_f32(Shape::vector(4), &[1.0, 2.0, 3.0, 4.0]);
     let input_hash = sha256(input_data.as_bytes());
-    let cache_key =
-        ComputationCache::cache_key(&graph_hash, &[input_hash.as_slice()]);
+    let cache_key = ComputationCache::cache_key(&graph_hash, &[input_hash.as_slice()]);
 
     // First lookup: miss
     let result = cache.get(&cache_key);

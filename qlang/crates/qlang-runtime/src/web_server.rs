@@ -6,8 +6,8 @@
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
-use std::sync::{Arc, Mutex, OnceLock};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 
 use crate::training::MlpWeights3;
@@ -35,7 +35,10 @@ fn rand_u32() -> u32 {
         x ^= x << 13;
         x ^= x >> 7;
         x ^= x << 17;
-        if RNG_SEED.compare_exchange(old, x, Ordering::Relaxed, Ordering::Relaxed).is_ok() {
+        if RNG_SEED
+            .compare_exchange(old, x, Ordering::Relaxed, Ordering::Relaxed)
+            .is_ok()
+        {
             return x as u32;
         }
     }
@@ -96,7 +99,13 @@ impl WebEvent {
     /// Serialize to JSON matching the dashboard's expected message format.
     pub fn to_json(&self) -> String {
         match self {
-            WebEvent::GraphNodeExecuted { node_id, op, shape, time_us, values } => {
+            WebEvent::GraphNodeExecuted {
+                node_id,
+                op,
+                shape,
+                time_us,
+                values,
+            } => {
                 let time_ms = *time_us as f64 / 1000.0;
                 let vals = match values {
                     Some(v) => {
@@ -109,20 +118,28 @@ impl WebEvent {
                     r#"{{"type":"node_exec","node_id":{node_id},"op":"{op}","name":"{op}","shape":"{shape}","time_ms":{time_ms},"values":{vals}}}"#,
                 )
             }
-            WebEvent::TrainingEpoch { epoch, loss, accuracy } => {
+            WebEvent::TrainingEpoch {
+                epoch,
+                loss,
+                accuracy,
+            } => {
                 format!(
                     r#"{{"type":"training","epoch":{epoch},"loss":{loss},"accuracy":{accuracy}}}"#,
                 )
             }
             WebEvent::AgentMessage { from, to, message } => {
                 let msg = json_escape(message);
-                format!(
-                    r#"{{"type":"agent","from":"{from}","to":"{to}","content":"{msg}"}}"#,
-                )
+                format!(r#"{{"type":"agent","from":"{from}","to":"{to}","content":"{msg}"}}"#,)
             }
-            WebEvent::CompressionResult { method, ratio, accuracy_before, accuracy_after } => {
+            WebEvent::CompressionResult {
+                method,
+                ratio,
+                accuracy_before,
+                accuracy_after,
+            } => {
                 let original_kb = format!("{:.1} KB", *accuracy_before as f64 * 918.5);
-                let compressed_kb = format!("{:.1} KB", *accuracy_before as f64 * 918.5 / *ratio as f64);
+                let compressed_kb =
+                    format!("{:.1} KB", *accuracy_before as f64 * 918.5 / *ratio as f64);
                 format!(
                     r#"{{"type":"compression","method":"{method}","ratio":"{ratio:.1}x","original_size":"{original_kb}","compressed_size":"{compressed_kb}","accuracy_delta":"{:.1}"}}"#,
                     (accuracy_after - accuracy_before) * 100.0
@@ -130,21 +147,34 @@ impl WebEvent {
             }
             WebEvent::SystemLog { level: _, message } => {
                 let msg = json_escape(message);
-                format!(
-                    r#"{{"type":"system","text":"{msg}"}}"#,
-                )
+                format!(r#"{{"type":"system","text":"{msg}"}}"#,)
             }
-            WebEvent::GraphLoaded { name, num_nodes, num_edges } => {
+            WebEvent::GraphLoaded {
+                name,
+                num_nodes,
+                num_edges,
+            } => {
                 // Send as graph with nodes/edges arrays for visualization
                 let mut nodes = Vec::new();
                 // Create visual nodes: input, hidden layers, output
-                let labels = ["Input\\n784", "Hidden1\\n256", "ReLU", "Hidden2\\n128", "ReLU", "Output\\n10", "Softmax", "Compress"];
+                let labels = [
+                    "Input\\n784",
+                    "Hidden1\\n256",
+                    "ReLU",
+                    "Hidden2\\n128",
+                    "ReLU",
+                    "Output\\n10",
+                    "Softmax",
+                    "Compress",
+                ];
                 let types = ["input", "op", "op", "op", "op", "output", "op", "quantum"];
                 let n = (*num_nodes).min(8);
                 for i in 0..n {
                     let label = labels.get(i).unwrap_or(&"node");
                     let ntype = types.get(i).unwrap_or(&"op");
-                    nodes.push(format!(r#"{{"id":{i},"label":"{label}","type":"{ntype}"}}"#));
+                    nodes.push(format!(
+                        r#"{{"id":{i},"label":"{label}","type":"{ntype}"}}"#
+                    ));
                 }
                 let mut edges = Vec::new();
                 let e = (*num_edges).min(7);
@@ -160,9 +190,7 @@ impl WebEvent {
                 )
             }
             WebEvent::ModelSaved { name, version } => {
-                format!(
-                    r#"{{"type":"model_saved","name":"{name}","size":"{version}"}}"#,
-                )
+                format!(r#"{{"type":"model_saved","name":"{name}","size":"{version}"}}"#,)
             }
         }
     }
@@ -269,7 +297,7 @@ pub fn sha1(data: &[u8]) -> [u8; 20] {
 const BASE64_CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 pub fn base64_encode(data: &[u8]) -> String {
-    let mut out = String::with_capacity((data.len() + 2) / 3 * 4);
+    let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
     for chunk in data.chunks(3) {
         let b0 = chunk[0] as u32;
         let b1 = if chunk.len() > 1 { chunk[1] as u32 } else { 0 };
@@ -472,7 +500,13 @@ fn content_type_for(path: &str) -> &'static str {
     }
 }
 
-fn send_http_response(stream: &mut TcpStream, status: u16, status_text: &str, content_type: &str, body: &[u8]) {
+fn send_http_response(
+    stream: &mut TcpStream,
+    status: u16,
+    status_text: &str,
+    content_type: &str,
+    body: &[u8],
+) {
     let header = format!(
         "HTTP/1.1 {status} {status_text}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
         body.len()
@@ -514,10 +548,7 @@ impl WebServer {
             clients: Arc::clone(&clients),
         };
 
-        let server = WebServer {
-            clients,
-            web_root,
-        };
+        let server = WebServer { clients, web_root };
 
         thread::spawn(move || {
             server.run(listener);
@@ -578,7 +609,10 @@ fn handle_connection(mut stream: TcpStream, clients: Clients, web_root: &str) {
     // Check for WebSocket upgrade on /ws
     if method == "GET"
         && path == "/ws"
-        && headers.get("upgrade").map(|v| v.eq_ignore_ascii_case("websocket")).unwrap_or(false)
+        && headers
+            .get("upgrade")
+            .map(|v| v.eq_ignore_ascii_case("websocket"))
+            .unwrap_or(false)
     {
         if let Some(key) = headers.get("sec-websocket-key") {
             let accept = compute_accept_key(key);
@@ -675,11 +709,7 @@ fn handle_connection(mut stream: TcpStream, clients: Clients, web_root: &str) {
     }
 }
 
-fn handle_websocket(
-    stream: &mut TcpStream,
-    clients: &Clients,
-    _client: &Arc<Mutex<TcpStream>>,
-) {
+fn handle_websocket(stream: &mut TcpStream, clients: &Clients, _client: &Arc<Mutex<TcpStream>>) {
     eprintln!("[web_server] handle_websocket: entering read loop");
     loop {
         eprintln!("[web_server] handle_websocket: waiting for frame...");
@@ -695,7 +725,10 @@ fn handle_websocket(
             0x1 => {
                 // Text frame — parse as JSON command from dashboard
                 if let Ok(text) = std::str::from_utf8(&frame.payload) {
-                    eprintln!("[web_server] Received WS message: {}", &text[..text.len().min(200)]);
+                    eprintln!(
+                        "[web_server] Received WS message: {}",
+                        &text[..text.len().min(200)]
+                    );
                     if let Ok(msg) = serde_json::from_str::<serde_json::Value>(text) {
                         match msg["type"].as_str() {
                             Some("list_models") => {
@@ -705,18 +738,32 @@ fn handle_websocket(
                                 let models = ollama.list_models().unwrap_or_default();
                                 let response = format!(
                                     r#"{{"type":"models_list","models":[{}]}}"#,
-                                    models.iter().map(|m| format!("\"{}\"", json_escape(m))).collect::<Vec<_>>().join(",")
+                                    models
+                                        .iter()
+                                        .map(|m| format!("\"{}\"", json_escape(m)))
+                                        .collect::<Vec<_>>()
+                                        .join(",")
                                 );
                                 let resp_frame = WsFrame::text(&response).encode();
                                 let _ = stream.write_all(&resp_frame);
                             }
                             Some("start_pipeline") => {
                                 eprintln!("[web_server] → start_pipeline request!");
-                                let task = msg["task"].as_str().unwrap_or("Train MNIST classifier").to_string();
-                                let architect_model = msg["architect_model"].as_str().unwrap_or("deepseek-r1:1.5b").to_string();
-                                let evaluator_model = msg["evaluator_model"].as_str().unwrap_or("llama3.2").to_string();
+                                let task = msg["task"]
+                                    .as_str()
+                                    .unwrap_or("Train MNIST classifier")
+                                    .to_string();
+                                let architect_model = msg["architect_model"]
+                                    .as_str()
+                                    .unwrap_or("deepseek-r1:1.5b")
+                                    .to_string();
+                                let evaluator_model = msg["evaluator_model"]
+                                    .as_str()
+                                    .unwrap_or("llama3.2")
+                                    .to_string();
                                 let epochs = msg["epochs"].as_u64().unwrap_or(15) as usize;
-                                let dataset = msg["dataset"].as_str().unwrap_or("synthetic").to_string();
+                                let dataset =
+                                    msg["dataset"].as_str().unwrap_or("synthetic").to_string();
                                 let compress = msg["compress"].as_bool().unwrap_or(true);
 
                                 run_agent_pipeline(
@@ -731,21 +778,33 @@ fn handle_websocket(
                             }
                             Some("predict") => {
                                 // Interactive model testing: receive 784 pixels, return prediction
-                                let pixels: Vec<f32> = msg["pixels"].as_array()
-                                    .map(|a| a.iter().filter_map(|v| v.as_f64().map(|f| f as f32)).collect())
+                                let pixels: Vec<f32> = msg["pixels"]
+                                    .as_array()
+                                    .map(|a| {
+                                        a.iter()
+                                            .filter_map(|v| v.as_f64().map(|f| f as f32))
+                                            .collect()
+                                    })
                                     .unwrap_or_default();
 
                                 if pixels.len() == 784 {
-                                    let model_store = TRAINED_MODEL.get_or_init(|| Mutex::new(None));
-                                    let response = if let Some(model) = model_store.lock().unwrap().as_ref() {
+                                    let model_store =
+                                        TRAINED_MODEL.get_or_init(|| Mutex::new(None));
+                                    let response = if let Some(model) =
+                                        model_store.lock().unwrap().as_ref()
+                                    {
                                         let probs = model.forward_single(&pixels);
-                                        let (digit, _conf) = probs.iter().enumerate()
+                                        let (digit, _conf) = probs
+                                            .iter()
+                                            .enumerate()
                                             .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
                                             .unwrap();
-                                        let conf_arr: Vec<String> = probs.iter().map(|p| format!("{:.6}", p)).collect();
+                                        let conf_arr: Vec<String> =
+                                            probs.iter().map(|p| format!("{:.6}", p)).collect();
                                         format!(
                                             r#"{{"type":"prediction","digit":{},"confidence":[{}]}}"#,
-                                            digit, conf_arr.join(",")
+                                            digit,
+                                            conf_arr.join(",")
                                         )
                                     } else {
                                         r#"{"type":"prediction","error":"Kein Modell trainiert. Bitte Pipeline zuerst starten."}"#.to_string()
@@ -782,7 +841,8 @@ fn handle_websocket(
                                             let elapsed = start.elapsed();
                                             format!(
                                                 r#"{{"type":"exec_result","output":{},"error":null,"backend":"bytecode","time_ms":{}}}"#,
-                                                serde_json::to_string(&output).unwrap_or_else(|_| "[]".into()),
+                                                serde_json::to_string(&output)
+                                                    .unwrap_or_else(|_| "[]".into()),
                                                 elapsed.as_millis()
                                             )
                                         }
@@ -793,7 +853,10 @@ fn handle_websocket(
                                                     let elapsed = start.elapsed();
                                                     format!(
                                                         r#"{{"type":"exec_result","output":{},"error":null,"backend":"interpreter","time_ms":{}}}"#,
-                                                        serde_json::to_string(&unified_result.output).unwrap_or_else(|_| "[]".into()),
+                                                        serde_json::to_string(
+                                                            &unified_result.output
+                                                        )
+                                                        .unwrap_or_else(|_| "[]".into()),
                                                         elapsed.as_millis()
                                                     )
                                                 }
@@ -844,20 +907,40 @@ fn handle_websocket(
                             Some("start_swarm") => {
                                 let population = msg["population"].as_u64().unwrap_or(6) as usize;
                                 let generations = msg["generations"].as_u64().unwrap_or(3) as usize;
-                                let data_source = msg["data"].as_str().unwrap_or("quick").to_string();
-                                eprintln!("[web_server] -> start_swarm (pop={}, gen={}, data={})", population, generations, data_source);
+                                let data_source =
+                                    msg["data"].as_str().unwrap_or("quick").to_string();
+                                eprintln!(
+                                    "[web_server] -> start_swarm (pop={}, gen={}, data={})",
+                                    population, generations, data_source
+                                );
                                 run_swarm_training(population, generations, &data_source, clients);
                             }
                             Some("start_autonomous") => {
-                                let task = msg["task"].as_str().unwrap_or("Build a digit classifier").to_string();
-                                let model = msg["model"].as_str().unwrap_or("deepseek-r1:1.5b").to_string();
-                                let target_acc = msg["target_accuracy"].as_f64().unwrap_or(0.95) as f32;
-                                let max_iterations = msg["max_iterations"].as_u64().unwrap_or(5) as usize;
-                                let dataset = msg["dataset"].as_str().unwrap_or("synthetic").to_string();
+                                let task = msg["task"]
+                                    .as_str()
+                                    .unwrap_or("Build a digit classifier")
+                                    .to_string();
+                                let model = msg["model"]
+                                    .as_str()
+                                    .unwrap_or("deepseek-r1:1.5b")
+                                    .to_string();
+                                let target_acc =
+                                    msg["target_accuracy"].as_f64().unwrap_or(0.95) as f32;
+                                let max_iterations =
+                                    msg["max_iterations"].as_u64().unwrap_or(5) as usize;
+                                let dataset =
+                                    msg["dataset"].as_str().unwrap_or("synthetic").to_string();
 
                                 eprintln!("[autonomous] Starting: task='{}', model={}, target={:.0}%, max_iter={}", task, model, target_acc*100.0, max_iterations);
 
-                                run_autonomous_loop(&task, &model, target_acc, max_iterations, &dataset, clients);
+                                run_autonomous_loop(
+                                    &task,
+                                    &model,
+                                    target_acc,
+                                    max_iterations,
+                                    &dataset,
+                                    clients,
+                                );
                             }
                             _ => {}
                         }
@@ -945,14 +1028,20 @@ fn run_agent_pipeline(
 
         // Step 1: Ask AI architect to design model
         eprintln!("[pipeline] Step 1: Calling Ollama ({})...", architect_model);
-        broadcast_to_clients(&clients, &format!(
-            r#"{{"type":"pipeline_status","step":1,"total_steps":6,"description":"Asking AI architect ({}) to design model..."}}"#,
-            json_escape(&architect_model)
-        ));
-        broadcast_to_clients(&clients, &format!(
-            r#"{{"type":"agent_thinking","agent":"Architekt","model":"{}","status":"thinking"}}"#,
-            json_escape(&architect_model)
-        ));
+        broadcast_to_clients(
+            &clients,
+            &format!(
+                r#"{{"type":"pipeline_status","step":1,"total_steps":6,"description":"Asking AI architect ({}) to design model..."}}"#,
+                json_escape(&architect_model)
+            ),
+        );
+        broadcast_to_clients(
+            &clients,
+            &format!(
+                r#"{{"type":"agent_thinking","agent":"Architekt","model":"{}","status":"thinking"}}"#,
+                json_escape(&architect_model)
+            ),
+        );
 
         let ollama = crate::ollama::OllamaClient::from_env();
         let prompt = format!(
@@ -961,17 +1050,26 @@ fn run_agent_pipeline(
         );
 
         eprintln!("[pipeline] Sending prompt to Ollama {}...", architect_model);
-        let design_response = ollama.generate(&architect_model, &prompt, Some("Output valid JSON only."))
+        let design_response = ollama
+            .generate(&architect_model, &prompt, Some("Output valid JSON only."))
             .unwrap_or_else(|e| {
                 eprintln!("[pipeline] ❌ Architect call failed: {e}");
-                r#"{"hidden1": 128, "hidden2": 64, "learning_rate": 0.1, "batch_size": 32}"#.to_string()
+                r#"{"hidden1": 128, "hidden2": 64, "learning_rate": 0.1, "batch_size": 32}"#
+                    .to_string()
             });
-        eprintln!("[pipeline] ✅ Architect responded: {}", &design_response[..design_response.len().min(200)]);
+        eprintln!(
+            "[pipeline] ✅ Architect responded: {}",
+            &design_response[..design_response.len().min(200)]
+        );
 
-        broadcast_to_clients(&clients, &format!(
-            r#"{{"type":"agent_response","agent":"Architekt","model":"{}","response":"{}"}}"#,
-            json_escape(&architect_model), json_escape(&design_response)
-        ));
+        broadcast_to_clients(
+            &clients,
+            &format!(
+                r#"{{"type":"agent_response","agent":"Architekt","model":"{}","response":"{}"}}"#,
+                json_escape(&architect_model),
+                json_escape(&design_response)
+            ),
+        );
 
         // Parse design (with sensible defaults)
         let design: serde_json::Value = serde_json::from_str(&extract_json_from_response(&design_response))
@@ -983,26 +1081,38 @@ fn run_agent_pipeline(
         let batch_size = design["batch_size"].as_u64().unwrap_or(64).min(256) as usize;
 
         // Step 2: Build model
-        eprintln!("[pipeline] Step 2: Building model 784→{}→{}→10", hidden1, hidden2);
-        broadcast_to_clients(&clients, &format!(
-            r#"{{"type":"pipeline_status","step":2,"total_steps":6,"description":"Building model: 784\u2192{}\u2192{}\u219210"}}"#,
+        eprintln!(
+            "[pipeline] Step 2: Building model 784→{}→{}→10",
             hidden1, hidden2
-        ));
+        );
+        broadcast_to_clients(
+            &clients,
+            &format!(
+                r#"{{"type":"pipeline_status","step":2,"total_steps":6,"description":"Building model: 784\u2192{}\u2192{}\u219210"}}"#,
+                hidden1, hidden2
+            ),
+        );
 
         use crate::training::MlpWeights3;
         let mut model = MlpWeights3::new(784, hidden1, hidden2, 10);
 
         // Send graph visualization
-        broadcast_to_clients(&clients, &format!(
-            r#"{{"type":"graph","nodes":[{{"id":0,"label":"Input\\n784","type":"input"}},{{"id":1,"label":"Hidden1\\n{}","type":"op"}},{{"id":2,"label":"ReLU","type":"op"}},{{"id":3,"label":"Hidden2\\n{}","type":"op"}},{{"id":4,"label":"ReLU","type":"op"}},{{"id":5,"label":"Output\\n10","type":"output"}},{{"id":6,"label":"Softmax","type":"op"}},{{"id":7,"label":"IGQK","type":"quantum"}}],"edges":[{{"from":0,"to":1}},{{"from":1,"to":2}},{{"from":2,"to":3}},{{"from":3,"to":4}},{{"from":4,"to":5}},{{"from":5,"to":6}},{{"from":6,"to":7}}]}}"#,
-            hidden1, hidden2
-        ));
+        broadcast_to_clients(
+            &clients,
+            &format!(
+                r#"{{"type":"graph","nodes":[{{"id":0,"label":"Input\\n784","type":"input"}},{{"id":1,"label":"Hidden1\\n{}","type":"op"}},{{"id":2,"label":"ReLU","type":"op"}},{{"id":3,"label":"Hidden2\\n{}","type":"op"}},{{"id":4,"label":"ReLU","type":"op"}},{{"id":5,"label":"Output\\n10","type":"output"}},{{"id":6,"label":"Softmax","type":"op"}},{{"id":7,"label":"IGQK","type":"quantum"}}],"edges":[{{"from":0,"to":1}},{{"from":1,"to":2}},{{"from":2,"to":3}},{{"from":3,"to":4}},{{"from":4,"to":5}},{{"from":5,"to":6}},{{"from":6,"to":7}}]}}"#,
+                hidden1, hidden2
+            ),
+        );
 
         // Step 3: Load data
-        broadcast_to_clients(&clients, &format!(
-            r#"{{"type":"pipeline_status","step":3,"total_steps":6,"description":"Loading {} data..."}}"#,
-            json_escape(&dataset)
-        ));
+        broadcast_to_clients(
+            &clients,
+            &format!(
+                r#"{{"type":"pipeline_status","step":3,"total_steps":6,"description":"Loading {} data..."}}"#,
+                json_escape(&dataset)
+            ),
+        );
 
         use crate::mnist::MnistData;
         let data = if dataset == "mnist" {
@@ -1012,17 +1122,23 @@ fn run_agent_pipeline(
             MnistData::synthetic(2000, 500)
         };
 
-        broadcast_to_clients(&clients, &format!(
-            r#"{{"type":"system","text":"Loaded {} training samples, {} test samples"}}"#,
-            data.n_train, data.n_test
-        ));
+        broadcast_to_clients(
+            &clients,
+            &format!(
+                r#"{{"type":"system","text":"Loaded {} training samples, {} test samples"}}"#,
+                data.n_train, data.n_test
+            ),
+        );
 
         // Step 4: Train
         eprintln!("[pipeline] Step 4: Training {} epochs...", epochs);
-        broadcast_to_clients(&clients, &format!(
-            r#"{{"type":"pipeline_status","step":4,"total_steps":6,"description":"Training {} epochs (batch_size={}, lr={})..."}}"#,
-            epochs, batch_size, lr
-        ));
+        broadcast_to_clients(
+            &clients,
+            &format!(
+                r#"{{"type":"pipeline_status","step":4,"total_steps":6,"description":"Training {} epochs (batch_size={}, lr={})..."}}"#,
+                epochs, batch_size, lr
+            ),
+        );
 
         let mut current_lr = lr;
         for epoch in 0..epochs {
@@ -1043,22 +1159,36 @@ fn run_agent_pipeline(
             let probs = model.forward(&data.train_images);
             let acc = model.accuracy(&probs, &data.train_labels);
 
-            eprintln!("[pipeline]   Epoch {}/{}: loss={:.4}, acc={:.1}%", epoch + 1, epochs, epoch_loss, acc * 100.0);
+            eprintln!(
+                "[pipeline]   Epoch {}/{}: loss={:.4}, acc={:.1}%",
+                epoch + 1,
+                epochs,
+                epoch_loss,
+                acc * 100.0
+            );
             // Broadcast every epoch
-            broadcast_to_clients(&clients, &format!(
-                r#"{{"type":"training","epoch":{},"loss":{},"accuracy":{}}}"#,
-                epoch + 1, epoch_loss, acc
-            ));
+            broadcast_to_clients(
+                &clients,
+                &format!(
+                    r#"{{"type":"training","epoch":{},"loss":{},"accuracy":{}}}"#,
+                    epoch + 1,
+                    epoch_loss,
+                    acc
+                ),
+            );
         }
 
         // Test accuracy
         let test_probs = model.forward(&data.test_images);
         let test_acc = model.accuracy(&test_probs, &data.test_labels);
 
-        broadcast_to_clients(&clients, &format!(
-            r#"{{"type":"system","text":"Training complete. Test accuracy: {:.1}%"}}"#,
-            test_acc * 100.0
-        ));
+        broadcast_to_clients(
+            &clients,
+            &format!(
+                r#"{{"type":"system","text":"Training complete. Test accuracy: {:.1}%"}}"#,
+                test_acc * 100.0
+            ),
+        );
 
         // Store model for interactive testing
         {
@@ -1068,14 +1198,18 @@ fn run_agent_pipeline(
         }
 
         // Notify frontend that model is ready for testing
-        broadcast_to_clients(&clients, r#"{"type":"model_ready","text":"Model ready for interactive testing"}"#);
+        broadcast_to_clients(
+            &clients,
+            r#"{"type":"model_ready","text":"Model ready for interactive testing"}"#,
+        );
 
         // Step 5: Compress
         eprintln!("[pipeline] Step 5: IGQK Compression...");
         if compress {
-            broadcast_to_clients(&clients, &format!(
-                r#"{{"type":"pipeline_status","step":5,"total_steps":6,"description":"IGQK Ternary Compression..."}}"#
-            ));
+            broadcast_to_clients(
+                &clients,
+                r#"{"type":"pipeline_status","step":5,"total_steps":6,"description":"IGQK Ternary Compression..."}"#,
+            );
 
             let compressed = model.compress_ternary();
             let comp_probs = compressed.forward(&data.test_images);
@@ -1084,49 +1218,78 @@ fn run_agent_pipeline(
             let total_params = model.param_count();
             let original_kb = total_params as f64 * 4.0 / 1024.0;
             let weight_count = model.w1.len() + model.w2.len() + model.w3.len();
-            let ternary_bytes = (weight_count * 2 + 7) / 8;
+            let ternary_bytes = (weight_count * 2).div_ceil(8);
             let bias_bytes = (model.b1.len() + model.b2.len() + model.b3.len()) * 4;
             let compressed_kb = (ternary_bytes + bias_bytes) as f64 / 1024.0;
             let ratio = original_kb / compressed_kb;
 
-            broadcast_to_clients(&clients, &format!(
-                r#"{{"type":"compression","method":"IGQK Ternary","ratio":"{:.1}x","original_size":"{:.1} KB","compressed_size":"{:.1} KB","accuracy_delta":"{:.1}"}}"#,
-                ratio, original_kb, compressed_kb, (comp_acc - test_acc) * 100.0
-            ));
+            broadcast_to_clients(
+                &clients,
+                &format!(
+                    r#"{{"type":"compression","method":"IGQK Ternary","ratio":"{:.1}x","original_size":"{:.1} KB","compressed_size":"{:.1} KB","accuracy_delta":"{:.1}"}}"#,
+                    ratio,
+                    original_kb,
+                    compressed_kb,
+                    (comp_acc - test_acc) * 100.0
+                ),
+            );
 
             // Step 6: AI Evaluator
-            broadcast_to_clients(&clients, &format!(
-                r#"{{"type":"pipeline_status","step":6,"total_steps":6,"description":"AI Evaluator ({}) reviewing results..."}}"#,
-                json_escape(&evaluator_model)
-            ));
-            broadcast_to_clients(&clients, &format!(
-                r#"{{"type":"agent_thinking","agent":"Evaluator","model":"{}","status":"thinking"}}"#,
-                json_escape(&evaluator_model)
-            ));
+            broadcast_to_clients(
+                &clients,
+                &format!(
+                    r#"{{"type":"pipeline_status","step":6,"total_steps":6,"description":"AI Evaluator ({}) reviewing results..."}}"#,
+                    json_escape(&evaluator_model)
+                ),
+            );
+            broadcast_to_clients(
+                &clients,
+                &format!(
+                    r#"{{"type":"agent_thinking","agent":"Evaluator","model":"{}","status":"thinking"}}"#,
+                    json_escape(&evaluator_model)
+                ),
+            );
 
             let eval_prompt = format!(
                 "I trained a neural network for MNIST: 784\u{2192}{}\u{2192}{}\u{2192}10. Results: Test accuracy: {:.1}%, Compressed accuracy: {:.1}%, Compression: {:.1}x, Size: {:.1}KB\u{2192}{:.1}KB. Evaluate in 2 sentences.",
                 hidden1, hidden2, test_acc * 100.0, comp_acc * 100.0, ratio, original_kb, compressed_kb
             );
 
-            eprintln!("[pipeline] Step 6: Calling Evaluator ({})...", evaluator_model);
-            let evaluation = ollama.generate(&evaluator_model, &eval_prompt, None)
+            eprintln!(
+                "[pipeline] Step 6: Calling Evaluator ({})...",
+                evaluator_model
+            );
+            let evaluation = ollama
+                .generate(&evaluator_model, &eval_prompt, None)
                 .unwrap_or_else(|e| {
                     eprintln!("[pipeline] ❌ Evaluator call failed: {e}");
                     "Evaluation unavailable.".to_string()
                 });
-            eprintln!("[pipeline] ✅ Evaluator: {}", &evaluation[..evaluation.len().min(200)]);
+            eprintln!(
+                "[pipeline] ✅ Evaluator: {}",
+                &evaluation[..evaluation.len().min(200)]
+            );
 
-            broadcast_to_clients(&clients, &format!(
-                r#"{{"type":"agent_response","agent":"Evaluator","model":"{}","response":"{}"}}"#,
-                json_escape(&evaluator_model), json_escape(&evaluation)
-            ));
+            broadcast_to_clients(
+                &clients,
+                &format!(
+                    r#"{{"type":"agent_response","agent":"Evaluator","model":"{}","response":"{}"}}"#,
+                    json_escape(&evaluator_model),
+                    json_escape(&evaluation)
+                ),
+            );
         } else {
             // Skip compression, jump to step 6
-            broadcast_to_clients(&clients, r#"{"type":"pipeline_status","step":5,"total_steps":6,"description":"Compression skipped."}"#);
+            broadcast_to_clients(
+                &clients,
+                r#"{"type":"pipeline_status","step":5,"total_steps":6,"description":"Compression skipped."}"#,
+            );
         }
 
-        broadcast_to_clients(&clients, r#"{"type":"pipeline_status","step":6,"total_steps":6,"description":"Pipeline complete!"}"#);
+        broadcast_to_clients(
+            &clients,
+            r#"{"type":"pipeline_status","step":6,"total_steps":6,"description":"Pipeline complete!"}"#,
+        );
         eprintln!("[pipeline] ==============================");
         eprintln!("[pipeline] ✅ Pipeline complete!");
         eprintln!("[pipeline] ==============================");
@@ -1150,28 +1313,41 @@ fn run_evolution(pop_size: usize, generations: usize, epochs_per: usize, clients
 
     thread::spawn(move || {
         eprintln!("[evolution] ==============================");
-        eprintln!("[evolution] Starting neuroevolution: pop={}, gen={}, epochs_per={}", pop_size, generations, epochs_per);
+        eprintln!(
+            "[evolution] Starting neuroevolution: pop={}, gen={}, epochs_per={}",
+            pop_size, generations, epochs_per
+        );
         eprintln!("[evolution] ==============================");
 
-        broadcast_to_clients(&clients, r#"{"type":"system","text":"Neuroevolution gestartet..."}"#);
+        broadcast_to_clients(
+            &clients,
+            r#"{"type":"system","text":"Neuroevolution gestartet..."}"#,
+        );
 
         // Generate synthetic data for quick evaluation
         use crate::mnist::MnistData;
         let data = MnistData::synthetic(1000, 200);
 
         // Initial population: random architectures (hidden1, hidden2, fitness)
-        let mut population: Vec<(usize, usize, f32)> = (0..pop_size).map(|_| {
-            let h1 = 32 + (rand_u32() % 224) as usize; // 32-256
-            let h2 = 16 + (rand_u32() % 112) as usize;  // 16-128
-            (h1, h2, 0.0)
-        }).collect();
+        let mut population: Vec<(usize, usize, f32)> = (0..pop_size)
+            .map(|_| {
+                let h1 = 32 + (rand_u32() % 224) as usize; // 32-256
+                let h2 = 16 + (rand_u32() % 112) as usize; // 16-128
+                (h1, h2, 0.0)
+            })
+            .collect();
 
         for g in 0..generations {
             eprintln!("[evolution] Generation {}/{}", g + 1, generations);
-            broadcast_to_clients(&clients, &format!(
-                r#"{{"type":"evolution_generation","generation":{},"total_generations":{},"population_size":{}}}"#,
-                g + 1, generations, population.len()
-            ));
+            broadcast_to_clients(
+                &clients,
+                &format!(
+                    r#"{{"type":"evolution_generation","generation":{},"total_generations":{},"population_size":{}}}"#,
+                    g + 1,
+                    generations,
+                    population.len()
+                ),
+            );
 
             // Train and evaluate each individual
             for i in 0..population.len() {
@@ -1193,22 +1369,47 @@ fn run_evolution(pop_size: usize, generations: usize, epochs_per: usize, clients
                 let acc = model.accuracy(&probs, &data.test_labels);
                 population[i].2 = acc;
 
-                eprintln!("[evolution]   Individual {}/{}: {}x{} -> acc={:.1}%", i + 1, population.len(), h1, h2, acc * 100.0);
-                broadcast_to_clients(&clients, &format!(
-                    r#"{{"type":"evolution_individual","generation":{},"index":{},"hidden1":{},"hidden2":{},"accuracy":{}}}"#,
-                    g + 1, i, h1, h2, acc
-                ));
+                eprintln!(
+                    "[evolution]   Individual {}/{}: {}x{} -> acc={:.1}%",
+                    i + 1,
+                    population.len(),
+                    h1,
+                    h2,
+                    acc * 100.0
+                );
+                broadcast_to_clients(
+                    &clients,
+                    &format!(
+                        r#"{{"type":"evolution_individual","generation":{},"index":{},"hidden1":{},"hidden2":{},"accuracy":{}}}"#,
+                        g + 1,
+                        i,
+                        h1,
+                        h2,
+                        acc
+                    ),
+                );
             }
 
             // Sort by fitness (descending accuracy)
             population.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap());
 
             let best = &population[0];
-            eprintln!("[evolution]   Best: {}x{} acc={:.1}%", best.0, best.1, best.2 * 100.0);
-            broadcast_to_clients(&clients, &format!(
-                r#"{{"type":"evolution_best","generation":{},"hidden1":{},"hidden2":{},"accuracy":{}}}"#,
-                g + 1, best.0, best.1, best.2
-            ));
+            eprintln!(
+                "[evolution]   Best: {}x{} acc={:.1}%",
+                best.0,
+                best.1,
+                best.2 * 100.0
+            );
+            broadcast_to_clients(
+                &clients,
+                &format!(
+                    r#"{{"type":"evolution_best","generation":{},"hidden1":{},"hidden2":{},"accuracy":{}}}"#,
+                    g + 1,
+                    best.0,
+                    best.1,
+                    best.2
+                ),
+            );
 
             // Selection & mutation: keep top 30%, mutate rest
             if g < generations - 1 {
@@ -1228,11 +1429,21 @@ fn run_evolution(pop_size: usize, generations: usize, epochs_per: usize, clients
 
         // Final training of the best architecture with more epochs
         let (best_h1, best_h2, best_acc) = population[0];
-        eprintln!("[evolution] Final training: {}x{} (best acc={:.1}%)", best_h1, best_h2, best_acc * 100.0);
-        broadcast_to_clients(&clients, &format!(
-            r#"{{"type":"system","text":"Evolution komplett! Bestes Modell: {}x{} ({:.1}%). Finales Training..."}}"#,
-            best_h1, best_h2, best_acc * 100.0
-        ));
+        eprintln!(
+            "[evolution] Final training: {}x{} (best acc={:.1}%)",
+            best_h1,
+            best_h2,
+            best_acc * 100.0
+        );
+        broadcast_to_clients(
+            &clients,
+            &format!(
+                r#"{{"type":"system","text":"Evolution komplett! Bestes Modell: {}x{} ({:.1}%). Finales Training..."}}"#,
+                best_h1,
+                best_h2,
+                best_acc * 100.0
+            ),
+        );
 
         // Train the winner properly
         let mut final_model = MlpWeights3::new(784, best_h1, best_h2, 10);
@@ -1246,10 +1457,14 @@ fn run_evolution(pop_size: usize, generations: usize, epochs_per: usize, clients
             }
             let probs = final_model.forward(&data.test_images);
             let acc = final_model.accuracy(&probs, &data.test_labels);
-            broadcast_to_clients(&clients, &format!(
-                r#"{{"type":"training","epoch":{},"loss":0,"accuracy":{}}}"#,
-                epoch + 1, acc
-            ));
+            broadcast_to_clients(
+                &clients,
+                &format!(
+                    r#"{{"type":"training","epoch":{},"loss":0,"accuracy":{}}}"#,
+                    epoch + 1,
+                    acc
+                ),
+            );
         }
 
         let final_probs = final_model.forward(&data.test_images);
@@ -1262,14 +1477,25 @@ fn run_evolution(pop_size: usize, generations: usize, epochs_per: usize, clients
             eprintln!("[evolution] Model stored for interactive testing");
         }
 
-        broadcast_to_clients(&clients, &format!(
-            r#"{{"type":"evolution_complete","best_hidden1":{},"best_hidden2":{},"final_accuracy":{}}}"#,
-            best_h1, best_h2, final_acc
-        ));
-        broadcast_to_clients(&clients, r#"{"type":"model_ready","text":"Evolution model ready for interactive testing"}"#);
+        broadcast_to_clients(
+            &clients,
+            &format!(
+                r#"{{"type":"evolution_complete","best_hidden1":{},"best_hidden2":{},"final_accuracy":{}}}"#,
+                best_h1, best_h2, final_acc
+            ),
+        );
+        broadcast_to_clients(
+            &clients,
+            r#"{"type":"model_ready","text":"Evolution model ready for interactive testing"}"#,
+        );
 
         eprintln!("[evolution] ==============================");
-        eprintln!("[evolution] Evolution complete! Best: {}x{}, acc={:.1}%", best_h1, best_h2, final_acc * 100.0);
+        eprintln!(
+            "[evolution] Evolution complete! Best: {}x{}, acc={:.1}%",
+            best_h1,
+            best_h2,
+            final_acc * 100.0
+        );
         eprintln!("[evolution] ==============================");
     });
 }
@@ -1305,7 +1531,8 @@ fn run_autonomous_loop(
         use crate::mnist::MnistData;
 
         let data = if dataset == "mnist" {
-            MnistData::download_and_load("data/mnist").unwrap_or_else(|_| MnistData::synthetic(2000, 500))
+            MnistData::download_and_load("data/mnist")
+                .unwrap_or_else(|_| MnistData::synthetic(2000, 500))
         } else {
             MnistData::synthetic(2000, 500)
         };
@@ -1321,19 +1548,30 @@ fn run_autonomous_loop(
         eprintln!("[autonomous] Max iterations: {}", max_iterations);
         eprintln!("[autonomous] ==============================");
 
-        broadcast_to_clients(&clients, &format!(
-            r#"{{"type":"autonomous_status","phase":"start","iteration":0,"max_iterations":{},"task":"{}","target_accuracy":{}}}"#,
-            max_iterations, json_escape(&task), target_accuracy
-        ));
+        broadcast_to_clients(
+            &clients,
+            &format!(
+                r#"{{"type":"autonomous_status","phase":"start","iteration":0,"max_iterations":{},"task":"{}","target_accuracy":{}}}"#,
+                max_iterations,
+                json_escape(&task),
+                target_accuracy
+            ),
+        );
 
         for iteration in 1..=max_iterations {
-            eprintln!("[autonomous] === Iteration {}/{} ===", iteration, max_iterations);
+            eprintln!(
+                "[autonomous] === Iteration {}/{} ===",
+                iteration, max_iterations
+            );
 
             // === STEP 1: Ask AI to design (or improve) architecture ===
-            broadcast_to_clients(&clients, &format!(
-                r#"{{"type":"autonomous_status","phase":"designing","iteration":{},"max_iterations":{}}}"#,
-                iteration, max_iterations
-            ));
+            broadcast_to_clients(
+                &clients,
+                &format!(
+                    r#"{{"type":"autonomous_status","phase":"designing","iteration":{},"max_iterations":{}}}"#,
+                    iteration, max_iterations
+                ),
+            );
 
             let design_prompt = if iteration == 1 {
                 format!(
@@ -1353,33 +1591,54 @@ fn run_autonomous_loop(
 
             eprintln!("[autonomous] Asking {} for architecture design...", model);
 
-            let design = ollama.generate(&model, &design_prompt, Some("Output valid JSON only."))
-                .unwrap_or_else(|_| r#"{"hidden1":128,"hidden2":64,"epochs":10,"learning_rate":0.1}"#.to_string());
+            let design = ollama
+                .generate(&model, &design_prompt, Some("Output valid JSON only."))
+                .unwrap_or_else(|_| {
+                    r#"{"hidden1":128,"hidden2":64,"epochs":10,"learning_rate":0.1}"#.to_string()
+                });
 
-            eprintln!("[autonomous] AI response: {}", &design[..design.len().min(120)]);
+            eprintln!(
+                "[autonomous] AI response: {}",
+                &design[..design.len().min(120)]
+            );
 
-            broadcast_to_clients(&clients, &format!(
-                r#"{{"type":"autonomous_design","iteration":{},"response":"{}"}}"#,
-                iteration, json_escape(&design)
-            ));
+            broadcast_to_clients(
+                &clients,
+                &format!(
+                    r#"{{"type":"autonomous_design","iteration":{},"response":"{}"}}"#,
+                    iteration,
+                    json_escape(&design)
+                ),
+            );
 
             // Parse design
             let json_str = extract_json_from_response(&design);
-            let parsed: serde_json::Value = serde_json::from_str(&json_str)
-                .unwrap_or(serde_json::json!({"hidden1":128,"hidden2":64,"epochs":10,"learning_rate":0.1}));
+            let parsed: serde_json::Value = serde_json::from_str(&json_str).unwrap_or(
+                serde_json::json!({"hidden1":128,"hidden2":64,"epochs":10,"learning_rate":0.1}),
+            );
 
             let h1 = parsed["hidden1"].as_u64().unwrap_or(128).min(512).max(16) as usize;
             let h2 = parsed["hidden2"].as_u64().unwrap_or(64).min(256).max(8) as usize;
             let epochs = parsed["epochs"].as_u64().unwrap_or(10).min(30).max(3) as usize;
-            let lr = parsed["learning_rate"].as_f64().unwrap_or(0.1).min(1.0).max(0.001) as f32;
+            let lr = parsed["learning_rate"]
+                .as_f64()
+                .unwrap_or(0.1)
+                .min(1.0)
+                .max(0.001) as f32;
 
-            eprintln!("[autonomous] Design: 784->{}->{}->10, {} epochs, lr={}", h1, h2, epochs, lr);
+            eprintln!(
+                "[autonomous] Design: 784->{}->{}->10, {} epochs, lr={}",
+                h1, h2, epochs, lr
+            );
 
             // === STEP 2: Build and train ===
-            broadcast_to_clients(&clients, &format!(
-                r#"{{"type":"autonomous_status","phase":"training","iteration":{},"max_iterations":{},"config":{{"h1":{},"h2":{},"epochs":{},"lr":{}}}}}"#,
-                iteration, max_iterations, h1, h2, epochs, lr
-            ));
+            broadcast_to_clients(
+                &clients,
+                &format!(
+                    r#"{{"type":"autonomous_status","phase":"training","iteration":{},"max_iterations":{},"config":{{"h1":{},"h2":{},"epochs":{},"lr":{}}}}}"#,
+                    iteration, max_iterations, h1, h2, epochs, lr
+                ),
+            );
 
             let mut model_nn = MlpWeights3::new(784, h1, h2, 10);
             let mut current_lr = lr;
@@ -1387,7 +1646,9 @@ fn run_autonomous_loop(
             eprintln!("[autonomous] Training model...");
 
             for epoch in 0..epochs {
-                if epoch > 0 && epoch % 10 == 0 { current_lr *= 0.95; }
+                if epoch > 0 && epoch % 10 == 0 {
+                    current_lr *= 0.95;
+                }
                 let n_batches = data.n_train / 64;
                 let mut epoch_loss = 0.0f32;
                 for b in 0..n_batches {
@@ -1399,10 +1660,15 @@ fn run_autonomous_loop(
                 let probs = model_nn.forward(&data.train_images);
                 let acc = model_nn.accuracy(&probs, &data.train_labels);
 
-                broadcast_to_clients(&clients, &format!(
-                    r#"{{"type":"training","epoch":{},"loss":{},"accuracy":{}}}"#,
-                    epoch + 1, epoch_loss, acc
-                ));
+                broadcast_to_clients(
+                    &clients,
+                    &format!(
+                        r#"{{"type":"training","epoch":{},"loss":{},"accuracy":{}}}"#,
+                        epoch + 1,
+                        epoch_loss,
+                        acc
+                    ),
+                );
             }
 
             // === STEP 3: Evaluate ===
@@ -1417,25 +1683,54 @@ fn run_autonomous_loop(
             let total_params = model_nn.param_count();
             let original_kb = total_params as f64 * 4.0 / 1024.0;
             let weight_count = model_nn.w1.len() + model_nn.w2.len() + model_nn.w3.len();
-            let compressed_kb = ((weight_count * 2 + 7) / 8 + (model_nn.b1.len() + model_nn.b2.len() + model_nn.b3.len()) * 4) as f64 / 1024.0;
+            let compressed_kb = ((weight_count * 2).div_ceil(8)
+                + (model_nn.b1.len() + model_nn.b2.len() + model_nn.b3.len()) * 4)
+                as f64
+                / 1024.0;
             let ratio = original_kb / compressed_kb;
 
-            eprintln!("[autonomous] Result: test_acc={:.1}%, comp_acc={:.1}%, ratio={:.1}x", test_acc*100.0, comp_acc*100.0, ratio);
+            eprintln!(
+                "[autonomous] Result: test_acc={:.1}%, comp_acc={:.1}%, ratio={:.1}x",
+                test_acc * 100.0,
+                comp_acc * 100.0,
+                ratio
+            );
 
-            let result_summary = format!("Iter {}: 784->{}->{}->10, acc={:.1}%, comp={:.1}%, ratio={:.1}x",
-                iteration, h1, h2, test_acc*100.0, comp_acc*100.0, ratio);
+            let result_summary = format!(
+                "Iter {}: 784->{}->{}->10, acc={:.1}%, comp={:.1}%, ratio={:.1}x",
+                iteration,
+                h1,
+                h2,
+                test_acc * 100.0,
+                comp_acc * 100.0,
+                ratio
+            );
             iteration_history.push(result_summary.clone());
 
-            broadcast_to_clients(&clients, &format!(
-                r#"{{"type":"autonomous_result","iteration":{},"test_accuracy":{},"compressed_accuracy":{},"compression_ratio":{},"hidden1":{},"hidden2":{},"params":{},"original_kb":{:.1},"compressed_kb":{:.1}}}"#,
-                iteration, test_acc, comp_acc, ratio, h1, h2, total_params, original_kb, compressed_kb
-            ));
+            broadcast_to_clients(
+                &clients,
+                &format!(
+                    r#"{{"type":"autonomous_result","iteration":{},"test_accuracy":{},"compressed_accuracy":{},"compression_ratio":{},"hidden1":{},"hidden2":{},"params":{},"original_kb":{:.1},"compressed_kb":{:.1}}}"#,
+                    iteration,
+                    test_acc,
+                    comp_acc,
+                    ratio,
+                    h1,
+                    h2,
+                    total_params,
+                    original_kb,
+                    compressed_kb
+                ),
+            );
 
             // Track best
             if test_acc > best_accuracy {
                 best_accuracy = test_acc;
                 best_config = (h1, h2);
-                eprintln!("[autonomous] New best accuracy: {:.1}%", best_accuracy * 100.0);
+                eprintln!(
+                    "[autonomous] New best accuracy: {:.1}%",
+                    best_accuracy * 100.0
+                );
 
                 // Store best model for interactive testing
                 let model_store = TRAINED_MODEL.get_or_init(|| std::sync::Mutex::new(None));
@@ -1445,12 +1740,19 @@ fn run_autonomous_loop(
 
             // === STEP 4: Check if target reached ===
             if test_acc >= target_accuracy {
-                eprintln!("[autonomous] TARGET REACHED at iteration {}: {:.1}%", iteration, test_acc * 100.0);
+                eprintln!(
+                    "[autonomous] TARGET REACHED at iteration {}: {:.1}%",
+                    iteration,
+                    test_acc * 100.0
+                );
 
-                broadcast_to_clients(&clients, &format!(
-                    r#"{{"type":"autonomous_status","phase":"success","iteration":{},"max_iterations":{},"accuracy":{},"target":{}}}"#,
-                    iteration, max_iterations, test_acc, target_accuracy
-                ));
+                broadcast_to_clients(
+                    &clients,
+                    &format!(
+                        r#"{{"type":"autonomous_status","phase":"success","iteration":{},"max_iterations":{},"accuracy":{},"target":{}}}"#,
+                        iteration, max_iterations, test_acc, target_accuracy
+                    ),
+                );
 
                 // Ask AI for final summary
                 let summary_prompt = format!(
@@ -1458,56 +1760,96 @@ fn run_autonomous_loop(
                     task, iteration, best_accuracy*100.0, target_accuracy*100.0, best_config.0, best_config.1, ratio
                 );
                 eprintln!("[autonomous] Asking AI for final summary...");
-                let summary = ollama.generate(&model, &summary_prompt, None).unwrap_or_default();
-                broadcast_to_clients(&clients, &format!(
-                    r#"{{"type":"autonomous_summary","success":true,"summary":"{}","iterations":{},"accuracy":{},"architecture":"784->{}->{}->10"}}"#,
-                    json_escape(&summary), iteration, best_accuracy, best_config.0, best_config.1
-                ));
+                let summary = ollama
+                    .generate(&model, &summary_prompt, None)
+                    .unwrap_or_default();
+                broadcast_to_clients(
+                    &clients,
+                    &format!(
+                        r#"{{"type":"autonomous_summary","success":true,"summary":"{}","iterations":{},"accuracy":{},"architecture":"784->{}->{}->10"}}"#,
+                        json_escape(&summary),
+                        iteration,
+                        best_accuracy,
+                        best_config.0,
+                        best_config.1
+                    ),
+                );
 
-                eprintln!("[autonomous] SUCCESS after {} iterations: {:.1}%", iteration, best_accuracy*100.0);
+                eprintln!(
+                    "[autonomous] SUCCESS after {} iterations: {:.1}%",
+                    iteration,
+                    best_accuracy * 100.0
+                );
                 eprintln!("[autonomous] ==============================");
                 return;
             }
 
             // === STEP 5: Ask AI for feedback and adjustments ===
-            broadcast_to_clients(&clients, &format!(
-                r#"{{"type":"autonomous_status","phase":"reflecting","iteration":{},"max_iterations":{}}}"#,
-                iteration, max_iterations
-            ));
+            broadcast_to_clients(
+                &clients,
+                &format!(
+                    r#"{{"type":"autonomous_status","phase":"reflecting","iteration":{},"max_iterations":{}}}"#,
+                    iteration, max_iterations
+                ),
+            );
 
             let feedback_prompt = format!(
                 "Training result: 784->{}->{}->10 achieved {:.1}% accuracy (target: {:.0}%). Compression: {:.1}x. What went wrong? How should the architecture change? Be brief (1-2 sentences).",
                 h1, h2, test_acc*100.0, target_accuracy*100.0, ratio
             );
             eprintln!("[autonomous] Asking AI for feedback...");
-            let feedback = ollama.generate(&model, &feedback_prompt, None).unwrap_or_default();
+            let feedback = ollama
+                .generate(&model, &feedback_prompt, None)
+                .unwrap_or_default();
 
-            broadcast_to_clients(&clients, &format!(
-                r#"{{"type":"autonomous_feedback","iteration":{},"feedback":"{}"}}"#,
-                iteration, json_escape(&feedback)
-            ));
+            broadcast_to_clients(
+                &clients,
+                &format!(
+                    r#"{{"type":"autonomous_feedback","iteration":{},"feedback":"{}"}}"#,
+                    iteration,
+                    json_escape(&feedback)
+                ),
+            );
 
-            eprintln!("[autonomous] Feedback: {}", &feedback[..feedback.len().min(100)]);
+            eprintln!(
+                "[autonomous] Feedback: {}",
+                &feedback[..feedback.len().min(100)]
+            );
         }
 
         // Max iterations reached without hitting target
-        eprintln!("[autonomous] MAX ITERATIONS reached. Best: {:.1}%", best_accuracy*100.0);
+        eprintln!(
+            "[autonomous] MAX ITERATIONS reached. Best: {:.1}%",
+            best_accuracy * 100.0
+        );
 
-        broadcast_to_clients(&clients, &format!(
-            r#"{{"type":"autonomous_status","phase":"max_reached","iteration":{},"max_iterations":{},"best_accuracy":{}}}"#,
-            max_iterations, max_iterations, best_accuracy
-        ));
+        broadcast_to_clients(
+            &clients,
+            &format!(
+                r#"{{"type":"autonomous_status","phase":"max_reached","iteration":{},"max_iterations":{},"best_accuracy":{}}}"#,
+                max_iterations, max_iterations, best_accuracy
+            ),
+        );
 
         let summary_prompt = format!(
             "A neural network was trained for: {}. After {} iterations, the best result was {:.1}% accuracy (target was {:.0}%). Best architecture: 784->{}->{}->10. The target was not reached. Summarize what happened and suggest next steps. 2-3 sentences.",
             task, max_iterations, best_accuracy*100.0, target_accuracy*100.0, best_config.0, best_config.1
         );
         eprintln!("[autonomous] Asking AI for final summary...");
-        let summary = ollama.generate(&model, &summary_prompt, None).unwrap_or_default();
-        broadcast_to_clients(&clients, &format!(
-            r#"{{"type":"autonomous_summary","success":false,"summary":"{}","iterations":{},"accuracy":{},"architecture":"784->{}->{}->10"}}"#,
-            json_escape(&summary), max_iterations, best_accuracy, best_config.0, best_config.1
-        ));
+        let summary = ollama
+            .generate(&model, &summary_prompt, None)
+            .unwrap_or_default();
+        broadcast_to_clients(
+            &clients,
+            &format!(
+                r#"{{"type":"autonomous_summary","success":false,"summary":"{}","iterations":{},"accuracy":{},"architecture":"784->{}->{}->10"}}"#,
+                json_escape(&summary),
+                max_iterations,
+                best_accuracy,
+                best_config.0,
+                best_config.1
+            ),
+        );
 
         eprintln!("[autonomous] ==============================");
     });
@@ -1524,7 +1866,10 @@ fn run_swarm_training(population: usize, generations: usize, data_source: &str, 
 
     thread::spawn(move || {
         eprintln!("[swarm] ==============================");
-        eprintln!("[swarm] Starting swarm training: pop={}, gen={}, data={}", population, generations, data_source);
+        eprintln!(
+            "[swarm] Starting swarm training: pop={}, gen={}, data={}",
+            population, generations, data_source
+        );
         eprintln!("[swarm] ==============================");
 
         let builtin_text = "The quick brown fox jumps over the lazy dog. \
@@ -1552,7 +1897,10 @@ fn run_swarm_training(population: usize, generations: usize, data_source: &str, 
             builtin_text.to_string()
         } else {
             std::fs::read_to_string(&data_source).unwrap_or_else(|e| {
-                eprintln!("[swarm] Cannot read {}: {}, using built-in text", data_source, e);
+                eprintln!(
+                    "[swarm] Cannot read {}: {}, using built-in text",
+                    data_source, e
+                );
                 builtin_text.to_string()
             })
         };
@@ -1562,35 +1910,45 @@ fn run_swarm_training(population: usize, generations: usize, data_source: &str, 
         eprintln!("[swarm] Training tokenizer...");
 
         use crate::tokenizer::BpeTokenizer;
-        use crate::transformer_train::{TransformerConfig, MiniGPT};
+        use crate::transformer_train::{MiniGPT, TransformerConfig};
 
         let tokenizer = BpeTokenizer::train(&text, 500);
         let tokens = tokenizer.encode(&text);
         let vocab_size = tokenizer.vocab_size();
 
-        broadcast_to_clients(&clients, &format!(
-            r#"{{"type":"swarm_status","phase":"tokenizer","vocab_size":{}}}"#,
-            vocab_size
-        ));
-        eprintln!("[swarm] Tokenizer ready: vocab={}, tokens={}", vocab_size, tokens.len());
+        broadcast_to_clients(
+            &clients,
+            &format!(
+                r#"{{"type":"swarm_status","phase":"tokenizer","vocab_size":{}}}"#,
+                vocab_size
+            ),
+        );
+        eprintln!(
+            "[swarm] Tokenizer ready: vocab={}, tokens={}",
+            vocab_size,
+            tokens.len()
+        );
 
         if tokens.len() < 4 {
-            broadcast_to_clients(&clients, r#"{"type":"swarm_status","phase":"error","message":"Text too short after tokenization"}"#);
+            broadcast_to_clients(
+                &clients,
+                r#"{"type":"swarm_status","phase":"error","message":"Text too short after tokenization"}"#,
+            );
             return;
         }
 
         // Step 2: Create population
         let architectures: [(usize, usize, usize); 10] = [
-            (32, 2, 2),   // tiny
-            (48, 3, 2),   // small-wide
-            (32, 2, 4),   // small-deep
-            (64, 4, 2),   // medium-wide
-            (64, 4, 3),   // medium
-            (48, 3, 4),   // medium-deep
-            (96, 4, 2),   // large-wide
-            (64, 4, 4),   // large-balanced
-            (32, 2, 6),   // very-deep
-            (128, 4, 2),  // widest
+            (32, 2, 2),  // tiny
+            (48, 3, 2),  // small-wide
+            (32, 2, 4),  // small-deep
+            (64, 4, 2),  // medium-wide
+            (64, 4, 3),  // medium
+            (48, 3, 4),  // medium-deep
+            (96, 4, 2),  // large-wide
+            (64, 4, 4),  // large-balanced
+            (32, 2, 6),  // very-deep
+            (128, 4, 2), // widest
         ];
 
         struct SwarmMember {
@@ -1619,12 +1977,19 @@ fn run_swarm_training(population: usize, generations: usize, data_source: &str, 
             let model = MiniGPT::new(config.clone());
             let params = model.param_count();
 
-            broadcast_to_clients(&clients, &format!(
-                r#"{{"type":"swarm_model","id":{},"d_model":{},"layers":{},"params":{}}}"#,
-                i, d_model, n_layers, params
-            ));
+            broadcast_to_clients(
+                &clients,
+                &format!(
+                    r#"{{"type":"swarm_model","id":{},"d_model":{},"layers":{},"params":{}}}"#,
+                    i, d_model, n_layers, params
+                ),
+            );
 
-            swarm.push(SwarmMember { config, model, fitness: f32::MAX });
+            swarm.push(SwarmMember {
+                config,
+                model,
+                fitness: f32::MAX,
+            });
         }
 
         // Step 3: Evolution loop
@@ -1634,10 +1999,14 @@ fn run_swarm_training(population: usize, generations: usize, data_source: &str, 
         for gen in 0..generations {
             eprintln!("[swarm] Generation {}/{}", gen + 1, generations);
 
-            broadcast_to_clients(&clients, &format!(
-                r#"{{"type":"swarm_generation","gen":{},"total":{}}}"#,
-                gen + 1, generations
-            ));
+            broadcast_to_clients(
+                &clients,
+                &format!(
+                    r#"{{"type":"swarm_generation","gen":{},"total":{}}}"#,
+                    gen + 1,
+                    generations
+                ),
+            );
 
             // Train each model briefly
             for i in 0..swarm.len() {
@@ -1646,7 +2015,9 @@ fn run_swarm_training(population: usize, generations: usize, data_source: &str, 
 
                 for epoch in 0..epochs_per_gen {
                     let max_start = tokens.len().saturating_sub(seq_len + 1);
-                    if max_start == 0 { continue; }
+                    if max_start == 0 {
+                        continue;
+                    }
 
                     let start = (gen * 7 + i * 13 + epoch * 17) % max_start.max(1);
                     let end = std::cmp::min(start + seq_len + 1, tokens.len());
@@ -1659,7 +2030,11 @@ fn run_swarm_training(population: usize, generations: usize, data_source: &str, 
                     }
                 }
 
-                swarm[i].fitness = if count > 0 { total_loss / count as f32 } else { f32::MAX };
+                swarm[i].fitness = if count > 0 {
+                    total_loss / count as f32
+                } else {
+                    f32::MAX
+                };
 
                 // Generate a short sample
                 let sample = if swarm[i].fitness < 50.0 && !tokens.is_empty() {
@@ -1672,26 +2047,47 @@ fn run_swarm_training(population: usize, generations: usize, data_source: &str, 
                     String::new()
                 };
 
-                broadcast_to_clients(&clients, &format!(
-                    r#"{{"type":"swarm_fitness","gen":{},"id":{},"loss":{},"d_model":{},"layers":{},"sample":"{}"}}"#,
-                    gen + 1, i, swarm[i].fitness, swarm[i].config.d_model, swarm[i].config.n_layers, sample
-                ));
+                broadcast_to_clients(
+                    &clients,
+                    &format!(
+                        r#"{{"type":"swarm_fitness","gen":{},"id":{},"loss":{},"d_model":{},"layers":{},"sample":"{}"}}"#,
+                        gen + 1,
+                        i,
+                        swarm[i].fitness,
+                        swarm[i].config.d_model,
+                        swarm[i].config.n_layers,
+                        sample
+                    ),
+                );
             }
 
             // Sort by fitness (lower loss = better)
-            swarm.sort_by(|a, b| a.fitness.partial_cmp(&b.fitness).unwrap_or(std::cmp::Ordering::Equal));
+            swarm.sort_by(|a, b| {
+                a.fitness
+                    .partial_cmp(&b.fitness)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
 
             let best = &swarm[0];
-            broadcast_to_clients(&clients, &format!(
-                r#"{{"type":"swarm_best","gen":{},"d_model":{},"layers":{},"loss":{},"params":{}}}"#,
-                gen + 1, best.config.d_model, best.config.n_layers, best.fitness, best.model.param_count()
-            ));
+            broadcast_to_clients(
+                &clients,
+                &format!(
+                    r#"{{"type":"swarm_best","gen":{},"d_model":{},"layers":{},"loss":{},"params":{}}}"#,
+                    gen + 1,
+                    best.config.d_model,
+                    best.config.n_layers,
+                    best.fitness,
+                    best.model.param_count()
+                ),
+            );
 
             // Mutate: keep top 40%, replace rest
             if gen < generations - 1 {
                 let survivors = (population * 4 / 10).max(1);
-                let survivor_configs: Vec<TransformerConfig> =
-                    swarm[..survivors].iter().map(|m| m.config.clone()).collect();
+                let survivor_configs: Vec<TransformerConfig> = swarm[..survivors]
+                    .iter()
+                    .map(|m| m.config.clone())
+                    .collect();
 
                 for i in survivors..population {
                     let parent_idx = i % survivors;
@@ -1706,8 +2102,11 @@ fn run_swarm_training(population: usize, generations: usize, data_source: &str, 
                             } else {
                                 new_config.d_model = new_config.d_model.saturating_sub(16).max(16);
                             }
-                            new_config.n_heads = new_config.n_heads.min(new_config.d_model / 8).max(1);
-                            while new_config.d_model % new_config.n_heads != 0 && new_config.n_heads > 1 {
+                            new_config.n_heads =
+                                new_config.n_heads.min(new_config.d_model / 8).max(1);
+                            while !new_config.d_model.is_multiple_of(new_config.n_heads)
+                                && new_config.n_heads > 1
+                            {
                                 new_config.n_heads -= 1;
                             }
                         }
@@ -1720,11 +2119,14 @@ fn run_swarm_training(population: usize, generations: usize, data_source: &str, 
                         }
                         _ => {
                             if (gen + i) % 2 == 0 {
-                                new_config.n_heads = (new_config.n_heads + 1).min(new_config.d_model / 8).max(1);
+                                new_config.n_heads =
+                                    (new_config.n_heads + 1).min(new_config.d_model / 8).max(1);
                             } else {
                                 new_config.n_heads = new_config.n_heads.saturating_sub(1).max(1);
                             }
-                            while new_config.d_model % new_config.n_heads != 0 && new_config.n_heads > 1 {
+                            while !new_config.d_model.is_multiple_of(new_config.n_heads)
+                                && new_config.n_heads > 1
+                            {
                                 new_config.n_heads -= 1;
                             }
                         }
@@ -1742,17 +2144,29 @@ fn run_swarm_training(population: usize, generations: usize, data_source: &str, 
 
         // Final results
         let show_count = population.min(5);
-        let results: Vec<String> = swarm.iter().enumerate().take(show_count).map(|(i, m)| {
-            format!(
-                r#"{{"rank":{},"d_model":{},"layers":{},"loss":{},"params":{}}}"#,
-                i + 1, m.config.d_model, m.config.n_layers, m.fitness, m.model.param_count()
-            )
-        }).collect();
+        let results: Vec<String> = swarm
+            .iter()
+            .enumerate()
+            .take(show_count)
+            .map(|(i, m)| {
+                format!(
+                    r#"{{"rank":{},"d_model":{},"layers":{},"loss":{},"params":{}}}"#,
+                    i + 1,
+                    m.config.d_model,
+                    m.config.n_layers,
+                    m.fitness,
+                    m.model.param_count()
+                )
+            })
+            .collect();
 
-        broadcast_to_clients(&clients, &format!(
-            r#"{{"type":"swarm_complete","results":[{}]}}"#,
-            results.join(",")
-        ));
+        broadcast_to_clients(
+            &clients,
+            &format!(
+                r#"{{"type":"swarm_complete","results":[{}]}}"#,
+                results.join(",")
+            ),
+        );
 
         // Save best model and tokenizer
         let model_dir = "data/models";
@@ -1773,10 +2187,14 @@ fn run_swarm_training(population: usize, generations: usize, data_source: &str, 
         }
 
         // Broadcast save paths
-        broadcast_to_clients(&clients, &format!(
-            r#"{{"type":"swarm_saved","model_path":"{}","tokenizer_path":"{}"}}"#,
-            json_escape(&model_path), json_escape(&tok_path)
-        ));
+        broadcast_to_clients(
+            &clients,
+            &format!(
+                r#"{{"type":"swarm_saved","model_path":"{}","tokenizer_path":"{}"}}"#,
+                json_escape(&model_path),
+                json_escape(&tok_path)
+            ),
+        );
 
         eprintln!("[swarm] ==============================");
         eprintln!("[swarm] Swarm training complete!");
@@ -1842,7 +2260,7 @@ mod tests {
         let frame = WsFrame::text("hello");
         let encoded = frame.encode();
         assert_eq!(encoded[0], 0x81); // FIN + text opcode
-        assert_eq!(encoded[1], 5);    // payload length
+        assert_eq!(encoded[1], 5); // payload length
         assert_eq!(&encoded[2..], b"hello");
     }
 
@@ -1853,9 +2271,9 @@ mod tests {
         let frame = WsFrame::text(&payload);
         let encoded = frame.encode();
         assert_eq!(encoded[0], 0x81);
-        assert_eq!(encoded[1], 126);   // extended length marker
-        assert_eq!(encoded[2], 0);     // length high byte
-        assert_eq!(encoded[3], 200);   // length low byte
+        assert_eq!(encoded[1], 126); // extended length marker
+        assert_eq!(encoded[2], 0); // length high byte
+        assert_eq!(encoded[3], 200); // length low byte
         assert_eq!(encoded.len(), 4 + 200);
     }
 
@@ -2017,10 +2435,7 @@ mod tests {
     #[test]
     fn test_extract_json_from_response_with_suffix() {
         let input = r#"{"hidden1": 128} - this is my design"#;
-        assert_eq!(
-            extract_json_from_response(input),
-            r#"{"hidden1": 128}"#
-        );
+        assert_eq!(extract_json_from_response(input), r#"{"hidden1": 128}"#);
     }
 
     #[test]

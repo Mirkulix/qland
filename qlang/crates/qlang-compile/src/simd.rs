@@ -27,7 +27,12 @@ pub fn compile_graph_simd<'ctx>(
     let vec8_f32_type = f32_type.vec_type(8);
 
     let fn_type = void_type.fn_type(
-        &[f32_ptr_type.into(), f32_ptr_type.into(), f32_ptr_type.into(), i64_type.into()],
+        &[
+            f32_ptr_type.into(),
+            f32_ptr_type.into(),
+            f32_ptr_type.into(),
+            i64_type.into(),
+        ],
         false,
     );
 
@@ -50,7 +55,8 @@ pub fn compile_graph_simd<'ctx>(
     let n = function.get_nth_param(3).unwrap().into_int_value();
 
     let ops: Vec<&Op> = graph
-        .nodes.iter()
+        .nodes
+        .iter()
         .filter(|n| !matches!(n.op, Op::Input { .. } | Op::Output { .. } | Op::Constant))
         .map(|n| &n.op)
         .collect();
@@ -62,7 +68,9 @@ pub fn compile_graph_simd<'ctx>(
     // Entry: compute n_vector_elems = (n / 8) * 8
     builder.position_at_end(entry_block);
     let n_vectors = builder.build_int_unsigned_div(n, eight, "n_vec").unwrap();
-    let n_vector_elems = builder.build_int_mul(n_vectors, eight, "n_vec_elems").unwrap();
+    let n_vector_elems = builder
+        .build_int_mul(n_vectors, eight, "n_vec_elems")
+        .unwrap();
     builder.build_unconditional_branch(vector_loop).unwrap();
 
     // === Vector loop header ===
@@ -71,22 +79,44 @@ pub fn compile_graph_simd<'ctx>(
     vec_i.add_incoming(&[(&zero, entry_block)]);
     let vec_i_val = vec_i.as_basic_value().into_int_value();
 
-    let vec_cond = builder.build_int_compare(inkwell::IntPredicate::ULT, vec_i_val, n_vector_elems, "vc").unwrap();
-    builder.build_conditional_branch(vec_cond, vector_body, scalar_loop).unwrap();
+    let vec_cond = builder
+        .build_int_compare(inkwell::IntPredicate::ULT, vec_i_val, n_vector_elems, "vc")
+        .unwrap();
+    builder
+        .build_conditional_branch(vec_cond, vector_body, scalar_loop)
+        .unwrap();
 
     // === Vector body: load <8 x float>, compute, store ===
     builder.position_at_end(vector_body);
 
-    let a_base = unsafe { builder.build_gep(f32_type, input_a, &[vec_i_val], "a_b").unwrap() };
-    let a_vec = builder.build_load(vec8_f32_type, a_base, "av").unwrap().into_vector_value();
+    let a_base = unsafe {
+        builder
+            .build_gep(f32_type, input_a, &[vec_i_val], "a_b")
+            .unwrap()
+    };
+    let a_vec = builder
+        .build_load(vec8_f32_type, a_base, "av")
+        .unwrap()
+        .into_vector_value();
 
-    let b_base = unsafe { builder.build_gep(f32_type, input_b, &[vec_i_val], "b_b").unwrap() };
-    let b_vec = builder.build_load(vec8_f32_type, b_base, "bv").unwrap().into_vector_value();
+    let b_base = unsafe {
+        builder
+            .build_gep(f32_type, input_b, &[vec_i_val], "b_b")
+            .unwrap()
+    };
+    let b_vec = builder
+        .build_load(vec8_f32_type, b_base, "bv")
+        .unwrap()
+        .into_vector_value();
 
     // Apply vector ops
-    let result_vec = emit_vector_ops(&builder, &context, &ops, a_vec, b_vec)?;
+    let result_vec = emit_vector_ops(&builder, context, &ops, a_vec, b_vec)?;
 
-    let out_base = unsafe { builder.build_gep(f32_type, output, &[vec_i_val], "o_b").unwrap() };
+    let out_base = unsafe {
+        builder
+            .build_gep(f32_type, output, &[vec_i_val], "o_b")
+            .unwrap()
+    };
     builder.build_store(out_base, result_vec).unwrap();
 
     let vec_next = builder.build_int_add(vec_i_val, eight, "vn").unwrap();
@@ -99,18 +129,40 @@ pub fn compile_graph_simd<'ctx>(
     sc_i.add_incoming(&[(&n_vector_elems, vector_loop)]);
     let sc_i_val = sc_i.as_basic_value().into_int_value();
 
-    let sc_cond = builder.build_int_compare(inkwell::IntPredicate::ULT, sc_i_val, n, "sc").unwrap();
-    builder.build_conditional_branch(sc_cond, scalar_body, exit_block).unwrap();
+    let sc_cond = builder
+        .build_int_compare(inkwell::IntPredicate::ULT, sc_i_val, n, "sc")
+        .unwrap();
+    builder
+        .build_conditional_branch(sc_cond, scalar_body, exit_block)
+        .unwrap();
 
     builder.position_at_end(scalar_body);
-    let a_ptr = unsafe { builder.build_gep(f32_type, input_a, &[sc_i_val], "as").unwrap() };
-    let a_val = builder.build_load(f32_type, a_ptr, "av").unwrap().into_float_value();
-    let b_ptr = unsafe { builder.build_gep(f32_type, input_b, &[sc_i_val], "bs").unwrap() };
-    let b_val = builder.build_load(f32_type, b_ptr, "bv").unwrap().into_float_value();
+    let a_ptr = unsafe {
+        builder
+            .build_gep(f32_type, input_a, &[sc_i_val], "as")
+            .unwrap()
+    };
+    let a_val = builder
+        .build_load(f32_type, a_ptr, "av")
+        .unwrap()
+        .into_float_value();
+    let b_ptr = unsafe {
+        builder
+            .build_gep(f32_type, input_b, &[sc_i_val], "bs")
+            .unwrap()
+    };
+    let b_val = builder
+        .build_load(f32_type, b_ptr, "bv")
+        .unwrap()
+        .into_float_value();
 
-    let sc_result = crate::codegen::emit_ops(&builder, &context, &ops, a_val, b_val)?;
+    let sc_result = crate::codegen::emit_ops(&builder, context, &ops, a_val, b_val)?;
 
-    let out_ptr = unsafe { builder.build_gep(f32_type, output, &[sc_i_val], "os").unwrap() };
+    let out_ptr = unsafe {
+        builder
+            .build_gep(f32_type, output, &[sc_i_val], "os")
+            .unwrap()
+    };
     builder.build_store(out_ptr, sc_result).unwrap();
 
     let sc_next = builder.build_int_add(sc_i_val, one, "sn").unwrap();
@@ -158,7 +210,10 @@ fn emit_vector_ops<'ctx>(
                 let cmp = builder
                     .build_float_compare(inkwell::FloatPredicate::OGT, current, zero_vec, "vrc")
                     .unwrap();
-                builder.build_select(cmp, current, zero_vec, "vr").unwrap().into_vector_value()
+                builder
+                    .build_select(cmp, current, zero_vec, "vr")
+                    .unwrap()
+                    .into_vector_value()
             }
 
             Op::ToTernary => {
@@ -187,8 +242,12 @@ fn emit_vector_ops<'ctx>(
                     pos_v = builder.build_insert_element(pos_v, p3, idx, "").unwrap();
                     neg_v = builder.build_insert_element(neg_v, n3, idx, "").unwrap();
                     one_v = builder.build_insert_element(one_v, one_c, idx, "").unwrap();
-                    neg1_v = builder.build_insert_element(neg1_v, neg1_c, idx, "").unwrap();
-                    zero_v = builder.build_insert_element(zero_v, zero_c, idx, "").unwrap();
+                    neg1_v = builder
+                        .build_insert_element(neg1_v, neg1_c, idx, "")
+                        .unwrap();
+                    zero_v = builder
+                        .build_insert_element(zero_v, zero_c, idx, "")
+                        .unwrap();
                 }
 
                 let is_pos = builder
@@ -198,8 +257,14 @@ fn emit_vector_ops<'ctx>(
                     .build_float_compare(inkwell::FloatPredicate::OLT, current, neg_v, "vin")
                     .unwrap();
 
-                let neg_or_zero = builder.build_select(is_neg, neg1_v, zero_v, "vnz").unwrap().into_vector_value();
-                builder.build_select(is_pos, one_v, neg_or_zero, "vt").unwrap().into_vector_value()
+                let neg_or_zero = builder
+                    .build_select(is_neg, neg1_v, zero_v, "vnz")
+                    .unwrap()
+                    .into_vector_value();
+                builder
+                    .build_select(is_pos, one_v, neg_or_zero, "vt")
+                    .unwrap()
+                    .into_vector_value()
             }
 
             other => {
@@ -226,10 +291,26 @@ mod tests {
     fn simd_compiles_with_vector_types() {
         // Just verify the graph compiles to LLVM IR with <8 x float>
         let mut g = Graph::new("simd_ir");
-        let a = g.add_node(Op::Input { name: "a".into() }, vec![], vec![TensorType::f32_vector(16)]);
-        let b = g.add_node(Op::Input { name: "b".into() }, vec![], vec![TensorType::f32_vector(16)]);
-        let add = g.add_node(Op::Add, vec![TensorType::f32_vector(16); 2], vec![TensorType::f32_vector(16)]);
-        let out = g.add_node(Op::Output { name: "y".into() }, vec![TensorType::f32_vector(16)], vec![]);
+        let a = g.add_node(
+            Op::Input { name: "a".into() },
+            vec![],
+            vec![TensorType::f32_vector(16)],
+        );
+        let b = g.add_node(
+            Op::Input { name: "b".into() },
+            vec![],
+            vec![TensorType::f32_vector(16)],
+        );
+        let add = g.add_node(
+            Op::Add,
+            vec![TensorType::f32_vector(16); 2],
+            vec![TensorType::f32_vector(16)],
+        );
+        let out = g.add_node(
+            Op::Output { name: "y".into() },
+            vec![TensorType::f32_vector(16)],
+            vec![],
+        );
         g.add_edge(a, 0, add, 0, TensorType::f32_vector(16));
         g.add_edge(b, 0, add, 1, TensorType::f32_vector(16));
         g.add_edge(add, 0, out, 0, TensorType::f32_vector(16));
@@ -245,10 +326,26 @@ mod tests {
     #[ignore = "requires 32-byte aligned memory allocation (Phase 5)"]
     fn simd_add() {
         let mut g = Graph::new("simd_add");
-        let a = g.add_node(Op::Input { name: "a".into() }, vec![], vec![TensorType::f32_vector(16)]);
-        let b = g.add_node(Op::Input { name: "b".into() }, vec![], vec![TensorType::f32_vector(16)]);
-        let add = g.add_node(Op::Add, vec![TensorType::f32_vector(16); 2], vec![TensorType::f32_vector(16)]);
-        let out = g.add_node(Op::Output { name: "y".into() }, vec![TensorType::f32_vector(16)], vec![]);
+        let a = g.add_node(
+            Op::Input { name: "a".into() },
+            vec![],
+            vec![TensorType::f32_vector(16)],
+        );
+        let b = g.add_node(
+            Op::Input { name: "b".into() },
+            vec![],
+            vec![TensorType::f32_vector(16)],
+        );
+        let add = g.add_node(
+            Op::Add,
+            vec![TensorType::f32_vector(16); 2],
+            vec![TensorType::f32_vector(16)],
+        );
+        let out = g.add_node(
+            Op::Output { name: "y".into() },
+            vec![TensorType::f32_vector(16)],
+            vec![],
+        );
         g.add_edge(a, 0, add, 0, TensorType::f32_vector(16));
         g.add_edge(b, 0, add, 1, TensorType::f32_vector(16));
         g.add_edge(add, 0, out, 0, TensorType::f32_vector(16));
@@ -270,10 +367,26 @@ mod tests {
     #[ignore = "requires 32-byte aligned memory allocation (Phase 5)"]
     fn simd_relu() {
         let mut g = Graph::new("simd_relu");
-        let a = g.add_node(Op::Input { name: "a".into() }, vec![], vec![TensorType::f32_vector(16)]);
-        let _b = g.add_node(Op::Input { name: "b".into() }, vec![], vec![TensorType::f32_vector(16)]);
-        let relu = g.add_node(Op::Relu, vec![TensorType::f32_vector(16)], vec![TensorType::f32_vector(16)]);
-        let out = g.add_node(Op::Output { name: "y".into() }, vec![TensorType::f32_vector(16)], vec![]);
+        let a = g.add_node(
+            Op::Input { name: "a".into() },
+            vec![],
+            vec![TensorType::f32_vector(16)],
+        );
+        let _b = g.add_node(
+            Op::Input { name: "b".into() },
+            vec![],
+            vec![TensorType::f32_vector(16)],
+        );
+        let relu = g.add_node(
+            Op::Relu,
+            vec![TensorType::f32_vector(16)],
+            vec![TensorType::f32_vector(16)],
+        );
+        let out = g.add_node(
+            Op::Output { name: "y".into() },
+            vec![TensorType::f32_vector(16)],
+            vec![],
+        );
         g.add_edge(a, 0, relu, 0, TensorType::f32_vector(16));
         g.add_edge(relu, 0, out, 0, TensorType::f32_vector(16));
 
@@ -292,10 +405,26 @@ mod tests {
     #[ignore = "requires 32-byte aligned memory allocation (Phase 5)"]
     fn simd_handles_non_aligned_sizes() {
         let mut g = Graph::new("simd_13");
-        let a = g.add_node(Op::Input { name: "a".into() }, vec![], vec![TensorType::f32_vector(13)]);
-        let b = g.add_node(Op::Input { name: "b".into() }, vec![], vec![TensorType::f32_vector(13)]);
-        let add = g.add_node(Op::Add, vec![TensorType::f32_vector(13); 2], vec![TensorType::f32_vector(13)]);
-        let out = g.add_node(Op::Output { name: "y".into() }, vec![TensorType::f32_vector(13)], vec![]);
+        let a = g.add_node(
+            Op::Input { name: "a".into() },
+            vec![],
+            vec![TensorType::f32_vector(13)],
+        );
+        let b = g.add_node(
+            Op::Input { name: "b".into() },
+            vec![],
+            vec![TensorType::f32_vector(13)],
+        );
+        let add = g.add_node(
+            Op::Add,
+            vec![TensorType::f32_vector(13); 2],
+            vec![TensorType::f32_vector(13)],
+        );
+        let out = g.add_node(
+            Op::Output { name: "y".into() },
+            vec![TensorType::f32_vector(13)],
+            vec![],
+        );
         g.add_edge(a, 0, add, 0, TensorType::f32_vector(13));
         g.add_edge(b, 0, add, 1, TensorType::f32_vector(13));
         g.add_edge(add, 0, out, 0, TensorType::f32_vector(13));

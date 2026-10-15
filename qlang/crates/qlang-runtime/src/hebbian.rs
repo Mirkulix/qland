@@ -178,11 +178,9 @@ impl HebbianState {
                     weights[i] = 1.0;
                     flipped += 1;
                 }
-            } else if s < -self.threshold {
-                if weights[i] != -1.0 {
-                    weights[i] = -1.0;
-                    flipped += 1;
-                }
+            } else if s < -self.threshold && weights[i] != -1.0 {
+                weights[i] = -1.0;
+                flipped += 1;
             }
             // Decay salience.
             self.salience[i] *= self.salience_decay;
@@ -222,11 +220,7 @@ pub fn hebbian_train_step(
     let out_dim = state.out_dim;
     let in_dim = state.in_dim;
 
-    assert_eq!(
-        weights.len(),
-        out_dim * in_dim,
-        "weights length mismatch"
-    );
+    assert_eq!(weights.len(), out_dim * in_dim, "weights length mismatch");
     assert_eq!(input.len(), in_dim, "input length mismatch");
 
     // Forward: output[i] = sum_j weights[i, j] * input[j]
@@ -342,10 +336,8 @@ mod tests {
 
         // Alternate between two patterns that share the same sign structure.
         // This keeps the centered correlation positive.
-        let patterns: &[(&[f32], &[f32])] = &[
-            (&[2.0, 2.0], &[3.0, 3.0]),
-            (&[1.0, 1.0], &[1.5, 1.5]),
-        ];
+        let patterns: &[(&[f32], &[f32])] =
+            &[(&[2.0, 2.0], &[3.0, 3.0]), (&[1.0, 1.0], &[1.5, 1.5])];
         for i in 0..20 {
             let (pre, post) = patterns[i % 2];
             s.update(pre, post);
@@ -364,10 +356,8 @@ mod tests {
         let mut weights = vec![0.0; 4];
 
         // Pre is above mean, post is below mean -> anticorrelation -> -1.
-        let patterns: &[(&[f32], &[f32])] = &[
-            (&[2.0, 2.0], &[-3.0, -3.0]),
-            (&[1.0, 1.0], &[-1.5, -1.5]),
-        ];
+        let patterns: &[(&[f32], &[f32])] =
+            &[(&[2.0, 2.0], &[-3.0, -3.0]), (&[1.0, 1.0], &[-1.5, -1.5])];
         for i in 0..20 {
             let (pre, post) = patterns[i % 2];
             s.update(pre, post);

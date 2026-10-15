@@ -46,7 +46,10 @@ impl fmt::Display for MnistError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             MnistError::InvalidMagic { expected, got } => {
-                write!(f, "Invalid IDX magic number: expected {expected}, got {got}")
+                write!(
+                    f,
+                    "Invalid IDX magic number: expected {expected}, got {got}"
+                )
             }
             MnistError::Io(e) => write!(f, "IO error: {e}"),
             MnistError::FilesNotFound { data_dir, missing } => {
@@ -142,9 +145,7 @@ fn download_file(url: &str, dest: &str) -> Result<(), MnistError> {
     }
 
     // Fall back to wget
-    let wget_result = Command::new("wget")
-        .args(["-q", "-O", dest, url])
-        .output();
+    let wget_result = Command::new("wget").args(["-q", "-O", dest, url]).output();
 
     match wget_result {
         Ok(output) if output.status.success() => Ok(()),
@@ -168,10 +169,7 @@ fn download_file(url: &str, dest: &str) -> Result<(), MnistError> {
 /// behaviour).
 fn decompress_gz(gz_path: &str) -> Result<(), MnistError> {
     // Try gunzip
-    let result = Command::new("gunzip")
-        .arg("-f")
-        .arg(gz_path)
-        .output();
+    let result = Command::new("gunzip").arg("-f").arg(gz_path).output();
 
     match result {
         Ok(output) if output.status.success() => return Ok(()),
@@ -179,9 +177,7 @@ fn decompress_gz(gz_path: &str) -> Result<(), MnistError> {
     }
 
     // Fall back to gzip -d
-    let result = Command::new("gzip")
-        .args(["-df", gz_path])
-        .output();
+    let result = Command::new("gzip").args(["-df", gz_path]).output();
 
     match result {
         Ok(output) if output.status.success() => Ok(()),
@@ -679,7 +675,7 @@ fn draw_digit(image: &mut [f32], digit: u8, seed: usize) {
     for i in 0..image.len() {
         let r = xorshift32(&mut rng);
         // ~3% chance to flip a dark pixel to faint
-        if image[i] < 0.1 && r % 33 == 0 {
+        if image[i] < 0.1 && r.is_multiple_of(33) {
             image[i] = 0.15 + (r % 100) as f32 / 500.0;
         }
         // Add slight intensity jitter to lit pixels
@@ -695,7 +691,11 @@ fn read_u32_be(data: &[u8], offset: usize) -> Result<u32, MnistError> {
     if data.len() < offset + 4 {
         return Err(MnistError::Io(std::io::Error::new(
             std::io::ErrorKind::UnexpectedEof,
-            format!("IDX file too short: need {} bytes, have {}", offset + 4, data.len()),
+            format!(
+                "IDX file too short: need {} bytes, have {}",
+                offset + 4,
+                data.len()
+            ),
         )));
     }
     Ok(u32::from_be_bytes([

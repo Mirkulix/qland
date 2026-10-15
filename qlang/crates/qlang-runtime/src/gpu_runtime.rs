@@ -114,12 +114,15 @@ impl GpuDevice {
         let limits = adapter.limits();
 
         let (device, queue) = match adapter
-            .request_device(&wgpu::DeviceDescriptor {
-                label: Some("qlang-gpu"),
-                required_features: wgpu::Features::empty(),
-                required_limits: wgpu::Limits::default(),
-                memory_hints: wgpu::MemoryHints::Performance,
-            }, None)
+            .request_device(
+                &wgpu::DeviceDescriptor {
+                    label: Some("qlang-gpu"),
+                    required_features: wgpu::Features::empty(),
+                    required_limits: wgpu::Limits::default(),
+                    memory_hints: wgpu::MemoryHints::Performance,
+                },
+                None,
+            )
             .await
         {
             Ok(dq) => dq,
@@ -202,24 +205,30 @@ impl GpuDevice {
         let buf_bytes = (n * std::mem::size_of::<f32>()) as u64;
 
         // --- shader module ---
-        let module = inner.device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("qlang_elementwise"),
-            source: wgpu::ShaderSource::Wgsl(kernel.shader_source.as_str().into()),
-        });
+        let module = inner
+            .device
+            .create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("qlang_elementwise"),
+                source: wgpu::ShaderSource::Wgsl(kernel.shader_source.as_str().into()),
+            });
 
         // --- buffers ---
         use wgpu::util::DeviceExt;
 
-        let buf_a = inner.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("input_a"),
-            contents: bytemuck_cast_slice(&input_a[..n]),
-            usage: wgpu::BufferUsages::STORAGE,
-        });
-        let buf_b = inner.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("input_b"),
-            contents: bytemuck_cast_slice(&input_b[..n]),
-            usage: wgpu::BufferUsages::STORAGE,
-        });
+        let buf_a = inner
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("input_a"),
+                contents: bytemuck_cast_slice(&input_a[..n]),
+                usage: wgpu::BufferUsages::STORAGE,
+            });
+        let buf_b = inner
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("input_b"),
+                contents: bytemuck_cast_slice(&input_b[..n]),
+                usage: wgpu::BufferUsages::STORAGE,
+            });
         let buf_out = inner.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("output"),
             size: buf_bytes,
@@ -229,11 +238,13 @@ impl GpuDevice {
 
         // params uniform: n_elements
         let params_data = (n as u32).to_le_bytes();
-        let buf_params = inner.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("params"),
-            contents: &params_data,
-            usage: wgpu::BufferUsages::UNIFORM,
-        });
+        let buf_params = inner
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("params"),
+                contents: &params_data,
+                usage: wgpu::BufferUsages::UNIFORM,
+            });
 
         // staging buffer for readback
         let buf_staging = inner.device.create_buffer(&wgpu::BufferDescriptor {
@@ -244,32 +255,48 @@ impl GpuDevice {
         });
 
         // --- pipeline ---
-        let pipeline = inner.device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("elementwise_pipeline"),
-            layout: None,
-            module: &module,
-            entry_point: Some("main"),
-            compilation_options: Default::default(),
-            cache: None,
-        });
+        let pipeline = inner
+            .device
+            .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("elementwise_pipeline"),
+                layout: None,
+                module: &module,
+                entry_point: Some("main"),
+                compilation_options: Default::default(),
+                cache: None,
+            });
 
         let bind_group_layout = pipeline.get_bind_group_layout(0);
         let bind_group = inner.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("elementwise_bg"),
             layout: &bind_group_layout,
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: buf_a.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: buf_b.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 2, resource: buf_out.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 3, resource: buf_params.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: buf_a.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: buf_b.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: buf_out.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: buf_params.as_entire_binding(),
+                },
             ],
         });
 
         // --- dispatch ---
         let workgroup_count = ((n as u32) + kernel.workgroup_size - 1) / kernel.workgroup_size;
-        let mut encoder = inner.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("elementwise_encoder"),
-        });
+        let mut encoder = inner
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("elementwise_encoder"),
+            });
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("elementwise_pass"),
@@ -336,23 +363,29 @@ impl GpuDevice {
         // Generate the tiled matmul shader (reuse the compile crate's generator would be
         // ideal, but we inline the same WGSL format here for self-containedness).
         let shader_source = generate_matmul_wgsl();
-        let module = inner.device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("qlang_matmul"),
-            source: wgpu::ShaderSource::Wgsl(shader_source.as_str().into()),
-        });
+        let module = inner
+            .device
+            .create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("qlang_matmul"),
+                source: wgpu::ShaderSource::Wgsl(shader_source.as_str().into()),
+            });
 
         use wgpu::util::DeviceExt;
 
-        let buf_a = inner.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("matmul_A"),
-            contents: bytemuck_cast_slice(a),
-            usage: wgpu::BufferUsages::STORAGE,
-        });
-        let buf_b = inner.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("matmul_B"),
-            contents: bytemuck_cast_slice(b),
-            usage: wgpu::BufferUsages::STORAGE,
-        });
+        let buf_a = inner
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("matmul_A"),
+                contents: bytemuck_cast_slice(a),
+                usage: wgpu::BufferUsages::STORAGE,
+            });
+        let buf_b = inner
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("matmul_B"),
+                contents: bytemuck_cast_slice(b),
+                usage: wgpu::BufferUsages::STORAGE,
+            });
         let out_size = (m * n * std::mem::size_of::<f32>()) as u64;
         let buf_c = inner.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("matmul_C"),
@@ -367,11 +400,13 @@ impl GpuDevice {
         // Pad to 16 bytes (uniform buffers need 16-byte alignment on many backends)
         let mut dims_padded = dims_bytes.clone();
         dims_padded.resize(16, 0);
-        let buf_dims = inner.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("dims"),
-            contents: &dims_padded,
-            usage: wgpu::BufferUsages::UNIFORM,
-        });
+        let buf_dims = inner
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("dims"),
+                contents: &dims_padded,
+                usage: wgpu::BufferUsages::UNIFORM,
+            });
 
         let buf_staging = inner.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("staging"),
@@ -380,24 +415,38 @@ impl GpuDevice {
             mapped_at_creation: false,
         });
 
-        let pipeline = inner.device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("matmul_pipeline"),
-            layout: None,
-            module: &module,
-            entry_point: Some("main"),
-            compilation_options: Default::default(),
-            cache: None,
-        });
+        let pipeline = inner
+            .device
+            .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("matmul_pipeline"),
+                layout: None,
+                module: &module,
+                entry_point: Some("main"),
+                compilation_options: Default::default(),
+                cache: None,
+            });
 
         let bind_group_layout = pipeline.get_bind_group_layout(0);
         let bind_group = inner.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("matmul_bg"),
             layout: &bind_group_layout,
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: buf_a.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: buf_b.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 2, resource: buf_c.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 3, resource: buf_dims.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: buf_a.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: buf_b.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: buf_c.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: buf_dims.as_entire_binding(),
+                },
             ],
         });
 
@@ -405,9 +454,11 @@ impl GpuDevice {
         let wg_x = (n as u32 + tile - 1) / tile;
         let wg_y = (m as u32 + tile - 1) / tile;
 
-        let mut encoder = inner.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("matmul_encoder"),
-        });
+        let mut encoder = inner
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("matmul_encoder"),
+            });
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("matmul_pass"),
@@ -452,7 +503,10 @@ impl GpuDevice {
 #[cfg(feature = "gpu")]
 fn bytemuck_cast_slice(data: &[f32]) -> &[u8] {
     unsafe {
-        std::slice::from_raw_parts(data.as_ptr() as *const u8, data.len() * std::mem::size_of::<f32>())
+        std::slice::from_raw_parts(
+            data.as_ptr() as *const u8,
+            data.len() * std::mem::size_of::<f32>(),
+        )
     }
 }
 
@@ -526,7 +580,10 @@ pub fn gpu_info() -> HashMap<String, String> {
         let dev = GpuDevice::new();
         info.insert("backend".into(), dev.name.clone());
         info.insert("max_buffer_size".into(), dev.max_buffer_size.to_string());
-        info.insert("max_workgroup_size".into(), dev.max_workgroup_size.to_string());
+        info.insert(
+            "max_workgroup_size".into(),
+            dev.max_workgroup_size.to_string(),
+        );
         info.insert("real_gpu".into(), dev.is_real_gpu.to_string());
     } else {
         info.insert("backend".into(), "No GPU adapter found".into());
@@ -539,6 +596,12 @@ pub fn gpu_info() -> HashMap<String, String> {
 // CPU fallback implementation (no "gpu" feature)
 // ---------------------------------------------------------------------------
 #[cfg(not(feature = "gpu"))]
+impl Default for GpuDevice {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl GpuDevice {
     /// Create a CPU fallback device for environments without GPU.
     pub fn cpu_fallback() -> Self {
@@ -674,7 +737,11 @@ fn simulate_elementwise_shader(
         } else if shader.contains("a * b") {
             a * b
         } else if shader.contains("a / b") {
-            if b != 0.0 { a / b } else { 0.0 }
+            if b != 0.0 {
+                a / b
+            } else {
+                0.0
+            }
         } else if shader.contains("max(") && shader.contains("0.0") {
             a.max(0.0) // relu
         } else if shader.contains("1.0 / (1.0 + exp(") {
@@ -757,7 +824,8 @@ mod tests {
     #[test]
     fn test_relu_shader() {
         let dev = GpuDevice::cpu_fallback();
-        let shader = "@compute @workgroup_size(256)\nfn main() { let r0 = max(a, 0.0); output[i] = r0; }";
+        let shader =
+            "@compute @workgroup_size(256)\nfn main() { let r0 = max(a, 0.0); output[i] = r0; }";
         let kernel = dev.compile_kernel(shader, 4).unwrap();
         let result = dev
             .execute_elementwise(&kernel, &[-1.0, 2.0, -3.0, 4.0], &[0.0; 4])

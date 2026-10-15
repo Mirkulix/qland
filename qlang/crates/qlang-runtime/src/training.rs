@@ -9,7 +9,6 @@
 //!
 //! This runs entirely within QLANG — no Python, no PyTorch.
 
-
 use crate::accel;
 
 /// Training configuration.
@@ -33,10 +32,10 @@ impl Default for TrainConfig {
 
 /// Simple MLP weights (not stored as QLANG graph yet, but as raw tensors).
 pub struct MlpWeights {
-    pub w1: Vec<f32>,  // [input_dim, hidden_dim]
-    pub b1: Vec<f32>,  // [hidden_dim]
-    pub w2: Vec<f32>,  // [hidden_dim, output_dim]
-    pub b2: Vec<f32>,  // [output_dim]
+    pub w1: Vec<f32>, // [input_dim, hidden_dim]
+    pub b1: Vec<f32>, // [hidden_dim]
+    pub w2: Vec<f32>, // [hidden_dim, output_dim]
+    pub b2: Vec<f32>, // [output_dim]
     pub input_dim: usize,
     pub hidden_dim: usize,
     pub output_dim: usize,
@@ -58,7 +57,15 @@ impl MlpWeights {
             .collect();
         let b2 = vec![0.0; output_dim];
 
-        Self { w1, b1, w2, b2, input_dim, hidden_dim, output_dim }
+        Self {
+            w1,
+            b1,
+            w2,
+            b2,
+            input_dim,
+            hidden_dim,
+            output_dim,
+        }
     }
 
     /// Forward pass: x → W1 → relu → W2 → softmax → probabilities
@@ -69,7 +76,8 @@ impl MlpWeights {
         let mut hidden = accel::matmul(x, &self.w1, batch, self.hidden_dim, self.input_dim);
         for b in 0..batch {
             for j in 0..self.hidden_dim {
-                hidden[b * self.hidden_dim + j] = (hidden[b * self.hidden_dim + j] + self.b1[j]).max(0.0);
+                hidden[b * self.hidden_dim + j] =
+                    (hidden[b * self.hidden_dim + j] + self.b1[j]).max(0.0);
             }
         }
 
@@ -222,7 +230,10 @@ impl MlpWeights {
         let mut probs = logits.clone();
         for b in 0..batch {
             let off = b * self.output_dim;
-            let max = probs[off..off + self.output_dim].iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+            let max = probs[off..off + self.output_dim]
+                .iter()
+                .cloned()
+                .fold(f32::NEG_INFINITY, f32::max);
             let mut sum = 0.0f32;
             for j in 0..self.output_dim {
                 probs[off + j] = (probs[off + j] - max).exp();
@@ -262,7 +273,8 @@ impl MlpWeights {
 
         // dL/d_hidden = d_logits @ W2^T  (shape: [batch, hidden_dim])
         // d_logits is [batch, output_dim], W2 is [hidden_dim, output_dim]
-        let mut d_hidden = accel::matmul_a_bt(&d_logits, &self.w2, batch, self.hidden_dim, self.output_dim);
+        let mut d_hidden =
+            accel::matmul_a_bt(&d_logits, &self.w2, batch, self.hidden_dim, self.output_dim);
 
         // ReLU backward: zero out where pre_act1 <= 0
         for b in 0..batch {
@@ -306,11 +318,17 @@ impl MlpWeights {
         fn ternary(v: &[f32]) -> Vec<f32> {
             let mean_abs: f32 = v.iter().map(|x| x.abs()).sum::<f32>() / v.len() as f32;
             let threshold = mean_abs * 0.7;
-            v.iter().map(|&x| {
-                if x > threshold { 1.0 }
-                else if x < -threshold { -1.0 }
-                else { 0.0 }
-            }).collect()
+            v.iter()
+                .map(|&x| {
+                    if x > threshold {
+                        1.0
+                    } else if x < -threshold {
+                        -1.0
+                    } else {
+                        0.0
+                    }
+                })
+                .collect()
         }
 
         MlpWeights {
@@ -385,12 +403,12 @@ pub fn generate_toy_dataset(n_samples: usize, dim: usize) -> (Vec<f32>, Vec<u8>)
 /// capacity and accuracy on tasks like MNIST.
 #[derive(Clone)]
 pub struct MlpWeights3 {
-    pub w1: Vec<f32>,  // [input_dim, hidden1_dim]
-    pub b1: Vec<f32>,  // [hidden1_dim]
-    pub w2: Vec<f32>,  // [hidden1_dim, hidden2_dim]
-    pub b2: Vec<f32>,  // [hidden2_dim]
-    pub w3: Vec<f32>,  // [hidden2_dim, output_dim]
-    pub b3: Vec<f32>,  // [output_dim]
+    pub w1: Vec<f32>, // [input_dim, hidden1_dim]
+    pub b1: Vec<f32>, // [hidden1_dim]
+    pub w2: Vec<f32>, // [hidden1_dim, hidden2_dim]
+    pub b2: Vec<f32>, // [hidden2_dim]
+    pub w3: Vec<f32>, // [hidden2_dim, output_dim]
+    pub b3: Vec<f32>, // [output_dim]
     pub input_dim: usize,
     pub hidden1_dim: usize,
     pub hidden2_dim: usize,
@@ -399,7 +417,12 @@ pub struct MlpWeights3 {
 
 impl MlpWeights3 {
     /// Initialize with Xavier/Glorot initialization.
-    pub fn new(input_dim: usize, hidden1_dim: usize, hidden2_dim: usize, output_dim: usize) -> Self {
+    pub fn new(
+        input_dim: usize,
+        hidden1_dim: usize,
+        hidden2_dim: usize,
+        output_dim: usize,
+    ) -> Self {
         let scale1 = (2.0 / (input_dim + hidden1_dim) as f64).sqrt() as f32;
         let scale2 = (2.0 / (hidden1_dim + hidden2_dim) as f64).sqrt() as f32;
         let scale3 = (2.0 / (hidden2_dim + output_dim) as f64).sqrt() as f32;
@@ -417,7 +440,18 @@ impl MlpWeights3 {
             .collect();
         let b3 = vec![0.0; output_dim];
 
-        Self { w1, b1, w2, b2, w3, b3, input_dim, hidden1_dim, hidden2_dim, output_dim }
+        Self {
+            w1,
+            b1,
+            w2,
+            b2,
+            w3,
+            b3,
+            input_dim,
+            hidden1_dim,
+            hidden2_dim,
+            output_dim,
+        }
     }
 
     /// Forward pass: x → W1 → relu → W2 → relu → W3 → softmax → probabilities
@@ -471,7 +505,11 @@ impl MlpWeights3 {
     /// Forward pass for a single input (784 elements).
     /// Returns a Vec of `output_dim` probabilities (softmax output).
     pub fn forward_single(&self, input: &[f32]) -> Vec<f32> {
-        assert_eq!(input.len(), self.input_dim, "forward_single: input length mismatch");
+        assert_eq!(
+            input.len(),
+            self.input_dim,
+            "forward_single: input length mismatch"
+        );
 
         // Layer 1: h1 = relu(input @ W1 + b1)
         let mut h1 = vec![0.0f32; self.hidden1_dim];
@@ -591,7 +629,10 @@ impl MlpWeights3 {
         let mut probs = logits.clone();
         for b in 0..batch {
             let off = b * self.output_dim;
-            let max = probs[off..off + self.output_dim].iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+            let max = probs[off..off + self.output_dim]
+                .iter()
+                .cloned()
+                .fold(f32::NEG_INFINITY, f32::max);
             let mut sum = 0.0f32;
             for j in 0..self.output_dim {
                 probs[off + j] = (probs[off + j] - max).exp();
@@ -630,7 +671,13 @@ impl MlpWeights3 {
 
         // dh2 = d_logits @ W3^T  [batch, hidden2_dim]
         // d_logits is [batch, output_dim], W3 is [hidden2_dim, output_dim]
-        let mut dh2 = accel::matmul_a_bt(&d_logits, &self.w3, batch, self.hidden2_dim, self.output_dim);
+        let mut dh2 = accel::matmul_a_bt(
+            &d_logits,
+            &self.w3,
+            batch,
+            self.hidden2_dim,
+            self.output_dim,
+        );
 
         // ReLU backward for layer 2
         for b in 0..batch {
@@ -677,12 +724,24 @@ impl MlpWeights3 {
         }
 
         // ---- Update weights ----
-        for i in 0..self.w1.len() { self.w1[i] -= lr * dw1[i]; }
-        for i in 0..self.b1.len() { self.b1[i] -= lr * db1[i]; }
-        for i in 0..self.w2.len() { self.w2[i] -= lr * dw2[i]; }
-        for i in 0..self.b2.len() { self.b2[i] -= lr * db2[i]; }
-        for i in 0..self.w3.len() { self.w3[i] -= lr * dw3[i]; }
-        for i in 0..self.b3.len() { self.b3[i] -= lr * db3[i]; }
+        for i in 0..self.w1.len() {
+            self.w1[i] -= lr * dw1[i];
+        }
+        for i in 0..self.b1.len() {
+            self.b1[i] -= lr * db1[i];
+        }
+        for i in 0..self.w2.len() {
+            self.w2[i] -= lr * dw2[i];
+        }
+        for i in 0..self.b2.len() {
+            self.b2[i] -= lr * db2[i];
+        }
+        for i in 0..self.w3.len() {
+            self.w3[i] -= lr * dw3[i];
+        }
+        for i in 0..self.b3.len() {
+            self.b3[i] -= lr * db3[i];
+        }
 
         loss
     }
@@ -692,11 +751,17 @@ impl MlpWeights3 {
         fn ternary(v: &[f32]) -> Vec<f32> {
             let mean_abs: f32 = v.iter().map(|x| x.abs()).sum::<f32>() / v.len() as f32;
             let threshold = mean_abs * 0.7;
-            v.iter().map(|&x| {
-                if x > threshold { 1.0 }
-                else if x < -threshold { -1.0 }
-                else { 0.0 }
-            }).collect()
+            v.iter()
+                .map(|&x| {
+                    if x > threshold {
+                        1.0
+                    } else if x < -threshold {
+                        -1.0
+                    } else {
+                        0.0
+                    }
+                })
+                .collect()
         }
 
         MlpWeights3 {
@@ -715,7 +780,12 @@ impl MlpWeights3 {
 
     /// Count total parameters.
     pub fn param_count(&self) -> usize {
-        self.w1.len() + self.b1.len() + self.w2.len() + self.b2.len() + self.w3.len() + self.b3.len()
+        self.w1.len()
+            + self.b1.len()
+            + self.w2.len()
+            + self.b2.len()
+            + self.w3.len()
+            + self.b3.len()
     }
 }
 
@@ -750,8 +820,10 @@ mod tests {
         let loss_after = mlp.loss(&probs_after, &labels);
 
         // Loss should decrease (or at least not increase dramatically)
-        assert!(loss_after < loss_before + 0.5,
-            "Loss didn't decrease: {loss_before} → {loss_after}");
+        assert!(
+            loss_after < loss_before + 0.5,
+            "Loss didn't decrease: {loss_before} → {loss_after}"
+        );
     }
 
     #[test]
@@ -761,8 +833,7 @@ mod tests {
 
         // All w1 values should be {-1, 0, 1}
         for &w in &compressed.w1 {
-            assert!(w == -1.0 || w == 0.0 || w == 1.0,
-                "Non-ternary value: {w}");
+            assert!(w == -1.0 || w == 0.0 || w == 1.0, "Non-ternary value: {w}");
         }
     }
 
@@ -791,8 +862,10 @@ mod tests {
         let probs_after = mlp.forward(&images);
         let loss_after = mlp.loss(&probs_after, &labels);
 
-        assert!(loss_after < loss_before,
-            "Backprop loss didn't decrease: {loss_before} → {loss_after}");
+        assert!(
+            loss_after < loss_before,
+            "Backprop loss didn't decrease: {loss_before} → {loss_after}"
+        );
     }
 
     #[test]
@@ -820,7 +893,10 @@ mod tests {
         let probs = mlp.forward(&input);
 
         let sum: f32 = probs.iter().sum();
-        assert!((sum - 1.0).abs() < 1e-5, "Softmax sum = {sum}, expected 1.0");
+        assert!(
+            (sum - 1.0).abs() < 1e-5,
+            "Softmax sum = {sum}, expected 1.0"
+        );
     }
 
     #[test]
@@ -852,8 +928,10 @@ mod tests {
         let probs_after = mlp.forward(&images);
         let loss_after = mlp.loss(&probs_after, &labels);
 
-        assert!(loss_after < loss_before,
-            "3-layer backprop loss didn't decrease: {loss_before} -> {loss_after}");
+        assert!(
+            loss_after < loss_before,
+            "3-layer backprop loss didn't decrease: {loss_before} -> {loss_after}"
+        );
     }
 
     #[test]

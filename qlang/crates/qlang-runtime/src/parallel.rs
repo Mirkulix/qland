@@ -50,7 +50,9 @@ pub fn execute_parallel(
     // Verify graph
     let verification = verify::verify_graph(graph);
     if !verification.is_ok() {
-        return Err(ExecutionError::VerificationFailed(format!("{verification}")));
+        return Err(ExecutionError::VerificationFailed(format!(
+            "{verification}"
+        )));
     }
 
     // Get execution plan from scheduler
@@ -152,7 +154,9 @@ fn execute_single_node(
 ) -> Result<(NodeId, TensorData, u64), ExecutionError> {
     let node = graph
         .node(node_id)
-        .ok_or(ExecutionError::RuntimeError(format!("node {node_id} not found")))?;
+        .ok_or(ExecutionError::RuntimeError(format!(
+            "node {node_id} not found"
+        )))?;
 
     let get_input = |port: usize| -> Result<TensorData, ExecutionError> {
         let incoming = graph.incoming_edges(node_id);
@@ -172,10 +176,7 @@ fn execute_single_node(
     let mut flops: u64 = 0;
 
     let result = match &node.op {
-        Op::Output { .. } => {
-            let data = get_input(0)?;
-            data
-        }
+        Op::Output { .. } => get_input(0)?,
         Op::Add => {
             let a = get_input(0)?;
             let b = get_input(1)?;
@@ -240,24 +241,42 @@ fn execute_single_node(
     Ok((node_id, result, flops))
 }
 
-fn binop(a: &TensorData, b: &TensorData, op: impl Fn(f32, f32) -> f32) -> Result<TensorData, ExecutionError> {
-    let va = a.as_f32_slice().ok_or(ExecutionError::RuntimeError("not f32".into()))?;
-    let vb = b.as_f32_slice().ok_or(ExecutionError::RuntimeError("not f32".into()))?;
+fn binop(
+    a: &TensorData,
+    b: &TensorData,
+    op: impl Fn(f32, f32) -> f32,
+) -> Result<TensorData, ExecutionError> {
+    let va = a
+        .as_f32_slice()
+        .ok_or(ExecutionError::RuntimeError("not f32".into()))?;
+    let vb = b
+        .as_f32_slice()
+        .ok_or(ExecutionError::RuntimeError("not f32".into()))?;
     let n = va.len().min(vb.len());
-    let result: Vec<f32> = va[..n].iter().zip(&vb[..n]).map(|(&x, &y)| op(x, y)).collect();
+    let result: Vec<f32> = va[..n]
+        .iter()
+        .zip(&vb[..n])
+        .map(|(&x, &y)| op(x, y))
+        .collect();
     Ok(TensorData::from_f32(a.shape.clone(), &result))
 }
 
 fn unaryop(a: &TensorData, op: impl Fn(f32) -> f32) -> Result<TensorData, ExecutionError> {
-    let va = a.as_f32_slice().ok_or(ExecutionError::RuntimeError("not f32".into()))?;
+    let va = a
+        .as_f32_slice()
+        .ok_or(ExecutionError::RuntimeError("not f32".into()))?;
     let result: Vec<f32> = va.iter().map(|&x| op(x)).collect();
     Ok(TensorData::from_f32(a.shape.clone(), &result))
 }
 
 fn matmul(a: &TensorData, b: &TensorData) -> Result<TensorData, ExecutionError> {
     use qlang_core::tensor::{Dim, Shape};
-    let va = a.as_f32_slice().ok_or(ExecutionError::RuntimeError("not f32".into()))?;
-    let vb = b.as_f32_slice().ok_or(ExecutionError::RuntimeError("not f32".into()))?;
+    let va = a
+        .as_f32_slice()
+        .ok_or(ExecutionError::RuntimeError("not f32".into()))?;
+    let vb = b
+        .as_f32_slice()
+        .ok_or(ExecutionError::RuntimeError("not f32".into()))?;
     let (m, k) = match a.shape.0.as_slice() {
         [Dim::Fixed(m), Dim::Fixed(k)] => (*m, *k),
         _ => return Err(ExecutionError::RuntimeError("matmul: need 2D".into())),
@@ -280,7 +299,9 @@ fn matmul(a: &TensorData, b: &TensorData) -> Result<TensorData, ExecutionError> 
 }
 
 fn softmax(a: &TensorData) -> Result<TensorData, ExecutionError> {
-    let va = a.as_f32_slice().ok_or(ExecutionError::RuntimeError("not f32".into()))?;
+    let va = a
+        .as_f32_slice()
+        .ok_or(ExecutionError::RuntimeError("not f32".into()))?;
     let max = va.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
     let exps: Vec<f32> = va.iter().map(|&x| (x - max).exp()).collect();
     let sum: f32 = exps.iter().sum();
@@ -289,12 +310,23 @@ fn softmax(a: &TensorData) -> Result<TensorData, ExecutionError> {
 }
 
 fn ternary(a: &TensorData) -> Result<TensorData, ExecutionError> {
-    let va = a.as_f32_slice().ok_or(ExecutionError::RuntimeError("not f32".into()))?;
+    let va = a
+        .as_f32_slice()
+        .ok_or(ExecutionError::RuntimeError("not f32".into()))?;
     let mean_abs: f32 = va.iter().map(|x| x.abs()).sum::<f32>() / va.len().max(1) as f32;
     let threshold = mean_abs * 0.7;
-    let result: Vec<f32> = va.iter().map(|&x| {
-        if x > threshold { 1.0 } else if x < -threshold { -1.0 } else { 0.0 }
-    }).collect();
+    let result: Vec<f32> = va
+        .iter()
+        .map(|&x| {
+            if x > threshold {
+                1.0
+            } else if x < -threshold {
+                -1.0
+            } else {
+                0.0
+            }
+        })
+        .collect();
     Ok(TensorData::from_f32(a.shape.clone(), &result))
 }
 
@@ -319,7 +351,10 @@ mod tests {
         g.add_edge(relu, 0, out, 0, f32_vec(4));
 
         let mut inputs = HashMap::new();
-        inputs.insert("x".into(), TensorData::from_f32(Shape::vector(4), &[-1.0, 2.0, -3.0, 4.0]));
+        inputs.insert(
+            "x".into(),
+            TensorData::from_f32(Shape::vector(4), &[-1.0, 2.0, -3.0, 4.0]),
+        );
 
         let config = ParallelConfig::default();
         let result = execute_parallel(&g, inputs, &config).unwrap();
@@ -338,9 +373,15 @@ mod tests {
         g.add_edge(neg, 0, out, 0, f32_vec(2));
 
         let mut inputs = HashMap::new();
-        inputs.insert("x".into(), TensorData::from_f32(Shape::vector(2), &[3.0, -5.0]));
+        inputs.insert(
+            "x".into(),
+            TensorData::from_f32(Shape::vector(2), &[3.0, -5.0]),
+        );
 
-        let config = ParallelConfig { enabled: false, ..Default::default() };
+        let config = ParallelConfig {
+            enabled: false,
+            ..Default::default()
+        };
         let result = execute_parallel(&g, inputs, &config).unwrap();
         let vals = result.outputs["y"].as_f32_slice().unwrap();
         assert_eq!(vals, vec![-3.0, 5.0]);
@@ -359,7 +400,10 @@ mod tests {
         g.add_edge(relu, 0, out, 0, f32_vec(4));
 
         let mut inputs = HashMap::new();
-        inputs.insert("x".into(), TensorData::from_f32(Shape::vector(4), &[-2.0, 1.0, -0.5, 3.0]));
+        inputs.insert(
+            "x".into(),
+            TensorData::from_f32(Shape::vector(4), &[-2.0, 1.0, -0.5, 3.0]),
+        );
 
         // Run with parallel
         let par_result = execute_parallel(&g, inputs.clone(), &ParallelConfig::default()).unwrap();

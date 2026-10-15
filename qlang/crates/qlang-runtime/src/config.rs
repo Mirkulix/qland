@@ -16,7 +16,9 @@ use std::time::{Instant, SystemTime};
 // ---------------------------------------------------------------------------
 
 /// Severity levels for log messages, ordered from most to least severe.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Deserialize, serde::Serialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Deserialize, serde::Serialize,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum LogLevel {
     Error = 0,
@@ -318,13 +320,28 @@ impl fmt::Display for GuardError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             GuardError::MemoryLimitExceeded { used, limit } => {
-                write!(f, "memory limit exceeded: {} bytes used, {} limit", used, limit)
+                write!(
+                    f,
+                    "memory limit exceeded: {} bytes used, {} limit",
+                    used, limit
+                )
             }
-            GuardError::TimeLimitExceeded { elapsed_ms, limit_ms } => {
-                write!(f, "time limit exceeded: {}ms elapsed, {}ms limit", elapsed_ms, limit_ms)
+            GuardError::TimeLimitExceeded {
+                elapsed_ms,
+                limit_ms,
+            } => {
+                write!(
+                    f,
+                    "time limit exceeded: {}ms elapsed, {}ms limit",
+                    elapsed_ms, limit_ms
+                )
             }
             GuardError::RecursionLimitExceeded { depth, limit } => {
-                write!(f, "recursion limit exceeded: depth {}, limit {}", depth, limit)
+                write!(
+                    f,
+                    "recursion limit exceeded: depth {}, limit {}",
+                    depth, limit
+                )
             }
         }
     }
@@ -346,7 +363,11 @@ impl ExecutionGuard {
     }
 
     /// Create a guard with explicit limits (useful for tests).
-    pub fn with_limits(max_memory_bytes: usize, max_execution_ms: u64, max_recursion_depth: usize) -> Self {
+    pub fn with_limits(
+        max_memory_bytes: usize,
+        max_execution_ms: u64,
+        max_recursion_depth: usize,
+    ) -> Self {
         Self {
             max_memory_bytes,
             allocated_bytes: Arc::new(AtomicUsize::new(0)),
@@ -511,11 +532,19 @@ mod tests {
             contents
         );
         // Check timestamp bracket structure.
-        assert!(contents.starts_with('['), "should start with timestamp bracket");
+        assert!(
+            contents.starts_with('['),
+            "should start with timestamp bracket"
+        );
         // Rough regex-like check: "[nnnn-nn-nn nn:nn:nn]"
         let closing = contents.find(']').expect("closing bracket");
         let ts_part = &contents[1..closing];
-        assert_eq!(ts_part.len(), 19, "timestamp should be 19 chars: {}", ts_part);
+        assert_eq!(
+            ts_part.len(),
+            19,
+            "timestamp should be 19 chars: {}",
+            ts_part
+        );
     }
 
     // 4. Memory limit enforcement
@@ -586,9 +615,9 @@ mod tests {
             let logger = Logger::to_file(LogLevel::Warn, &tmp).unwrap();
             logger.error("err");
             logger.warn("wrn");
-            logger.info("inf");   // should be filtered
-            logger.debug("dbg");  // should be filtered
-            logger.trace("trc");  // should be filtered
+            logger.info("inf"); // should be filtered
+            logger.debug("dbg"); // should be filtered
+            logger.trace("trc"); // should be filtered
         }
 
         let mut contents = String::new();

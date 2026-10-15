@@ -108,8 +108,8 @@ pub fn parse_imports(source: &str) -> Result<(Vec<ImportStatement>, String), Mod
                 body_lines.push(line);
                 continue;
             }
-            if trimmed.starts_with("import ") {
-                let rest = trimmed["import ".len()..].trim();
+            if let Some(rest) = trimmed.strip_prefix("import ") {
+                let rest = rest.trim();
                 // Expect a quoted string.
                 let path = parse_quoted_string(rest).ok_or_else(|| ModuleError::ParseError {
                     module: "<current>".into(),
@@ -141,8 +141,7 @@ pub fn parse_exports(source: &str) -> (Vec<ExportedItem>, String) {
     while i < lines.len() {
         let trimmed = lines[i].trim();
 
-        if trimmed.starts_with("export fn ") {
-            let fn_header = &trimmed["export fn ".len()..];
+        if let Some(fn_header) = trimmed.strip_prefix("export fn ") {
             let name = fn_header
                 .split(|c: char| c == '(' || c.is_whitespace())
                 .next()
@@ -156,8 +155,7 @@ pub fn parse_exports(source: &str) -> (Vec<ExportedItem>, String) {
             // Emit line without the "export " prefix
             output_lines.push(lines[i].replacen("export ", "", 1));
             i += 1;
-        } else if trimmed.starts_with("export graph ") {
-            let graph_header = &trimmed["export graph ".len()..];
+        } else if let Some(graph_header) = trimmed.strip_prefix("export graph ") {
             let name = graph_header
                 .split(|c: char| c == '{' || c.is_whitespace())
                 .next()
@@ -193,7 +191,7 @@ fn collect_braced_block(lines: &[&str], start: usize) -> String {
             }
         }
         collected.push(*line);
-        if depth <= 0 && collected.len() > 0 {
+        if depth <= 0 && !collected.is_empty() {
             // If the opening brace hasn't appeared yet, keep going.
             if depth == 0 && collected.iter().any(|l| l.contains('{')) {
                 break;
@@ -315,6 +313,12 @@ pub struct ModuleRegistry {
     loaded: HashMap<ResolvedPath, Module>,
     /// Modules currently being loaded (import chain), for cycle detection.
     loading: HashSet<ResolvedPath>,
+}
+
+impl Default for ModuleRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ModuleRegistry {
@@ -582,12 +586,7 @@ graph b { input x: f32[1] output y = x }"#
 
         let source = r#"import "./b.qlang"
 graph main { input x: f32[1] output y = x }"#;
-        let result = resolve_imports(
-            source,
-            Path::new("/project/a.qlang"),
-            &resolver,
-            &loader,
-        );
+        let result = resolve_imports(source, Path::new("/project/a.qlang"), &resolver, &loader);
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(
@@ -673,13 +672,8 @@ graph main {
   output y = x
 }
 "#;
-        let program = resolve_imports(
-            source,
-            Path::new("/project/main.qlang"),
-            &resolver,
-            &loader,
-        )
-        .unwrap();
+        let program =
+            resolve_imports(source, Path::new("/project/main.qlang"), &resolver, &loader).unwrap();
 
         // 3 imported modules + the main module = 4
         assert_eq!(program.modules.len(), 4);
@@ -693,9 +687,8 @@ graph main {
     fn invalid_import_path_error() {
         let resolver = ModuleResolver::new("/project", "/project/std");
 
-        let loader: SourceLoader = Box::new(|_: &Path| {
-            Err(ModuleError::ModuleNotFound("no_such_file".into()))
-        });
+        let loader: SourceLoader =
+            Box::new(|_: &Path| Err(ModuleError::ModuleNotFound("no_such_file".into())));
 
         let source = r#"import "nonexistent_builtin"
 
@@ -704,12 +697,7 @@ graph main {
   output y = x
 }
 "#;
-        let result = resolve_imports(
-            source,
-            Path::new("/project/main.qlang"),
-            &resolver,
-            &loader,
-        );
+        let result = resolve_imports(source, Path::new("/project/main.qlang"), &resolver, &loader);
         assert!(result.is_err());
     }
 

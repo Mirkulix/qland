@@ -61,15 +61,12 @@ pub fn start_hub(config: &HubConfig) -> std::io::Result<()> {
 }
 
 /// Parse and handle a single HTTP request.
-fn handle_request(
-    registry: &Registry,
-    mut stream: std::net::TcpStream,
-) -> std::io::Result<()> {
+fn handle_request(registry: &Registry, mut stream: std::net::TcpStream) -> std::io::Result<()> {
     let mut reader = BufReader::new(&stream);
     let mut request_line = String::new();
     reader.read_line(&mut request_line)?;
 
-    let parts: Vec<&str> = request_line.trim().split_whitespace().collect();
+    let parts: Vec<&str> = request_line.split_whitespace().collect();
     if parts.len() < 2 {
         return send_response(&mut stream, 400, "Bad Request");
     }
@@ -86,7 +83,8 @@ fn handle_request(
             break;
         }
         if line.to_lowercase().starts_with("content-length:") {
-            content_length = line.split(':')
+            content_length = line
+                .split(':')
                 .nth(1)
                 .and_then(|s| s.trim().parse::<usize>().ok())
                 .unwrap_or(0);
@@ -104,15 +102,13 @@ fn handle_request(
         ("GET", "/api/health") => {
             send_json(&mut stream, 200, r#"{"status":"ok","service":"qlang-hub"}"#)
         }
-        ("GET", "/api/models") => {
-            match registry.list() {
-                Ok(models) => {
-                    let json = format_model_list(&models);
-                    send_json(&mut stream, 200, &json)
-                }
-                Err(e) => send_json(&mut stream, 500, &format!(r#"{{"error":"{}"}}"#, e)),
+        ("GET", "/api/models") => match registry.list() {
+            Ok(models) => {
+                let json = format_model_list(&models);
+                send_json(&mut stream, 200, &json)
             }
-        }
+            Err(e) => send_json(&mut stream, 500, &format!(r#"{{"error":"{}"}}"#, e)),
+        },
         ("GET", p) if p.starts_with("/api/models/") => {
             let path_parts: Vec<&str> = p.trim_start_matches("/api/models/").split('/').collect();
             match path_parts.len() {
@@ -121,9 +117,8 @@ fn handle_request(
                     let name = path_parts[0];
                     match registry.list() {
                         Ok(models) => {
-                            let filtered: Vec<&ModelEntry> = models.iter()
-                                .filter(|m| m.name == name)
-                                .collect();
+                            let filtered: Vec<&ModelEntry> =
+                                models.iter().filter(|m| m.name == name).collect();
                             let json = format_model_list_ref(&filtered);
                             send_json(&mut stream, 200, &json)
                         }
@@ -159,7 +154,11 @@ fn handle_request(
                     Err(e) => send_json(&mut stream, 500, &format!(r#"{{"error":"{}"}}"#, e)),
                 }
             } else {
-                send_response(&mut stream, 400, "Bad Request: need /api/models/:name/:version")
+                send_response(
+                    &mut stream,
+                    400,
+                    "Bad Request: need /api/models/:name/:version",
+                )
             }
         }
         ("POST", "/api/models") => {
@@ -172,16 +171,17 @@ fn handle_request(
                     );
                     match registry.save(&entry, &checkpoint) {
                         Ok(path) => {
-                            let json = format!(
-                                r#"{{"saved":true,"path":"{}"}}"#,
-                                path.display()
-                            );
+                            let json = format!(r#"{{"saved":true,"path":"{}"}}"#, path.display());
                             send_json(&mut stream, 201, &json)
                         }
                         Err(e) => send_json(&mut stream, 409, &format!(r#"{{"error":"{}"}}"#, e)),
                     }
                 }
-                Err(e) => send_json(&mut stream, 400, &format!(r#"{{"error":"invalid JSON: {}"}}"#, e)),
+                Err(e) => send_json(
+                    &mut stream,
+                    400,
+                    &format!(r#"{{"error":"invalid JSON: {}"}}"#, e),
+                ),
             }
         }
         _ => send_response(&mut stream, 404, "Not Found"),
@@ -229,7 +229,7 @@ fn format_model_entry(entry: &ModelEntry) -> String {
 }
 
 fn format_model_list(models: &[ModelEntry]) -> String {
-    let entries: Vec<String> = models.iter().map(|m| format_model_entry(m)).collect();
+    let entries: Vec<String> = models.iter().map(format_model_entry).collect();
     format!("[{}]", entries.join(","))
 }
 
@@ -272,16 +272,28 @@ mod tests {
     fn test_format_model_list() {
         let entries = vec![
             ModelEntry {
-                name: "a".into(), version: "1.0".into(), created_at: "".into(),
-                param_count: 100, accuracy: None, loss: None,
-                compressed: false, compression_ratio: None,
-                tags: vec![], description: "".into(),
+                name: "a".into(),
+                version: "1.0".into(),
+                created_at: "".into(),
+                param_count: 100,
+                accuracy: None,
+                loss: None,
+                compressed: false,
+                compression_ratio: None,
+                tags: vec![],
+                description: "".into(),
             },
             ModelEntry {
-                name: "b".into(), version: "2.0".into(), created_at: "".into(),
-                param_count: 200, accuracy: None, loss: None,
-                compressed: false, compression_ratio: None,
-                tags: vec![], description: "".into(),
+                name: "b".into(),
+                version: "2.0".into(),
+                created_at: "".into(),
+                param_count: 200,
+                accuracy: None,
+                loss: None,
+                compressed: false,
+                compression_ratio: None,
+                tags: vec![],
+                description: "".into(),
             },
         ];
         let json = format_model_list(&entries);

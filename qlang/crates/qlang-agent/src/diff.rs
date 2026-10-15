@@ -16,7 +16,11 @@ pub enum GraphChange {
     /// Node was removed in the new version.
     NodeRemoved { node_id: u32, op: String },
     /// Node operation changed.
-    NodeModified { node_id: u32, old_op: String, new_op: String },
+    NodeModified {
+        node_id: u32,
+        old_op: String,
+        new_op: String,
+    },
     /// Edge was added.
     EdgeAdded { from: u32, to: u32 },
     /// Edge was removed.
@@ -60,16 +64,17 @@ impl std::fmt::Display for GraphDiff {
         writeln!(f, "Graph Diff ({}):", self.summary())?;
         for change in &self.changes {
             match change {
-                GraphChange::NodeAdded { node_id, op } =>
-                    writeln!(f, "  + node [{node_id}] {op}")?,
-                GraphChange::NodeRemoved { node_id, op } =>
-                    writeln!(f, "  - node [{node_id}] {op}")?,
-                GraphChange::NodeModified { node_id, old_op, new_op } =>
-                    writeln!(f, "  ~ node [{node_id}] {old_op} → {new_op}")?,
-                GraphChange::EdgeAdded { from, to } =>
-                    writeln!(f, "  + edge {from} → {to}")?,
-                GraphChange::EdgeRemoved { from, to } =>
-                    writeln!(f, "  - edge {from} → {to}")?,
+                GraphChange::NodeAdded { node_id, op } => writeln!(f, "  + node [{node_id}] {op}")?,
+                GraphChange::NodeRemoved { node_id, op } => {
+                    writeln!(f, "  - node [{node_id}] {op}")?
+                }
+                GraphChange::NodeModified {
+                    node_id,
+                    old_op,
+                    new_op,
+                } => writeln!(f, "  ~ node [{node_id}] {old_op} → {new_op}")?,
+                GraphChange::EdgeAdded { from, to } => writeln!(f, "  + edge {from} → {to}")?,
+                GraphChange::EdgeRemoved { from, to } => writeln!(f, "  - edge {from} → {to}")?,
             }
         }
         Ok(())
@@ -161,7 +166,9 @@ pub fn apply_diff(base: &Graph, diff: &GraphDiff) -> Graph {
         match change {
             GraphChange::NodeRemoved { node_id, .. } => {
                 result.nodes.retain(|n| n.id != *node_id);
-                result.edges.retain(|e| e.from_node != *node_id && e.to_node != *node_id);
+                result
+                    .edges
+                    .retain(|e| e.from_node != *node_id && e.to_node != *node_id);
             }
             _ => {
                 // NodeAdded and EdgeAdded would need the full node/edge data
@@ -190,7 +197,11 @@ mod tests {
     fn diff_added_node() {
         let old = Graph::new("v1");
         let mut new = Graph::new("v2");
-        new.add_node(Op::Input { name: "x".into() }, vec![], vec![TensorType::f32_vector(4)]);
+        new.add_node(
+            Op::Input { name: "x".into() },
+            vec![],
+            vec![TensorType::f32_vector(4)],
+        );
 
         let d = diff(&old, &new);
         assert_eq!(d.nodes_added, 1);
@@ -203,7 +214,11 @@ mod tests {
     #[test]
     fn diff_removed_node() {
         let mut old = Graph::new("v1");
-        old.add_node(Op::Input { name: "x".into() }, vec![], vec![TensorType::f32_vector(4)]);
+        old.add_node(
+            Op::Input { name: "x".into() },
+            vec![],
+            vec![TensorType::f32_vector(4)],
+        );
         let new = Graph::new("v2");
 
         let d = diff(&old, &new);
@@ -214,7 +229,11 @@ mod tests {
     fn diff_display() {
         let old = Graph::new("v1");
         let mut new = Graph::new("v2");
-        new.add_node(Op::Relu, vec![TensorType::f32_vector(4)], vec![TensorType::f32_vector(4)]);
+        new.add_node(
+            Op::Relu,
+            vec![TensorType::f32_vector(4)],
+            vec![TensorType::f32_vector(4)],
+        );
 
         let d = diff(&old, &new);
         let display = format!("{d}");
@@ -225,8 +244,16 @@ mod tests {
     #[test]
     fn diff_edges() {
         let mut old = Graph::new("v1");
-        let a = old.add_node(Op::Input { name: "a".into() }, vec![], vec![TensorType::f32_vector(4)]);
-        let b = old.add_node(Op::Relu, vec![TensorType::f32_vector(4)], vec![TensorType::f32_vector(4)]);
+        let a = old.add_node(
+            Op::Input { name: "a".into() },
+            vec![],
+            vec![TensorType::f32_vector(4)],
+        );
+        let b = old.add_node(
+            Op::Relu,
+            vec![TensorType::f32_vector(4)],
+            vec![TensorType::f32_vector(4)],
+        );
 
         let mut new = old.clone();
         new.add_edge(a, 0, b, 0, TensorType::f32_vector(4));

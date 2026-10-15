@@ -24,7 +24,11 @@ impl Xorshift64 {
     fn new(seed: u64) -> Self {
         // Ensure non-zero state.
         Self {
-            state: if seed == 0 { 0xDEAD_BEEF_CAFE_1234 } else { seed },
+            state: if seed == 0 {
+                0xDEAD_BEEF_CAFE_1234
+            } else {
+                seed
+            },
         }
     }
 
@@ -133,10 +137,7 @@ impl DiffusionSchedule {
             vec![beta_start]
         } else {
             (0..timesteps)
-                .map(|t| {
-                    beta_start
-                        + (beta_end - beta_start) * t as f32 / (timesteps - 1) as f32
-                })
+                .map(|t| beta_start + (beta_end - beta_start) * t as f32 / (timesteps - 1) as f32)
                 .collect()
         };
 
@@ -150,8 +151,10 @@ impl DiffusionSchedule {
         }
 
         let sqrt_alpha_bars: Vec<f32> = alpha_bars.iter().map(|a| a.sqrt()).collect();
-        let sqrt_one_minus: Vec<f32> =
-            alpha_bars.iter().map(|a| (1.0 - a).max(0.0).sqrt()).collect();
+        let sqrt_one_minus: Vec<f32> = alpha_bars
+            .iter()
+            .map(|a| (1.0 - a).max(0.0).sqrt())
+            .collect();
 
         DiffusionSchedule {
             timesteps,
@@ -174,8 +177,10 @@ impl DiffusionSchedule {
 
         let alphas: Vec<f32> = betas.iter().map(|b| 1.0 - b).collect();
         let sqrt_alpha_bars: Vec<f32> = alpha_bars.iter().map(|a| a.sqrt()).collect();
-        let sqrt_one_minus: Vec<f32> =
-            alpha_bars.iter().map(|a| (1.0 - a).max(0.0).sqrt()).collect();
+        let sqrt_one_minus: Vec<f32> = alpha_bars
+            .iter()
+            .map(|a| (1.0 - a).max(0.0).sqrt())
+            .collect();
 
         DiffusionSchedule {
             timesteps,
@@ -195,7 +200,11 @@ impl DiffusionSchedule {
     /// Panics if `x0` and `noise` differ in length, or `t >= timesteps`.
     pub fn add_noise(&self, x0: &[f32], noise: &[f32], t: usize) -> Vec<f32> {
         assert_eq!(x0.len(), noise.len(), "x0 and noise must have equal length");
-        assert!(t < self.timesteps, "t={t} out of range [0, {})", self.timesteps);
+        assert!(
+            t < self.timesteps,
+            "t={t} out of range [0, {})",
+            self.timesteps
+        );
 
         let sa = self.sqrt_alpha_bars[t];
         let sn = self.sqrt_one_minus_alpha_bars[t];
@@ -430,10 +439,7 @@ mod tests {
         // At high t with zero noise, the signal coefficient is small.
         let sa = sched.sqrt_alpha_bars[t];
         for &v in &noisy {
-            assert!(
-                (v - sa).abs() < 1e-5,
-                "Expected ~{sa}, got {v} at t={t}"
-            );
+            assert!((v - sa).abs() < 1e-5, "Expected ~{sa}, got {v} at t={t}");
         }
     }
 
@@ -448,9 +454,7 @@ mod tests {
         for t in [0, 10, 50, 90] {
             let noisy = sched.add_noise(&x0, &noise, t);
             let x0_recovered = sched.predict_x0(&noisy, &noise, t);
-            for (i, (&recovered, &original)) in
-                x0_recovered.iter().zip(x0.iter()).enumerate()
-            {
+            for (i, (&recovered, &original)) in x0_recovered.iter().zip(x0.iter()).enumerate() {
                 assert!(
                     (recovered - original).abs() < 1e-3,
                     "Roundtrip failed at t={t}, idx={i}: {recovered} vs {original}"
@@ -505,10 +509,14 @@ mod tests {
         // finite, bounded results.
         let sched = DiffusionSchedule::cosine(50);
         let sampler = DdimSampler::new(sched, 5);
-        let result = sampler.sample_seeded(8, |x, _t| {
-            // Return scaled version of input as "predicted noise"
-            x.iter().map(|v| v * 0.5).collect()
-        }, Some(123));
+        let result = sampler.sample_seeded(
+            8,
+            |x, _t| {
+                // Return scaled version of input as "predicted noise"
+                x.iter().map(|v| v * 0.5).collect()
+            },
+            Some(123),
+        );
         for &v in &result {
             assert!(v.is_finite(), "Output must be finite");
         }
@@ -568,14 +576,8 @@ mod tests {
         let var: f32 = v.iter().map(|x| (x - mean) * (x - mean)).sum::<f32>() / n as f32;
         let std = var.sqrt();
 
-        assert!(
-            mean.abs() < 0.05,
-            "Mean = {mean}, expected close to 0"
-        );
-        assert!(
-            (std - 1.0).abs() < 0.1,
-            "Std = {std}, expected close to 1"
-        );
+        assert!(mean.abs() < 0.05, "Mean = {mean}, expected close to 0");
+        assert!((std - 1.0).abs() < 0.1, "Std = {std}, expected close to 1");
     }
 
     #[test]

@@ -10,7 +10,6 @@
 //! 1. Forward pass: evaluate graph, store intermediate values
 //! 2. Backward pass: propagate gradients from output to inputs
 
-
 /// A value tracked for automatic differentiation.
 #[derive(Debug, Clone)]
 pub struct Value {
@@ -21,7 +20,11 @@ pub struct Value {
 
 impl Value {
     pub fn new(data: Vec<f32>, shape: Vec<usize>) -> Self {
-        Self { data, shape, grad: None }
+        Self {
+            data,
+            shape,
+            grad: None,
+        }
     }
 
     pub fn zeros_like(&self) -> Vec<f32> {
@@ -37,13 +40,42 @@ impl Value {
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 enum TapeEntry {
-    Add { out: usize, a: usize, b: usize },
-    Mul { out: usize, a: usize, b: usize },
-    MatMul { out: usize, a: usize, b: usize, m: usize, k: usize, n: usize },
-    Relu { out: usize, input: usize },
-    Sigmoid { out: usize, input: usize },
-    Softmax { out: usize, input: usize, n_classes: usize },
-    CrossEntropyLoss { out: usize, probs: usize, targets: Vec<u8> },
+    Add {
+        out: usize,
+        a: usize,
+        b: usize,
+    },
+    Mul {
+        out: usize,
+        a: usize,
+        b: usize,
+    },
+    MatMul {
+        out: usize,
+        a: usize,
+        b: usize,
+        m: usize,
+        k: usize,
+        n: usize,
+    },
+    Relu {
+        out: usize,
+        input: usize,
+    },
+    Sigmoid {
+        out: usize,
+        input: usize,
+    },
+    Softmax {
+        out: usize,
+        input: usize,
+        n_classes: usize,
+    },
+    CrossEntropyLoss {
+        out: usize,
+        probs: usize,
+        targets: Vec<u8>,
+    },
 }
 
 /// Computation tape for reverse-mode AD.
@@ -54,7 +86,10 @@ pub struct Tape {
 
 impl Tape {
     pub fn new() -> Self {
-        Self { values: Vec::new(), ops: Vec::new() }
+        Self {
+            values: Vec::new(),
+            ops: Vec::new(),
+        }
     }
 
     /// Register a new value (input or parameter).
@@ -66,7 +101,9 @@ impl Tape {
 
     /// Element-wise add.
     pub fn add(&mut self, a: usize, b: usize) -> usize {
-        let data: Vec<f32> = self.values[a].data.iter()
+        let data: Vec<f32> = self.values[a]
+            .data
+            .iter()
             .zip(self.values[b].data.iter())
             .map(|(&x, &y)| x + y)
             .collect();
@@ -78,7 +115,9 @@ impl Tape {
 
     /// Element-wise multiply.
     pub fn mul(&mut self, a: usize, b: usize) -> usize {
-        let data: Vec<f32> = self.values[a].data.iter()
+        let data: Vec<f32> = self.values[a]
+            .data
+            .iter()
             .zip(self.values[b].data.iter())
             .map(|(&x, &y)| x * y)
             .collect();
@@ -116,7 +155,9 @@ impl Tape {
 
     /// ReLU activation.
     pub fn relu(&mut self, input: usize) -> usize {
-        let data: Vec<f32> = self.values[input].data.iter()
+        let data: Vec<f32> = self.values[input]
+            .data
+            .iter()
             .map(|&x| x.max(0.0))
             .collect();
         let shape = self.values[input].shape.clone();
@@ -127,7 +168,9 @@ impl Tape {
 
     /// Sigmoid activation.
     pub fn sigmoid(&mut self, input: usize) -> usize {
-        let data: Vec<f32> = self.values[input].data.iter()
+        let data: Vec<f32> = self.values[input]
+            .data
+            .iter()
             .map(|&x| 1.0 / (1.0 + (-x).exp()))
             .collect();
         let shape = self.values[input].shape.clone();
@@ -145,7 +188,9 @@ impl Tape {
         let mut data = vec![0.0f32; batch * n_classes];
         for b in 0..batch {
             let offset = b * n_classes;
-            let max = va[offset..offset + n_classes].iter().cloned()
+            let max = va[offset..offset + n_classes]
+                .iter()
+                .cloned()
                 .fold(f32::NEG_INFINITY, f32::max);
             let mut sum = 0.0f32;
             for j in 0..n_classes {
@@ -159,7 +204,11 @@ impl Tape {
 
         let shape = self.values[input].shape.clone();
         let out = self.variable(data, shape);
-        self.ops.push(TapeEntry::Softmax { out, input, n_classes });
+        self.ops.push(TapeEntry::Softmax {
+            out,
+            input,
+            n_classes,
+        });
         out
     }
 
@@ -178,7 +227,9 @@ impl Tape {
 
         let out = self.variable(vec![loss], vec![1]);
         self.ops.push(TapeEntry::CrossEntropyLoss {
-            out, probs, targets: targets.to_vec(),
+            out,
+            probs,
+            targets: targets.to_vec(),
         });
         out
     }
@@ -193,7 +244,9 @@ impl Tape {
         let _n = self.values.len();
 
         // Initialize gradients to zero
-        let mut grads: Vec<Vec<f32>> = self.values.iter()
+        let mut grads: Vec<Vec<f32>> = self
+            .values
+            .iter()
             .map(|v| vec![0.0f32; v.data.len()])
             .collect();
 
@@ -271,7 +324,11 @@ impl Tape {
                     }
                 }
 
-                TapeEntry::Softmax { out, input, n_classes: _n_classes } => {
+                TapeEntry::Softmax {
+                    out,
+                    input,
+                    n_classes: _n_classes,
+                } => {
                     // Pass gradients through to input
                     // When combined with CE loss, grad is already (probs - one_hot)
                     // Just pass through: d(softmax)/d(logits) ≈ identity for combined CE+softmax
@@ -281,7 +338,11 @@ impl Tape {
                     }
                 }
 
-                TapeEntry::CrossEntropyLoss { out: _, probs, targets } => {
+                TapeEntry::CrossEntropyLoss {
+                    out: _,
+                    probs,
+                    targets,
+                } => {
                     // d(CE)/d(softmax_output) = probs - one_hot(targets)
                     // This gradient flows back through Softmax → logits
                     let batch = targets.len();
@@ -291,7 +352,8 @@ impl Tape {
                     for b in 0..batch {
                         for j in 0..n_classes {
                             let target_val = if j == targets[b] as usize { 1.0 } else { 0.0 };
-                            grads[*probs][b * n_classes + j] += (vp[b * n_classes + j] - target_val) / batch as f32;
+                            grads[*probs][b * n_classes + j] +=
+                                (vp[b * n_classes + j] - target_val) / batch as f32;
                         }
                     }
                 }
@@ -328,10 +390,15 @@ impl Default for Tape {
 
 /// Train an MLP using autograd.
 pub fn train_mlp_autograd(
-    w1: &mut Vec<f32>, b1: &mut Vec<f32>,
-    w2: &mut Vec<f32>, b2: &mut Vec<f32>,
-    x: &[f32], targets: &[u8],
-    input_dim: usize, hidden_dim: usize, output_dim: usize,
+    w1: &mut Vec<f32>,
+    b1: &mut [f32],
+    w2: &mut Vec<f32>,
+    b2: &mut [f32],
+    x: &[f32],
+    targets: &[u8],
+    input_dim: usize,
+    hidden_dim: usize,
+    output_dim: usize,
     lr: f32,
 ) -> (f32, f32) {
     let batch = targets.len();
@@ -341,9 +408,9 @@ pub fn train_mlp_autograd(
     // Register variables
     let x_id = tape.variable(x.to_vec(), vec![batch, input_dim]);
     let w1_id = tape.variable(w1.clone(), vec![input_dim, hidden_dim]);
-    let _b1_id = tape.variable(b1.clone(), vec![1, hidden_dim]);
+    let _b1_id = tape.variable(b1.to_vec(), vec![1, hidden_dim]);
     let w2_id = tape.variable(w2.clone(), vec![hidden_dim, output_dim]);
-    let _b2_id = tape.variable(b2.clone(), vec![1, output_dim]);
+    let _b2_id = tape.variable(b2.to_vec(), vec![1, output_dim]);
 
     // Forward: h = relu(x @ W1 + b1_broadcast)
     let h1 = tape.matmul(x_id, w1_id);
@@ -489,25 +556,20 @@ mod tests {
         let hidden_dim = 4;
         let output_dim = 2;
 
-        let mut w1: Vec<f32> = vec![0.1, 0.2, -0.1, -0.2,
-                                     0.3, -0.3, 0.1, 0.4,
-                                     -0.2, 0.1, 0.3, -0.1,
-                                     0.2, -0.4, 0.1, 0.2];
+        let mut w1: Vec<f32> = vec![
+            0.1, 0.2, -0.1, -0.2, 0.3, -0.3, 0.1, 0.4, -0.2, 0.1, 0.3, -0.1, 0.2, -0.4, 0.1, 0.2,
+        ];
         let mut b1 = vec![0.0f32; hidden_dim];
-        let mut w2: Vec<f32> = vec![0.1, -0.1, 0.2, 0.3,
-                                     -0.2, 0.1, -0.3, 0.2];
+        let mut w2: Vec<f32> = vec![0.1, -0.1, 0.2, 0.3, -0.2, 0.1, -0.3, 0.2];
         let mut b2 = vec![0.0f32; output_dim];
 
-        let x = vec![1.0, 0.0, 0.5, 0.0,
-                     0.0, 1.0, 0.0, 0.5]; // 2 samples
+        let x = vec![1.0, 0.0, 0.5, 0.0, 0.0, 1.0, 0.0, 0.5]; // 2 samples
         let labels = vec![0u8, 1u8];
 
         let w1_before = w1.clone();
 
         let (loss, _acc) = train_mlp_autograd(
-            &mut w1, &mut b1, &mut w2, &mut b2,
-            &x, &labels,
-            input_dim, hidden_dim, output_dim,
+            &mut w1, &mut b1, &mut w2, &mut b2, &x, &labels, input_dim, hidden_dim, output_dim,
             0.01,
         );
 
@@ -515,6 +577,9 @@ mod tests {
         assert!(loss.is_finite(), "Loss is not finite: {loss}");
 
         // Weights should have changed
-        assert_ne!(w1, w1_before, "W1 weights didn't change after training step");
+        assert_ne!(
+            w1, w1_before,
+            "W1 weights didn't change after training step"
+        );
     }
 }

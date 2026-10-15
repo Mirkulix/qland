@@ -41,7 +41,10 @@ fn main() {
     let size_ratio = json_size as f64 / wire_size as f64;
     println!("  JSON size:          {:>8} bytes", json_size);
     println!("  QLANG binary size:  {:>8} bytes", wire_size);
-    println!("  Ratio:              {:.1}x smaller with QLANG", size_ratio);
+    println!(
+        "  Ratio:              {:.1}x smaller with QLANG",
+        size_ratio
+    );
     println!();
 
     // Also show what the theoretical minimum is (just the raw floats)
@@ -295,11 +298,7 @@ fn main() {
         "  | Precision               | {:>12.2e} | {:>12.2e}    | {}      |",
         json_max_err,
         wire_max_err,
-        if wire_max_err == 0.0 {
-            "QLANG"
-        } else {
-            "tie"
-        }
+        if wire_max_err == 0.0 { "QLANG" } else { "tie" }
     );
     println!(
         "  | Graph signing           | n/a           | {:>8.1} us     | --         |",

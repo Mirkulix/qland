@@ -195,7 +195,9 @@ pub fn try_call_graph_op(name: &str, args: &[Value]) -> Result<Option<Value>, Vm
             if expected_numel != data.len() {
                 return Err(VmError::RuntimeError(format!(
                     "tensor: shape {:?} requires {} elements but got {}",
-                    shape, expected_numel, data.len()
+                    shape,
+                    expected_numel,
+                    data.len()
                 )));
             }
             Ok(Some(Value::Tensor(data, shape)))
@@ -205,9 +207,7 @@ pub fn try_call_graph_op(name: &str, args: &[Value]) -> Result<Option<Value>, Vm
         "shape" => {
             check_arity("shape", args, 1)?;
             match &args[0] {
-                Value::Array(a) => {
-                    Ok(Some(Value::Array(vec![a.len() as f64])))
-                }
+                Value::Array(a) => Ok(Some(Value::Array(vec![a.len() as f64]))),
                 Value::Tensor(_, s) => {
                     Ok(Some(Value::Array(s.iter().map(|&d| d as f64).collect())))
                 }
@@ -263,11 +263,7 @@ fn binary_elementwise(
     }
 }
 
-fn unary_elementwise(
-    a: &Value,
-    op: fn(f64) -> f64,
-    _name: &str,
-) -> Result<Option<Value>, VmError> {
+fn unary_elementwise(a: &Value, op: fn(f64) -> f64, _name: &str) -> Result<Option<Value>, VmError> {
     let (va, sa) = get_f64_data(a)?;
     let result: Vec<f64> = va.iter().map(|&x| op(x)).collect();
 
@@ -364,7 +360,7 @@ fn graph_reduce_mean(a: &Value) -> Result<Option<Value>, VmError> {
 
 #[cfg(test)]
 mod tests {
-    
+
     use crate::vm::{run_qlang_script, Value};
 
     fn run(src: &str) -> (Value, Vec<String>) {

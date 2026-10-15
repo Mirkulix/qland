@@ -82,7 +82,8 @@ fn compute_levels(graph: &Graph) -> Vec<ExecutionLevel> {
         let level = if incoming.is_empty() {
             0
         } else {
-            incoming.iter()
+            incoming
+                .iter()
                 .map(|e| node_level.get(&e.from_node).copied().unwrap_or(0) + 1)
                 .max()
                 .unwrap_or(0)
@@ -95,12 +96,14 @@ fn compute_levels(graph: &Graph) -> Vec<ExecutionLevel> {
     let mut levels = Vec::new();
 
     for level in 0..=max_level {
-        let nodes: Vec<NodeId> = order.iter()
+        let nodes: Vec<NodeId> = order
+            .iter()
             .filter(|&&id| node_level.get(&id) == Some(&level))
             .copied()
             .collect();
 
-        let estimated_flops: u64 = nodes.iter()
+        let estimated_flops: u64 = nodes
+            .iter()
             .filter_map(|&id| graph.node(id))
             .map(|n| estimate_node_flops(&n.op, &n.output_types))
             .sum();
@@ -120,7 +123,8 @@ fn compute_levels(graph: &Graph) -> Vec<ExecutionLevel> {
 /// Plan memory allocation and deallocation.
 fn plan_memory(graph: &Graph, levels: &[ExecutionLevel]) -> MemoryPlan {
     let mut lifetimes = Vec::new();
-    let node_to_level: HashMap<NodeId, usize> = levels.iter()
+    let node_to_level: HashMap<NodeId, usize> = levels
+        .iter()
         .flat_map(|l| l.nodes.iter().map(move |&n| (n, l.level)))
         .collect();
 
@@ -141,17 +145,17 @@ fn plan_memory(graph: &Graph, levels: &[ExecutionLevel]) -> MemoryPlan {
     // Compute peak memory: at each level, sum all live tensors
     let max_level = levels.len();
     let mut peak = 0u64;
-    let total;
 
     for level in 0..max_level {
-        let live_bytes: u64 = lifetimes.iter()
+        let live_bytes: u64 = lifetimes
+            .iter()
             .filter(|t| t.first_use_level <= level && t.last_use_level >= level)
             .map(|t| t.size_bytes)
             .sum();
         peak = peak.max(live_bytes);
     }
 
-    total = lifetimes.iter().map(|t| t.size_bytes).sum();
+    let total = lifetimes.iter().map(|t| t.size_bytes).sum();
 
     MemoryPlan {
         tensor_lifetimes: lifetimes,
@@ -161,7 +165,8 @@ fn plan_memory(graph: &Graph, levels: &[ExecutionLevel]) -> MemoryPlan {
 }
 
 fn estimate_node_flops(op: &Op, output_types: &[qlang_core::tensor::TensorType]) -> u64 {
-    let n = output_types.first()
+    let n = output_types
+        .first()
         .and_then(|t| t.shape.numel())
         .unwrap_or(0) as u64;
 
@@ -225,15 +230,21 @@ impl ExecutionPlan {
         s.push_str("Execution Plan:\n");
         s.push_str(&format!("  Levels: {}\n", self.levels.len()));
         s.push_str(&format!("  Total FLOPs: {}\n", self.total_flops));
-        s.push_str(&format!("  Peak memory: {:.1} KB\n",
-            self.memory_plan.peak_memory_bytes as f64 / 1024.0));
+        s.push_str(&format!(
+            "  Peak memory: {:.1} KB\n",
+            self.memory_plan.peak_memory_bytes as f64 / 1024.0
+        ));
 
         let max_parallel = self.levels.iter().map(|l| l.nodes.len()).max().unwrap_or(0);
         s.push_str(&format!("  Max parallelism: {} nodes\n\n", max_parallel));
 
         for level in &self.levels {
-            s.push_str(&format!("  Level {} ({} nodes, {} FLOPs):\n",
-                level.level, level.nodes.len(), level.estimated_flops));
+            s.push_str(&format!(
+                "  Level {} ({} nodes, {} FLOPs):\n",
+                level.level,
+                level.nodes.len(),
+                level.estimated_flops
+            ));
             for &node_id in &level.nodes {
                 s.push_str(&format!("    - node {}\n", node_id));
             }
@@ -254,9 +265,21 @@ mod tests {
     fn schedule_linear_graph() {
         // a → relu → output (3 levels: 0, 1, 2)
         let mut g = Graph::new("linear");
-        let a = g.add_node(Op::Input { name: "a".into() }, vec![], vec![TensorType::f32_vector(4)]);
-        let relu = g.add_node(Op::Relu, vec![TensorType::f32_vector(4)], vec![TensorType::f32_vector(4)]);
-        let out = g.add_node(Op::Output { name: "y".into() }, vec![TensorType::f32_vector(4)], vec![]);
+        let a = g.add_node(
+            Op::Input { name: "a".into() },
+            vec![],
+            vec![TensorType::f32_vector(4)],
+        );
+        let relu = g.add_node(
+            Op::Relu,
+            vec![TensorType::f32_vector(4)],
+            vec![TensorType::f32_vector(4)],
+        );
+        let out = g.add_node(
+            Op::Output { name: "y".into() },
+            vec![TensorType::f32_vector(4)],
+            vec![],
+        );
         g.add_edge(a, 0, relu, 0, TensorType::f32_vector(4));
         g.add_edge(relu, 0, out, 0, TensorType::f32_vector(4));
 
@@ -272,10 +295,26 @@ mod tests {
         // a, b → add → out
         // a and b should be in the same level (parallel)
         let mut g = Graph::new("parallel");
-        let a = g.add_node(Op::Input { name: "a".into() }, vec![], vec![TensorType::f32_vector(4)]);
-        let b = g.add_node(Op::Input { name: "b".into() }, vec![], vec![TensorType::f32_vector(4)]);
-        let add = g.add_node(Op::Add, vec![TensorType::f32_vector(4); 2], vec![TensorType::f32_vector(4)]);
-        let out = g.add_node(Op::Output { name: "y".into() }, vec![TensorType::f32_vector(4)], vec![]);
+        let a = g.add_node(
+            Op::Input { name: "a".into() },
+            vec![],
+            vec![TensorType::f32_vector(4)],
+        );
+        let b = g.add_node(
+            Op::Input { name: "b".into() },
+            vec![],
+            vec![TensorType::f32_vector(4)],
+        );
+        let add = g.add_node(
+            Op::Add,
+            vec![TensorType::f32_vector(4); 2],
+            vec![TensorType::f32_vector(4)],
+        );
+        let out = g.add_node(
+            Op::Output { name: "y".into() },
+            vec![TensorType::f32_vector(4)],
+            vec![],
+        );
         g.add_edge(a, 0, add, 0, TensorType::f32_vector(4));
         g.add_edge(b, 0, add, 1, TensorType::f32_vector(4));
         g.add_edge(add, 0, out, 0, TensorType::f32_vector(4));
@@ -288,10 +327,26 @@ mod tests {
     #[test]
     fn memory_plan_tracks_peak() {
         let mut g = Graph::new("mem_test");
-        let a = g.add_node(Op::Input { name: "a".into() }, vec![], vec![TensorType::f32_vector(1000)]);
-        let b = g.add_node(Op::Input { name: "b".into() }, vec![], vec![TensorType::f32_vector(1000)]);
-        let add = g.add_node(Op::Add, vec![TensorType::f32_vector(1000); 2], vec![TensorType::f32_vector(1000)]);
-        let out = g.add_node(Op::Output { name: "y".into() }, vec![TensorType::f32_vector(1000)], vec![]);
+        let a = g.add_node(
+            Op::Input { name: "a".into() },
+            vec![],
+            vec![TensorType::f32_vector(1000)],
+        );
+        let b = g.add_node(
+            Op::Input { name: "b".into() },
+            vec![],
+            vec![TensorType::f32_vector(1000)],
+        );
+        let add = g.add_node(
+            Op::Add,
+            vec![TensorType::f32_vector(1000); 2],
+            vec![TensorType::f32_vector(1000)],
+        );
+        let out = g.add_node(
+            Op::Output { name: "y".into() },
+            vec![TensorType::f32_vector(1000)],
+            vec![],
+        );
         g.add_edge(a, 0, add, 0, TensorType::f32_vector(1000));
         g.add_edge(b, 0, add, 1, TensorType::f32_vector(1000));
         g.add_edge(add, 0, out, 0, TensorType::f32_vector(1000));
@@ -304,8 +359,16 @@ mod tests {
     #[test]
     fn find_independent_subgraphs_single() {
         let mut g = Graph::new("single");
-        let a = g.add_node(Op::Input { name: "a".into() }, vec![], vec![TensorType::f32_vector(4)]);
-        let relu = g.add_node(Op::Relu, vec![TensorType::f32_vector(4)], vec![TensorType::f32_vector(4)]);
+        let a = g.add_node(
+            Op::Input { name: "a".into() },
+            vec![],
+            vec![TensorType::f32_vector(4)],
+        );
+        let relu = g.add_node(
+            Op::Relu,
+            vec![TensorType::f32_vector(4)],
+            vec![TensorType::f32_vector(4)],
+        );
         g.add_edge(a, 0, relu, 0, TensorType::f32_vector(4));
 
         let components = find_independent_subgraphs(&g);
@@ -316,13 +379,29 @@ mod tests {
     fn find_independent_subgraphs_two() {
         let mut g = Graph::new("two_components");
         // Component 1: a → relu
-        let a = g.add_node(Op::Input { name: "a".into() }, vec![], vec![TensorType::f32_vector(4)]);
-        let relu = g.add_node(Op::Relu, vec![TensorType::f32_vector(4)], vec![TensorType::f32_vector(4)]);
+        let a = g.add_node(
+            Op::Input { name: "a".into() },
+            vec![],
+            vec![TensorType::f32_vector(4)],
+        );
+        let relu = g.add_node(
+            Op::Relu,
+            vec![TensorType::f32_vector(4)],
+            vec![TensorType::f32_vector(4)],
+        );
         g.add_edge(a, 0, relu, 0, TensorType::f32_vector(4));
 
         // Component 2: b → neg (disconnected)
-        let b = g.add_node(Op::Input { name: "b".into() }, vec![], vec![TensorType::f32_vector(4)]);
-        let neg = g.add_node(Op::Neg, vec![TensorType::f32_vector(4)], vec![TensorType::f32_vector(4)]);
+        let b = g.add_node(
+            Op::Input { name: "b".into() },
+            vec![],
+            vec![TensorType::f32_vector(4)],
+        );
+        let neg = g.add_node(
+            Op::Neg,
+            vec![TensorType::f32_vector(4)],
+            vec![TensorType::f32_vector(4)],
+        );
         g.add_edge(b, 0, neg, 0, TensorType::f32_vector(4));
 
         let components = find_independent_subgraphs(&g);
@@ -332,9 +411,21 @@ mod tests {
     #[test]
     fn execution_plan_report() {
         let mut g = Graph::new("report_test");
-        let a = g.add_node(Op::Input { name: "a".into() }, vec![], vec![TensorType::f32_vector(100)]);
-        let relu = g.add_node(Op::Relu, vec![TensorType::f32_vector(100)], vec![TensorType::f32_vector(100)]);
-        let out = g.add_node(Op::Output { name: "y".into() }, vec![TensorType::f32_vector(100)], vec![]);
+        let a = g.add_node(
+            Op::Input { name: "a".into() },
+            vec![],
+            vec![TensorType::f32_vector(100)],
+        );
+        let relu = g.add_node(
+            Op::Relu,
+            vec![TensorType::f32_vector(100)],
+            vec![TensorType::f32_vector(100)],
+        );
+        let out = g.add_node(
+            Op::Output { name: "y".into() },
+            vec![TensorType::f32_vector(100)],
+            vec![],
+        );
         g.add_edge(a, 0, relu, 0, TensorType::f32_vector(100));
         g.add_edge(relu, 0, out, 0, TensorType::f32_vector(100));
 

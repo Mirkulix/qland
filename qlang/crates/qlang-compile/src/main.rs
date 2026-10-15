@@ -10,6 +10,9 @@
 //!   qlang-cli ascii    <file.qlg.json>                    ASCII visualization
 //!   qlang-cli llvm-ir  <file.qlg.json>                    Show LLVM IR output
 
+// Numeric ML code with parallel index arrays; `clamp` panics when min > max, so rewriting could change behavior.
+#![allow(clippy::needless_range_loop, clippy::manual_clamp)]
+
 use std::collections::HashMap;
 use std::env;
 use std::fs;
@@ -48,7 +51,8 @@ fn main() {
     }
 
     if command == "web" {
-        let port: u16 = args.iter()
+        let port: u16 = args
+            .iter()
             .position(|a| a == "--port")
             .and_then(|i| args.get(i + 1))
             .and_then(|p| p.parse().ok())
@@ -58,12 +62,14 @@ fn main() {
     }
 
     if command == "train-mnist" {
-        let port: u16 = args.iter()
+        let port: u16 = args
+            .iter()
             .position(|a| a == "--port")
             .and_then(|i| args.get(i + 1))
             .and_then(|p| p.parse().ok())
             .unwrap_or(8081);
-        let epochs: usize = args.iter()
+        let epochs: usize = args
+            .iter()
             .position(|a| a == "--epochs")
             .and_then(|i| args.get(i + 1))
             .and_then(|e| e.parse().ok())
@@ -188,7 +194,10 @@ fn main() {
         "compile" => {
             #[cfg(feature = "llvm")]
             {
-                let output = args.get(4).map(|s| s.as_str()).unwrap_or("/tmp/qlang_out.o");
+                let output = args
+                    .get(4)
+                    .map(|s| s.as_str())
+                    .unwrap_or("/tmp/qlang_out.o");
                 cmd_compile(&graph, output);
             }
             #[cfg(not(feature = "llvm"))]
@@ -240,24 +249,50 @@ fn print_usage() {
     eprintln!("  qlang-cli exec     <file.qlang>                        Execute a QLANG program");
     eprintln!("  qlang-cli parse    <file.qlang>                        Parse .qlang text file");
     eprintln!("  qlang-cli lsp                                            Start LSP server (stdin/stdout)");
-    eprintln!("  qlang-cli web      [--port 8081]                       Start web dashboard server");
-    eprintln!("  qlang-cli train-mnist [--port 8081] [--epochs 50]      Train MNIST with live dashboard");
-    eprintln!("  qlang-cli ai-train [--model M] [--quick]               AI-designed training pipeline");
-    eprintln!("  qlang-cli proxy    [--port 9100] [--upstream URL]       HTTP-to-QLMS signing proxy");
+    eprintln!(
+        "  qlang-cli web      [--port 8081]                       Start web dashboard server"
+    );
+    eprintln!(
+        "  qlang-cli train-mnist [--port 8081] [--epochs 50]      Train MNIST with live dashboard"
+    );
+    eprintln!(
+        "  qlang-cli ai-train [--model M] [--quick]               AI-designed training pipeline"
+    );
+    eprintln!(
+        "  qlang-cli proxy    [--port 9100] [--upstream URL]       HTTP-to-QLMS signing proxy"
+    );
     eprintln!("  qlang-cli ollama   health|models|generate|chat         Ollama LLM operations");
-    eprintln!("  qlang-cli binary   encode <file.qlg.json>              Encode graph to binary .qlb");
+    eprintln!(
+        "  qlang-cli binary   encode <file.qlg.json>              Encode graph to binary .qlb"
+    );
     eprintln!("  qlang-cli binary   decode <file.qlb>                  Decode binary .qlb to JSON");
-    eprintln!("  qlang-cli cache    stats                              Show cache hit/miss statistics");
+    eprintln!(
+        "  qlang-cli cache    stats                              Show cache hit/miss statistics"
+    );
     eprintln!("  qlang-cli cache    clear                              Clear computation cache");
-    eprintln!("  qlang-cli ide      [--port 3000]                       Start QLANG IDE (Eclipse Theia)");
-    eprintln!("  qlang-cli autonomous [--task T] [--target 95] [--iterations 5] [--model M] [--quick]");
-    eprintln!("                                                          Autonomous AI feedback loop");
+    eprintln!(
+        "  qlang-cli ide      [--port 3000]                       Start QLANG IDE (Eclipse Theia)"
+    );
+    eprintln!(
+        "  qlang-cli autonomous [--task T] [--target 95] [--iterations 5] [--model M] [--quick]"
+    );
+    eprintln!(
+        "                                                          Autonomous AI feedback loop"
+    );
     eprintln!("  qlang-cli train-lm --data <text.txt> [options]           Train a transformer language model");
-    eprintln!("  qlang-cli swarm-train [--data FILE] [--population 10] [--generations 5] [--quick]");
-    eprintln!("      --vocab-size 1000 --d-model 128 --layers 4 --heads 4 --epochs 10 --seq-len 128");
+    eprintln!(
+        "  qlang-cli swarm-train [--data FILE] [--population 10] [--generations 5] [--quick]"
+    );
+    eprintln!(
+        "      --vocab-size 1000 --d-model 128 --layers 4 --heads 4 --epochs 10 --seq-len 128"
+    );
     eprintln!("  qlang-cli orchestrate \"task\" [--budget 0.10] [--quality 0.9] [--models 3]");
-    eprintln!("                                                          Multi-model orchestration");
-    eprintln!("  qlang-cli devices                                      List available compute devices");
+    eprintln!(
+        "                                                          Multi-model orchestration"
+    );
+    eprintln!(
+        "  qlang-cli devices                                      List available compute devices"
+    );
     eprintln!("  qlang-cli compile  <file.qlg.json> -o <output.o>      Compile to object file");
     eprintln!("  qlang-cli asm      <file.qlg.json>                    Show native assembly");
     eprintln!("  qlang-cli dot      <file.qlg.json>                    Output Graphviz DOT");
@@ -280,7 +315,8 @@ fn cmd_devices() {
 }
 
 fn cmd_ide(args: &[String]) {
-    let port: u16 = args.iter()
+    let port: u16 = args
+        .iter()
         .position(|a| a == "--port")
         .and_then(|i| args.get(i + 1))
         .and_then(|p| p.parse().ok())
@@ -288,7 +324,8 @@ fn cmd_ide(args: &[String]) {
 
     // Check if Theia is set up
     let theia_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent().and_then(|p| p.parent())
+        .parent()
+        .and_then(|p| p.parent())
         .map(|p| p.join("editors/theia"))
         .unwrap_or_default();
 
@@ -343,7 +380,10 @@ fn cmd_exec_script(file_path: &str) {
             if let Ok(stmts) = qlang_runtime::vm::Parser::new(tokens).parse_program() {
                 if let Some((_result, _output)) = qlang_compile::script_jit::try_jit_run(&stmts) {
                     // Print output was already sent to stdout by the JIT callback
-                    eprintln!("[executed in {:.3}s, LLVM JIT]", start.elapsed().as_secs_f64());
+                    eprintln!(
+                        "[executed in {:.3}s, LLVM JIT]",
+                        start.elapsed().as_secs_f64()
+                    );
                     return;
                 }
             }
@@ -352,10 +392,10 @@ fn cmd_exec_script(file_path: &str) {
 
     // Tier 2: Bytecode VM (fast, all features except graphs)
     // Use catch_unwind to gracefully fall back on panics (e.g., unsupported features)
-    let bc_result = std::panic::catch_unwind(|| {
-        qlang_runtime::bytecode::run_bytecode(&source)
-    });
-    match bc_result.unwrap_or(Err(qlang_runtime::vm::VmError::RuntimeError("bytecode panic".into()))) {
+    let bc_result = std::panic::catch_unwind(|| qlang_runtime::bytecode::run_bytecode(&source));
+    match bc_result.unwrap_or(Err(qlang_runtime::vm::VmError::RuntimeError(
+        "bytecode panic".into(),
+    ))) {
         Ok((_value, output)) => {
             for line in &output {
                 println!("{}", line);
@@ -430,7 +470,10 @@ fn cmd_optimize(mut graph: qlang_core::graph::Graph, output: Option<&str>) {
     println!("  Dead nodes removed:  {}", report.dead_nodes_removed);
     println!("  Constants folded:    {}", report.constants_folded);
     println!("  Identity ops removed:{}", report.identity_ops_removed);
-    println!("  CSE eliminated:      {}", report.common_subexpressions_eliminated);
+    println!(
+        "  CSE eliminated:      {}",
+        report.common_subexpressions_eliminated
+    );
     println!("  Ops fused:           {}", report.ops_fused);
     for desc in &report.fused_descriptions {
         println!("    {desc}");
@@ -471,7 +514,12 @@ fn cmd_run(graph: &qlang_core::graph::Graph) {
                     if vals.len() <= 20 {
                         println!("    values: {:?}", vals);
                     } else {
-                        println!("    values: [{}, {}, ... {} total]", vals[0], vals[1], vals.len());
+                        println!(
+                            "    values: [{}, {}, ... {} total]",
+                            vals[0],
+                            vals[1],
+                            vals.len()
+                        );
                     }
                 }
             }
@@ -491,7 +539,8 @@ fn cmd_jit(graph: &qlang_core::graph::Graph) {
     println!("JIT compiling graph '{}'...", graph.id);
 
     let context = Context::create();
-    let result = qlang_compile::codegen::compile_graph(&context, graph, OptimizationLevel::Aggressive);
+    let result =
+        qlang_compile::codegen::compile_graph(&context, graph, OptimizationLevel::Aggressive);
     match result {
         Ok(compiled) => {
             println!("  Compilation successful!");
@@ -499,7 +548,8 @@ fn cmd_jit(graph: &qlang_core::graph::Graph) {
 
             // Determine input sizes from graph
             let input_nodes = graph.input_nodes();
-            let n = input_nodes.first()
+            let n = input_nodes
+                .first()
                 .and_then(|n| n.output_types.first())
                 .and_then(|t| t.shape.numel())
                 .unwrap_or(4);
@@ -515,7 +565,12 @@ fn cmd_jit(graph: &qlang_core::graph::Graph) {
                     if result.len() <= 20 {
                         println!("    output: {:?}", result);
                     } else {
-                        println!("    output: [{}, {}, ... {} total]", result[0], result[1], result.len());
+                        println!(
+                            "    output: [{}, {}, ... {} total]",
+                            result[0],
+                            result[1],
+                            result.len()
+                        );
                     }
                 }
                 Err(e) => eprintln!("  JIT execution failed: {e}"),
@@ -615,7 +670,11 @@ fn cmd_compile(graph: &qlang_core::graph::Graph, output: &str) {
 fn cmd_asm(graph: &qlang_core::graph::Graph) {
     use inkwell::OptimizationLevel;
 
-    match qlang_compile::aot::compile_to_object(graph, "/tmp/qlang_asm_tmp.o", OptimizationLevel::Aggressive) {
+    match qlang_compile::aot::compile_to_object(
+        graph,
+        "/tmp/qlang_asm_tmp.o",
+        OptimizationLevel::Aggressive,
+    ) {
         Ok(result) => {
             println!("{}", result.assembly);
             let _ = std::fs::remove_file("/tmp/qlang_asm_tmp.o");
@@ -632,37 +691,33 @@ fn cmd_ollama(args: &[String]) {
     let client = qlang_runtime::ollama::OllamaClient::from_env();
 
     match sub {
-        "health" => {
-            match client.health() {
-                Ok(true) => println!("Ollama is running at {}:{}", client.host, client.port),
-                Ok(false) => {
-                    eprintln!("Ollama is not reachable at {}:{}", client.host, client.port);
-                    process::exit(1);
-                }
-                Err(e) => {
-                    eprintln!("Error checking Ollama health: {e}");
-                    process::exit(1);
-                }
+        "health" => match client.health() {
+            Ok(true) => println!("Ollama is running at {}:{}", client.host, client.port),
+            Ok(false) => {
+                eprintln!("Ollama is not reachable at {}:{}", client.host, client.port);
+                process::exit(1);
             }
-        }
-        "models" => {
-            match client.list_models() {
-                Ok(models) => {
-                    if models.is_empty() {
-                        println!("No models available.");
-                    } else {
-                        println!("Available models:");
-                        for m in &models {
-                            println!("  {m}");
-                        }
+            Err(e) => {
+                eprintln!("Error checking Ollama health: {e}");
+                process::exit(1);
+            }
+        },
+        "models" => match client.list_models() {
+            Ok(models) => {
+                if models.is_empty() {
+                    println!("No models available.");
+                } else {
+                    println!("Available models:");
+                    for m in &models {
+                        println!("  {m}");
                     }
                 }
-                Err(e) => {
-                    eprintln!("Error listing models: {e}");
-                    process::exit(1);
-                }
             }
-        }
+            Err(e) => {
+                eprintln!("Error listing models: {e}");
+                process::exit(1);
+            }
+        },
         "generate" => {
             let model = match args.get(1) {
                 Some(m) => m,
@@ -697,9 +752,7 @@ fn cmd_ollama(args: &[String]) {
                 eprintln!("Usage: qlang-cli ollama chat <model> <prompt>");
                 process::exit(1);
             }
-            let messages = vec![
-                qlang_runtime::ollama::ChatMessage::user(prompt),
-            ];
+            let messages = vec![qlang_runtime::ollama::ChatMessage::user(prompt)];
             match client.chat(model, messages) {
                 Ok(response) => println!("{response}"),
                 Err(e) => {
@@ -710,7 +763,7 @@ fn cmd_ollama(args: &[String]) {
         }
         _ => {
             eprintln!("Usage: qlang-cli ollama <subcommand>");
-            eprintln!("");
+            eprintln!();
             eprintln!("Subcommands:");
             eprintln!("  health              Check if Ollama is running");
             eprintln!("  models              List available models");
@@ -760,11 +813,12 @@ fn cmd_web(port: u16) {
 }
 
 fn cmd_ai_train(args: &[String]) {
+    use qlang_runtime::mnist::MnistData;
     use qlang_runtime::ollama::OllamaClient;
     use qlang_runtime::training::MlpWeights3;
-    use qlang_runtime::mnist::MnistData;
 
-    let model = args.iter()
+    let model = args
+        .iter()
         .position(|a| a == "--model")
         .and_then(|i| args.get(i + 1))
         .map(|s| s.as_str())
@@ -775,7 +829,10 @@ fn cmd_ai_train(args: &[String]) {
     println!("=== QLANG AI-Train Pipeline ===\n");
 
     // Step 1: Ask Ollama to design a model
-    println!("Step 1: Asking AI architect ({}) to design a neural network...\n", model);
+    println!(
+        "Step 1: Asking AI architect ({}) to design a neural network...\n",
+        model
+    );
 
     let client = OllamaClient::from_env();
 
@@ -783,7 +840,10 @@ fn cmd_ai_train(args: &[String]) {
     match client.health() {
         Ok(true) => {}
         Ok(false) => {
-            eprintln!("Error: Ollama is not running at {}:{}", client.host, client.port);
+            eprintln!(
+                "Error: Ollama is not running at {}:{}",
+                client.host, client.port
+            );
             eprintln!("Start Ollama with: ollama serve");
             eprintln!("Then pull a model: ollama pull {}", model);
             process::exit(1);
@@ -800,13 +860,17 @@ Reply with ONLY a JSON object like this, no other text:\n\
 {\"hidden1\": 128, \"hidden2\": 64, \"epochs\": 30, \"learning_rate\": 0.1, \"batch_size\": 32}\n\
 Choose reasonable values. Keep the model small but effective.";
 
-    let system_prompt = "You are a JSON-only response bot. Output valid JSON only, no markdown, no explanation.";
+    let system_prompt =
+        "You are a JSON-only response bot. Output valid JSON only, no markdown, no explanation.";
 
     let response = match client.generate(model, prompt, Some(system_prompt)) {
         Ok(r) => r,
         Err(e) => {
             eprintln!("Error from Ollama: {e}");
-            eprintln!("Make sure the model '{}' is available: ollama pull {}", model, model);
+            eprintln!(
+                "Make sure the model '{}' is available: ollama pull {}",
+                model, model
+            );
             process::exit(1);
         }
     };
@@ -826,7 +890,10 @@ Choose reasonable values. Keep the model small but effective.";
 
     let design: AiDesign = serde_json::from_str(&json_str).unwrap_or_else(|_| {
         eprintln!("Warning: Could not parse AI response as JSON, using defaults.");
-        eprintln!("  AI said: {}", response.chars().take(200).collect::<String>());
+        eprintln!(
+            "  AI said: {}",
+            response.chars().take(200).collect::<String>()
+        );
         AiDesign {
             hidden1: None,
             hidden2: None,
@@ -851,7 +918,10 @@ Choose reasonable values. Keep the model small but effective.";
     println!("  Batch size: {}", batch_size);
 
     // Step 4: Build and train the model
-    println!("\nStep 2: Building model (784 -> {} -> {} -> 10)...", hidden1, hidden2);
+    println!(
+        "\nStep 2: Building model (784 -> {} -> {} -> 10)...",
+        hidden1, hidden2
+    );
     let mut mlp = MlpWeights3::new(784, hidden1, hidden2, 10);
     println!("  Parameters: {}", mlp.param_count());
 
@@ -867,11 +937,18 @@ Choose reasonable values. Keep the model small but effective.";
                 .parent()
                 .and_then(|p| p.parent())
                 .unwrap_or(std::path::Path::new("."));
-            workspace_root.join("data").join("mnist").to_string_lossy().to_string()
+            workspace_root
+                .join("data")
+                .join("mnist")
+                .to_string_lossy()
+                .to_string()
         };
         match MnistData::download_and_load(&data_dir) {
             Ok(d) => {
-                println!("  Loaded real MNIST: {} train, {} test", d.n_train, d.n_test);
+                println!(
+                    "  Loaded real MNIST: {} train, {} test",
+                    d.n_train, d.n_test
+                );
                 d
             }
             Err(_) => {
@@ -901,14 +978,23 @@ Choose reasonable values. Keep the model small but effective.";
             offset += actual_batch;
         }
 
-        let avg_loss = if n_batches > 0 { epoch_loss / n_batches as f32 } else { 0.0 };
+        let avg_loss = if n_batches > 0 {
+            epoch_loss / n_batches as f32
+        } else {
+            0.0
+        };
 
         // Print progress every few epochs
         if epoch == 0 || epoch == epochs - 1 || (epoch + 1) % 5 == 0 {
             let train_probs = mlp.forward(&data.train_images);
             let train_acc = mlp.accuracy(&train_probs, &data.train_labels);
-            println!("  Epoch {}/{}: loss={:.4}, train_acc={:.1}%",
-                epoch + 1, epochs, avg_loss, train_acc * 100.0);
+            println!(
+                "  Epoch {}/{}: loss={:.4}, train_acc={:.1}%",
+                epoch + 1,
+                epochs,
+                avg_loss,
+                train_acc * 100.0
+            );
         }
     }
 
@@ -937,7 +1023,8 @@ Choose reasonable values. Keep the model small but effective.";
     // Step 6: Ask Ollama to evaluate the results
     println!("\nStep 6: Asking AI to evaluate results...\n");
 
-    let eval_prompt = format!(
+    let eval_prompt =
+        format!(
         "I trained a neural network for MNIST with your architecture (784->{}->{}->10). Results:\n\
         - Test accuracy: {:.1}%\n\
         - Compressed accuracy: {:.1}%\n\
@@ -962,18 +1049,31 @@ Choose reasonable values. Keep the model small but effective.";
 }
 
 fn cmd_autonomous(args: &[String]) {
-    let model = args.iter().position(|a| a == "--model")
-        .and_then(|i| args.get(i+1)).cloned()
+    let model = args
+        .iter()
+        .position(|a| a == "--model")
+        .and_then(|i| args.get(i + 1))
+        .cloned()
         .unwrap_or_else(|| "deepseek-r1:1.5b".to_string());
-    let target = args.iter().position(|a| a == "--target")
-        .and_then(|i| args.get(i+1)).and_then(|p| p.parse::<f32>().ok())
-        .unwrap_or(95.0) / 100.0;
-    let max_iter = args.iter().position(|a| a == "--iterations")
-        .and_then(|i| args.get(i+1)).and_then(|p| p.parse::<usize>().ok())
+    let target = args
+        .iter()
+        .position(|a| a == "--target")
+        .and_then(|i| args.get(i + 1))
+        .and_then(|p| p.parse::<f32>().ok())
+        .unwrap_or(95.0)
+        / 100.0;
+    let max_iter = args
+        .iter()
+        .position(|a| a == "--iterations")
+        .and_then(|i| args.get(i + 1))
+        .and_then(|p| p.parse::<usize>().ok())
         .unwrap_or(5);
     let quick = args.iter().any(|a| a == "--quick");
-    let task = args.iter().position(|a| a == "--task")
-        .and_then(|i| args.get(i+1)).cloned()
+    let task = args
+        .iter()
+        .position(|a| a == "--task")
+        .and_then(|i| args.get(i + 1))
+        .cloned()
         .unwrap_or_else(|| "Build a digit classifier".to_string());
 
     println!("=== QLANG Autonomous AI Loop ===");
@@ -996,7 +1096,8 @@ fn cmd_autonomous(args: &[String]) {
     let data = if quick {
         MnistData::synthetic(2000, 500)
     } else {
-        MnistData::download_and_load("data/mnist").unwrap_or_else(|_| MnistData::synthetic(2000, 500))
+        MnistData::download_and_load("data/mnist")
+            .unwrap_or_else(|_| MnistData::synthetic(2000, 500))
     };
 
     let mut best_accuracy: f32 = 0.0;
@@ -1015,10 +1116,15 @@ fn cmd_autonomous(args: &[String]) {
                 history.join("; "), best_accuracy*100.0, best_config.0, best_config.1, target*100.0)
         };
 
-        let response = ollama.generate(&model, &prompt, Some("JSON only.")).unwrap_or_default();
-        let json_str = extract_json(&response).unwrap_or_else(|| r#"{"hidden1":128,"hidden2":64,"epochs":10,"learning_rate":0.1}"#.to_string());
-        let parsed: serde_json::Value = serde_json::from_str(&json_str)
-            .unwrap_or(serde_json::json!({"hidden1":128,"hidden2":64,"epochs":10,"learning_rate":0.1}));
+        let response = ollama
+            .generate(&model, &prompt, Some("JSON only."))
+            .unwrap_or_default();
+        let json_str = extract_json(&response).unwrap_or_else(|| {
+            r#"{"hidden1":128,"hidden2":64,"epochs":10,"learning_rate":0.1}"#.to_string()
+        });
+        let parsed: serde_json::Value = serde_json::from_str(&json_str).unwrap_or(
+            serde_json::json!({"hidden1":128,"hidden2":64,"epochs":10,"learning_rate":0.1}),
+        );
 
         let h1 = parsed["hidden1"].as_u64().unwrap_or(128).min(512).max(16) as usize;
         let h2 = parsed["hidden2"].as_u64().unwrap_or(64).min(256).max(8) as usize;
@@ -1032,10 +1138,12 @@ fn cmd_autonomous(args: &[String]) {
         let mut nn = MlpWeights3::new(784, h1, h2, 10);
         let mut clr = lr;
         for epoch in 0..epochs {
-            if epoch > 0 && epoch % 10 == 0 { clr *= 0.95; }
+            if epoch > 0 && epoch % 10 == 0 {
+                clr *= 0.95;
+            }
             let nb = data.n_train / 64;
             for b in 0..nb {
-                let (x, y) = data.train_batch(b*64, 64);
+                let (x, y) = data.train_batch(b * 64, 64);
                 nn.train_step_backprop(x, y, clr);
             }
         }
@@ -1048,9 +1156,14 @@ fn cmd_autonomous(args: &[String]) {
         let comp_probs = compressed.forward(&data.test_images);
         let comp_acc = compressed.accuracy(&comp_probs, &data.test_labels);
 
-        println!("{:.1}% (compressed: {:.1}%) in {:.1}s", test_acc*100.0, comp_acc*100.0, train_time.as_secs_f64());
+        println!(
+            "{:.1}% (compressed: {:.1}%) in {:.1}s",
+            test_acc * 100.0,
+            comp_acc * 100.0,
+            train_time.as_secs_f64()
+        );
 
-        history.push(format!("784->{}->{}->10: {:.1}%", h1, h2, test_acc*100.0));
+        history.push(format!("784->{}->{}->10: {:.1}%", h1, h2, test_acc * 100.0));
 
         if test_acc > best_accuracy {
             best_accuracy = test_acc;
@@ -1075,15 +1188,28 @@ fn cmd_autonomous(args: &[String]) {
         }
 
         // Step 5: AI feedback
-        let feedback = ollama.generate(&model, &format!(
-            "{:.1}% (target {:.0}%). What to change? 1 sentence.", test_acc*100.0, target*100.0
-        ), None).unwrap_or_default();
+        let feedback = ollama
+            .generate(
+                &model,
+                &format!(
+                    "{:.1}% (target {:.0}%). What to change? 1 sentence.",
+                    test_acc * 100.0,
+                    target * 100.0
+                ),
+                None,
+            )
+            .unwrap_or_default();
         println!("  AI feedback: {}", &feedback[..feedback.len().min(100)]);
     }
 
     println!();
     println!("=== Max iterations reached ===");
-    println!("  Best: {:.1}% with 784->{}->{}->10", best_accuracy*100.0, best_config.0, best_config.1);
+    println!(
+        "  Best: {:.1}% with 784->{}->{}->10",
+        best_accuracy * 100.0,
+        best_config.0,
+        best_config.1
+    );
     println!("  Target {:.0}% was not reached.", target * 100.0);
 }
 
@@ -1109,9 +1235,9 @@ fn extract_json(s: &str) -> Option<String> {
 }
 
 fn cmd_train_mnist(port: u16, epochs: usize) {
-    use qlang_runtime::web_server::{WebServer, WebEvent};
     use qlang_runtime::mnist::MnistData;
     use qlang_runtime::training::MlpWeights3;
+    use qlang_runtime::web_server::{WebEvent, WebServer};
     use std::time::Instant;
 
     // Determine the web root directory
@@ -1170,8 +1296,13 @@ fn cmd_train_mnist(port: u16, epochs: usize) {
             .parent()
             .and_then(|p| p.parent())
             .unwrap_or(std::path::Path::new("."));
-        std::env::var("MNIST_DIR")
-            .unwrap_or_else(|_| workspace_root.join("data").join("mnist").to_string_lossy().to_string())
+        std::env::var("MNIST_DIR").unwrap_or_else(|_| {
+            workspace_root
+                .join("data")
+                .join("mnist")
+                .to_string_lossy()
+                .to_string()
+        })
     };
 
     let data = match MnistData::download_and_load(&mnist_dir) {
@@ -1208,12 +1339,22 @@ fn cmd_train_mnist(port: u16, epochs: usize) {
     let mut model = MlpWeights3::new(input_dim, hidden1_dim, hidden2_dim, output_dim);
     let total_params = model.param_count();
 
-    println!("  Architecture: {}->{}->{}->{}  (3-layer MLP)", input_dim, hidden1_dim, hidden2_dim, output_dim);
-    println!("  Parameters:   {} ({:.1} KB)", total_params, total_params as f64 * 4.0 / 1024.0);
+    println!(
+        "  Architecture: {}->{}->{}->{}  (3-layer MLP)",
+        input_dim, hidden1_dim, hidden2_dim, output_dim
+    );
+    println!(
+        "  Parameters:   {} ({:.1} KB)",
+        total_params,
+        total_params as f64 * 4.0 / 1024.0
+    );
 
     // Broadcast graph info
     handle.broadcast(WebEvent::GraphLoaded {
-        name: format!("MNIST {}->{}->{}->{}  ({} params)", input_dim, hidden1_dim, hidden2_dim, output_dim, total_params),
+        name: format!(
+            "MNIST {}->{}->{}->{}  ({} params)",
+            input_dim, hidden1_dim, hidden2_dim, output_dim, total_params
+        ),
         num_nodes: 8,
         num_edges: 7,
     });
@@ -1229,12 +1370,18 @@ fn cmd_train_mnist(port: u16, epochs: usize) {
 
     println!("  Epochs:        {}", epochs);
     println!("  Batch size:    {}", batch_size);
-    println!("  Learning rate: {} (decay {}x every {} epochs)", lr, lr_decay, lr_decay_every);
+    println!(
+        "  Learning rate: {} (decay {}x every {} epochs)",
+        lr, lr_decay, lr_decay_every
+    );
     println!();
 
     handle.broadcast(WebEvent::SystemLog {
         level: "info".to_string(),
-        message: format!("Training: {} epochs, batch_size={}, lr={}", epochs, batch_size, lr),
+        message: format!(
+            "Training: {} epochs, batch_size={}, lr={}",
+            epochs, batch_size, lr
+        ),
     });
 
     let train_start = Instant::now();
@@ -1268,8 +1415,14 @@ fn cmd_train_mnist(port: u16, epochs: usize) {
 
         // Print every 5 epochs to console
         if epoch % 5 == 0 || epoch == epochs - 1 {
-            println!("  Epoch {:>3}/{}: loss={:.4}  train_acc={:.1}%  lr={:.4}",
-                epoch + 1, epochs, epoch_loss, train_acc * 100.0, lr);
+            println!(
+                "  Epoch {:>3}/{}: loss={:.4}  train_acc={:.1}%  lr={:.4}",
+                epoch + 1,
+                epochs,
+                epoch_loss,
+                train_acc * 100.0,
+                lr
+            );
         }
     }
 
@@ -1287,7 +1440,12 @@ fn cmd_train_mnist(port: u16, epochs: usize) {
 
     handle.broadcast(WebEvent::SystemLog {
         level: "info".to_string(),
-        message: format!("Training complete: test_acc={:.1}%, loss={:.4}, time={:?}", test_acc * 100.0, test_loss, train_time),
+        message: format!(
+            "Training complete: test_acc={:.1}%, loss={:.4}, time={:?}",
+            test_acc * 100.0,
+            test_loss,
+            train_time
+        ),
     });
 
     // ================================================================
@@ -1306,13 +1464,21 @@ fn cmd_train_mnist(port: u16, epochs: usize) {
 
     let weight_count = model.w1.len() + model.w2.len() + model.w3.len();
     let original_bytes = total_params * 4;
-    let ternary_weight_bytes = (weight_count * 2 + 7) / 8;
+    let ternary_weight_bytes = (weight_count * 2).div_ceil(8);
     let bias_bytes = (model.b1.len() + model.b2.len() + model.b3.len()) * 4;
     let compressed_bytes = ternary_weight_bytes + bias_bytes;
     let compression_ratio = original_bytes as f64 / compressed_bytes as f64;
 
-    println!("  Before: {:.1}% accuracy, {:.1} KB", test_acc * 100.0, original_bytes as f64 / 1024.0);
-    println!("  After:  {:.1}% accuracy, {:.1} KB", comp_acc * 100.0, compressed_bytes as f64 / 1024.0);
+    println!(
+        "  Before: {:.1}% accuracy, {:.1} KB",
+        test_acc * 100.0,
+        original_bytes as f64 / 1024.0
+    );
+    println!(
+        "  After:  {:.1}% accuracy, {:.1} KB",
+        comp_acc * 100.0,
+        compressed_bytes as f64 / 1024.0
+    );
     println!("  Accuracy drop: {:.1}%", (test_acc - comp_acc) * 100.0);
     println!("  Compression ratio: {:.1}x", compression_ratio);
 
@@ -1327,7 +1493,8 @@ fn cmd_train_mnist(port: u16, epochs: usize) {
     // 5. ONNX Export
     // ================================================================
     println!("\n--- [5/6] ONNX EXPORT ---");
-    let qlang_source = format!(r#"graph mnist_3layer {{
+    let qlang_source = format!(
+        r#"graph mnist_3layer {{
   input x: f32[1, 784]
   input W1: f32[784, {hidden1_dim}]
   input b1: f32[1, {hidden1_dim}]
@@ -1346,7 +1513,8 @@ fn cmd_train_mnist(port: u16, epochs: usize) {
 
   output predictions = probs
   output compressed = comp
-}}"#);
+}}"#
+    );
 
     match qlang_compile::parser::parse(&qlang_source) {
         Ok(graph) => {
@@ -1361,7 +1529,11 @@ fn cmd_train_mnist(port: u16, epochs: usize) {
 
             handle.broadcast(WebEvent::ModelSaved {
                 name: "mnist_3layer".to_string(),
-                version: format!("acc={:.1}% comp={:.1}x", test_acc * 100.0, compression_ratio),
+                version: format!(
+                    "acc={:.1}% comp={:.1}x",
+                    test_acc * 100.0,
+                    compression_ratio
+                ),
             });
         }
         Err(e) => {
@@ -1378,9 +1550,19 @@ fn cmd_train_mnist(port: u16, epochs: usize) {
     println!("================================================================");
     println!("  Total time:         {:?}", total_time);
     println!("  Training time:      {:?}", train_time);
-    println!("  Architecture:       {}->{}->{}->{}  (3-layer MLP)", input_dim, hidden1_dim, hidden2_dim, output_dim);
-    println!("  Parameters:         {} ({:.1} KB)", total_params, total_params as f64 * 4.0 / 1024.0);
-    println!("  Training:           {} epochs, batch_size={}", epochs, batch_size);
+    println!(
+        "  Architecture:       {}->{}->{}->{}  (3-layer MLP)",
+        input_dim, hidden1_dim, hidden2_dim, output_dim
+    );
+    println!(
+        "  Parameters:         {} ({:.1} KB)",
+        total_params,
+        total_params as f64 * 4.0 / 1024.0
+    );
+    println!(
+        "  Training:           {} epochs, batch_size={}",
+        epochs, batch_size
+    );
     println!("  Test accuracy:      {:.1}%", test_acc * 100.0);
     println!("  Compressed acc:     {:.1}%", comp_acc * 100.0);
     println!("  Compression ratio:  {:.1}x", compression_ratio);
@@ -1391,7 +1573,10 @@ fn cmd_train_mnist(port: u16, epochs: usize) {
         level: "info".to_string(),
         message: format!(
             "Pipeline complete: acc={:.1}%, compressed={:.1}%, ratio={:.1}x, time={:?}",
-            test_acc * 100.0, comp_acc * 100.0, compression_ratio, total_time
+            test_acc * 100.0,
+            comp_acc * 100.0,
+            compression_ratio,
+            total_time
         ),
     });
 
@@ -1416,12 +1601,7 @@ fn cmd_lsp() {
 
     let mut documents: HashMap<String, String> = HashMap::new();
 
-    loop {
-        let header = match lines.next() {
-            Some(Ok(h)) => h,
-            _ => break,
-        };
-
+    while let Some(Ok(header)) = lines.next() {
         if !header.starts_with("Content-Length:") {
             continue;
         }
@@ -1500,22 +1680,28 @@ fn cmd_lsp() {
                 let source = documents.get(uri).map(|s| s.as_str()).unwrap_or("");
                 let items = qlang_compile::lsp::completions_at(source, line, col);
 
-                let lsp_items: Vec<serde_json::Value> = items.iter().map(|item| {
-                    serde_json::json!({
-                        "label": item.label,
-                        "kind": match item.kind {
-                            qlang_compile::lsp::CompletionKind::Operation => 3,
-                            qlang_compile::lsp::CompletionKind::Type => 6,
-                            qlang_compile::lsp::CompletionKind::Variable => 6,
-                            qlang_compile::lsp::CompletionKind::Keyword => 14,
-                        },
-                        "documentation": item.documentation
+                let lsp_items: Vec<serde_json::Value> = items
+                    .iter()
+                    .map(|item| {
+                        serde_json::json!({
+                            "label": item.label,
+                            "kind": match item.kind {
+                                qlang_compile::lsp::CompletionKind::Operation => 3,
+                                qlang_compile::lsp::CompletionKind::Type => 6,
+                                qlang_compile::lsp::CompletionKind::Variable => 6,
+                                qlang_compile::lsp::CompletionKind::Keyword => 14,
+                            },
+                            "documentation": item.documentation
+                        })
                     })
-                }).collect();
+                    .collect();
 
-                send_response(&stdout, &serde_json::json!({
-                    "jsonrpc": "2.0", "id": id, "result": lsp_items
-                }));
+                send_response(
+                    &stdout,
+                    &serde_json::json!({
+                        "jsonrpc": "2.0", "id": id, "result": lsp_items
+                    }),
+                );
             }
             "textDocument/hover" => {
                 let uri = msg["params"]["textDocument"]["uri"].as_str().unwrap_or("");
@@ -1525,10 +1711,15 @@ fn cmd_lsp() {
                 let hover = qlang_compile::lsp::hover_info(source, line, col);
 
                 let result = match hover {
-                    Some(text) => serde_json::json!({ "contents": { "kind": "markdown", "value": text } }),
+                    Some(text) => {
+                        serde_json::json!({ "contents": { "kind": "markdown", "value": text } })
+                    }
                     None => serde_json::Value::Null,
                 };
-                send_response(&stdout, &serde_json::json!({ "jsonrpc": "2.0", "id": id, "result": result }));
+                send_response(
+                    &stdout,
+                    &serde_json::json!({ "jsonrpc": "2.0", "id": id, "result": result }),
+                );
             }
             "textDocument/definition" => {
                 let uri = msg["params"]["textDocument"]["uri"].as_str().unwrap_or("");
@@ -1544,10 +1735,16 @@ fn cmd_lsp() {
                     }),
                     None => serde_json::Value::Null,
                 };
-                send_response(&stdout, &serde_json::json!({ "jsonrpc": "2.0", "id": id, "result": result }));
+                send_response(
+                    &stdout,
+                    &serde_json::json!({ "jsonrpc": "2.0", "id": id, "result": result }),
+                );
             }
             "shutdown" => {
-                send_response(&stdout, &serde_json::json!({ "jsonrpc": "2.0", "id": id, "result": null }));
+                send_response(
+                    &stdout,
+                    &serde_json::json!({ "jsonrpc": "2.0", "id": id, "result": null }),
+                );
             }
             "exit" => break,
             _ => {}
@@ -1566,27 +1763,33 @@ fn send_response(stdout: &std::io::Stdout, msg: &serde_json::Value) {
 
 fn publish_diagnostics(stdout: &std::io::Stdout, uri: &str, source: &str) {
     let diags = qlang_compile::lsp::analyze_source(source);
-    let lsp_diags: Vec<serde_json::Value> = diags.iter().map(|d| {
-        serde_json::json!({
-            "range": {
-                "start": { "line": d.line.saturating_sub(1), "character": d.col },
-                "end": { "line": d.line.saturating_sub(1), "character": d.col + 1 }
-            },
-            "severity": match d.severity {
-                qlang_compile::lsp::Severity::Error => 1,
-                qlang_compile::lsp::Severity::Warning => 2,
-                qlang_compile::lsp::Severity::Info => 3,
-            },
-            "source": "qlang",
-            "message": d.message
+    let lsp_diags: Vec<serde_json::Value> = diags
+        .iter()
+        .map(|d| {
+            serde_json::json!({
+                "range": {
+                    "start": { "line": d.line.saturating_sub(1), "character": d.col },
+                    "end": { "line": d.line.saturating_sub(1), "character": d.col + 1 }
+                },
+                "severity": match d.severity {
+                    qlang_compile::lsp::Severity::Error => 1,
+                    qlang_compile::lsp::Severity::Warning => 2,
+                    qlang_compile::lsp::Severity::Info => 3,
+                },
+                "source": "qlang",
+                "message": d.message
+            })
         })
-    }).collect();
+        .collect();
 
-    send_response(stdout, &serde_json::json!({
-        "jsonrpc": "2.0",
-        "method": "textDocument/publishDiagnostics",
-        "params": { "uri": uri, "diagnostics": lsp_diags }
-    }));
+    send_response(
+        stdout,
+        &serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "textDocument/publishDiagnostics",
+            "params": { "uri": uri, "diagnostics": lsp_diags }
+        }),
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -1604,18 +1807,24 @@ fn publish_diagnostics(stdout: &std::io::Stdout, uri: &str, source: &str) {
 ///   POST /v1/graph/verify   — verify a signed graph
 ///   POST /v1/compress       — ternary compress weights, sign result
 fn cmd_proxy(args: &[String]) {
+    use qlang_agent::server::GraphStore;
+    use qlang_compile::api::{self, json_error, json_ok, parse_request, HttpResponse, Method};
     use qlang_core::crypto::{self, Keypair, SignedGraph};
     use qlang_core::graph::Graph;
     use qlang_core::tensor::{Dim, Shape, TensorData};
-    use qlang_agent::server::GraphStore;
-    use qlang_compile::api::{self, parse_request, json_ok, json_error, Method, HttpResponse};
 
-    let port: u16 = args.iter().position(|a| a == "--port")
-        .and_then(|i| args.get(i + 1)).and_then(|p| p.parse().ok())
+    let port: u16 = args
+        .iter()
+        .position(|a| a == "--port")
+        .and_then(|i| args.get(i + 1))
+        .and_then(|p| p.parse().ok())
         .unwrap_or(9100);
 
-    let upstream = args.iter().position(|a| a == "--upstream")
-        .and_then(|i| args.get(i + 1)).cloned();
+    let upstream = args
+        .iter()
+        .position(|a| a == "--upstream")
+        .and_then(|i| args.get(i + 1))
+        .cloned();
 
     // Generate server keypair
     let keypair = Keypair::generate();
@@ -1651,10 +1860,8 @@ fn cmd_proxy(args: &[String]) {
 
     let store = GraphStore::new();
 
-    for stream in listener.incoming() {
-        if let Ok(mut stream) = stream {
-            handle_proxy_request(&mut stream, &keypair, &upstream, &store);
-        }
+    for mut stream in listener.incoming().flatten() {
+        handle_proxy_request(&mut stream, &keypair, &upstream, &store);
     }
 
     // Inner handler — routes an HTTP request to the appropriate proxy endpoint.
@@ -1725,14 +1932,17 @@ fn cmd_proxy(args: &[String]) {
             // --- List stored graphs ---
             (Method::Get, "/v1/graphs") => {
                 let ids = store.list();
-                let infos: Vec<_> = ids.iter()
+                let infos: Vec<_> = ids
+                    .iter()
                     .filter_map(|id| store.get_info(*id))
-                    .map(|info| serde_json::json!({
-                        "id": info.id,
-                        "name": info.name,
-                        "nodes": info.num_nodes,
-                        "edges": info.num_edges,
-                    }))
+                    .map(|info| {
+                        serde_json::json!({
+                            "id": info.id,
+                            "name": info.name,
+                            "nodes": info.num_nodes,
+                            "edges": info.num_edges,
+                        })
+                    })
                     .collect();
                 let resp = serde_json::json!({ "graphs": infos });
                 json_ok(&resp)
@@ -1746,18 +1956,16 @@ fn cmd_proxy(args: &[String]) {
                     Err(_) => {
                         // Try parsing as .qlang text
                         match std::str::from_utf8(&request.body) {
-                            Ok(source) => {
-                                match qlang_compile::parser::parse(source) {
-                                    Ok(g) => g,
-                                    Err(e) => {
-                                        return json_error(
-                                            400,
-                                            "Bad Request",
-                                            &format!("cannot parse as JSON or .qlang: {e}"),
-                                        );
-                                    }
+                            Ok(source) => match qlang_compile::parser::parse(source) {
+                                Ok(g) => g,
+                                Err(e) => {
+                                    return json_error(
+                                        400,
+                                        "Bad Request",
+                                        &format!("cannot parse as JSON or .qlang: {e}"),
+                                    );
                                 }
-                            }
+                            },
                             Err(e) => {
                                 return json_error(
                                     400,
@@ -1806,7 +2014,9 @@ fn cmd_proxy(args: &[String]) {
                 };
 
                 // Build inputs map.
-                let inputs_val = payload.get("inputs").cloned()
+                let inputs_val = payload
+                    .get("inputs")
+                    .cloned()
                     .unwrap_or(serde_json::json!({}));
                 let inputs_map = match inputs_val.as_object() {
                     Some(m) => m,
@@ -1832,10 +2042,8 @@ fn cmd_proxy(args: &[String]) {
                         let mut output_json = serde_json::Map::new();
                         for (name, tensor) in &result.outputs {
                             let floats = tensor.as_f32_slice().unwrap_or_default();
-                            let arr: Vec<serde_json::Value> = floats
-                                .iter()
-                                .map(|&f| serde_json::Value::from(f))
-                                .collect();
+                            let arr: Vec<serde_json::Value> =
+                                floats.iter().map(|&f| serde_json::Value::from(f)).collect();
                             output_json.insert(name.clone(), serde_json::Value::Array(arr));
                         }
 
@@ -1877,13 +2085,11 @@ fn cmd_proxy(args: &[String]) {
                         });
                         json_ok(&resp)
                     }
-                    Err(e) => {
-                        json_error(
-                            400,
-                            "Bad Request",
-                            &format!("invalid signed graph JSON: {e}"),
-                        )
-                    }
+                    Err(e) => json_error(
+                        400,
+                        "Bad Request",
+                        &format!("invalid signed graph JSON: {e}"),
+                    ),
                 }
             }
 
@@ -1894,7 +2100,9 @@ fn cmd_proxy(args: &[String]) {
 
                 // Parse the compress response to add signing info
                 if compress_resp.status_code == 200 {
-                    if let Ok(mut val) = serde_json::from_slice::<serde_json::Value>(&compress_resp.body) {
+                    if let Ok(mut val) =
+                        serde_json::from_slice::<serde_json::Value>(&compress_resp.body)
+                    {
                         // Sign the compressed result
                         let result_hash = crypto::sha256(&compress_resp.body);
                         let signature = keypair.sign(&result_hash);
@@ -1914,9 +2122,7 @@ fn cmd_proxy(args: &[String]) {
             }
 
             // --- Fallback: not found ---
-            (_, path) => {
-                json_error(404, "Not Found", &format!("unknown endpoint: {path}"))
-            }
+            (_, path) => json_error(404, "Not Found", &format!("unknown endpoint: {path}")),
         }
     }
 }
@@ -2051,7 +2257,8 @@ fn cmd_binary(args: &[String]) {
 
 fn cmd_train_lm(args: &[String]) {
     // Parse arguments
-    let data_path: String = args.iter()
+    let data_path: String = args
+        .iter()
         .position(|a| a == "--data")
         .and_then(|i| args.get(i + 1))
         .cloned()
@@ -2071,63 +2278,75 @@ fn cmd_train_lm(args: &[String]) {
             process::exit(1);
         });
 
-    let vocab_size: usize = args.iter()
+    let vocab_size: usize = args
+        .iter()
         .position(|a| a == "--vocab-size")
         .and_then(|i| args.get(i + 1))
         .and_then(|v| v.parse().ok())
         .unwrap_or(500);
 
-    let d_model: usize = args.iter()
+    let d_model: usize = args
+        .iter()
         .position(|a| a == "--d-model")
         .and_then(|i| args.get(i + 1))
         .and_then(|v| v.parse().ok())
         .unwrap_or(64);
 
-    let n_layers: usize = args.iter()
+    let n_layers: usize = args
+        .iter()
         .position(|a| a == "--layers")
         .and_then(|i| args.get(i + 1))
         .and_then(|v| v.parse().ok())
         .unwrap_or(2);
 
-    let n_heads: usize = args.iter()
+    let n_heads: usize = args
+        .iter()
         .position(|a| a == "--heads")
         .and_then(|i| args.get(i + 1))
         .and_then(|v| v.parse().ok())
         .unwrap_or(4);
 
-    let epochs: usize = args.iter()
+    let epochs: usize = args
+        .iter()
         .position(|a| a == "--epochs")
         .and_then(|i| args.get(i + 1))
         .and_then(|v| v.parse().ok())
         .unwrap_or(5);
 
-    let seq_len: usize = args.iter()
+    let seq_len: usize = args
+        .iter()
         .position(|a| a == "--seq-len")
         .and_then(|i| args.get(i + 1))
         .and_then(|v| v.parse().ok())
         .unwrap_or(64);
 
-    let lr: f32 = args.iter()
+    let lr: f32 = args
+        .iter()
         .position(|a| a == "--lr")
         .and_then(|i| args.get(i + 1))
         .and_then(|v| v.parse().ok())
         .unwrap_or(0.001);
 
-    let model_path: String = args.iter()
+    let model_path: String = args
+        .iter()
         .position(|a| a == "--out-model")
         .and_then(|i| args.get(i + 1))
         .cloned()
         .unwrap_or_else(|| "model.qgpt".to_string());
 
-    let tokenizer_path: String = args.iter()
+    let tokenizer_path: String = args
+        .iter()
         .position(|a| a == "--out-tokenizer")
         .and_then(|i| args.get(i + 1))
         .cloned()
         .unwrap_or_else(|| "tokenizer.qbpe".to_string());
 
     // Validate d_model is divisible by n_heads
-    if d_model % n_heads != 0 {
-        eprintln!("Error: d_model ({}) must be divisible by heads ({})", d_model, n_heads);
+    if !d_model.is_multiple_of(n_heads) {
+        eprintln!(
+            "Error: d_model ({}) must be divisible by heads ({})",
+            d_model, n_heads
+        );
         process::exit(1);
     }
 
@@ -2207,41 +2426,37 @@ fn cmd_cache(args: &[String]) {
     let subcmd = &args[0];
     let cache_arc = qlang_core::cache::ComputationCache::global();
     match subcmd.as_str() {
-        "stats" => {
-            match cache_arc.lock() {
-                Ok(guard) => {
-                    let (hits, misses, size) = guard.stats();
-                    let total = hits + misses;
-                    let hit_rate = if total > 0 {
-                        (hits as f64 / total as f64) * 100.0
-                    } else {
-                        0.0
-                    };
-                    println!("Computation Cache Statistics:");
-                    println!("  Entries:   {size}");
-                    println!("  Hits:      {hits}");
-                    println!("  Misses:    {misses}");
-                    println!("  Hit rate:  {hit_rate:.1}%");
-                }
-                Err(e) => {
-                    eprintln!("Error accessing cache: {e}");
-                    process::exit(1);
-                }
+        "stats" => match cache_arc.lock() {
+            Ok(guard) => {
+                let (hits, misses, size) = guard.stats();
+                let total = hits + misses;
+                let hit_rate = if total > 0 {
+                    (hits as f64 / total as f64) * 100.0
+                } else {
+                    0.0
+                };
+                println!("Computation Cache Statistics:");
+                println!("  Entries:   {size}");
+                println!("  Hits:      {hits}");
+                println!("  Misses:    {misses}");
+                println!("  Hit rate:  {hit_rate:.1}%");
             }
-        }
-        "clear" => {
-            match cache_arc.lock() {
-                Ok(mut guard) => {
-                    let (_, _, size) = guard.stats();
-                    guard.clear();
-                    println!("Cleared {size} cache entries.");
-                }
-                Err(e) => {
-                    eprintln!("Error accessing cache: {e}");
-                    process::exit(1);
-                }
+            Err(e) => {
+                eprintln!("Error accessing cache: {e}");
+                process::exit(1);
             }
-        }
+        },
+        "clear" => match cache_arc.lock() {
+            Ok(mut guard) => {
+                let (_, _, size) = guard.stats();
+                guard.clear();
+                println!("Cleared {size} cache entries.");
+            }
+            Err(e) => {
+                eprintln!("Error accessing cache: {e}");
+                process::exit(1);
+            }
+        },
         _ => {
             eprintln!("Unknown cache subcommand: {subcmd}");
             eprintln!("Use: stats | clear");
@@ -2256,19 +2471,22 @@ fn cmd_cache(args: &[String]) {
 
 fn cmd_swarm_train(args: &[String]) {
     // Parse arguments
-    let data_path: String = args.iter()
+    let data_path: String = args
+        .iter()
         .position(|a| a == "--data")
         .and_then(|i| args.get(i + 1))
         .cloned()
         .unwrap_or_default();
 
-    let population: usize = args.iter()
+    let population: usize = args
+        .iter()
         .position(|a| a == "--population")
         .and_then(|i| args.get(i + 1))
         .and_then(|v| v.parse().ok())
         .unwrap_or(10);
 
-    let generations: usize = args.iter()
+    let generations: usize = args
+        .iter()
         .position(|a| a == "--generations")
         .and_then(|i| args.get(i + 1))
         .and_then(|v| v.parse().ok())
@@ -2297,7 +2515,8 @@ fn cmd_swarm_train(args: &[String]) {
          Edge deployment brings AI closer to where data is generated. \
          Federated learning trains models without centralizing data. \
          Attention mechanisms allow models to focus on relevant information. \
-         Tokenization converts text into numerical representations.".to_string()
+         Tokenization converts text into numerical representations."
+            .to_string()
     } else {
         if data_path.is_empty() {
             eprintln!("Error: --data <text_file> is required (or use --quick for built-in sample)");
@@ -2315,7 +2534,11 @@ fn cmd_swarm_train(args: &[String]) {
     println!();
     println!("  Population:   {} models", population);
     println!("  Generations:  {}", generations);
-    println!("  Data:         {} ({} bytes)", if quick { "built-in sample" } else { &data_path }, text.len());
+    println!(
+        "  Data:         {} ({} bytes)",
+        if quick { "built-in sample" } else { &data_path },
+        text.len()
+    );
     println!("  Backend:      {}", qlang_runtime::accel::backend_name());
     println!();
 
@@ -2323,15 +2546,25 @@ fn cmd_swarm_train(args: &[String]) {
     println!("[1/4] Training tokenizer...");
     let tokenizer = qlang_runtime::tokenizer::BpeTokenizer::train(&text, 500);
     let tokens = tokenizer.encode(&text);
-    println!("  Vocab: {} tokens, Text: {} tokens", tokenizer.vocab_size(), tokens.len());
+    println!(
+        "  Vocab: {} tokens, Text: {} tokens",
+        tokenizer.vocab_size(),
+        tokens.len()
+    );
 
     if tokens.len() < 4 {
-        eprintln!("Error: text too short after tokenization ({} tokens, need at least 4)", tokens.len());
+        eprintln!(
+            "Error: text too short after tokenization ({} tokens, need at least 4)",
+            tokens.len()
+        );
         process::exit(1);
     }
 
     // Step 3: Create initial population with diverse architectures
-    println!("\n[2/4] Creating {} models with diverse architectures...", population);
+    println!(
+        "\n[2/4] Creating {} models with diverse architectures...",
+        population
+    );
 
     struct SwarmMember {
         config: qlang_runtime::transformer_train::TransformerConfig,
@@ -2341,16 +2574,16 @@ fn cmd_swarm_train(args: &[String]) {
     }
 
     let architectures: [(usize, usize, usize); 10] = [
-        (32, 2, 2),   // tiny
-        (48, 3, 2),   // small-wide
-        (32, 2, 4),   // small-deep
-        (64, 4, 2),   // medium-wide
-        (64, 4, 3),   // medium
-        (48, 3, 4),   // medium-deep
-        (96, 4, 2),   // large-wide
-        (64, 4, 4),   // large-balanced
-        (32, 2, 6),   // very-deep
-        (128, 4, 2),  // widest
+        (32, 2, 2),  // tiny
+        (48, 3, 2),  // small-wide
+        (32, 2, 4),  // small-deep
+        (64, 4, 2),  // medium-wide
+        (64, 4, 3),  // medium
+        (48, 3, 4),  // medium-deep
+        (96, 4, 2),  // large-wide
+        (64, 4, 4),  // large-balanced
+        (32, 2, 6),  // very-deep
+        (128, 4, 2), // widest
     ];
 
     let mut swarm: Vec<SwarmMember> = Vec::new();
@@ -2373,7 +2606,14 @@ fn cmd_swarm_train(args: &[String]) {
 
         let model = qlang_runtime::transformer_train::MiniGPT::new(config.clone());
         let params = model.param_count();
-        println!("  Model {}: d={} h={} L={} ({} params)", i + 1, d_model, n_heads, n_layers, params);
+        println!(
+            "  Model {}: d={} h={} L={} ({} params)",
+            i + 1,
+            d_model,
+            n_heads,
+            n_layers,
+            params
+        );
 
         swarm.push(SwarmMember {
             config,
@@ -2400,7 +2640,9 @@ fn cmd_swarm_train(args: &[String]) {
 
             for epoch in 0..epochs_per_gen {
                 let max_start = tokens.len().saturating_sub(seq_len + 1);
-                if max_start == 0 { continue; }
+                if max_start == 0 {
+                    continue;
+                }
 
                 let start = (gen * 7 + i * 13 + epoch * 17) % max_start.max(1);
                 let end = std::cmp::min(start + seq_len + 1, tokens.len());
@@ -2413,10 +2655,19 @@ fn cmd_swarm_train(args: &[String]) {
                 }
             }
 
-            swarm[i].fitness = if count > 0 { total_loss / count as f32 } else { f32::MAX };
+            swarm[i].fitness = if count > 0 {
+                total_loss / count as f32
+            } else {
+                f32::MAX
+            };
 
-            print!("  Model {} (d={} L={}): loss={:.4}",
-                i + 1, swarm[i].config.d_model, swarm[i].config.n_layers, swarm[i].fitness);
+            print!(
+                "  Model {} (d={} L={}): loss={:.4}",
+                i + 1,
+                swarm[i].config.d_model,
+                swarm[i].config.n_layers,
+                swarm[i].fitness
+            );
 
             // Generate a short sample
             if swarm[i].fitness < 50.0 && !tokens.is_empty() {
@@ -2431,20 +2682,33 @@ fn cmd_swarm_train(args: &[String]) {
         }
 
         // Sort by fitness (lower loss = better)
-        swarm.sort_by(|a, b| a.fitness.partial_cmp(&b.fitness).unwrap_or(std::cmp::Ordering::Equal));
+        swarm.sort_by(|a, b| {
+            a.fitness
+                .partial_cmp(&b.fitness)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
         let best = &swarm[0];
         let gen_time = gen_start.elapsed();
-        println!("\n  Best: d={} h={} L={} (loss={:.4}, {} params) [{:.1}s]",
-            best.config.d_model, best.config.n_heads, best.config.n_layers,
-            best.fitness, best.model.param_count(), gen_time.as_secs_f64());
+        println!(
+            "\n  Best: d={} h={} L={} (loss={:.4}, {} params) [{:.1}s]",
+            best.config.d_model,
+            best.config.n_heads,
+            best.config.n_layers,
+            best.fitness,
+            best.model.param_count(),
+            gen_time.as_secs_f64()
+        );
 
         // Keep top 40%, mutate rest
         if gen < generations - 1 {
             let survivors = (population * 4) / 10;
             let survivors = survivors.max(1);
-            let survivor_configs: Vec<qlang_runtime::transformer_train::TransformerConfig> =
-                swarm[..survivors].iter().map(|m| m.config.clone()).collect();
+            let survivor_configs: Vec<qlang_runtime::transformer_train::TransformerConfig> = swarm
+                [..survivors]
+                .iter()
+                .map(|m| m.config.clone())
+                .collect();
 
             // Replace bottom 60% with mutations of survivors
             for i in survivors..population {
@@ -2464,7 +2728,9 @@ fn cmd_swarm_train(args: &[String]) {
                         // Ensure d_model is divisible by n_heads
                         new_config.n_heads = new_config.n_heads.min(new_config.d_model / 8).max(1);
                         // Fix: ensure divisibility
-                        while new_config.d_model % new_config.n_heads != 0 && new_config.n_heads > 1 {
+                        while !new_config.d_model.is_multiple_of(new_config.n_heads)
+                            && new_config.n_heads > 1
+                        {
                             new_config.n_heads -= 1;
                         }
                     }
@@ -2479,12 +2745,15 @@ fn cmd_swarm_train(args: &[String]) {
                     _ => {
                         // change n_heads
                         if (gen + i) % 2 == 0 {
-                            new_config.n_heads = (new_config.n_heads + 1).min(new_config.d_model / 8).max(1);
+                            new_config.n_heads =
+                                (new_config.n_heads + 1).min(new_config.d_model / 8).max(1);
                         } else {
                             new_config.n_heads = new_config.n_heads.saturating_sub(1).max(1);
                         }
                         // Fix: ensure divisibility
-                        while new_config.d_model % new_config.n_heads != 0 && new_config.n_heads > 1 {
+                        while !new_config.d_model.is_multiple_of(new_config.n_heads)
+                            && new_config.n_heads > 1
+                        {
                             new_config.n_heads -= 1;
                         }
                     }
@@ -2499,7 +2768,10 @@ fn cmd_swarm_train(args: &[String]) {
                 };
             }
 
-            println!("  Mutated {} models for next generation\n", population - survivors);
+            println!(
+                "  Mutated {} models for next generation\n",
+                population - survivors
+            );
         }
     }
 
@@ -2508,9 +2780,16 @@ fn cmd_swarm_train(args: &[String]) {
     println!("=== Results ===");
     let show_count = population.min(5);
     for (i, member) in swarm.iter().enumerate().take(show_count) {
-        println!("  #{}: d_model={} heads={} layers={} | loss={:.4} | params={} | born=gen{}",
-            i + 1, member.config.d_model, member.config.n_heads, member.config.n_layers,
-            member.fitness, member.model.param_count(), member.generation_born);
+        println!(
+            "  #{}: d_model={} heads={} layers={} | loss={:.4} | params={} | born=gen{}",
+            i + 1,
+            member.config.d_model,
+            member.config.n_heads,
+            member.config.n_layers,
+            member.fitness,
+            member.model.param_count(),
+            member.generation_born
+        );
 
         // Generate sample from best models
         if i < 3 && !tokens.is_empty() {
@@ -2521,9 +2800,17 @@ fn cmd_swarm_train(args: &[String]) {
         }
     }
 
-    let total_params: usize = swarm.iter().take(show_count).map(|m| m.model.param_count()).sum();
-    println!("\n  Top {} models: {} total params ({:.1} KB compressed with IGQK)",
-        show_count, total_params, total_params as f64 * 4.0 / 1024.0 / 16.0);
+    let total_params: usize = swarm
+        .iter()
+        .take(show_count)
+        .map(|m| m.model.param_count())
+        .sum();
+    println!(
+        "\n  Top {} models: {} total params ({:.1} KB compressed with IGQK)",
+        show_count,
+        total_params,
+        total_params as f64 * 4.0 / 1024.0 / 16.0
+    );
     println!("  Backend: {}", qlang_runtime::accel::backend_name());
 }
 
@@ -2533,7 +2820,8 @@ fn cmd_swarm_train(args: &[String]) {
 
 fn cmd_orchestrate(args: &[String]) {
     // Collect all args that are not flags into the prompt
-    let prompt: String = args.iter()
+    let prompt: String = args
+        .iter()
         .filter(|a| !a.starts_with("--"))
         .map(|s| s.as_str())
         .collect::<Vec<_>>()
@@ -2654,9 +2942,9 @@ mod proxy_tests {
 
     #[test]
     fn proxy_health_check() {
-        use qlang_core::crypto::{self, Keypair};
         use qlang_agent::server::GraphStore;
         use qlang_compile::api;
+        use qlang_core::crypto::{self, Keypair};
 
         let keypair = Keypair::from_seed(&[42u8; 32]);
         let _store = GraphStore::new();
@@ -2684,12 +2972,17 @@ mod proxy_tests {
 
         // Send a health check request
         let mut client = TcpStream::connect(&addr).unwrap();
-        client.write_all(b"GET /v1/health HTTP/1.1\r\nHost: localhost\r\n\r\n").unwrap();
+        client
+            .write_all(b"GET /v1/health HTTP/1.1\r\nHost: localhost\r\n\r\n")
+            .unwrap();
 
         let mut response = String::new();
         client.read_to_string(&mut response).unwrap();
 
-        assert!(response.contains("200 OK"), "Expected 200 OK, got: {response}");
+        assert!(
+            response.contains("200 OK"),
+            "Expected 200 OK, got: {response}"
+        );
         assert!(response.contains("qlms"), "Expected 'qlms' in response");
         assert!(response.contains("\"status\""), "Expected 'status' field");
         assert!(response.contains("\"signed\""), "Expected 'signed' field");
@@ -2699,8 +2992,8 @@ mod proxy_tests {
 
     #[test]
     fn proxy_pubkey_endpoint() {
-        use qlang_core::crypto::{self, Keypair};
         use qlang_compile::api;
+        use qlang_core::crypto::{self, Keypair};
 
         let keypair = Keypair::from_seed(&[99u8; 32]);
         let expected_pubkey = crypto::hex(keypair.public_key());
@@ -2720,7 +3013,9 @@ mod proxy_tests {
         });
 
         let mut client = TcpStream::connect(&addr).unwrap();
-        client.write_all(b"GET /v1/pubkey HTTP/1.1\r\nHost: localhost\r\n\r\n").unwrap();
+        client
+            .write_all(b"GET /v1/pubkey HTTP/1.1\r\nHost: localhost\r\n\r\n")
+            .unwrap();
 
         let mut response = String::new();
         client.read_to_string(&mut response).unwrap();

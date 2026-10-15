@@ -45,10 +45,11 @@ fn status_scalar() -> TensorType {
 /// runtime can, in principle, execute the compiler itself.
 pub fn compiler_graph() -> Graph {
     let mut g = Graph::new("qlang.compiler");
-    g.metadata
-        .insert("description".into(), "QLANG compiler as a QLANG graph".into());
-    g.metadata
-        .insert("self_hosting".into(), "true".into());
+    g.metadata.insert(
+        "description".into(),
+        "QLANG compiler as a QLANG graph".into(),
+    );
+    g.metadata.insert("self_hosting".into(), "true".into());
 
     let buf = byte_buffer();
     let status = status_scalar();
@@ -149,7 +150,9 @@ pub fn deserialize_stage_graph() -> Graph {
     let buf = byte_buffer();
 
     let input = g.add_node(
-        Op::Input { name: "raw_bytes".into() },
+        Op::Input {
+            name: "raw_bytes".into(),
+        },
         vec![],
         vec![buf.clone()],
     );
@@ -164,7 +167,9 @@ pub fn deserialize_stage_graph() -> Graph {
     );
 
     let output = g.add_node(
-        Op::Output { name: "graph_ir".into() },
+        Op::Output {
+            name: "graph_ir".into(),
+        },
         vec![buf.clone()],
         vec![],
     );
@@ -180,7 +185,9 @@ pub fn typecheck_stage_graph() -> Graph {
     let buf = byte_buffer();
 
     let input = g.add_node(
-        Op::Input { name: "graph_ir".into() },
+        Op::Input {
+            name: "graph_ir".into(),
+        },
         vec![],
         vec![buf.clone()],
     );
@@ -196,7 +203,9 @@ pub fn typecheck_stage_graph() -> Graph {
     );
 
     let output = g.add_node(
-        Op::Output { name: "checked_ir".into() },
+        Op::Output {
+            name: "checked_ir".into(),
+        },
         vec![buf.clone()],
         vec![],
     );
@@ -213,7 +222,9 @@ pub fn optimize_stage_graph() -> Graph {
     let buf = byte_buffer();
 
     let input = g.add_node(
-        Op::Input { name: "checked_ir".into() },
+        Op::Input {
+            name: "checked_ir".into(),
+        },
         vec![],
         vec![buf.clone()],
     );
@@ -234,13 +245,17 @@ pub fn optimize_stage_graph() -> Graph {
 
     // Feed the original IR as second input to Concat (self-join for fusion scan).
     let identity = g.add_node(
-        Op::Reshape { target_shape: vec![0] },
+        Op::Reshape {
+            target_shape: vec![0],
+        },
         vec![buf.clone()],
         vec![buf.clone()],
     );
 
     let output = g.add_node(
-        Op::Output { name: "optimized_ir".into() },
+        Op::Output {
+            name: "optimized_ir".into(),
+        },
         vec![buf.clone()],
         vec![],
     );
@@ -259,7 +274,9 @@ pub fn codegen_stage_graph() -> Graph {
     let buf = byte_buffer();
 
     let input = g.add_node(
-        Op::Input { name: "optimized_ir".into() },
+        Op::Input {
+            name: "optimized_ir".into(),
+        },
         vec![],
         vec![buf.clone()],
     );
@@ -276,14 +293,12 @@ pub fn codegen_stage_graph() -> Graph {
     );
 
     // Relu squashes invalid (negative) instruction encodings to zero.
-    let relu = g.add_node(
-        Op::Relu,
-        vec![buf.clone()],
-        vec![buf.clone()],
-    );
+    let relu = g.add_node(Op::Relu, vec![buf.clone()], vec![buf.clone()]);
 
     let output = g.add_node(
-        Op::Output { name: "machine_code".into() },
+        Op::Output {
+            name: "machine_code".into(),
+        },
         vec![buf.clone()],
         vec![],
     );
@@ -378,9 +393,7 @@ mod tests {
             let node_id = g
                 .nodes
                 .iter()
-                .find(|n| {
-                    matches!(&n.op, Op::SubGraph { graph_id: gid } if gid == graph_id)
-                })
+                .find(|n| matches!(&n.op, Op::SubGraph { graph_id: gid } if gid == graph_id))
                 .unwrap()
                 .id;
             order.iter().position(|&id| id == node_id).unwrap()
@@ -391,18 +404,9 @@ mod tests {
         let p_opt = pos_of("qlang.compiler.optimize");
         let p_cg = pos_of("qlang.compiler.codegen");
 
-        assert!(
-            p_deser < p_tc,
-            "deserialize must precede typecheck"
-        );
-        assert!(
-            p_tc < p_opt,
-            "typecheck must precede optimize"
-        );
-        assert!(
-            p_opt < p_cg,
-            "optimize must precede codegen"
-        );
+        assert!(p_deser < p_tc, "deserialize must precede typecheck");
+        assert!(p_tc < p_opt, "typecheck must precede optimize");
+        assert!(p_opt < p_cg, "optimize must precede codegen");
     }
 
     #[test]

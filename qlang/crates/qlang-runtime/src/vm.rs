@@ -27,7 +27,10 @@ impl Value {
         match self {
             Value::Number(n) => Ok(*n),
             Value::Bool(b) => Ok(if *b { 1.0 } else { 0.0 }),
-            other => Err(VmError::TypeError(format!("expected number, got {}", other.type_name()))),
+            other => Err(VmError::TypeError(format!(
+                "expected number, got {}",
+                other.type_name()
+            ))),
         }
     }
 
@@ -35,14 +38,20 @@ impl Value {
         match self {
             Value::Bool(b) => Ok(*b),
             Value::Number(n) => Ok(*n != 0.0),
-            other => Err(VmError::TypeError(format!("expected bool, got {}", other.type_name()))),
+            other => Err(VmError::TypeError(format!(
+                "expected bool, got {}",
+                other.type_name()
+            ))),
         }
     }
 
     pub fn as_array(&self) -> Result<&Vec<f64>, VmError> {
         match self {
             Value::Array(a) => Ok(a),
-            other => Err(VmError::TypeError(format!("expected array, got {}", other.type_name()))),
+            other => Err(VmError::TypeError(format!(
+                "expected array, got {}",
+                other.type_name()
+            ))),
         }
     }
 
@@ -79,7 +88,9 @@ impl fmt::Display for Value {
             Value::Array(a) => {
                 write!(f, "[")?;
                 for (i, v) in a.iter().enumerate() {
-                    if i > 0 { write!(f, ", ")?; }
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
                     if *v == (*v as i64) as f64 && v.abs() < 1e15 {
                         write!(f, "{}", *v as i64)?;
                     } else {
@@ -91,7 +102,9 @@ impl fmt::Display for Value {
             Value::Tensor(data, shape) => {
                 write!(f, "tensor([")?;
                 for (i, v) in data.iter().enumerate() {
-                    if i > 0 { write!(f, ", ")?; }
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
                     if *v == (*v as i64) as f64 && v.abs() < 1e15 {
                         write!(f, "{}", *v as i64)?;
                     } else {
@@ -103,7 +116,9 @@ impl fmt::Display for Value {
             Value::Dict(entries) => {
                 write!(f, "{{")?;
                 for (i, (k, v)) in entries.iter().enumerate() {
-                    if i > 0 { write!(f, ", ")?; }
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
                     write!(f, "\"{}\": {}", k, v)?;
                 }
                 write!(f, "}}")
@@ -224,9 +239,9 @@ pub enum Token {
     RBracket,
     Comma,
     Colon,
-    DotDot,    // ..
+    DotDot, // ..
     Semicolon,
-    Arrow,     // ->
+    Arrow, // ->
 
     Eof,
 }
@@ -256,14 +271,19 @@ pub fn tokenize(source: &str) -> Result<Vec<Token>, VmError> {
         }
 
         // Numbers
-        if ch.is_ascii_digit() || (ch == '.' && i + 1 < chars.len() && chars[i + 1].is_ascii_digit()) {
+        if ch.is_ascii_digit()
+            || (ch == '.' && i + 1 < chars.len() && chars[i + 1].is_ascii_digit())
+        {
             let start = i;
             while i < chars.len() && chars[i].is_ascii_digit() {
                 i += 1;
             }
             // Consume decimal point only if followed by a digit (not '..' range)
-            if i < chars.len() && chars[i] == '.'
-                && i + 1 < chars.len() && chars[i + 1] != '.' && chars[i + 1].is_ascii_digit()
+            if i < chars.len()
+                && chars[i] == '.'
+                && i + 1 < chars.len()
+                && chars[i + 1] != '.'
+                && chars[i + 1].is_ascii_digit()
             {
                 i += 1; // consume '.'
                 while i < chars.len() && chars[i].is_ascii_digit() {
@@ -271,7 +291,9 @@ pub fn tokenize(source: &str) -> Result<Vec<Token>, VmError> {
                 }
             }
             let s: String = chars[start..i].iter().collect();
-            let n: f64 = s.parse().map_err(|_| VmError::ParseError(format!("invalid number: {s}")))?;
+            let n: f64 = s
+                .parse()
+                .map_err(|_| VmError::ParseError(format!("invalid number: {s}")))?;
             tokens.push(Token::NumberLit(n));
             continue;
         }
@@ -325,22 +347,86 @@ pub fn tokenize(source: &str) -> Result<Vec<Token>, VmError> {
         if i + 1 < chars.len() {
             let two: String = chars[i..i + 2].iter().collect();
             match two.as_str() {
-                "**" => { tokens.push(Token::StarStar); i += 2; continue; }
-                "==" => { tokens.push(Token::EqEq); i += 2; continue; }
-                "!=" => { tokens.push(Token::BangEq); i += 2; continue; }
-                "+=" => { tokens.push(Token::PlusEq); i += 2; continue; }
-                "->" => { tokens.push(Token::Arrow); i += 2; continue; }
-                "-=" => { tokens.push(Token::MinusEq); i += 2; continue; }
-                "*=" => { tokens.push(Token::StarEq); i += 2; continue; }
-                "/=" => { tokens.push(Token::SlashEq); i += 2; continue; }
-                "%=" => { tokens.push(Token::PercentEq); i += 2; continue; }
-                "<=" => { tokens.push(Token::LtEq); i += 2; continue; }
-                ">=" => { tokens.push(Token::GtEq); i += 2; continue; }
-                "<<" => { tokens.push(Token::LtLt); i += 2; continue; }
-                ">>" => { tokens.push(Token::GtGt); i += 2; continue; }
-                "&&" => { tokens.push(Token::AmpAmp); i += 2; continue; }
-                "||" => { tokens.push(Token::PipePipe); i += 2; continue; }
-                ".." => { tokens.push(Token::DotDot); i += 2; continue; }
+                "**" => {
+                    tokens.push(Token::StarStar);
+                    i += 2;
+                    continue;
+                }
+                "==" => {
+                    tokens.push(Token::EqEq);
+                    i += 2;
+                    continue;
+                }
+                "!=" => {
+                    tokens.push(Token::BangEq);
+                    i += 2;
+                    continue;
+                }
+                "+=" => {
+                    tokens.push(Token::PlusEq);
+                    i += 2;
+                    continue;
+                }
+                "->" => {
+                    tokens.push(Token::Arrow);
+                    i += 2;
+                    continue;
+                }
+                "-=" => {
+                    tokens.push(Token::MinusEq);
+                    i += 2;
+                    continue;
+                }
+                "*=" => {
+                    tokens.push(Token::StarEq);
+                    i += 2;
+                    continue;
+                }
+                "/=" => {
+                    tokens.push(Token::SlashEq);
+                    i += 2;
+                    continue;
+                }
+                "%=" => {
+                    tokens.push(Token::PercentEq);
+                    i += 2;
+                    continue;
+                }
+                "<=" => {
+                    tokens.push(Token::LtEq);
+                    i += 2;
+                    continue;
+                }
+                ">=" => {
+                    tokens.push(Token::GtEq);
+                    i += 2;
+                    continue;
+                }
+                "<<" => {
+                    tokens.push(Token::LtLt);
+                    i += 2;
+                    continue;
+                }
+                ">>" => {
+                    tokens.push(Token::GtGt);
+                    i += 2;
+                    continue;
+                }
+                "&&" => {
+                    tokens.push(Token::AmpAmp);
+                    i += 2;
+                    continue;
+                }
+                "||" => {
+                    tokens.push(Token::PipePipe);
+                    i += 2;
+                    continue;
+                }
+                ".." => {
+                    tokens.push(Token::DotDot);
+                    i += 2;
+                    continue;
+                }
                 _ => {}
             }
         }
@@ -427,34 +513,88 @@ pub enum Expr {
     StringLit(String),
     ArrayLit(Vec<Expr>),
     Var(String),
-    BinOp { op: BinOp, left: Box<Expr>, right: Box<Expr> },
-    UnaryOp { op: UnaryOp, operand: Box<Expr> },
-    Call { name: String, args: Vec<Expr> },
-    Index { array: Box<Expr>, index: Box<Expr> },
+    BinOp {
+        op: BinOp,
+        left: Box<Expr>,
+        right: Box<Expr>,
+    },
+    UnaryOp {
+        op: UnaryOp,
+        operand: Box<Expr>,
+    },
+    Call {
+        name: String,
+        args: Vec<Expr>,
+    },
+    Index {
+        array: Box<Expr>,
+        index: Box<Expr>,
+    },
     DictLit(Vec<(String, Expr)>),
 }
 
 #[derive(Debug, Clone, Copy)]
 pub enum BinOp {
-    Add, Sub, Mul, Div, Mod, Pow,
-    Eq, Ne, Lt, Gt, Le, Ge,
-    And, Or,
-    BitAnd, BitOr, BitXor, Shl, Shr,
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Mod,
+    Pow,
+    Eq,
+    Ne,
+    Lt,
+    Gt,
+    Le,
+    Ge,
+    And,
+    Or,
+    BitAnd,
+    BitOr,
+    BitXor,
+    Shl,
+    Shr,
 }
 
 #[derive(Debug, Clone, Copy)]
 pub enum UnaryOp {
-    Neg, Not, BitNot,
+    Neg,
+    Not,
+    BitNot,
 }
 
 #[derive(Debug, Clone)]
 pub enum Stmt {
-    Let { name: String, type_ann: Option<QType>, value: Expr },
-    Assign { name: String, value: Expr },
-    If { cond: Expr, then_body: Vec<Stmt>, else_body: Vec<Stmt> },
-    While { cond: Expr, body: Vec<Stmt> },
-    For { var: String, start: Expr, end: Expr, body: Vec<Stmt> },
-    FnDef { name: String, params: Vec<Param>, return_type: Option<QType>, body: Vec<Stmt> },
+    Let {
+        name: String,
+        type_ann: Option<QType>,
+        value: Expr,
+    },
+    Assign {
+        name: String,
+        value: Expr,
+    },
+    If {
+        cond: Expr,
+        then_body: Vec<Stmt>,
+        else_body: Vec<Stmt>,
+    },
+    While {
+        cond: Expr,
+        body: Vec<Stmt>,
+    },
+    For {
+        var: String,
+        start: Expr,
+        end: Expr,
+        body: Vec<Stmt>,
+    },
+    FnDef {
+        name: String,
+        params: Vec<Param>,
+        return_type: Option<QType>,
+        body: Vec<Stmt>,
+    },
     Return(Expr),
     Print(Expr),
     ExprStmt(Expr),
@@ -488,7 +628,9 @@ impl Parser {
         if &tok == expected {
             Ok(())
         } else {
-            Err(VmError::ParseError(format!("expected {expected:?}, got {tok:?}")))
+            Err(VmError::ParseError(format!(
+                "expected {expected:?}, got {tok:?}"
+            )))
         }
     }
 
@@ -555,9 +697,14 @@ impl Parser {
                     let is_assign = match next {
                         Token::Eq => {
                             // Check it's not == (comparison)
-                            self.pos + 2 >= self.tokens.len() || self.tokens[self.pos + 2] != Token::Eq
+                            self.pos + 2 >= self.tokens.len()
+                                || self.tokens[self.pos + 2] != Token::Eq
                         }
-                        Token::PlusEq | Token::MinusEq | Token::StarEq | Token::SlashEq | Token::PercentEq => true,
+                        Token::PlusEq
+                        | Token::MinusEq
+                        | Token::StarEq
+                        | Token::SlashEq
+                        | Token::PercentEq => true,
                         _ => false,
                     };
                     if is_assign {
@@ -578,7 +725,11 @@ impl Parser {
         self.advance(); // consume 'let'
         let name = match self.advance() {
             Token::Ident(n) => n,
-            other => return Err(VmError::ParseError(format!("expected identifier after 'let', got {other:?}"))),
+            other => {
+                return Err(VmError::ParseError(format!(
+                    "expected identifier after 'let', got {other:?}"
+                )))
+            }
         };
         // Optional type annotation: let x: int = ...
         let type_ann = if self.at(&Token::Colon) {
@@ -589,13 +740,21 @@ impl Parser {
         };
         self.expect(&Token::Eq)?;
         let value = self.parse_expr()?;
-        Ok(Stmt::Let { name, type_ann, value })
+        Ok(Stmt::Let {
+            name,
+            type_ann,
+            value,
+        })
     }
 
     fn parse_assign(&mut self) -> Result<Stmt, VmError> {
         let name = match self.advance() {
             Token::Ident(n) => n,
-            other => return Err(VmError::ParseError(format!("expected identifier, got {other:?}"))),
+            other => {
+                return Err(VmError::ParseError(format!(
+                    "expected identifier, got {other:?}"
+                )))
+            }
         };
         // Check for compound assignment: +=, -=, *=, /=, %=
         let compound_op = match self.peek() {
@@ -636,7 +795,11 @@ impl Parser {
         } else {
             vec![]
         };
-        Ok(Stmt::If { cond, then_body, else_body })
+        Ok(Stmt::If {
+            cond,
+            then_body,
+            else_body,
+        })
     }
 
     fn parse_while(&mut self) -> Result<Stmt, VmError> {
@@ -650,21 +813,34 @@ impl Parser {
         self.advance(); // consume 'for'
         let var = match self.advance() {
             Token::Ident(n) => n,
-            other => return Err(VmError::ParseError(format!("expected identifier after 'for', got {other:?}"))),
+            other => {
+                return Err(VmError::ParseError(format!(
+                    "expected identifier after 'for', got {other:?}"
+                )))
+            }
         };
         self.expect(&Token::In)?;
         let start = self.parse_unary()?;
         self.expect(&Token::DotDot)?;
         let end = self.parse_unary()?;
         let body = self.parse_block()?;
-        Ok(Stmt::For { var, start, end, body })
+        Ok(Stmt::For {
+            var,
+            start,
+            end,
+            body,
+        })
     }
 
     fn parse_fn_def(&mut self) -> Result<Stmt, VmError> {
         self.advance(); // consume 'fn'
         let name = match self.advance() {
             Token::Ident(n) => n,
-            other => return Err(VmError::ParseError(format!("expected function name, got {other:?}"))),
+            other => {
+                return Err(VmError::ParseError(format!(
+                    "expected function name, got {other:?}"
+                )))
+            }
         };
         self.expect(&Token::LParen)?;
         let mut params: Vec<Param> = Vec::new();
@@ -674,7 +850,11 @@ impl Parser {
             }
             let pname = match self.advance() {
                 Token::Ident(p) => p,
-                other => return Err(VmError::ParseError(format!("expected parameter name, got {other:?}"))),
+                other => {
+                    return Err(VmError::ParseError(format!(
+                        "expected parameter name, got {other:?}"
+                    )))
+                }
             };
             // Optional type annotation: fn foo(a: int, b: float)
             let type_ann = if self.at(&Token::Colon) {
@@ -683,7 +863,10 @@ impl Parser {
             } else {
                 None
             };
-            params.push(Param { name: pname, type_ann });
+            params.push(Param {
+                name: pname,
+                type_ann,
+            });
         }
         self.expect(&Token::RParen)?;
         // Optional return type: fn foo(a, b) -> int { ... }
@@ -694,7 +877,12 @@ impl Parser {
             None
         };
         let body = self.parse_block()?;
-        Ok(Stmt::FnDef { name, params, return_type, body })
+        Ok(Stmt::FnDef {
+            name,
+            params,
+            return_type,
+            body,
+        })
     }
 
     fn parse_return(&mut self) -> Result<Stmt, VmError> {
@@ -715,7 +903,9 @@ impl Parser {
         self.advance(); // consume 'import'
         match self.advance() {
             Token::StringLit(path) => Ok(Stmt::Import(path)),
-            other => Err(VmError::ParseError(format!("expected string after 'import', got {other:?}"))),
+            other => Err(VmError::ParseError(format!(
+                "expected string after 'import', got {other:?}"
+            ))),
         }
     }
 
@@ -740,7 +930,11 @@ impl Parser {
         while self.at(&Token::Or) || self.at(&Token::PipePipe) {
             self.advance();
             let right = self.parse_and()?;
-            left = Expr::BinOp { op: BinOp::Or, left: Box::new(left), right: Box::new(right) };
+            left = Expr::BinOp {
+                op: BinOp::Or,
+                left: Box::new(left),
+                right: Box::new(right),
+            };
         }
         Ok(left)
     }
@@ -750,7 +944,11 @@ impl Parser {
         while self.at(&Token::And) || self.at(&Token::AmpAmp) {
             self.advance();
             let right = self.parse_bitor()?;
-            left = Expr::BinOp { op: BinOp::And, left: Box::new(left), right: Box::new(right) };
+            left = Expr::BinOp {
+                op: BinOp::And,
+                left: Box::new(left),
+                right: Box::new(right),
+            };
         }
         Ok(left)
     }
@@ -760,7 +958,11 @@ impl Parser {
         while self.at(&Token::Pipe) {
             self.advance();
             let right = self.parse_bitxor()?;
-            left = Expr::BinOp { op: BinOp::BitOr, left: Box::new(left), right: Box::new(right) };
+            left = Expr::BinOp {
+                op: BinOp::BitOr,
+                left: Box::new(left),
+                right: Box::new(right),
+            };
         }
         Ok(left)
     }
@@ -770,7 +972,11 @@ impl Parser {
         while self.at(&Token::Caret) {
             self.advance();
             let right = self.parse_bitand()?;
-            left = Expr::BinOp { op: BinOp::BitXor, left: Box::new(left), right: Box::new(right) };
+            left = Expr::BinOp {
+                op: BinOp::BitXor,
+                left: Box::new(left),
+                right: Box::new(right),
+            };
         }
         Ok(left)
     }
@@ -780,7 +986,11 @@ impl Parser {
         while self.at(&Token::Ampersand) {
             self.advance();
             let right = self.parse_equality()?;
-            left = Expr::BinOp { op: BinOp::BitAnd, left: Box::new(left), right: Box::new(right) };
+            left = Expr::BinOp {
+                op: BinOp::BitAnd,
+                left: Box::new(left),
+                right: Box::new(right),
+            };
         }
         Ok(left)
     }
@@ -795,7 +1005,11 @@ impl Parser {
             };
             self.advance();
             let right = self.parse_comparison()?;
-            left = Expr::BinOp { op, left: Box::new(left), right: Box::new(right) };
+            left = Expr::BinOp {
+                op,
+                left: Box::new(left),
+                right: Box::new(right),
+            };
         }
         Ok(left)
     }
@@ -812,7 +1026,11 @@ impl Parser {
             };
             self.advance();
             let right = self.parse_shift()?;
-            left = Expr::BinOp { op, left: Box::new(left), right: Box::new(right) };
+            left = Expr::BinOp {
+                op,
+                left: Box::new(left),
+                right: Box::new(right),
+            };
         }
         Ok(left)
     }
@@ -827,7 +1045,11 @@ impl Parser {
             };
             self.advance();
             let right = self.parse_additive()?;
-            left = Expr::BinOp { op, left: Box::new(left), right: Box::new(right) };
+            left = Expr::BinOp {
+                op,
+                left: Box::new(left),
+                right: Box::new(right),
+            };
         }
         Ok(left)
     }
@@ -842,7 +1064,11 @@ impl Parser {
             };
             self.advance();
             let right = self.parse_multiplicative()?;
-            left = Expr::BinOp { op, left: Box::new(left), right: Box::new(right) };
+            left = Expr::BinOp {
+                op,
+                left: Box::new(left),
+                right: Box::new(right),
+            };
         }
         Ok(left)
     }
@@ -858,7 +1084,11 @@ impl Parser {
             };
             self.advance();
             let right = self.parse_power()?;
-            left = Expr::BinOp { op, left: Box::new(left), right: Box::new(right) };
+            left = Expr::BinOp {
+                op,
+                left: Box::new(left),
+                right: Box::new(right),
+            };
         }
         Ok(left)
     }
@@ -868,7 +1098,11 @@ impl Parser {
         if self.at(&Token::StarStar) {
             self.advance();
             let exp = self.parse_power()?; // right-associative
-            Ok(Expr::BinOp { op: BinOp::Pow, left: Box::new(base), right: Box::new(exp) })
+            Ok(Expr::BinOp {
+                op: BinOp::Pow,
+                left: Box::new(base),
+                right: Box::new(exp),
+            })
         } else {
             Ok(base)
         }
@@ -879,17 +1113,26 @@ impl Parser {
             Token::Minus => {
                 self.advance();
                 let operand = self.parse_unary()?;
-                Ok(Expr::UnaryOp { op: UnaryOp::Neg, operand: Box::new(operand) })
+                Ok(Expr::UnaryOp {
+                    op: UnaryOp::Neg,
+                    operand: Box::new(operand),
+                })
             }
             Token::Not | Token::Bang => {
                 self.advance();
                 let operand = self.parse_unary()?;
-                Ok(Expr::UnaryOp { op: UnaryOp::Not, operand: Box::new(operand) })
+                Ok(Expr::UnaryOp {
+                    op: UnaryOp::Not,
+                    operand: Box::new(operand),
+                })
             }
             Token::Tilde => {
                 self.advance();
                 let operand = self.parse_unary()?;
-                Ok(Expr::UnaryOp { op: UnaryOp::BitNot, operand: Box::new(operand) })
+                Ok(Expr::UnaryOp {
+                    op: UnaryOp::BitNot,
+                    operand: Box::new(operand),
+                })
             }
             _ => self.parse_postfix(),
         }
@@ -902,7 +1145,10 @@ impl Parser {
             self.advance();
             let index = self.parse_expr()?;
             self.expect(&Token::RBracket)?;
-            expr = Expr::Index { array: Box::new(expr), index: Box::new(index) };
+            expr = Expr::Index {
+                array: Box::new(expr),
+                index: Box::new(index),
+            };
         }
         Ok(expr)
     }
@@ -950,7 +1196,11 @@ impl Parser {
                     // Key must be a string literal
                     let key = match self.advance() {
                         Token::StringLit(s) => s,
-                        other => return Err(VmError::ParseError(format!("expected string key in dict, got {other:?}"))),
+                        other => {
+                            return Err(VmError::ParseError(format!(
+                                "expected string key in dict, got {other:?}"
+                            )))
+                        }
                     };
                     self.expect(&Token::Colon)?;
                     let value = self.parse_expr()?;
@@ -1012,6 +1262,12 @@ pub struct VmState {
     pub output: Vec<String>,
 }
 
+impl Default for VmState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl VmState {
     pub fn new() -> Self {
         Self {
@@ -1070,7 +1326,11 @@ impl VmState {
 
     pub fn exec_stmt(&mut self, stmt: &Stmt) -> Result<ExecSignal, VmError> {
         match stmt {
-            Stmt::Let { name, type_ann: _, value } => {
+            Stmt::Let {
+                name,
+                type_ann: _,
+                value,
+            } => {
                 let val = self.eval_expr(value)?;
                 self.declare_var(name, val);
                 Ok(ExecSignal::None)
@@ -1082,7 +1342,11 @@ impl VmState {
                 self.set_var(name, val);
                 Ok(ExecSignal::None)
             }
-            Stmt::If { cond, then_body, else_body } => {
+            Stmt::If {
+                cond,
+                then_body,
+                else_body,
+            } => {
                 let c = self.eval_expr(cond)?;
                 if c.as_bool()? {
                     self.push_scope();
@@ -1114,12 +1378,19 @@ impl VmState {
                     self.pop_scope();
                     iterations += 1;
                     if iterations > 1_000_000 {
-                        return Err(VmError::RuntimeError("loop exceeded 1000000 iterations".into()));
+                        return Err(VmError::RuntimeError(
+                            "loop exceeded 1000000 iterations".into(),
+                        ));
                     }
                 }
                 Ok(ExecSignal::None)
             }
-            Stmt::For { var, start, end, body } => {
+            Stmt::For {
+                var,
+                start,
+                end,
+                body,
+            } => {
                 let s = self.eval_expr(start)?.as_number()? as i64;
                 let e = self.eval_expr(end)?.as_number()? as i64;
                 for i in s..e {
@@ -1136,12 +1407,20 @@ impl VmState {
                 }
                 Ok(ExecSignal::None)
             }
-            Stmt::FnDef { name, params, return_type, body } => {
-                self.functions.insert(name.clone(), FnDef {
-                    params: params.clone(),
-                    body: body.clone(),
-                    return_type: return_type.clone(),
-                });
+            Stmt::FnDef {
+                name,
+                params,
+                return_type,
+                body,
+            } => {
+                self.functions.insert(
+                    name.clone(),
+                    FnDef {
+                        params: params.clone(),
+                        body: body.clone(),
+                        return_type: return_type.clone(),
+                    },
+                );
                 Ok(ExecSignal::None)
             }
             Stmt::Return(expr) => {
@@ -1269,58 +1548,87 @@ impl VmState {
                 match name.as_str() {
                     "len" => {
                         if evaluated_args.len() != 1 {
-                            return Err(VmError::ArityMismatch { expected: 1, got: evaluated_args.len() });
+                            return Err(VmError::ArityMismatch {
+                                expected: 1,
+                                got: evaluated_args.len(),
+                            });
                         }
                         return match &evaluated_args[0] {
                             Value::Array(a) => Ok(Value::Number(a.len() as f64)),
                             Value::String(s) => Ok(Value::Number(s.len() as f64)),
                             Value::Dict(entries) => Ok(Value::Number(entries.len() as f64)),
-                            other => Err(VmError::TypeError(format!("len() expects string, array, or dict, got {}", other.type_name()))),
+                            other => Err(VmError::TypeError(format!(
+                                "len() expects string, array, or dict, got {}",
+                                other.type_name()
+                            ))),
                         };
                     }
                     "type" => {
                         if evaluated_args.len() != 1 {
-                            return Err(VmError::ArityMismatch { expected: 1, got: evaluated_args.len() });
+                            return Err(VmError::ArityMismatch {
+                                expected: 1,
+                                got: evaluated_args.len(),
+                            });
                         }
-                        return Ok(Value::String(evaluated_args[0].type_name_static().to_string()));
+                        return Ok(Value::String(
+                            evaluated_args[0].type_name_static().to_string(),
+                        ));
                     }
                     "str" => {
                         if evaluated_args.len() != 1 {
-                            return Err(VmError::ArityMismatch { expected: 1, got: evaluated_args.len() });
+                            return Err(VmError::ArityMismatch {
+                                expected: 1,
+                                got: evaluated_args.len(),
+                            });
                         }
                         return Ok(Value::String(format!("{}", evaluated_args[0])));
                     }
                     "int" => {
                         if evaluated_args.len() != 1 {
-                            return Err(VmError::ArityMismatch { expected: 1, got: evaluated_args.len() });
+                            return Err(VmError::ArityMismatch {
+                                expected: 1,
+                                got: evaluated_args.len(),
+                            });
                         }
                         let n = evaluated_args[0].as_number()?;
                         return Ok(Value::Number(n.floor()));
                     }
                     "sqrt" => {
                         if evaluated_args.len() != 1 {
-                            return Err(VmError::ArityMismatch { expected: 1, got: evaluated_args.len() });
+                            return Err(VmError::ArityMismatch {
+                                expected: 1,
+                                got: evaluated_args.len(),
+                            });
                         }
                         let n = evaluated_args[0].as_number()?;
                         return Ok(Value::Number(n.sqrt()));
                     }
                     "abs" => {
                         if evaluated_args.len() != 1 {
-                            return Err(VmError::ArityMismatch { expected: 1, got: evaluated_args.len() });
+                            return Err(VmError::ArityMismatch {
+                                expected: 1,
+                                got: evaluated_args.len(),
+                            });
                         }
                         let n = evaluated_args[0].as_number()?;
                         return Ok(Value::Number(n.abs()));
                     }
                     "floor" => {
                         if evaluated_args.len() != 1 {
-                            return Err(VmError::ArityMismatch { expected: 1, got: evaluated_args.len() });
+                            return Err(VmError::ArityMismatch {
+                                expected: 1,
+                                got: evaluated_args.len(),
+                            });
                         }
                         let n = evaluated_args[0].as_number()?;
                         return Ok(Value::Number(n.floor()));
                     }
                     "min" => {
                         if evaluated_args.len() != 2 {
-                            return Err(VmError::ArityMismatch { expected: 2, got: evaluated_args.len() });
+                            return Err(VmError::ArityMismatch {
+                                expected: 2,
+                                got: evaluated_args.len(),
+                            });
                         }
                         let a = evaluated_args[0].as_number()?;
                         let b = evaluated_args[1].as_number()?;
@@ -1328,7 +1636,10 @@ impl VmState {
                     }
                     "max" => {
                         if evaluated_args.len() != 2 {
-                            return Err(VmError::ArityMismatch { expected: 2, got: evaluated_args.len() });
+                            return Err(VmError::ArityMismatch {
+                                expected: 2,
+                                got: evaluated_args.len(),
+                            });
                         }
                         let a = evaluated_args[0].as_number()?;
                         let b = evaluated_args[1].as_number()?;
@@ -1337,61 +1648,91 @@ impl VmState {
                     // ── Math functions (new) ──────────────────────
                     "ceil" => {
                         if evaluated_args.len() != 1 {
-                            return Err(VmError::ArityMismatch { expected: 1, got: evaluated_args.len() });
+                            return Err(VmError::ArityMismatch {
+                                expected: 1,
+                                got: evaluated_args.len(),
+                            });
                         }
                         return Ok(Value::Number(evaluated_args[0].as_number()?.ceil()));
                     }
                     "round" => {
                         if evaluated_args.len() != 1 {
-                            return Err(VmError::ArityMismatch { expected: 1, got: evaluated_args.len() });
+                            return Err(VmError::ArityMismatch {
+                                expected: 1,
+                                got: evaluated_args.len(),
+                            });
                         }
                         return Ok(Value::Number(evaluated_args[0].as_number()?.round()));
                     }
                     "sin" => {
                         if evaluated_args.len() != 1 {
-                            return Err(VmError::ArityMismatch { expected: 1, got: evaluated_args.len() });
+                            return Err(VmError::ArityMismatch {
+                                expected: 1,
+                                got: evaluated_args.len(),
+                            });
                         }
                         return Ok(Value::Number(evaluated_args[0].as_number()?.sin()));
                     }
                     "cos" => {
                         if evaluated_args.len() != 1 {
-                            return Err(VmError::ArityMismatch { expected: 1, got: evaluated_args.len() });
+                            return Err(VmError::ArityMismatch {
+                                expected: 1,
+                                got: evaluated_args.len(),
+                            });
                         }
                         return Ok(Value::Number(evaluated_args[0].as_number()?.cos()));
                     }
                     "tan" => {
                         if evaluated_args.len() != 1 {
-                            return Err(VmError::ArityMismatch { expected: 1, got: evaluated_args.len() });
+                            return Err(VmError::ArityMismatch {
+                                expected: 1,
+                                got: evaluated_args.len(),
+                            });
                         }
                         return Ok(Value::Number(evaluated_args[0].as_number()?.tan()));
                     }
                     "log" => {
                         if evaluated_args.len() != 1 {
-                            return Err(VmError::ArityMismatch { expected: 1, got: evaluated_args.len() });
+                            return Err(VmError::ArityMismatch {
+                                expected: 1,
+                                got: evaluated_args.len(),
+                            });
                         }
                         return Ok(Value::Number(evaluated_args[0].as_number()?.ln()));
                     }
                     "log2" => {
                         if evaluated_args.len() != 1 {
-                            return Err(VmError::ArityMismatch { expected: 1, got: evaluated_args.len() });
+                            return Err(VmError::ArityMismatch {
+                                expected: 1,
+                                got: evaluated_args.len(),
+                            });
                         }
                         return Ok(Value::Number(evaluated_args[0].as_number()?.log2()));
                     }
                     "log10" => {
                         if evaluated_args.len() != 1 {
-                            return Err(VmError::ArityMismatch { expected: 1, got: evaluated_args.len() });
+                            return Err(VmError::ArityMismatch {
+                                expected: 1,
+                                got: evaluated_args.len(),
+                            });
                         }
                         return Ok(Value::Number(evaluated_args[0].as_number()?.log10()));
                     }
                     "exp" => {
                         if evaluated_args.len() != 1 {
-                            return Err(VmError::ArityMismatch { expected: 1, got: evaluated_args.len() });
+                            return Err(VmError::ArityMismatch {
+                                expected: 1,
+                                got: evaluated_args.len(),
+                            });
                         }
                         return Ok(Value::Number(evaluated_args[0].as_number()?.exp()));
                     }
                     "pow" => {
                         if evaluated_args.len() != 2 {
-                            return Err(VmError::ArityMismatch { expected: 2, got: evaluated_args.len() });
+                            return Err(VmError::ArityMismatch {
+                                expected: 2,
+                                got: evaluated_args.len(),
+                            });
                         }
                         let a = evaluated_args[0].as_number()?;
                         let b = evaluated_args[1].as_number()?;
@@ -1399,19 +1740,28 @@ impl VmState {
                     }
                     "pi" => {
                         if !evaluated_args.is_empty() {
-                            return Err(VmError::ArityMismatch { expected: 0, got: evaluated_args.len() });
+                            return Err(VmError::ArityMismatch {
+                                expected: 0,
+                                got: evaluated_args.len(),
+                            });
                         }
                         return Ok(Value::Number(std::f64::consts::PI));
                     }
                     "e" => {
                         if !evaluated_args.is_empty() {
-                            return Err(VmError::ArityMismatch { expected: 0, got: evaluated_args.len() });
+                            return Err(VmError::ArityMismatch {
+                                expected: 0,
+                                got: evaluated_args.len(),
+                            });
                         }
                         return Ok(Value::Number(std::f64::consts::E));
                     }
                     "clamp" => {
                         if evaluated_args.len() != 3 {
-                            return Err(VmError::ArityMismatch { expected: 3, got: evaluated_args.len() });
+                            return Err(VmError::ArityMismatch {
+                                expected: 3,
+                                got: evaluated_args.len(),
+                            });
                         }
                         let x = evaluated_args[0].as_number()?;
                         let lo = evaluated_args[1].as_number()?;
@@ -1422,44 +1772,82 @@ impl VmState {
                     // ── String functions ──────────────────────────────
                     "upper" => {
                         if evaluated_args.len() != 1 {
-                            return Err(VmError::ArityMismatch { expected: 1, got: evaluated_args.len() });
+                            return Err(VmError::ArityMismatch {
+                                expected: 1,
+                                got: evaluated_args.len(),
+                            });
                         }
                         match &evaluated_args[0] {
                             Value::String(s) => return Ok(Value::String(s.to_uppercase())),
-                            other => return Err(VmError::TypeError(format!("upper() expects string, got {}", other.type_name()))),
+                            other => {
+                                return Err(VmError::TypeError(format!(
+                                    "upper() expects string, got {}",
+                                    other.type_name()
+                                )))
+                            }
                         }
                     }
                     "lower" => {
                         if evaluated_args.len() != 1 {
-                            return Err(VmError::ArityMismatch { expected: 1, got: evaluated_args.len() });
+                            return Err(VmError::ArityMismatch {
+                                expected: 1,
+                                got: evaluated_args.len(),
+                            });
                         }
                         match &evaluated_args[0] {
                             Value::String(s) => return Ok(Value::String(s.to_lowercase())),
-                            other => return Err(VmError::TypeError(format!("lower() expects string, got {}", other.type_name()))),
+                            other => {
+                                return Err(VmError::TypeError(format!(
+                                    "lower() expects string, got {}",
+                                    other.type_name()
+                                )))
+                            }
                         }
                     }
                     "trim" => {
                         if evaluated_args.len() != 1 {
-                            return Err(VmError::ArityMismatch { expected: 1, got: evaluated_args.len() });
+                            return Err(VmError::ArityMismatch {
+                                expected: 1,
+                                got: evaluated_args.len(),
+                            });
                         }
                         match &evaluated_args[0] {
                             Value::String(s) => return Ok(Value::String(s.trim().to_string())),
-                            other => return Err(VmError::TypeError(format!("trim() expects string, got {}", other.type_name()))),
+                            other => {
+                                return Err(VmError::TypeError(format!(
+                                    "trim() expects string, got {}",
+                                    other.type_name()
+                                )))
+                            }
                         }
                     }
                     "split" => {
                         if evaluated_args.len() != 2 {
-                            return Err(VmError::ArityMismatch { expected: 2, got: evaluated_args.len() });
+                            return Err(VmError::ArityMismatch {
+                                expected: 2,
+                                got: evaluated_args.len(),
+                            });
                         }
                         let s = match &evaluated_args[0] {
                             Value::String(s) => s.clone(),
-                            other => return Err(VmError::TypeError(format!("split() expects string, got {}", other.type_name()))),
+                            other => {
+                                return Err(VmError::TypeError(format!(
+                                    "split() expects string, got {}",
+                                    other.type_name()
+                                )))
+                            }
                         };
                         let sep = match &evaluated_args[1] {
                             Value::String(s) => s.clone(),
-                            other => return Err(VmError::TypeError(format!("split() expects string separator, got {}", other.type_name()))),
+                            other => {
+                                return Err(VmError::TypeError(format!(
+                                    "split() expects string separator, got {}",
+                                    other.type_name()
+                                )))
+                            }
                         };
-                        let parts: Vec<(String, Value)> = s.split(&sep)
+                        let parts: Vec<(String, Value)> = s
+                            .split(&sep)
                             .enumerate()
                             .map(|(i, part)| (i.to_string(), Value::String(part.to_string())))
                             .collect();
@@ -1467,97 +1855,179 @@ impl VmState {
                     }
                     "join" => {
                         if evaluated_args.len() != 2 {
-                            return Err(VmError::ArityMismatch { expected: 2, got: evaluated_args.len() });
+                            return Err(VmError::ArityMismatch {
+                                expected: 2,
+                                got: evaluated_args.len(),
+                            });
                         }
                         let sep = match &evaluated_args[1] {
                             Value::String(s) => s.clone(),
-                            other => return Err(VmError::TypeError(format!("join() expects string separator, got {}", other.type_name()))),
+                            other => {
+                                return Err(VmError::TypeError(format!(
+                                    "join() expects string separator, got {}",
+                                    other.type_name()
+                                )))
+                            }
                         };
                         match &evaluated_args[0] {
                             Value::Array(arr) => {
-                                let strs: Vec<String> = arr.iter().map(|n| {
-                                    if *n == (*n as i64) as f64 && n.abs() < 1e15 {
-                                        format!("{}", *n as i64)
-                                    } else {
-                                        format!("{n}")
-                                    }
-                                }).collect();
+                                let strs: Vec<String> = arr
+                                    .iter()
+                                    .map(|n| {
+                                        if *n == (*n as i64) as f64 && n.abs() < 1e15 {
+                                            format!("{}", *n as i64)
+                                        } else {
+                                            format!("{n}")
+                                        }
+                                    })
+                                    .collect();
                                 return Ok(Value::String(strs.join(&sep)));
                             }
                             Value::Dict(entries) => {
-                                let strs: Vec<String> = entries.iter().map(|(_, v)| format!("{v}")).collect();
+                                let strs: Vec<String> =
+                                    entries.iter().map(|(_, v)| format!("{v}")).collect();
                                 return Ok(Value::String(strs.join(&sep)));
                             }
-                            other => return Err(VmError::TypeError(format!("join() expects array or dict, got {}", other.type_name()))),
+                            other => {
+                                return Err(VmError::TypeError(format!(
+                                    "join() expects array or dict, got {}",
+                                    other.type_name()
+                                )))
+                            }
                         }
                     }
                     "contains" => {
                         if evaluated_args.len() != 2 {
-                            return Err(VmError::ArityMismatch { expected: 2, got: evaluated_args.len() });
+                            return Err(VmError::ArityMismatch {
+                                expected: 2,
+                                got: evaluated_args.len(),
+                            });
                         }
                         let s = match &evaluated_args[0] {
                             Value::String(s) => s.clone(),
-                            other => return Err(VmError::TypeError(format!("contains() expects string, got {}", other.type_name()))),
+                            other => {
+                                return Err(VmError::TypeError(format!(
+                                    "contains() expects string, got {}",
+                                    other.type_name()
+                                )))
+                            }
                         };
                         let sub = match &evaluated_args[1] {
                             Value::String(s) => s.clone(),
-                            other => return Err(VmError::TypeError(format!("contains() expects string substring, got {}", other.type_name()))),
+                            other => {
+                                return Err(VmError::TypeError(format!(
+                                    "contains() expects string substring, got {}",
+                                    other.type_name()
+                                )))
+                            }
                         };
                         return Ok(Value::Bool(s.contains(&sub)));
                     }
                     "starts_with" => {
                         if evaluated_args.len() != 2 {
-                            return Err(VmError::ArityMismatch { expected: 2, got: evaluated_args.len() });
+                            return Err(VmError::ArityMismatch {
+                                expected: 2,
+                                got: evaluated_args.len(),
+                            });
                         }
                         let s = match &evaluated_args[0] {
                             Value::String(s) => s.clone(),
-                            other => return Err(VmError::TypeError(format!("starts_with() expects string, got {}", other.type_name()))),
+                            other => {
+                                return Err(VmError::TypeError(format!(
+                                    "starts_with() expects string, got {}",
+                                    other.type_name()
+                                )))
+                            }
                         };
                         let prefix = match &evaluated_args[1] {
                             Value::String(s) => s.clone(),
-                            other => return Err(VmError::TypeError(format!("starts_with() expects string prefix, got {}", other.type_name()))),
+                            other => {
+                                return Err(VmError::TypeError(format!(
+                                    "starts_with() expects string prefix, got {}",
+                                    other.type_name()
+                                )))
+                            }
                         };
                         return Ok(Value::Bool(s.starts_with(&prefix)));
                     }
                     "ends_with" => {
                         if evaluated_args.len() != 2 {
-                            return Err(VmError::ArityMismatch { expected: 2, got: evaluated_args.len() });
+                            return Err(VmError::ArityMismatch {
+                                expected: 2,
+                                got: evaluated_args.len(),
+                            });
                         }
                         let s = match &evaluated_args[0] {
                             Value::String(s) => s.clone(),
-                            other => return Err(VmError::TypeError(format!("ends_with() expects string, got {}", other.type_name()))),
+                            other => {
+                                return Err(VmError::TypeError(format!(
+                                    "ends_with() expects string, got {}",
+                                    other.type_name()
+                                )))
+                            }
                         };
                         let suffix = match &evaluated_args[1] {
                             Value::String(s) => s.clone(),
-                            other => return Err(VmError::TypeError(format!("ends_with() expects string suffix, got {}", other.type_name()))),
+                            other => {
+                                return Err(VmError::TypeError(format!(
+                                    "ends_with() expects string suffix, got {}",
+                                    other.type_name()
+                                )))
+                            }
                         };
                         return Ok(Value::Bool(s.ends_with(&suffix)));
                     }
                     "replace" => {
                         if evaluated_args.len() != 3 {
-                            return Err(VmError::ArityMismatch { expected: 3, got: evaluated_args.len() });
+                            return Err(VmError::ArityMismatch {
+                                expected: 3,
+                                got: evaluated_args.len(),
+                            });
                         }
                         let s = match &evaluated_args[0] {
                             Value::String(s) => s.clone(),
-                            other => return Err(VmError::TypeError(format!("replace() expects string, got {}", other.type_name()))),
+                            other => {
+                                return Err(VmError::TypeError(format!(
+                                    "replace() expects string, got {}",
+                                    other.type_name()
+                                )))
+                            }
                         };
                         let old = match &evaluated_args[1] {
                             Value::String(s) => s.clone(),
-                            other => return Err(VmError::TypeError(format!("replace() expects string old, got {}", other.type_name()))),
+                            other => {
+                                return Err(VmError::TypeError(format!(
+                                    "replace() expects string old, got {}",
+                                    other.type_name()
+                                )))
+                            }
                         };
                         let new_s = match &evaluated_args[2] {
                             Value::String(s) => s.clone(),
-                            other => return Err(VmError::TypeError(format!("replace() expects string new, got {}", other.type_name()))),
+                            other => {
+                                return Err(VmError::TypeError(format!(
+                                    "replace() expects string new, got {}",
+                                    other.type_name()
+                                )))
+                            }
                         };
                         return Ok(Value::String(s.replace(&old, &new_s)));
                     }
                     "substr" => {
                         if evaluated_args.len() != 3 {
-                            return Err(VmError::ArityMismatch { expected: 3, got: evaluated_args.len() });
+                            return Err(VmError::ArityMismatch {
+                                expected: 3,
+                                got: evaluated_args.len(),
+                            });
                         }
                         let s = match &evaluated_args[0] {
                             Value::String(s) => s.clone(),
-                            other => return Err(VmError::TypeError(format!("substr() expects string, got {}", other.type_name()))),
+                            other => {
+                                return Err(VmError::TypeError(format!(
+                                    "substr() expects string, got {}",
+                                    other.type_name()
+                                )))
+                            }
                         };
                         let start = evaluated_args[1].as_number()? as usize;
                         let length = evaluated_args[2].as_number()? as usize;
@@ -1569,52 +2039,97 @@ impl VmState {
                     }
                     "char_at" => {
                         if evaluated_args.len() != 2 {
-                            return Err(VmError::ArityMismatch { expected: 2, got: evaluated_args.len() });
+                            return Err(VmError::ArityMismatch {
+                                expected: 2,
+                                got: evaluated_args.len(),
+                            });
                         }
                         let s = match &evaluated_args[0] {
                             Value::String(s) => s.clone(),
-                            other => return Err(VmError::TypeError(format!("char_at() expects string, got {}", other.type_name()))),
+                            other => {
+                                return Err(VmError::TypeError(format!(
+                                    "char_at() expects string, got {}",
+                                    other.type_name()
+                                )))
+                            }
                         };
                         let idx = evaluated_args[1].as_number()? as usize;
                         let chars: Vec<char> = s.chars().collect();
                         if idx >= chars.len() {
-                            return Err(VmError::IndexOutOfBounds { index: idx, len: chars.len() });
+                            return Err(VmError::IndexOutOfBounds {
+                                index: idx,
+                                len: chars.len(),
+                            });
                         }
                         return Ok(Value::String(chars[idx].to_string()));
                     }
                     "parse_int" => {
                         if evaluated_args.len() != 1 {
-                            return Err(VmError::ArityMismatch { expected: 1, got: evaluated_args.len() });
+                            return Err(VmError::ArityMismatch {
+                                expected: 1,
+                                got: evaluated_args.len(),
+                            });
                         }
                         match &evaluated_args[0] {
                             Value::String(s) => match s.trim().parse::<i64>() {
                                 Ok(n) => return Ok(Value::Number(n as f64)),
-                                Err(e) => return Err(VmError::RuntimeError(format!("parse_int: cannot parse '{}': {}", s, e))),
+                                Err(e) => {
+                                    return Err(VmError::RuntimeError(format!(
+                                        "parse_int: cannot parse '{}': {}",
+                                        s, e
+                                    )))
+                                }
                             },
                             Value::Number(n) => return Ok(Value::Number((*n as i64) as f64)),
-                            other => return Err(VmError::TypeError(format!("parse_int() expects string, got {}", other.type_name()))),
+                            other => {
+                                return Err(VmError::TypeError(format!(
+                                    "parse_int() expects string, got {}",
+                                    other.type_name()
+                                )))
+                            }
                         }
                     }
                     "parse_float" => {
                         if evaluated_args.len() != 1 {
-                            return Err(VmError::ArityMismatch { expected: 1, got: evaluated_args.len() });
+                            return Err(VmError::ArityMismatch {
+                                expected: 1,
+                                got: evaluated_args.len(),
+                            });
                         }
                         match &evaluated_args[0] {
                             Value::String(s) => match s.trim().parse::<f64>() {
                                 Ok(n) => return Ok(Value::Number(n)),
-                                Err(e) => return Err(VmError::RuntimeError(format!("parse_float: cannot parse '{}': {}", s, e))),
+                                Err(e) => {
+                                    return Err(VmError::RuntimeError(format!(
+                                        "parse_float: cannot parse '{}': {}",
+                                        s, e
+                                    )))
+                                }
                             },
                             Value::Number(n) => return Ok(Value::Number(*n)),
-                            other => return Err(VmError::TypeError(format!("parse_float() expects string, got {}", other.type_name()))),
+                            other => {
+                                return Err(VmError::TypeError(format!(
+                                    "parse_float() expects string, got {}",
+                                    other.type_name()
+                                )))
+                            }
                         }
                     }
                     "format" => {
                         if evaluated_args.is_empty() {
-                            return Err(VmError::ArityMismatch { expected: 1, got: 0 });
+                            return Err(VmError::ArityMismatch {
+                                expected: 1,
+                                got: 0,
+                            });
                         }
                         let template = match &evaluated_args[0] {
                             Value::String(s) => s.clone(),
-                            other => return Err(VmError::TypeError(format!("format() expects string template, got {}", other.type_name()))),
+                            other => {
+                                return Err(VmError::TypeError(format!(
+                                    "format() expects string template, got {}",
+                                    other.type_name()
+                                )))
+                            }
                         };
                         let mut result = template;
                         for (i, arg) in evaluated_args[1..].iter().enumerate() {
@@ -1633,7 +2148,10 @@ impl VmState {
                     // ── Array functions ───────────────────────────────
                     "push" => {
                         if evaluated_args.len() != 2 {
-                            return Err(VmError::ArityMismatch { expected: 2, got: evaluated_args.len() });
+                            return Err(VmError::ArityMismatch {
+                                expected: 2,
+                                got: evaluated_args.len(),
+                            });
                         }
                         let mut arr = evaluated_args[0].as_array()?.clone();
                         let val = evaluated_args[1].as_number()?;
@@ -1642,7 +2160,10 @@ impl VmState {
                     }
                     "pop" => {
                         if evaluated_args.len() != 1 {
-                            return Err(VmError::ArityMismatch { expected: 1, got: evaluated_args.len() });
+                            return Err(VmError::ArityMismatch {
+                                expected: 1,
+                                got: evaluated_args.len(),
+                            });
                         }
                         let mut arr = evaluated_args[0].as_array()?.clone();
                         if arr.is_empty() {
@@ -1656,7 +2177,10 @@ impl VmState {
                     }
                     "reverse" => {
                         if evaluated_args.len() != 1 {
-                            return Err(VmError::ArityMismatch { expected: 1, got: evaluated_args.len() });
+                            return Err(VmError::ArityMismatch {
+                                expected: 1,
+                                got: evaluated_args.len(),
+                            });
                         }
                         let mut arr = evaluated_args[0].as_array()?.clone();
                         arr.reverse();
@@ -1664,7 +2188,10 @@ impl VmState {
                     }
                     "sort" => {
                         if evaluated_args.len() != 1 {
-                            return Err(VmError::ArityMismatch { expected: 1, got: evaluated_args.len() });
+                            return Err(VmError::ArityMismatch {
+                                expected: 1,
+                                got: evaluated_args.len(),
+                            });
                         }
                         let mut arr = evaluated_args[0].as_array()?.clone();
                         arr.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
@@ -1672,7 +2199,10 @@ impl VmState {
                     }
                     "range" => {
                         if evaluated_args.len() < 2 || evaluated_args.len() > 3 {
-                            return Err(VmError::ArityMismatch { expected: 2, got: evaluated_args.len() });
+                            return Err(VmError::ArityMismatch {
+                                expected: 2,
+                                got: evaluated_args.len(),
+                            });
                         }
                         let start = evaluated_args[0].as_number()?;
                         let end = evaluated_args[1].as_number()?;
@@ -1682,7 +2212,9 @@ impl VmState {
                             1.0
                         };
                         if step == 0.0 {
-                            return Err(VmError::RuntimeError("range() step cannot be zero".into()));
+                            return Err(VmError::RuntimeError(
+                                "range() step cannot be zero".into(),
+                            ));
                         }
                         let mut arr = Vec::new();
                         let mut current = start;
@@ -1701,7 +2233,10 @@ impl VmState {
                     }
                     "sum" => {
                         if evaluated_args.len() != 1 {
-                            return Err(VmError::ArityMismatch { expected: 1, got: evaluated_args.len() });
+                            return Err(VmError::ArityMismatch {
+                                expected: 1,
+                                got: evaluated_args.len(),
+                            });
                         }
                         let arr = evaluated_args[0].as_array()?;
                         let total: f64 = arr.iter().sum();
@@ -1709,7 +2244,10 @@ impl VmState {
                     }
                     "avg" => {
                         if evaluated_args.len() != 1 {
-                            return Err(VmError::ArityMismatch { expected: 1, got: evaluated_args.len() });
+                            return Err(VmError::ArityMismatch {
+                                expected: 1,
+                                got: evaluated_args.len(),
+                            });
                         }
                         let arr = evaluated_args[0].as_array()?;
                         if arr.is_empty() {
@@ -1720,41 +2258,52 @@ impl VmState {
                     }
                     "flatten" => {
                         if evaluated_args.len() != 1 {
-                            return Err(VmError::ArityMismatch { expected: 1, got: evaluated_args.len() });
+                            return Err(VmError::ArityMismatch {
+                                expected: 1,
+                                got: evaluated_args.len(),
+                            });
                         }
                         let arr = evaluated_args[0].as_array()?.clone();
                         return Ok(Value::Array(arr));
                     }
                     "zip" => {
                         if evaluated_args.len() != 2 {
-                            return Err(VmError::ArityMismatch { expected: 2, got: evaluated_args.len() });
+                            return Err(VmError::ArityMismatch {
+                                expected: 2,
+                                got: evaluated_args.len(),
+                            });
                         }
                         let a = evaluated_args[0].as_array()?;
                         let b = evaluated_args[1].as_array()?;
-                        let pairs: Vec<(String, Value)> = a.iter().zip(b.iter())
+                        let pairs: Vec<(String, Value)> = a
+                            .iter()
+                            .zip(b.iter())
                             .enumerate()
-                            .map(|(i, (x, y))| {
-                                (i.to_string(), Value::Array(vec![*x, *y]))
-                            })
+                            .map(|(i, (x, y))| (i.to_string(), Value::Array(vec![*x, *y])))
                             .collect();
                         return Ok(Value::Dict(pairs));
                     }
                     "enumerate" => {
                         if evaluated_args.len() != 1 {
-                            return Err(VmError::ArityMismatch { expected: 1, got: evaluated_args.len() });
+                            return Err(VmError::ArityMismatch {
+                                expected: 1,
+                                got: evaluated_args.len(),
+                            });
                         }
                         let arr = evaluated_args[0].as_array()?;
-                        let pairs: Vec<(String, Value)> = arr.iter()
+                        let pairs: Vec<(String, Value)> = arr
+                            .iter()
                             .enumerate()
-                            .map(|(i, v)| {
-                                (i.to_string(), Value::Array(vec![i as f64, *v]))
-                            })
+                            .map(|(i, v)| (i.to_string(), Value::Array(vec![i as f64, *v])))
                             .collect();
                         return Ok(Value::Dict(pairs));
                     }
                     "slice" => {
                         if evaluated_args.len() != 3 {
-                            return Err(VmError::ArityMismatch { expected: 3, got: evaluated_args.len() });
+                            return Err(VmError::ArityMismatch {
+                                expected: 3,
+                                got: evaluated_args.len(),
+                            });
                         }
                         let arr = evaluated_args[0].as_array()?;
                         let start = evaluated_args[1].as_number()? as usize;
@@ -1770,24 +2319,42 @@ impl VmState {
                     // ── I/O functions ─────────────────────────────────
                     "read_file" => {
                         if evaluated_args.len() != 1 {
-                            return Err(VmError::ArityMismatch { expected: 1, got: evaluated_args.len() });
+                            return Err(VmError::ArityMismatch {
+                                expected: 1,
+                                got: evaluated_args.len(),
+                            });
                         }
                         let path = match &evaluated_args[0] {
                             Value::String(s) => s.clone(),
-                            other => return Err(VmError::TypeError(format!("read_file() expects string path, got {}", other.type_name()))),
+                            other => {
+                                return Err(VmError::TypeError(format!(
+                                    "read_file() expects string path, got {}",
+                                    other.type_name()
+                                )))
+                            }
                         };
                         match std::fs::read_to_string(&path) {
                             Ok(content) => return Ok(Value::String(content)),
-                            Err(err) => return Err(VmError::RuntimeError(format!("read_file: {}", err))),
+                            Err(err) => {
+                                return Err(VmError::RuntimeError(format!("read_file: {}", err)))
+                            }
                         }
                     }
                     "write_file" => {
                         if evaluated_args.len() != 2 {
-                            return Err(VmError::ArityMismatch { expected: 2, got: evaluated_args.len() });
+                            return Err(VmError::ArityMismatch {
+                                expected: 2,
+                                got: evaluated_args.len(),
+                            });
                         }
                         let path = match &evaluated_args[0] {
                             Value::String(s) => s.clone(),
-                            other => return Err(VmError::TypeError(format!("write_file() expects string path, got {}", other.type_name()))),
+                            other => {
+                                return Err(VmError::TypeError(format!(
+                                    "write_file() expects string path, got {}",
+                                    other.type_name()
+                                )))
+                            }
                         };
                         let content = match &evaluated_args[1] {
                             Value::String(s) => s.clone(),
@@ -1795,43 +2362,69 @@ impl VmState {
                         };
                         match std::fs::write(&path, &content) {
                             Ok(_) => return Ok(Value::Null),
-                            Err(err) => return Err(VmError::RuntimeError(format!("write_file: {}", err))),
+                            Err(err) => {
+                                return Err(VmError::RuntimeError(format!("write_file: {}", err)))
+                            }
                         }
                     }
                     "file_exists" => {
                         if evaluated_args.len() != 1 {
-                            return Err(VmError::ArityMismatch { expected: 1, got: evaluated_args.len() });
+                            return Err(VmError::ArityMismatch {
+                                expected: 1,
+                                got: evaluated_args.len(),
+                            });
                         }
                         let path = match &evaluated_args[0] {
                             Value::String(s) => s.clone(),
-                            other => return Err(VmError::TypeError(format!("file_exists() expects string path, got {}", other.type_name()))),
+                            other => {
+                                return Err(VmError::TypeError(format!(
+                                    "file_exists() expects string path, got {}",
+                                    other.type_name()
+                                )))
+                            }
                         };
                         return Ok(Value::Bool(std::path::Path::new(&path).exists()));
                     }
                     "read_lines" => {
                         if evaluated_args.len() != 1 {
-                            return Err(VmError::ArityMismatch { expected: 1, got: evaluated_args.len() });
+                            return Err(VmError::ArityMismatch {
+                                expected: 1,
+                                got: evaluated_args.len(),
+                            });
                         }
                         let path = match &evaluated_args[0] {
                             Value::String(s) => s.clone(),
-                            other => return Err(VmError::TypeError(format!("read_lines() expects string path, got {}", other.type_name()))),
+                            other => {
+                                return Err(VmError::TypeError(format!(
+                                    "read_lines() expects string path, got {}",
+                                    other.type_name()
+                                )))
+                            }
                         };
                         match std::fs::read_to_string(&path) {
                             Ok(content) => {
-                                let lines: Vec<(String, Value)> = content.lines()
+                                let lines: Vec<(String, Value)> = content
+                                    .lines()
                                     .enumerate()
-                                    .map(|(i, line)| (i.to_string(), Value::String(line.to_string())))
+                                    .map(|(i, line)| {
+                                        (i.to_string(), Value::String(line.to_string()))
+                                    })
                                     .collect();
                                 return Ok(Value::Dict(lines));
                             }
-                            Err(err) => return Err(VmError::RuntimeError(format!("read_lines: {}", err))),
+                            Err(err) => {
+                                return Err(VmError::RuntimeError(format!("read_lines: {}", err)))
+                            }
                         }
                     }
 
                     // ── System functions ──────────────────────────────
                     "time" => {
                         if !evaluated_args.is_empty() {
-                            return Err(VmError::ArityMismatch { expected: 0, got: evaluated_args.len() });
+                            return Err(VmError::ArityMismatch {
+                                expected: 0,
+                                got: evaluated_args.len(),
+                            });
                         }
                         let secs = SystemTime::now()
                             .duration_since(UNIX_EPOCH)
@@ -1841,7 +2434,10 @@ impl VmState {
                     }
                     "sleep" => {
                         if evaluated_args.len() != 1 {
-                            return Err(VmError::ArityMismatch { expected: 1, got: evaluated_args.len() });
+                            return Err(VmError::ArityMismatch {
+                                expected: 1,
+                                got: evaluated_args.len(),
+                            });
                         }
                         let ms = evaluated_args[0].as_number()?;
                         std::thread::sleep(std::time::Duration::from_millis(ms as u64));
@@ -1849,18 +2445,29 @@ impl VmState {
                     }
                     "exit" => {
                         if evaluated_args.len() != 1 {
-                            return Err(VmError::ArityMismatch { expected: 1, got: evaluated_args.len() });
+                            return Err(VmError::ArityMismatch {
+                                expected: 1,
+                                got: evaluated_args.len(),
+                            });
                         }
                         let code = evaluated_args[0].as_number()? as i32;
                         std::process::exit(code);
                     }
                     "env" => {
                         if evaluated_args.len() != 1 {
-                            return Err(VmError::ArityMismatch { expected: 1, got: evaluated_args.len() });
+                            return Err(VmError::ArityMismatch {
+                                expected: 1,
+                                got: evaluated_args.len(),
+                            });
                         }
                         let var_name = match &evaluated_args[0] {
                             Value::String(s) => s.clone(),
-                            other => return Err(VmError::TypeError(format!("env() expects string, got {}", other.type_name()))),
+                            other => {
+                                return Err(VmError::TypeError(format!(
+                                    "env() expects string, got {}",
+                                    other.type_name()
+                                )))
+                            }
                         };
                         match std::env::var(&var_name) {
                             Ok(val) => return Ok(Value::String(val)),
@@ -1869,7 +2476,10 @@ impl VmState {
                     }
                     "args" => {
                         if !evaluated_args.is_empty() {
-                            return Err(VmError::ArityMismatch { expected: 0, got: evaluated_args.len() });
+                            return Err(VmError::ArityMismatch {
+                                expected: 0,
+                                got: evaluated_args.len(),
+                            });
                         }
                         let argv: Vec<(String, Value)> = std::env::args()
                             .enumerate()
@@ -1881,21 +2491,37 @@ impl VmState {
                     // ── Type functions ────────────────────────────────
                     "float" => {
                         if evaluated_args.len() != 1 {
-                            return Err(VmError::ArityMismatch { expected: 1, got: evaluated_args.len() });
+                            return Err(VmError::ArityMismatch {
+                                expected: 1,
+                                got: evaluated_args.len(),
+                            });
                         }
                         match &evaluated_args[0] {
                             Value::Number(n) => return Ok(Value::Number(*n)),
                             Value::Bool(b) => return Ok(Value::Number(if *b { 1.0 } else { 0.0 })),
                             Value::String(s) => match s.trim().parse::<f64>() {
                                 Ok(n) => return Ok(Value::Number(n)),
-                                Err(err) => return Err(VmError::RuntimeError(format!("float(): cannot convert '{}': {}", s, err))),
+                                Err(err) => {
+                                    return Err(VmError::RuntimeError(format!(
+                                        "float(): cannot convert '{}': {}",
+                                        s, err
+                                    )))
+                                }
                             },
-                            other => return Err(VmError::TypeError(format!("float() cannot convert {}", other.type_name()))),
+                            other => {
+                                return Err(VmError::TypeError(format!(
+                                    "float() cannot convert {}",
+                                    other.type_name()
+                                )))
+                            }
                         }
                     }
                     "bool" => {
                         if evaluated_args.len() != 1 {
-                            return Err(VmError::ArityMismatch { expected: 1, got: evaluated_args.len() });
+                            return Err(VmError::ArityMismatch {
+                                expected: 1,
+                                got: evaluated_args.len(),
+                            });
                         }
                         let result = match &evaluated_args[0] {
                             Value::Bool(b) => *b,
@@ -1909,7 +2535,10 @@ impl VmState {
                     }
                     "is_int" => {
                         if evaluated_args.len() != 1 {
-                            return Err(VmError::ArityMismatch { expected: 1, got: evaluated_args.len() });
+                            return Err(VmError::ArityMismatch {
+                                expected: 1,
+                                got: evaluated_args.len(),
+                            });
                         }
                         let result = match &evaluated_args[0] {
                             Value::Number(n) => *n == (*n as i64) as f64,
@@ -1919,25 +2548,37 @@ impl VmState {
                     }
                     "is_float" => {
                         if evaluated_args.len() != 1 {
-                            return Err(VmError::ArityMismatch { expected: 1, got: evaluated_args.len() });
+                            return Err(VmError::ArityMismatch {
+                                expected: 1,
+                                got: evaluated_args.len(),
+                            });
                         }
                         return Ok(Value::Bool(matches!(&evaluated_args[0], Value::Number(_))));
                     }
                     "is_string" => {
                         if evaluated_args.len() != 1 {
-                            return Err(VmError::ArityMismatch { expected: 1, got: evaluated_args.len() });
+                            return Err(VmError::ArityMismatch {
+                                expected: 1,
+                                got: evaluated_args.len(),
+                            });
                         }
                         return Ok(Value::Bool(matches!(&evaluated_args[0], Value::String(_))));
                     }
                     "is_array" => {
                         if evaluated_args.len() != 1 {
-                            return Err(VmError::ArityMismatch { expected: 1, got: evaluated_args.len() });
+                            return Err(VmError::ArityMismatch {
+                                expected: 1,
+                                got: evaluated_args.len(),
+                            });
                         }
                         return Ok(Value::Bool(matches!(&evaluated_args[0], Value::Array(_))));
                     }
                     "is_null" => {
                         if evaluated_args.len() != 1 {
-                            return Err(VmError::ArityMismatch { expected: 1, got: evaluated_args.len() });
+                            return Err(VmError::ArityMismatch {
+                                expected: 1,
+                                got: evaluated_args.len(),
+                            });
                         }
                         return Ok(Value::Bool(matches!(&evaluated_args[0], Value::Null)));
                     }
@@ -1945,20 +2586,33 @@ impl VmState {
                     // ── JSON functions ────────────────────────────────
                     "json_parse" => {
                         if evaluated_args.len() != 1 {
-                            return Err(VmError::ArityMismatch { expected: 1, got: evaluated_args.len() });
+                            return Err(VmError::ArityMismatch {
+                                expected: 1,
+                                got: evaluated_args.len(),
+                            });
                         }
                         let s = match &evaluated_args[0] {
                             Value::String(s) => s.clone(),
-                            other => return Err(VmError::TypeError(format!("json_parse() expects string, got {}", other.type_name()))),
+                            other => {
+                                return Err(VmError::TypeError(format!(
+                                    "json_parse() expects string, got {}",
+                                    other.type_name()
+                                )))
+                            }
                         };
                         match serde_json::from_str::<serde_json::Value>(&s) {
                             Ok(json) => return Ok(json_to_value(json)),
-                            Err(err) => return Err(VmError::RuntimeError(format!("json_parse: {}", err))),
+                            Err(err) => {
+                                return Err(VmError::RuntimeError(format!("json_parse: {}", err)))
+                            }
                         }
                     }
                     "json_stringify" => {
                         if evaluated_args.len() != 1 {
-                            return Err(VmError::ArityMismatch { expected: 1, got: evaluated_args.len() });
+                            return Err(VmError::ArityMismatch {
+                                expected: 1,
+                                got: evaluated_args.len(),
+                            });
                         }
                         let json = value_to_json(&evaluated_args[0]);
                         return Ok(Value::String(json.to_string()));
@@ -2003,31 +2657,48 @@ impl VmState {
                     Value::Array(arr) => {
                         let idx = idx_val.as_number()? as usize;
                         if idx >= arr.len() {
-                            return Err(VmError::IndexOutOfBounds { index: idx, len: arr.len() });
+                            return Err(VmError::IndexOutOfBounds {
+                                index: idx,
+                                len: arr.len(),
+                            });
                         }
                         Ok(Value::Number(arr[idx]))
                     }
                     Value::Dict(entries) => {
                         let key = match &idx_val {
                             Value::String(s) => s.clone(),
-                            other => return Err(VmError::TypeError(format!("dict key must be string, got {}", other.type_name()))),
+                            other => {
+                                return Err(VmError::TypeError(format!(
+                                    "dict key must be string, got {}",
+                                    other.type_name()
+                                )))
+                            }
                         };
                         for (k, v) in entries {
                             if k == &key {
                                 return Ok(v.clone());
                             }
                         }
-                        Err(VmError::RuntimeError(format!("key '{}' not found in dict", key)))
+                        Err(VmError::RuntimeError(format!(
+                            "key '{}' not found in dict",
+                            key
+                        )))
                     }
                     Value::String(s) => {
                         let idx = idx_val.as_number()? as usize;
                         let chars: Vec<char> = s.chars().collect();
                         if idx >= chars.len() {
-                            return Err(VmError::IndexOutOfBounds { index: idx, len: chars.len() });
+                            return Err(VmError::IndexOutOfBounds {
+                                index: idx,
+                                len: chars.len(),
+                            });
                         }
                         Ok(Value::String(chars[idx].to_string()))
                     }
-                    other => Err(VmError::TypeError(format!("cannot index into {}", other.type_name()))),
+                    other => Err(VmError::TypeError(format!(
+                        "cannot index into {}",
+                        other.type_name()
+                    ))),
                 }
             }
             Expr::DictLit(entries) => {
@@ -2082,7 +2753,8 @@ fn value_to_json(val: &Value) -> serde_json::Value {
         Value::Number(n) => serde_json::json!(*n),
         Value::String(s) => serde_json::Value::String(s.clone()),
         Value::Array(arr) => {
-            let json_arr: Vec<serde_json::Value> = arr.iter().map(|n| serde_json::json!(*n)).collect();
+            let json_arr: Vec<serde_json::Value> =
+                arr.iter().map(|n| serde_json::json!(*n)).collect();
             serde_json::Value::Array(json_arr)
         }
         Value::Tensor(data, shape) => {
@@ -2154,8 +2826,14 @@ fn infer_expr_type(expr: &Expr, env: &HashMap<String, QType>) -> Option<QType> {
         Expr::Var(name) => env.get(name).cloned(),
         Expr::BinOp { op, left, right } => {
             match op {
-                BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Gt | BinOp::Le | BinOp::Ge
-                | BinOp::And | BinOp::Or => Some(QType::Bool),
+                BinOp::Eq
+                | BinOp::Ne
+                | BinOp::Lt
+                | BinOp::Gt
+                | BinOp::Le
+                | BinOp::Ge
+                | BinOp::And
+                | BinOp::Or => Some(QType::Bool),
                 BinOp::Add => {
                     let lt = infer_expr_type(left, env);
                     let rt = infer_expr_type(right, env);
@@ -2172,8 +2850,15 @@ fn infer_expr_type(expr: &Expr, env: &HashMap<String, QType>) -> Option<QType> {
                         lt.or(rt)
                     }
                 }
-                BinOp::Sub | BinOp::Mul | BinOp::Mod | BinOp::Pow
-                | BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor | BinOp::Shl | BinOp::Shr => {
+                BinOp::Sub
+                | BinOp::Mul
+                | BinOp::Mod
+                | BinOp::Pow
+                | BinOp::BitAnd
+                | BinOp::BitOr
+                | BinOp::BitXor
+                | BinOp::Shl
+                | BinOp::Shr => {
                     let lt = infer_expr_type(left, env);
                     let rt = infer_expr_type(right, env);
                     if lt == Some(QType::Float) || rt == Some(QType::Float) {
@@ -2190,12 +2875,10 @@ fn infer_expr_type(expr: &Expr, env: &HashMap<String, QType>) -> Option<QType> {
                 }
             }
         }
-        Expr::UnaryOp { op, operand } => {
-            match op {
-                UnaryOp::Not => Some(QType::Bool),
-                UnaryOp::Neg | UnaryOp::BitNot => infer_expr_type(operand, env),
-            }
-        }
+        Expr::UnaryOp { op, operand } => match op {
+            UnaryOp::Not => Some(QType::Bool),
+            UnaryOp::Neg | UnaryOp::BitNot => infer_expr_type(operand, env),
+        },
         Expr::Call { .. } | Expr::Index { .. } => None,
     }
 }
@@ -2213,8 +2896,7 @@ fn types_compatible(expected: &QType, actual: &QType) -> bool {
     // Int and Float are compatible (numeric promotion).
     if matches!(
         (expected, actual),
-        (QType::Int, QType::Float)
-            | (QType::Float, QType::Int)
+        (QType::Int, QType::Float) | (QType::Float, QType::Int)
     ) {
         return true;
     }
@@ -2245,7 +2927,11 @@ fn type_check_stmts(stmts: &[Stmt], env: &mut HashMap<String, QType>) -> Result<
 
 fn type_check_stmt(stmt: &Stmt, env: &mut HashMap<String, QType>) -> Result<(), VmError> {
     match stmt {
-        Stmt::Let { name, type_ann, value } => {
+        Stmt::Let {
+            name,
+            type_ann,
+            value,
+        } => {
             if let Some(expected) = type_ann {
                 // Record the variable's declared type.
                 env.insert(name.clone(), expected.clone());
@@ -2278,7 +2964,12 @@ fn type_check_stmt(stmt: &Stmt, env: &mut HashMap<String, QType>) -> Result<(), 
                 }
             }
         }
-        Stmt::FnDef { name: fn_name, params, return_type, body } => {
+        Stmt::FnDef {
+            name: fn_name,
+            params,
+            return_type,
+            body,
+        } => {
             // Build a local env with parameter types.
             let mut fn_env = env.clone();
             for p in params {
@@ -2314,14 +3005,23 @@ fn type_check_stmt(stmt: &Stmt, env: &mut HashMap<String, QType>) -> Result<(), 
                 check_return_types(body, expected_ret, &fn_env, fn_name)?;
             }
         }
-        Stmt::If { cond: _, then_body, else_body } => {
+        Stmt::If {
+            cond: _,
+            then_body,
+            else_body,
+        } => {
             type_check_stmts(then_body, env)?;
             type_check_stmts(else_body, env)?;
         }
         Stmt::While { cond: _, body } => {
             type_check_stmts(body, env)?;
         }
-        Stmt::For { var: _, start: _, end: _, body } => {
+        Stmt::For {
+            var: _,
+            start: _,
+            end: _,
+            body,
+        } => {
             type_check_stmts(body, env)?;
         }
         Stmt::Return(_) | Stmt::Print(_) | Stmt::ExprStmt(_) | Stmt::Import(_) => {
@@ -2351,7 +3051,11 @@ fn check_return_types(
                     }
                 }
             }
-            Stmt::If { then_body, else_body, .. } => {
+            Stmt::If {
+                then_body,
+                else_body,
+                ..
+            } => {
                 check_return_types(then_body, expected, env, fn_name)?;
                 check_return_types(else_body, expected, env, fn_name)?;
             }
@@ -2610,10 +3314,12 @@ mod tests {
 
     #[test]
     fn test_index_out_of_bounds() {
-        let err = run_err(r#"
+        let err = run_err(
+            r#"
             let arr = [1.0, 2.0]
             print(arr[5])
-        "#);
+        "#,
+        );
         match err {
             VmError::IndexOutOfBounds { index: 5, len: 2 } => {}
             other => panic!("expected IndexOutOfBounds, got: {other}"),
@@ -2669,9 +3375,11 @@ mod tests {
 
     #[test]
     fn test_typed_let_wrong_type_fails() {
-        let err = run_err(r#"
+        let err = run_err(
+            r#"
             let x: int = "oops"
-        "#);
+        "#,
+        );
         match err {
             VmError::TypeError(msg) => {
                 assert!(msg.contains("expected type int"), "got: {msg}");
@@ -2683,9 +3391,11 @@ mod tests {
 
     #[test]
     fn test_typed_let_string_vs_int_fails() {
-        let err = run_err(r#"
+        let err = run_err(
+            r#"
             let s: string = 42
-        "#);
+        "#,
+        );
         match err {
             VmError::TypeError(msg) => {
                 assert!(msg.contains("expected type string"), "got: {msg}");
@@ -2696,9 +3406,11 @@ mod tests {
 
     #[test]
     fn test_typed_let_bool_vs_int_fails() {
-        let err = run_err(r#"
+        let err = run_err(
+            r#"
             let b: bool = 0
-        "#);
+        "#,
+        );
         match err {
             VmError::TypeError(msg) => {
                 assert!(msg.contains("expected type bool"), "got: {msg}");
@@ -2731,12 +3443,14 @@ mod tests {
 
     #[test]
     fn test_typed_fn_return_type_mismatch() {
-        let err = run_err(r#"
+        let err = run_err(
+            r#"
             fn greet(name: string) -> int {
                 return "hello"
             }
             greet("world")
-        "#);
+        "#,
+        );
         match err {
             VmError::TypeError(msg) => {
                 assert!(msg.contains("expected return type int"), "got: {msg}");
@@ -3076,7 +3790,11 @@ mod tests {
         assert_eq!(out, vec!["[1.0,2.0,3.0]"]);
         // Test json_parse with object via read_file (avoids escape issues)
         // Write JSON with proper quotes from Rust side
-        std::fs::write("/tmp/qlang_test_json.json", r#"{"name": "qlang", "version": 1}"#).unwrap();
+        std::fs::write(
+            "/tmp/qlang_test_json.json",
+            r#"{"name": "qlang", "version": 1}"#,
+        )
+        .unwrap();
         let (_, out) = run(r#"
             let text = read_file("/tmp/qlang_test_json.json")
             let obj = json_parse(text)
@@ -3141,12 +3859,18 @@ line3")
     fn test_stdlib_arity_errors() {
         let err = run_err("ceil(1.0, 2.0)");
         match err {
-            VmError::ArityMismatch { expected: 1, got: 2 } => {}
+            VmError::ArityMismatch {
+                expected: 1,
+                got: 2,
+            } => {}
             other => panic!("expected ArityMismatch, got: {other}"),
         }
         let err = run_err("pow(1.0)");
         match err {
-            VmError::ArityMismatch { expected: 2, got: 1 } => {}
+            VmError::ArityMismatch {
+                expected: 2,
+                got: 1,
+            } => {}
             other => panic!("expected ArityMismatch, got: {other}"),
         }
     }

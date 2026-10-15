@@ -8,7 +8,7 @@ use qlang_core::ops::Op;
 use qlang_core::tensor::TensorData;
 use qlang_core::verify;
 
-use crate::ollama::{OllamaClient, ChatMessage};
+use crate::ollama::{ChatMessage, OllamaClient};
 
 /// Result of executing a QLANG graph.
 #[derive(Debug)]
@@ -124,9 +124,7 @@ pub fn execute(
             Op::Input { name } => {
                 let data = inputs
                     .get(name)
-                    .ok_or_else(|| {
-                        ExecutionError::MissingInput(node_id, name.clone())
-                    })?
+                    .ok_or_else(|| ExecutionError::MissingInput(node_id, name.clone()))?
                     .clone();
                 node_outputs.insert((node_id, 0), data);
             }
@@ -164,7 +162,9 @@ pub fn execute(
                 let (a, b) = get_two_inputs(graph, node_id, &node_outputs)?;
                 let result = tensor_matmul(&a, &b)?;
                 let flops = match (a.shape.numel(), b.shape.0.last()) {
-                    (Some(m), Some(qlang_core::tensor::Dim::Fixed(n))) => (m as u64) * (*n as u64) * 2,
+                    (Some(m), Some(qlang_core::tensor::Dim::Fixed(n))) => {
+                        (m as u64) * (*n as u64) * 2
+                    }
                     _ => 0,
                 };
                 node_outputs.insert((node_id, 0), result);
@@ -240,7 +240,8 @@ pub fn execute(
 
             Op::ReduceMax { axis } => {
                 let input = get_one_input(graph, node_id, &node_outputs)?;
-                let result = tensor_reduce(&input, *axis, |acc, x| acc.max(x), f32::NEG_INFINITY, "max")?;
+                let result =
+                    tensor_reduce(&input, *axis, |acc, x| acc.max(x), f32::NEG_INFINITY, "max")?;
                 node_outputs.insert((node_id, 0), result);
             }
 
@@ -285,7 +286,10 @@ pub fn execute(
                 // Quantum gradient flow: dρ/dt = -i[H, ρ] - γ{G⁻¹∇L, ρ}
                 let incoming = graph.incoming_edges(node_id);
                 if incoming.len() < 2 {
-                    return Err(ExecutionError::MissingInput(node_id, "evolve needs state and gradient".into()));
+                    return Err(ExecutionError::MissingInput(
+                        node_id,
+                        "evolve needs state and gradient".into(),
+                    ));
                 }
                 let state = node_outputs
                     .get(&(incoming[0].from_node, incoming[0].from_port))
@@ -296,8 +300,12 @@ pub fn execute(
                     .cloned()
                     .ok_or(ExecutionError::MissingInput(node_id, "gradient".into()))?;
 
-                let vs = state.as_f32_slice().ok_or(ExecutionError::RuntimeError("evolve: state not f32".into()))?;
-                let vg = gradient.as_f32_slice().ok_or(ExecutionError::RuntimeError("evolve: gradient not f32".into()))?;
+                let vs = state
+                    .as_f32_slice()
+                    .ok_or(ExecutionError::RuntimeError("evolve: state not f32".into()))?;
+                let vg = gradient.as_f32_slice().ok_or(ExecutionError::RuntimeError(
+                    "evolve: gradient not f32".into(),
+                ))?;
 
                 // Check if state is a square density matrix (n*n elements)
                 let len = vs.len();
@@ -324,9 +332,15 @@ pub fn execute(
                         }
                         let sum: f64 = eigenvalues.iter().sum();
                         if sum > 1e-15 {
-                            for v in eigenvalues.iter_mut() { *v /= sum; }
+                            for v in eigenvalues.iter_mut() {
+                                *v /= sum;
+                            }
                         }
-                        DensityMatrix { dim: n, eigenvalues, eigenvectors }
+                        DensityMatrix {
+                            dim: n,
+                            eigenvalues,
+                            eigenvectors,
+                        }
                     };
 
                     // Construct a diagonal Hamiltonian from eigenvalue indices
@@ -346,13 +360,8 @@ pub fn execute(
                     }
 
                     // Evolve one step using the real quantum gradient flow
-                    let rho_next = quantum_flow::evolve_step(
-                        &rho,
-                        &hamiltonian,
-                        &grad_mat,
-                        *gamma,
-                        *dt,
-                    );
+                    let rho_next =
+                        quantum_flow::evolve_step(&rho, &hamiltonian, &grad_mat, *gamma, *dt);
 
                     // Reconstruct dense matrix from the resulting DensityMatrix
                     let mut dense_out = vec![0.0f64; n * n];
@@ -371,22 +380,30 @@ pub fn execute(
                 } else {
                     // Fallback: simple gradient step for non-square states
                     let step = (*gamma * *dt) as f32;
-                    vs.iter().zip(vg.iter()).map(|(s, g)| s - step * g).collect()
+                    vs.iter()
+                        .zip(vg.iter())
+                        .map(|(s, g)| s - step * g)
+                        .collect()
                 };
 
-                node_outputs.insert((node_id, 0), TensorData::from_f32(state.shape.clone(), &result));
+                node_outputs.insert(
+                    (node_id, 0),
+                    TensorData::from_f32(state.shape.clone(), &result),
+                );
                 stats.quantum_ops += 1;
             }
 
             Op::OllamaGenerate { model } => {
                 let input = get_one_input(graph, node_id, &node_outputs)?;
                 let prompt = input.as_string().ok_or_else(|| {
-                    ExecutionError::RuntimeError("ollama_generate: input is not a UTF-8 string".into())
+                    ExecutionError::RuntimeError(
+                        "ollama_generate: input is not a UTF-8 string".into(),
+                    )
                 })?;
                 let client = OllamaClient::from_env();
-                let response = client.generate(model, &prompt, None).map_err(|e| {
-                    ExecutionError::RuntimeError(format!("ollama_generate: {e}"))
-                })?;
+                let response = client
+                    .generate(model, &prompt, None)
+                    .map_err(|e| ExecutionError::RuntimeError(format!("ollama_generate: {e}")))?;
                 node_outputs.insert((node_id, 0), TensorData::from_string(&response));
             }
 
@@ -396,12 +413,14 @@ pub fn execute(
                     ExecutionError::RuntimeError("ollama_chat: input is not a UTF-8 string".into())
                 })?;
                 let messages: Vec<ChatMessage> = serde_json::from_str(&json_str).map_err(|e| {
-                    ExecutionError::RuntimeError(format!("ollama_chat: failed to parse messages JSON: {e}"))
+                    ExecutionError::RuntimeError(format!(
+                        "ollama_chat: failed to parse messages JSON: {e}"
+                    ))
                 })?;
                 let client = OllamaClient::from_env();
-                let response = client.chat(model, messages).map_err(|e| {
-                    ExecutionError::RuntimeError(format!("ollama_chat: {e}"))
-                })?;
+                let response = client
+                    .chat(model, messages)
+                    .map_err(|e| ExecutionError::RuntimeError(format!("ollama_chat: {e}")))?;
                 node_outputs.insert((node_id, 0), TensorData::from_string(&response));
             }
 
@@ -489,12 +508,12 @@ fn get_two_inputs(
 // === Tensor operations (Phase 1: pure Rust, no SIMD yet) ===
 
 fn tensor_add(a: &TensorData, b: &TensorData) -> Result<TensorData, ExecutionError> {
-    let va = a.as_f32_slice().ok_or(ExecutionError::RuntimeError(
-        "add: input a not f32".into(),
-    ))?;
-    let vb = b.as_f32_slice().ok_or(ExecutionError::RuntimeError(
-        "add: input b not f32".into(),
-    ))?;
+    let va = a
+        .as_f32_slice()
+        .ok_or(ExecutionError::RuntimeError("add: input a not f32".into()))?;
+    let vb = b
+        .as_f32_slice()
+        .ok_or(ExecutionError::RuntimeError("add: input b not f32".into()))?;
 
     if va.len() != vb.len() {
         return Err(ExecutionError::ShapeMismatch {
@@ -508,12 +527,12 @@ fn tensor_add(a: &TensorData, b: &TensorData) -> Result<TensorData, ExecutionErr
 }
 
 fn tensor_mul(a: &TensorData, b: &TensorData) -> Result<TensorData, ExecutionError> {
-    let va = a.as_f32_slice().ok_or(ExecutionError::RuntimeError(
-        "mul: input a not f32".into(),
-    ))?;
-    let vb = b.as_f32_slice().ok_or(ExecutionError::RuntimeError(
-        "mul: input b not f32".into(),
-    ))?;
+    let va = a
+        .as_f32_slice()
+        .ok_or(ExecutionError::RuntimeError("mul: input a not f32".into()))?;
+    let vb = b
+        .as_f32_slice()
+        .ok_or(ExecutionError::RuntimeError("mul: input b not f32".into()))?;
 
     if va.len() != vb.len() {
         return Err(ExecutionError::ShapeMismatch {
@@ -583,12 +602,16 @@ fn tensor_binop(
     op: impl Fn(f32, f32) -> f32,
     name: &str,
 ) -> Result<TensorData, ExecutionError> {
-    let va = a.as_f32_slice().ok_or(ExecutionError::RuntimeError(
-        format!("{name}: input a not f32"),
-    ))?;
-    let vb = b.as_f32_slice().ok_or(ExecutionError::RuntimeError(
-        format!("{name}: input b not f32"),
-    ))?;
+    let va = a
+        .as_f32_slice()
+        .ok_or(ExecutionError::RuntimeError(format!(
+            "{name}: input a not f32"
+        )))?;
+    let vb = b
+        .as_f32_slice()
+        .ok_or(ExecutionError::RuntimeError(format!(
+            "{name}: input b not f32"
+        )))?;
     if va.len() != vb.len() {
         return Err(ExecutionError::ShapeMismatch {
             expected: format!("{}", a.shape),
@@ -605,9 +628,11 @@ fn tensor_unaryop(
     op: impl Fn(f32) -> f32,
     name: &str,
 ) -> Result<TensorData, ExecutionError> {
-    let va = a.as_f32_slice().ok_or(ExecutionError::RuntimeError(
-        format!("{name}: input not f32"),
-    ))?;
+    let va = a
+        .as_f32_slice()
+        .ok_or(ExecutionError::RuntimeError(format!(
+            "{name}: input not f32"
+        )))?;
     let result: Vec<f32> = va.iter().map(|&x| op(x)).collect();
     Ok(TensorData::from_f32(a.shape.clone(), &result))
 }
@@ -654,9 +679,11 @@ fn tensor_reduce(
 ) -> Result<TensorData, ExecutionError> {
     use qlang_core::tensor::Shape;
 
-    let va = a.as_f32_slice().ok_or(ExecutionError::RuntimeError(
-        format!("{name}: input not f32"),
-    ))?;
+    let va = a
+        .as_f32_slice()
+        .ok_or(ExecutionError::RuntimeError(format!(
+            "{name}: input not f32"
+        )))?;
 
     match axis {
         None => {
@@ -699,7 +726,11 @@ fn tensor_to_lowrank(a: &TensorData, rank: usize) -> Result<TensorData, Executio
 
     let (m, n) = match a.shape.0.as_slice() {
         [Dim::Fixed(m), Dim::Fixed(n)] => (*m, *n),
-        _ => return Err(ExecutionError::RuntimeError("to_lowrank: must be 2D".into())),
+        _ => {
+            return Err(ExecutionError::RuntimeError(
+                "to_lowrank: must be 2D".into(),
+            ))
+        }
     };
 
     let effective_rank = rank.min(m).min(n);
@@ -714,7 +745,10 @@ fn tensor_to_lowrank(a: &TensorData, rank: usize) -> Result<TensorData, Executio
     values.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
 
     let threshold = if effective_rank * effective_rank < values.len() {
-        values.get(effective_rank * effective_rank).copied().unwrap_or(0.0)
+        values
+            .get(effective_rank * effective_rank)
+            .copied()
+            .unwrap_or(0.0)
     } else {
         0.0
     };
@@ -746,7 +780,11 @@ fn tensor_entropy(a: &TensorData) -> Result<TensorData, ExecutionError> {
         .iter()
         .map(|&x| {
             let p = x.abs() / sum;
-            if p > 1e-15 { -p * p.ln() } else { 0.0 }
+            if p > 1e-15 {
+                -p * p.ln()
+            } else {
+                0.0
+            }
         })
         .sum();
 
@@ -775,17 +813,17 @@ fn tensor_measure(a: &TensorData) -> Result<TensorData, ExecutionError> {
 }
 
 fn tensor_relu(a: &TensorData) -> Result<TensorData, ExecutionError> {
-    let va = a.as_f32_slice().ok_or(ExecutionError::RuntimeError(
-        "relu: input not f32".into(),
-    ))?;
+    let va = a
+        .as_f32_slice()
+        .ok_or(ExecutionError::RuntimeError("relu: input not f32".into()))?;
     let result: Vec<f32> = va.iter().map(|&x| x.max(0.0)).collect();
     Ok(TensorData::from_f32(a.shape.clone(), &result))
 }
 
 fn tensor_neg(a: &TensorData) -> Result<TensorData, ExecutionError> {
-    let va = a.as_f32_slice().ok_or(ExecutionError::RuntimeError(
-        "neg: input not f32".into(),
-    ))?;
+    let va = a
+        .as_f32_slice()
+        .ok_or(ExecutionError::RuntimeError("neg: input not f32".into()))?;
     let result: Vec<f32> = va.iter().map(|&x| -x).collect();
     Ok(TensorData::from_f32(a.shape.clone(), &result))
 }
@@ -1072,7 +1110,9 @@ mod tests {
         let mut g = Graph::new("test_ternary");
 
         let input = g.add_node(
-            Op::Input { name: "weights".into() },
+            Op::Input {
+                name: "weights".into(),
+            },
             vec![],
             vec![TensorType::f32_vector(8)],
         );
@@ -1082,13 +1122,21 @@ mod tests {
             vec![TensorType::new(Dtype::Ternary, Shape::vector(8))],
         );
         let out = g.add_node(
-            Op::Output { name: "compressed".into() },
+            Op::Output {
+                name: "compressed".into(),
+            },
             vec![TensorType::new(Dtype::Ternary, Shape::vector(8))],
             vec![],
         );
 
         g.add_edge(input, 0, ternary, 0, TensorType::f32_vector(8));
-        g.add_edge(ternary, 0, out, 0, TensorType::new(Dtype::Ternary, Shape::vector(8)));
+        g.add_edge(
+            ternary,
+            0,
+            out,
+            0,
+            TensorType::new(Dtype::Ternary, Shape::vector(8)),
+        );
 
         let mut inputs = HashMap::new();
         // Large positive, small, large negative values
@@ -1139,12 +1187,16 @@ mod tests {
         let ty9 = TensorType::f32_vector(n * n);
 
         let state_node = g.add_node(
-            Op::Input { name: "state".into() },
+            Op::Input {
+                name: "state".into(),
+            },
             vec![],
             vec![ty9.clone()],
         );
         let grad_node = g.add_node(
-            Op::Input { name: "gradient".into() },
+            Op::Input {
+                name: "gradient".into(),
+            },
             vec![],
             vec![ty9.clone()],
         );
@@ -1154,7 +1206,9 @@ mod tests {
             vec![ty9.clone()],
         );
         let out_node = g.add_node(
-            Op::Output { name: "evolved".into() },
+            Op::Output {
+                name: "evolved".into(),
+            },
             vec![ty9.clone()],
             vec![],
         );

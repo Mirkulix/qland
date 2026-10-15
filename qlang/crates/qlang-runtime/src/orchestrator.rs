@@ -27,8 +27,8 @@ pub enum TaskType {
 
 #[derive(Debug, Clone)]
 pub struct Budget {
-    pub max_cost: f64,    // dollars
-    pub max_time_ms: u64, // milliseconds
+    pub max_cost: f64,     // dollars
+    pub max_time_ms: u64,  // milliseconds
     pub max_models: usize, // max concurrent models
 }
 
@@ -51,10 +51,10 @@ pub enum ExecutionMode {
 #[derive(Debug, Clone)]
 pub struct PlanStep {
     pub step_id: usize,
-    pub role: String,             // "analyst", "synthesizer", "verifier"
+    pub role: String,                // "analyst", "synthesizer", "verifier"
     pub provider_preference: String, // "local", "cheapest", "best_quality"
-    pub prompt_template: String,  // Template with {input} placeholder
-    pub depends_on: Vec<usize>,   // Step IDs this depends on
+    pub prompt_template: String,     // Template with {input} placeholder
+    pub depends_on: Vec<usize>,      // Step IDs this depends on
     pub timeout_ms: u64,
 }
 
@@ -105,6 +105,12 @@ pub struct Orchestrator {
     pub decisions: Vec<Decision>,
 }
 
+impl Default for Orchestrator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Orchestrator {
     pub fn new() -> Self {
         Orchestrator {
@@ -131,11 +137,7 @@ impl Orchestrator {
                 }]
             }
             ExecutionMode::Escalation => {
-                self.log(
-                    "plan",
-                    "Escalation: try cheap first, then quality",
-                    None,
-                );
+                self.log("plan", "Escalation: try cheap first, then quality", None);
                 vec![
                     PlanStep {
                         step_id: 0,
@@ -149,8 +151,7 @@ impl Orchestrator {
                         step_id: 1,
                         role: "quality_check".into(),
                         provider_preference: "local".into(),
-                        prompt_template:
-                            "Rate the quality of this answer (0-100): {input}".into(),
+                        prompt_template: "Rate the quality of this answer (0-100): {input}".into(),
                         depends_on: vec![0],
                         timeout_ms: task.budget.max_time_ms / 4,
                     },
@@ -191,8 +192,7 @@ impl Orchestrator {
                     step_id: n,
                     role: "judge".into(),
                     provider_preference: "local".into(),
-                    prompt_template:
-                        "Compare these answers and pick the best one:\n{input}".into(),
+                    prompt_template: "Compare these answers and pick the best one:\n{input}".into(),
                     depends_on: (0..n).collect(),
                     timeout_ms: task.budget.max_time_ms / 2,
                 });
@@ -214,8 +214,7 @@ impl Orchestrator {
                         role: "synthesizer".into(),
                         provider_preference: "best_quality".into(),
                         prompt_template:
-                            "Based on this analysis, provide a complete answer:\n{input}"
-                                .into(),
+                            "Based on this analysis, provide a complete answer:\n{input}".into(),
                         depends_on: vec![0],
                         timeout_ms: task.budget.max_time_ms / 2,
                     },

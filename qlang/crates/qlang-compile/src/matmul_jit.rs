@@ -25,7 +25,7 @@ pub struct CompiledMatMul<'ctx> {
 type MatMulFn = unsafe extern "C" fn(*const f32, *const f32, *mut f32, u64, u64, u64);
 
 /// Compile a matrix multiplication kernel via LLVM.
-pub fn compile_matmul(context: &Context) -> Result<CompiledMatMul, CodegenError> {
+pub fn compile_matmul(context: &Context) -> Result<CompiledMatMul<'_>, CodegenError> {
     let module = context.create_module("qlang_matmul");
     let builder = context.create_builder();
 
@@ -35,8 +35,14 @@ pub fn compile_matmul(context: &Context) -> Result<CompiledMatMul, CodegenError>
     let void_type = context.void_type();
 
     let fn_type = void_type.fn_type(
-        &[f32_ptr.into(), f32_ptr.into(), f32_ptr.into(),
-          i64_type.into(), i64_type.into(), i64_type.into()],
+        &[
+            f32_ptr.into(),
+            f32_ptr.into(),
+            f32_ptr.into(),
+            i64_type.into(),
+            i64_type.into(),
+            i64_type.into(),
+        ],
         false,
     );
 
@@ -73,16 +79,24 @@ pub fn compile_matmul(context: &Context) -> Result<CompiledMatMul, CodegenError>
     let i_phi = builder.build_phi(i64_type, "i").unwrap();
     i_phi.add_incoming(&[(&zero_i64, entry)]);
     let i_val = i_phi.as_basic_value().into_int_value();
-    let cond_i = builder.build_int_compare(inkwell::IntPredicate::ULT, i_val, m_param, "ci").unwrap();
-    builder.build_conditional_branch(cond_i, loop_j_header, exit).unwrap();
+    let cond_i = builder
+        .build_int_compare(inkwell::IntPredicate::ULT, i_val, m_param, "ci")
+        .unwrap();
+    builder
+        .build_conditional_branch(cond_i, loop_j_header, exit)
+        .unwrap();
 
     // loop_j: j = phi(0, j+1); if j < N goto loop_k else i_inc
     builder.position_at_end(loop_j_header);
     let j_phi = builder.build_phi(i64_type, "j").unwrap();
     j_phi.add_incoming(&[(&zero_i64, loop_i_header)]);
     let j_val = j_phi.as_basic_value().into_int_value();
-    let cond_j = builder.build_int_compare(inkwell::IntPredicate::ULT, j_val, n_param, "cj").unwrap();
-    builder.build_conditional_branch(cond_j, loop_k_header, i_inc).unwrap();
+    let cond_j = builder
+        .build_int_compare(inkwell::IntPredicate::ULT, j_val, n_param, "cj")
+        .unwrap();
+    builder
+        .build_conditional_branch(cond_j, loop_k_header, i_inc)
+        .unwrap();
 
     // loop_k: k = phi(0, k+1), sum = phi(0.0, new_sum); if k < K goto k_body else k_done
     builder.position_at_end(loop_k_header);
@@ -92,20 +106,38 @@ pub fn compile_matmul(context: &Context) -> Result<CompiledMatMul, CodegenError>
     sum_phi.add_incoming(&[(&zero_f32, loop_j_header)]);
     let k_val = k_phi.as_basic_value().into_int_value();
     let sum_val = sum_phi.as_basic_value().into_float_value();
-    let cond_k = builder.build_int_compare(inkwell::IntPredicate::ULT, k_val, k_param, "ck").unwrap();
-    builder.build_conditional_branch(cond_k, k_body, k_done).unwrap();
+    let cond_k = builder
+        .build_int_compare(inkwell::IntPredicate::ULT, k_val, k_param, "ck")
+        .unwrap();
+    builder
+        .build_conditional_branch(cond_k, k_body, k_done)
+        .unwrap();
 
     // k_body: sum += A[i*K+k] * B[k*N+j]; k++; goto loop_k
     builder.position_at_end(k_body);
     let ik = builder.build_int_mul(i_val, k_param, "ik").unwrap();
     let a_idx = builder.build_int_add(ik, k_val, "aidx").unwrap();
-    let a_gep = unsafe { builder.build_gep(f32_type, a_ptr, &[a_idx], "agep").unwrap() };
-    let a_val = builder.build_load(f32_type, a_gep, "av").unwrap().into_float_value();
+    let a_gep = unsafe {
+        builder
+            .build_gep(f32_type, a_ptr, &[a_idx], "agep")
+            .unwrap()
+    };
+    let a_val = builder
+        .build_load(f32_type, a_gep, "av")
+        .unwrap()
+        .into_float_value();
 
     let kn = builder.build_int_mul(k_val, n_param, "kn").unwrap();
     let b_idx = builder.build_int_add(kn, j_val, "bidx").unwrap();
-    let b_gep = unsafe { builder.build_gep(f32_type, b_ptr, &[b_idx], "bgep").unwrap() };
-    let b_val = builder.build_load(f32_type, b_gep, "bv").unwrap().into_float_value();
+    let b_gep = unsafe {
+        builder
+            .build_gep(f32_type, b_ptr, &[b_idx], "bgep")
+            .unwrap()
+    };
+    let b_val = builder
+        .build_load(f32_type, b_gep, "bv")
+        .unwrap()
+        .into_float_value();
 
     let prod = builder.build_float_mul(a_val, b_val, "prod").unwrap();
     let new_sum = builder.build_float_add(sum_val, prod, "nsum").unwrap();
@@ -119,7 +151,11 @@ pub fn compile_matmul(context: &Context) -> Result<CompiledMatMul, CodegenError>
     builder.position_at_end(k_done);
     let in_val = builder.build_int_mul(i_val, n_param, "in").unwrap();
     let c_idx = builder.build_int_add(in_val, j_val, "cidx").unwrap();
-    let c_gep = unsafe { builder.build_gep(f32_type, c_ptr, &[c_idx], "cgep").unwrap() };
+    let c_gep = unsafe {
+        builder
+            .build_gep(f32_type, c_ptr, &[c_idx], "cgep")
+            .unwrap()
+    };
     builder.build_store(c_gep, sum_val).unwrap();
     builder.build_unconditional_branch(j_inc).unwrap();
 
@@ -155,18 +191,29 @@ pub fn compile_matmul(context: &Context) -> Result<CompiledMatMul, CodegenError>
 /// Execute JIT-compiled matmul: C[m×n] = A[m×k] × B[k×n]
 pub fn execute_matmul(
     compiled: &CompiledMatMul,
-    a: &[f32], b: &[f32],
-    m: usize, k: usize, n: usize,
+    a: &[f32],
+    b: &[f32],
+    m: usize,
+    k: usize,
+    n: usize,
 ) -> Result<Vec<f32>, CodegenError> {
     assert_eq!(a.len(), m * k);
     assert_eq!(b.len(), k * n);
     let mut c = vec![0.0f32; m * n];
 
     unsafe {
-        let func: JitFunction<MatMulFn> = compiled.execution_engine
+        let func: JitFunction<MatMulFn> = compiled
+            .execution_engine
             .get_function("qlang_matmul")
             .map_err(|e| CodegenError::LlvmError(e.to_string()))?;
-        func.call(a.as_ptr(), b.as_ptr(), c.as_mut_ptr(), m as u64, k as u64, n as u64);
+        func.call(
+            a.as_ptr(),
+            b.as_ptr(),
+            c.as_mut_ptr(),
+            m as u64,
+            k as u64,
+            n as u64,
+        );
     }
     Ok(c)
 }
@@ -225,8 +272,10 @@ mod tests {
                 for p in 0..k {
                     expected += a[i * k + p] * b[p * n + j];
                 }
-                assert!((c[i * n + j] - expected).abs() < 1e-3,
-                    "Mismatch at [{i},{j}]");
+                assert!(
+                    (c[i * n + j] - expected).abs() < 1e-3,
+                    "Mismatch at [{i},{j}]"
+                );
             }
         }
     }

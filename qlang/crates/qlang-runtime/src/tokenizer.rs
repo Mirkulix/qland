@@ -10,7 +10,7 @@
 //! the most frequent adjacent pair until the desired vocabulary size is reached.
 
 use std::collections::HashMap;
-use std::io::{Read, Write, BufWriter, BufReader};
+use std::io::{BufReader, BufWriter, Read, Write};
 
 /// A trained BPE tokenizer.
 pub struct BpeTokenizer {
@@ -294,7 +294,7 @@ mod tests {
     fn test_train_basic() {
         let text = "aaabdaaabac";
         let tok = BpeTokenizer::train(text, 260); // 256 + 3 special + 1 merge
-        // Should have at least 259 tokens (256 bytes + 3 special)
+                                                  // Should have at least 259 tokens (256 bytes + 3 special)
         assert!(tok.vocab_size() >= 259);
         // The most frequent pair "aa" should have been merged
         assert!(!tok.merges.is_empty());

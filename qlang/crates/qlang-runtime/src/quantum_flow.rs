@@ -428,9 +428,7 @@ impl QuantumScheduler {
         };
 
         let factor = match self.schedule {
-            ScheduleType::Cosine => {
-                0.5 * (1.0 + (std::f64::consts::PI * progress).cos())
-            }
+            ScheduleType::Cosine => 0.5 * (1.0 + (std::f64::consts::PI * progress).cos()),
             ScheduleType::Linear => 1.0 - progress,
             ScheduleType::Exponential => (-5.0 * progress).exp(),
         };
@@ -520,16 +518,8 @@ mod tests {
     #[test]
     fn commutator_is_traceless() {
         let n = 3;
-        let a = vec![
-            1.0, 2.0, 0.0,
-            2.0, 3.0, 1.0,
-            0.0, 1.0, 4.0,
-        ];
-        let b = vec![
-            0.0, 1.0, 2.0,
-            1.0, 0.0, 3.0,
-            2.0, 3.0, 0.0,
-        ];
+        let a = vec![1.0, 2.0, 0.0, 2.0, 3.0, 1.0, 0.0, 1.0, 4.0];
+        let b = vec![0.0, 1.0, 2.0, 1.0, 0.0, 3.0, 2.0, 3.0, 0.0];
         let comm = mat_commutator(&a, &b, n);
         let tr = mat_trace(&comm, n);
         assert!(tr.abs() < 1e-12, "Tr([A,B]) = {tr}, expected 0");
@@ -539,16 +529,8 @@ mod tests {
     #[test]
     fn anticommutator_is_symmetric() {
         let n = 3;
-        let a = vec![
-            1.0, 2.0, 3.0,
-            4.0, 5.0, 6.0,
-            7.0, 8.0, 9.0,
-        ];
-        let b = vec![
-            9.0, 8.0, 7.0,
-            6.0, 5.0, 4.0,
-            3.0, 2.0, 1.0,
-        ];
+        let a = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0];
+        let b = vec![9.0, 8.0, 7.0, 6.0, 5.0, 4.0, 3.0, 2.0, 1.0];
         let ac = mat_anticommutator(&a, &b, n);
         for i in 0..n {
             for j in 0..n {
@@ -597,7 +579,9 @@ mod tests {
             eigenvalues: vec![0.7, 0.2, 0.08, 0.02],
             eigenvectors: {
                 let mut v = vec![0.0; 16];
-                for i in 0..4 { v[i * 4 + i] = 1.0; }
+                for i in 0..4 {
+                    v[i * 4 + i] = 1.0;
+                }
                 v
             },
         };
@@ -837,9 +821,7 @@ mod tests {
     // 18. Linear schedule
     #[test]
     fn scheduler_linear() {
-        let s = QuantumScheduler::with_params(
-            100, 1.0, 0.0, 0.0, 1.0, ScheduleType::Linear,
-        );
+        let s = QuantumScheduler::with_params(100, 1.0, 0.0, 0.0, 1.0, ScheduleType::Linear);
         let (hbar, gamma) = s.get_params();
         // At step 0, linear factor = 1.0
         assert!((hbar - 1.0).abs() < 1e-10);
@@ -849,9 +831,8 @@ mod tests {
     // 19. Exponential schedule
     #[test]
     fn scheduler_exponential() {
-        let mut s = QuantumScheduler::with_params(
-            100, 1.0, 0.0, 0.0, 1.0, ScheduleType::Exponential,
-        );
+        let mut s =
+            QuantumScheduler::with_params(100, 1.0, 0.0, 0.0, 1.0, ScheduleType::Exponential);
         let (hbar0, _) = s.get_params();
         assert!((hbar0 - 1.0).abs() < 1e-10);
         for _ in 0..100 {

@@ -121,7 +121,9 @@ pub fn write_message<W: Write, T: Serialize>(writer: &mut W, msg: &T) -> Result<
 }
 
 /// Read a length-prefixed JSON message from a stream.
-pub fn read_message<R: Read, T: for<'de> Deserialize<'de>>(reader: &mut R) -> Result<T, ServerError> {
+pub fn read_message<R: Read, T: for<'de> Deserialize<'de>>(
+    reader: &mut R,
+) -> Result<T, ServerError> {
     let mut len_buf = [0u8; 4];
     reader.read_exact(&mut len_buf)?;
     let len = u32::from_le_bytes(len_buf) as usize;
@@ -249,14 +251,12 @@ pub fn handle_request(store: &GraphStore, request: &Request) -> Response {
                     // (ternary quantization, low-rank decomposition, etc.)
                     // For now, store a copy with metadata noting the method.
                     let mut compressed = graph.clone();
-                    compressed.metadata.insert(
-                        "compressed_from".to_string(),
-                        graph_id.to_string(),
-                    );
-                    compressed.metadata.insert(
-                        "compression_method".to_string(),
-                        format!("{method:?}"),
-                    );
+                    compressed
+                        .metadata
+                        .insert("compressed_from".to_string(), graph_id.to_string());
+                    compressed
+                        .metadata
+                        .insert("compression_method".to_string(), format!("{method:?}"));
                     let compressed_id = store.insert(compressed);
                     Response::GraphCompressed {
                         original_id: *graph_id,
@@ -363,7 +363,9 @@ impl Client {
         match self.send(&Request::SubmitGraph(graph))? {
             Response::GraphSubmitted(id) => Ok(id),
             Response::Error(e) => Err(ServerError::Other(e)),
-            other => Err(ServerError::Other(format!("unexpected response: {other:?}"))),
+            other => Err(ServerError::Other(format!(
+                "unexpected response: {other:?}"
+            ))),
         }
     }
 
@@ -376,7 +378,9 @@ impl Client {
         match self.send(&Request::ExecuteGraph { graph_id, inputs })? {
             Response::ExecutionResult { outputs } => Ok(outputs),
             Response::Error(e) => Err(ServerError::Other(e)),
-            other => Err(ServerError::Other(format!("unexpected response: {other:?}"))),
+            other => Err(ServerError::Other(format!(
+                "unexpected response: {other:?}"
+            ))),
         }
     }
 
@@ -385,7 +389,9 @@ impl Client {
         match self.send(&Request::GetGraphInfo(graph_id))? {
             Response::GraphInfo(info) => Ok(info),
             Response::Error(e) => Err(ServerError::Other(e)),
-            other => Err(ServerError::Other(format!("unexpected response: {other:?}"))),
+            other => Err(ServerError::Other(format!(
+                "unexpected response: {other:?}"
+            ))),
         }
     }
 
@@ -394,7 +400,9 @@ impl Client {
         match self.send(&Request::ListGraphs)? {
             Response::GraphList(ids) => Ok(ids),
             Response::Error(e) => Err(ServerError::Other(e)),
-            other => Err(ServerError::Other(format!("unexpected response: {other:?}"))),
+            other => Err(ServerError::Other(format!(
+                "unexpected response: {other:?}"
+            ))),
         }
     }
 
@@ -407,7 +415,9 @@ impl Client {
         match self.send(&Request::CompressGraph { graph_id, method })? {
             Response::GraphCompressed { compressed_id, .. } => Ok(compressed_id),
             Response::Error(e) => Err(ServerError::Other(e)),
-            other => Err(ServerError::Other(format!("unexpected response: {other:?}"))),
+            other => Err(ServerError::Other(format!(
+                "unexpected response: {other:?}"
+            ))),
         }
     }
 }
@@ -431,7 +441,11 @@ mod tests {
             vec![],
             vec![TensorType::f32_vector(4)],
         );
-        g.add_node(Op::Relu, vec![TensorType::f32_vector(4)], vec![TensorType::f32_vector(4)]);
+        g.add_node(
+            Op::Relu,
+            vec![TensorType::f32_vector(4)],
+            vec![TensorType::f32_vector(4)],
+        );
         g.add_node(
             Op::Output { name: "y".into() },
             vec![TensorType::f32_vector(4)],

@@ -7,10 +7,8 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-use crate::vm::{
-    tokenize, parse_program, Stmt, VmError, VmState,
-};
 use crate::executor::{self, ExecutionError};
+use crate::vm::{parse_program, tokenize, Stmt, VmError, VmState};
 use qlang_core::graph::{Graph, NodeId};
 use qlang_core::ops::Op;
 use qlang_core::tensor::TensorData;
@@ -320,10 +318,8 @@ impl Debugger {
             Stmt::FnDef { name, .. } => {
                 self.call_stack.push(name.clone());
             }
-            Stmt::Return(_) => {
-                if self.call_stack.len() > 1 {
-                    self.call_stack.pop();
-                }
+            Stmt::Return(_) if self.call_stack.len() > 1 => {
+                self.call_stack.pop();
             }
             _ => {}
         }
@@ -440,7 +436,10 @@ pub fn format_debug_state(state: &DebugState, source: &str) -> String {
     let mut out = String::new();
 
     out.push_str("=== Debug State ===\n");
-    out.push_str(&format!("Status: {}\n", if state.paused { "PAUSED" } else { "FINISHED" }));
+    out.push_str(&format!(
+        "Status: {}\n",
+        if state.paused { "PAUSED" } else { "FINISHED" }
+    ));
     out.push_str(&format!("Line: {}\n", state.current_line));
 
     // Call stack
@@ -452,7 +451,7 @@ pub fn format_debug_state(state: &DebugState, source: &str) -> String {
     // Variables
     out.push_str("Variables:\n");
     let mut vars: Vec<_> = state.variables.iter().collect();
-    vars.sort_by(|(a, _), (b, _)| a.cmp(b));
+    vars.sort_by_key(|(a, _)| *a);
     for (name, val) in &vars {
         out.push_str(&format!("  {name} = {val}\n"));
     }
@@ -478,10 +477,7 @@ pub fn format_debug_state(state: &DebugState, source: &str) -> String {
 #[derive(Debug, Clone)]
 pub enum GraphDebugEvent {
     /// Emitted before a node begins execution.
-    NodeEnter {
-        node_id: NodeId,
-        op: String,
-    },
+    NodeEnter { node_id: NodeId, op: String },
     /// Emitted after a node finishes execution, with output info.
     NodeExit {
         node_id: NodeId,
@@ -492,14 +488,9 @@ pub enum GraphDebugEvent {
         output_values: Option<Vec<f32>>,
     },
     /// Emitted when execution reaches a breakpointed node.
-    BreakpointHit {
-        node_id: NodeId,
-        op: String,
-    },
+    BreakpointHit { node_id: NodeId, op: String },
     /// Emitted once the full graph has been executed.
-    ExecutionComplete {
-        nodes_executed: usize,
-    },
+    ExecutionComplete { nodes_executed: usize },
 }
 
 // ─── Graph Debugger ───────────────────────────────────────────────────
@@ -563,17 +554,9 @@ impl GraphDebugger {
     }
 
     /// Record a NodeExit event with optional tensor output info.
-    fn on_node_exit(
-        &mut self,
-        node_id: NodeId,
-        op: &str,
-        output: Option<&TensorData>,
-    ) {
+    fn on_node_exit(&mut self, node_id: NodeId, op: &str, output: Option<&TensorData>) {
         let (output_shape, output_values) = match output {
-            Some(td) => (
-                Some(format!("{}", td.shape)),
-                td.as_f32_slice(),
-            ),
+            Some(td) => (Some(format!("{}", td.shape)), td.as_f32_slice()),
             None => (None, None),
         };
         self.events.push(GraphDebugEvent::NodeExit {
@@ -587,9 +570,8 @@ impl GraphDebugger {
 
     /// Record the execution-complete event.
     fn on_complete(&mut self, nodes_executed: usize) {
-        self.events.push(GraphDebugEvent::ExecutionComplete {
-            nodes_executed,
-        });
+        self.events
+            .push(GraphDebugEvent::ExecutionComplete { nodes_executed });
     }
 
     /// Return the recorded execution order (node IDs in the order they ran).
@@ -654,7 +636,14 @@ pub fn debug_execute(
         dbg.on_node_enter(node_id, &op_str);
 
         // Execute the single node.
-        execute_single_node(graph, node_id, &node.op, &inputs, &mut node_outputs, &mut stats)?;
+        execute_single_node(
+            graph,
+            node_id,
+            &node.op,
+            &inputs,
+            &mut node_outputs,
+            &mut stats,
+        )?;
 
         // --- After-node hook ---
         let output_tensor = node_outputs.get(&(node_id, 0));
@@ -778,13 +767,18 @@ fn execute_single_node(
 
         Op::Softmax { axis: _ } => {
             let input = get_one_input_dbg(graph, node_id, node_outputs)?;
-            let va = input.as_f32_slice().ok_or(ExecutionError::RuntimeError("softmax: input not f32".into()))?;
+            let va = input.as_f32_slice().ok_or(ExecutionError::RuntimeError(
+                "softmax: input not f32".into(),
+            ))?;
             let max_val = va.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
             let exps: Vec<f32> = va.iter().map(|&x| (x - max_val).exp()).collect();
             let sum: f32 = exps.iter().sum();
             let result: Vec<f32> = exps.iter().map(|&e| e / sum).collect();
             stats.total_flops += input.shape.numel().unwrap_or(0) as u64 * 5;
-            node_outputs.insert((node_id, 0), TensorData::from_f32(input.shape.clone(), &result));
+            node_outputs.insert(
+                (node_id, 0),
+                TensorData::from_f32(input.shape.clone(), &result),
+            );
         }
 
         Op::Transpose => {
@@ -802,65 +796,114 @@ fn execute_single_node(
 
         Op::ReduceMean { axis: _ } => {
             let input = get_one_input_dbg(graph, node_id, node_outputs)?;
-            let va = input.as_f32_slice().ok_or(ExecutionError::RuntimeError("reduce_mean: input not f32".into()))?;
+            let va = input.as_f32_slice().ok_or(ExecutionError::RuntimeError(
+                "reduce_mean: input not f32".into(),
+            ))?;
             let sum: f32 = va.iter().sum();
             let mean = sum / va.len() as f32;
             stats.total_flops += input.shape.numel().unwrap_or(0) as u64;
-            node_outputs.insert((node_id, 0), TensorData::from_f32(qlang_core::tensor::Shape::scalar(), &[mean]));
+            node_outputs.insert(
+                (node_id, 0),
+                TensorData::from_f32(qlang_core::tensor::Shape::scalar(), &[mean]),
+            );
         }
 
         Op::ReduceMax { axis } => {
             let input = get_one_input_dbg(graph, node_id, node_outputs)?;
-            let result = tensor_reduce_dbg(&input, *axis, |acc, x| acc.max(x), f32::NEG_INFINITY, "max")?;
+            let result =
+                tensor_reduce_dbg(&input, *axis, |acc, x| acc.max(x), f32::NEG_INFINITY, "max")?;
             node_outputs.insert((node_id, 0), result);
         }
 
         Op::ToTernary => {
             let input = get_one_input_dbg(graph, node_id, node_outputs)?;
-            let va = input.as_f32_slice().ok_or(ExecutionError::RuntimeError("to_ternary: input not f32".into()))?;
+            let va = input.as_f32_slice().ok_or(ExecutionError::RuntimeError(
+                "to_ternary: input not f32".into(),
+            ))?;
             let mean_abs: f32 = va.iter().map(|x| x.abs()).sum::<f32>() / va.len() as f32;
             let threshold = mean_abs * 0.7;
-            let result: Vec<u8> = va.iter().map(|&x| {
-                if x > threshold { 1u8 } else if x < -threshold { 255u8 } else { 0u8 }
-            }).collect();
-            node_outputs.insert((node_id, 0), TensorData {
-                dtype: qlang_core::tensor::Dtype::Ternary,
-                shape: input.shape.clone(),
-                data: result,
-            });
+            let result: Vec<u8> = va
+                .iter()
+                .map(|&x| {
+                    if x > threshold {
+                        1u8
+                    } else if x < -threshold {
+                        255u8
+                    } else {
+                        0u8
+                    }
+                })
+                .collect();
+            node_outputs.insert(
+                (node_id, 0),
+                TensorData {
+                    dtype: qlang_core::tensor::Dtype::Ternary,
+                    shape: input.shape.clone(),
+                    data: result,
+                },
+            );
             stats.quantum_ops += 1;
         }
 
         Op::ToLowRank { rank } => {
             let input = get_one_input_dbg(graph, node_id, node_outputs)?;
-            let va = input.as_f32_slice().ok_or(ExecutionError::RuntimeError("to_lowrank: input not f32".into()))?;
+            let va = input.as_f32_slice().ok_or(ExecutionError::RuntimeError(
+                "to_lowrank: input not f32".into(),
+            ))?;
             let (m, n) = match input.shape.0.as_slice() {
                 [qlang_core::tensor::Dim::Fixed(m), qlang_core::tensor::Dim::Fixed(n)] => (*m, *n),
-                _ => return Err(ExecutionError::RuntimeError("to_lowrank: must be 2D".into())),
+                _ => {
+                    return Err(ExecutionError::RuntimeError(
+                        "to_lowrank: must be 2D".into(),
+                    ))
+                }
             };
             let effective_rank = (*rank).min(m).min(n);
             let mut values: Vec<f32> = va.iter().map(|x| x.abs()).collect();
             values.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
             let threshold = if effective_rank * effective_rank < values.len() {
-                values.get(effective_rank * effective_rank).copied().unwrap_or(0.0)
+                values
+                    .get(effective_rank * effective_rank)
+                    .copied()
+                    .unwrap_or(0.0)
             } else {
                 0.0
             };
-            let result: Vec<f32> = va.iter().map(|&v| if v.abs() >= threshold { v } else { 0.0 }).collect();
-            node_outputs.insert((node_id, 0), TensorData::from_f32(input.shape.clone(), &result));
+            let result: Vec<f32> = va
+                .iter()
+                .map(|&v| if v.abs() >= threshold { v } else { 0.0 })
+                .collect();
+            node_outputs.insert(
+                (node_id, 0),
+                TensorData::from_f32(input.shape.clone(), &result),
+            );
             stats.quantum_ops += 1;
         }
 
         Op::Entropy => {
             let input = get_one_input_dbg(graph, node_id, node_outputs)?;
-            let va = input.as_f32_slice().ok_or(ExecutionError::RuntimeError("entropy: input not f32".into()))?;
+            let va = input.as_f32_slice().ok_or(ExecutionError::RuntimeError(
+                "entropy: input not f32".into(),
+            ))?;
             let sum: f32 = va.iter().map(|x| x.abs()).sum();
             let entropy: f32 = if sum < 1e-15 {
                 0.0
             } else {
-                va.iter().map(|&x| { let p = x.abs() / sum; if p > 1e-15 { -p * p.ln() } else { 0.0 } }).sum()
+                va.iter()
+                    .map(|&x| {
+                        let p = x.abs() / sum;
+                        if p > 1e-15 {
+                            -p * p.ln()
+                        } else {
+                            0.0
+                        }
+                    })
+                    .sum()
             };
-            node_outputs.insert((node_id, 0), TensorData::from_f32(qlang_core::tensor::Shape::scalar(), &[entropy]));
+            node_outputs.insert(
+                (node_id, 0),
+                TensorData::from_f32(qlang_core::tensor::Shape::scalar(), &[entropy]),
+            );
             stats.quantum_ops += 1;
         }
 
@@ -873,22 +916,33 @@ fn execute_single_node(
 
         Op::Measure => {
             let input = get_one_input_dbg(graph, node_id, node_outputs)?;
-            let va = input.as_f32_slice().ok_or(ExecutionError::RuntimeError("measure: input not f32".into()))?;
+            let va = input.as_f32_slice().ok_or(ExecutionError::RuntimeError(
+                "measure: input not f32".into(),
+            ))?;
             let mut max_idx = 0;
             let mut max_val = f32::NEG_INFINITY;
             for (i, &v) in va.iter().enumerate() {
-                if v > max_val { max_val = v; max_idx = i; }
+                if v > max_val {
+                    max_val = v;
+                    max_idx = i;
+                }
             }
             let mut result = vec![0.0f32; va.len()];
             result[max_idx] = 1.0;
-            node_outputs.insert((node_id, 0), TensorData::from_f32(input.shape.clone(), &result));
+            node_outputs.insert(
+                (node_id, 0),
+                TensorData::from_f32(input.shape.clone(), &result),
+            );
             stats.quantum_ops += 1;
         }
 
         Op::Evolve { gamma, dt } => {
             let incoming = graph.incoming_edges(node_id);
             if incoming.len() < 2 {
-                return Err(ExecutionError::MissingInput(node_id, "evolve needs state and gradient".into()));
+                return Err(ExecutionError::MissingInput(
+                    node_id,
+                    "evolve needs state and gradient".into(),
+                ));
             }
             let state = node_outputs
                 .get(&(incoming[0].from_node, incoming[0].from_port))
@@ -898,11 +952,22 @@ fn execute_single_node(
                 .get(&(incoming[1].from_node, incoming[1].from_port))
                 .cloned()
                 .ok_or(ExecutionError::MissingInput(node_id, "gradient".into()))?;
-            let vs = state.as_f32_slice().ok_or(ExecutionError::RuntimeError("evolve: state not f32".into()))?;
-            let vg = gradient.as_f32_slice().ok_or(ExecutionError::RuntimeError("evolve: gradient not f32".into()))?;
+            let vs = state
+                .as_f32_slice()
+                .ok_or(ExecutionError::RuntimeError("evolve: state not f32".into()))?;
+            let vg = gradient.as_f32_slice().ok_or(ExecutionError::RuntimeError(
+                "evolve: gradient not f32".into(),
+            ))?;
             let step = (*gamma * *dt) as f32;
-            let result: Vec<f32> = vs.iter().zip(vg.iter()).map(|(s, g)| s - step * g).collect();
-            node_outputs.insert((node_id, 0), TensorData::from_f32(state.shape.clone(), &result));
+            let result: Vec<f32> = vs
+                .iter()
+                .zip(vg.iter())
+                .map(|(s, g)| s - step * g)
+                .collect();
+            node_outputs.insert(
+                (node_id, 0),
+                TensorData::from_f32(state.shape.clone(), &result),
+            );
             stats.quantum_ops += 1;
         }
 
@@ -967,8 +1032,16 @@ fn tensor_binop_dbg(
     op: impl Fn(f32, f32) -> f32,
     name: &str,
 ) -> Result<TensorData, ExecutionError> {
-    let va = a.as_f32_slice().ok_or(ExecutionError::RuntimeError(format!("{name}: input a not f32")))?;
-    let vb = b.as_f32_slice().ok_or(ExecutionError::RuntimeError(format!("{name}: input b not f32")))?;
+    let va = a
+        .as_f32_slice()
+        .ok_or(ExecutionError::RuntimeError(format!(
+            "{name}: input a not f32"
+        )))?;
+    let vb = b
+        .as_f32_slice()
+        .ok_or(ExecutionError::RuntimeError(format!(
+            "{name}: input b not f32"
+        )))?;
     if va.len() != vb.len() {
         return Err(ExecutionError::ShapeMismatch {
             expected: format!("{}", a.shape),
@@ -984,7 +1057,11 @@ fn tensor_unaryop_dbg(
     op: impl Fn(f32) -> f32,
     name: &str,
 ) -> Result<TensorData, ExecutionError> {
-    let va = a.as_f32_slice().ok_or(ExecutionError::RuntimeError(format!("{name}: input not f32")))?;
+    let va = a
+        .as_f32_slice()
+        .ok_or(ExecutionError::RuntimeError(format!(
+            "{name}: input not f32"
+        )))?;
     let result: Vec<f32> = va.iter().map(|&x| op(x)).collect();
     Ok(TensorData::from_f32(a.shape.clone(), &result))
 }
@@ -992,16 +1069,28 @@ fn tensor_unaryop_dbg(
 fn tensor_matmul_dbg(a: &TensorData, b: &TensorData) -> Result<TensorData, ExecutionError> {
     use qlang_core::tensor::{Dim, Shape};
 
-    let va = a.as_f32_slice().ok_or(ExecutionError::RuntimeError("matmul: input a not f32".into()))?;
-    let vb = b.as_f32_slice().ok_or(ExecutionError::RuntimeError("matmul: input b not f32".into()))?;
+    let va = a.as_f32_slice().ok_or(ExecutionError::RuntimeError(
+        "matmul: input a not f32".into(),
+    ))?;
+    let vb = b.as_f32_slice().ok_or(ExecutionError::RuntimeError(
+        "matmul: input b not f32".into(),
+    ))?;
 
     let (m, k) = match a.shape.0.as_slice() {
         [Dim::Fixed(m), Dim::Fixed(k)] => (*m, *k),
-        _ => return Err(ExecutionError::RuntimeError("matmul: input a must be 2D".into())),
+        _ => {
+            return Err(ExecutionError::RuntimeError(
+                "matmul: input a must be 2D".into(),
+            ))
+        }
     };
     let (k2, n) = match b.shape.0.as_slice() {
         [Dim::Fixed(k2), Dim::Fixed(n)] => (*k2, *n),
-        _ => return Err(ExecutionError::RuntimeError("matmul: input b must be 2D".into())),
+        _ => {
+            return Err(ExecutionError::RuntimeError(
+                "matmul: input b must be 2D".into(),
+            ))
+        }
     };
     if k != k2 {
         return Err(ExecutionError::ShapeMismatch {
@@ -1026,7 +1115,9 @@ fn tensor_matmul_dbg(a: &TensorData, b: &TensorData) -> Result<TensorData, Execu
 fn tensor_transpose_dbg(a: &TensorData) -> Result<TensorData, ExecutionError> {
     use qlang_core::tensor::{Dim, Shape};
 
-    let va = a.as_f32_slice().ok_or(ExecutionError::RuntimeError("transpose: input not f32".into()))?;
+    let va = a.as_f32_slice().ok_or(ExecutionError::RuntimeError(
+        "transpose: input not f32".into(),
+    ))?;
     let (m, n) = match a.shape.0.as_slice() {
         [Dim::Fixed(m), Dim::Fixed(n)] => (*m, *n),
         _ => return Err(ExecutionError::RuntimeError("transpose: must be 2D".into())),
@@ -1049,7 +1140,11 @@ fn tensor_reduce_dbg(
 ) -> Result<TensorData, ExecutionError> {
     use qlang_core::tensor::Shape;
 
-    let va = a.as_f32_slice().ok_or(ExecutionError::RuntimeError(format!("{name}: input not f32")))?;
+    let va = a
+        .as_f32_slice()
+        .ok_or(ExecutionError::RuntimeError(format!(
+            "{name}: input not f32"
+        )))?;
     let result = va.iter().fold(init, |acc, &x| op(acc, x));
     Ok(TensorData::from_f32(Shape::scalar(), &[result]))
 }
@@ -1216,7 +1311,9 @@ mod tests {
 
     use qlang_core::graph::Graph as TestGraph;
     use qlang_core::ops::Op as TestOp;
-    use qlang_core::tensor::{Shape as TestShape, TensorData as TestTensorData, TensorType as TestTensorType};
+    use qlang_core::tensor::{
+        Shape as TestShape, TensorData as TestTensorData, TensorType as TestTensorType,
+    };
 
     fn build_three_node_graph() -> (TestGraph, HashMap<String, TestTensorData>) {
         // Graph: a + b = y  (Input_a, Input_b, Add, Output_y => 4 graph nodes, 3 non-trivial)
@@ -1274,7 +1371,11 @@ mod tests {
         let result = debug_execute(&graph, inputs, &mut gdbg).unwrap();
 
         // The breakpoint should have been hit.
-        let bp_events: Vec<_> = gdbg.events.iter().filter(|e| matches!(e, GraphDebugEvent::BreakpointHit { .. })).collect();
+        let bp_events: Vec<_> = gdbg
+            .events
+            .iter()
+            .filter(|e| matches!(e, GraphDebugEvent::BreakpointHit { .. }))
+            .collect();
         assert_eq!(bp_events.len(), 1);
         if let GraphDebugEvent::BreakpointHit { node_id, .. } = &bp_events[0] {
             assert_eq!(*node_id, add_node_id);
@@ -1293,9 +1394,21 @@ mod tests {
         let result = debug_execute(&graph, inputs, &mut gdbg).unwrap();
 
         // Should have NodeEnter + NodeExit for each node in topo order, plus ExecutionComplete.
-        let enter_count = gdbg.events.iter().filter(|e| matches!(e, GraphDebugEvent::NodeEnter { .. })).count();
-        let exit_count = gdbg.events.iter().filter(|e| matches!(e, GraphDebugEvent::NodeExit { .. })).count();
-        let complete_count = gdbg.events.iter().filter(|e| matches!(e, GraphDebugEvent::ExecutionComplete { .. })).count();
+        let enter_count = gdbg
+            .events
+            .iter()
+            .filter(|e| matches!(e, GraphDebugEvent::NodeEnter { .. }))
+            .count();
+        let exit_count = gdbg
+            .events
+            .iter()
+            .filter(|e| matches!(e, GraphDebugEvent::NodeExit { .. }))
+            .count();
+        let complete_count = gdbg
+            .events
+            .iter()
+            .filter(|e| matches!(e, GraphDebugEvent::ExecutionComplete { .. }))
+            .count();
 
         assert_eq!(enter_count, 4); // 4 nodes: 2 inputs, 1 add, 1 output
         assert_eq!(exit_count, 4);
@@ -1323,7 +1436,12 @@ mod tests {
         }).collect();
         assert_eq!(exit_events.len(), 1);
 
-        if let GraphDebugEvent::NodeExit { output_shape, output_values, .. } = &exit_events[0] {
+        if let GraphDebugEvent::NodeExit {
+            output_shape,
+            output_values,
+            ..
+        } = &exit_events[0]
+        {
             assert!(output_shape.is_some());
             let vals = output_values.as_ref().unwrap();
             assert_eq!(vals.len(), 2);

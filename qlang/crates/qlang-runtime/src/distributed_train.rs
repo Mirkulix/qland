@@ -145,7 +145,7 @@ impl GradientBuffer {
 ///
 /// * `config`       - Distributed training configuration.
 /// * `train_fn`     - Training function: takes a worker ID (0..n_workers) and returns
-///                    `(gradients, loss)`. Gradients is `Vec<Vec<f32>>` matching `param_shapes`.
+///   `(gradients, loss)`. Gradients is `Vec<Vec<f32>>` matching `param_shapes`.
 /// * `apply_fn`     - Function to apply averaged gradients to the model.
 /// * `param_shapes` - Size of each parameter group (e.g., `&[w1.len(), b1.len(), w2.len(), b2.len()]`).
 /// * `epochs`       - Number of training epochs.
@@ -450,9 +450,7 @@ mod tests {
                 batch_size_per_worker: 8,
                 gradient_accumulation_steps: 1,
             },
-            |_worker_id| {
-                (vec![vec![0.5, 0.5]], 0.3)
-            },
+            |_worker_id| (vec![vec![0.5, 0.5]], 0.3),
             move |_avg_grads| {
                 let mut count = ec.lock().unwrap();
                 *count += 1;

@@ -212,13 +212,13 @@ fn main(
             // Dims uniform -- padded to 16 bytes for alignment.
             let dims: [u32; 4] = [m as u32, k as u32, n as u32, 0];
             let dims_bytes: Vec<u8> = dims.iter().flat_map(|d| d.to_le_bytes()).collect();
-            let buf_dims =
-                self.device
-                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some("dims"),
-                        contents: &dims_bytes,
-                        usage: wgpu::BufferUsages::UNIFORM,
-                    });
+            let buf_dims = self
+                .device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("dims"),
+                    contents: &dims_bytes,
+                    usage: wgpu::BufferUsages::UNIFORM,
+                });
 
             let buf_staging = self.device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("staging"),
@@ -254,11 +254,11 @@ fn main(
             let wg_x = (n as u32 + tile - 1) / tile;
             let wg_y = (m as u32 + tile - 1) / tile;
 
-            let mut encoder =
-                self.device
-                    .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                        label: Some("matmul_enc"),
-                    });
+            let mut encoder = self
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("matmul_enc"),
+                });
             {
                 let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                     label: Some("matmul_pass"),
@@ -306,14 +306,7 @@ fn main(
         ///
         /// We transpose A on the CPU (cheap compared to GPU dispatch overhead for the
         /// matrix sizes typical in QLANG training) and then run the standard matmul shader.
-        pub fn matmul_at_b(
-            &self,
-            a: &[f32],
-            b: &[f32],
-            m: usize,
-            n: usize,
-            k: usize,
-        ) -> Vec<f32> {
+        pub fn matmul_at_b(&self, a: &[f32], b: &[f32], m: usize, n: usize, k: usize) -> Vec<f32> {
             debug_assert_eq!(a.len(), k * m, "gpu matmul_at_b: a must be [k,m]");
             debug_assert_eq!(b.len(), k * n, "gpu matmul_at_b: b must be [k,n]");
             // Transpose A from [k, m] to [m, k].
@@ -327,14 +320,7 @@ fn main(
         }
 
         /// C = A * B^T  where A is [m, k], B is stored as [n, k], result is [m, n].
-        pub fn matmul_a_bt(
-            &self,
-            a: &[f32],
-            b: &[f32],
-            m: usize,
-            n: usize,
-            k: usize,
-        ) -> Vec<f32> {
+        pub fn matmul_a_bt(&self, a: &[f32], b: &[f32], m: usize, n: usize, k: usize) -> Vec<f32> {
             debug_assert_eq!(a.len(), m * k, "gpu matmul_a_bt: a must be [m,k]");
             debug_assert_eq!(b.len(), n * k, "gpu matmul_a_bt: b must be [n,k]");
             // Transpose B from [n, k] to [k, n].

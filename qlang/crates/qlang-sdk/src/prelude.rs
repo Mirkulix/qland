@@ -5,14 +5,14 @@
 //! ```
 
 // SDK top-level functions
-pub use crate::{sign, verify, compress_ternary};
+pub use crate::{compress_ternary, sign, verify};
 
 // Core types
-pub use crate::{Graph, TensorData, Dtype, Shape, Dim, TensorType, Op};
+pub use crate::{Dim, Dtype, Graph, Op, Shape, TensorData, TensorType};
 
 // Crypto
-pub use crate::{Keypair, SignedGraph, sha256, hash_graph};
+pub use crate::{hash_graph, sha256, Keypair, SignedGraph};
 
 // Agent types
 pub use crate::GraphEmitter;
-pub use crate::{GraphMessage, AgentId, MessageIntent, Capability};
+pub use crate::{AgentId, Capability, GraphMessage, MessageIntent};

@@ -10,11 +10,11 @@
 //!
 //! This means ANY QLANG graph can be trained, not just hand-coded MLPs.
 
-use std::collections::HashMap;
+use crate::autograd::Tape;
 use qlang_core::graph::Graph;
 use qlang_core::ops::Op;
 use qlang_core::tensor::Shape;
-use crate::autograd::Tape;
+use std::collections::HashMap;
 
 /// Result of a training step on a graph.
 #[derive(Debug)]
@@ -51,19 +51,24 @@ pub fn train_step(
     let mut weight_tape_ids: HashMap<String, usize> = HashMap::new();
 
     // Process nodes in topological order
-    let order = graph.topological_sort()
+    let order = graph
+        .topological_sort()
         .map_err(|e| TrainError::GraphError(e.to_string()))?;
 
     for &node_id in &order {
-        let node = graph.node(node_id)
+        let node = graph
+            .node(node_id)
             .ok_or(TrainError::GraphError(format!("Node {node_id} not found")))?;
 
         let tape_id = match &node.op {
             Op::Input { name } => {
-                let data = inputs.get(name)
+                let data = inputs
+                    .get(name)
                     .ok_or(TrainError::MissingInput(name.clone()))?;
 
-                let shape = node.output_types.first()
+                let shape = node
+                    .output_types
+                    .first()
                     .map(|t| shape_to_vec(&t.shape))
                     .unwrap_or_else(|| vec![data.len()]);
 
@@ -105,7 +110,8 @@ pub fn train_step(
                 // Pass through
                 let incoming = graph.incoming_edges(node_id);
                 if let Some(edge) = incoming.first() {
-                    *node_to_tape.get(&edge.from_node)
+                    *node_to_tape
+                        .get(&edge.from_node)
                         .ok_or(TrainError::GraphError("Output has no input".into()))?
                 } else {
                     continue;
@@ -168,7 +174,11 @@ pub fn train_step(
         }
     }
 
-    Ok(TrainStepResult { loss, gradients, outputs })
+    Ok(TrainStepResult {
+        loss,
+        gradients,
+        outputs,
+    })
 }
 
 /// Apply gradients to weights using SGD.
@@ -192,10 +202,16 @@ fn get_one_tape_input(
     node_to_tape: &HashMap<u32, usize>,
 ) -> Result<usize, TrainError> {
     let incoming = graph.incoming_edges(node_id);
-    let edge = incoming.first()
-        .ok_or(TrainError::GraphError(format!("Node {node_id} has no input")))?;
-    node_to_tape.get(&edge.from_node).copied()
-        .ok_or(TrainError::GraphError(format!("Input node {} not in tape", edge.from_node)))
+    let edge = incoming.first().ok_or(TrainError::GraphError(format!(
+        "Node {node_id} has no input"
+    )))?;
+    node_to_tape
+        .get(&edge.from_node)
+        .copied()
+        .ok_or(TrainError::GraphError(format!(
+            "Input node {} not in tape",
+            edge.from_node
+        )))
 }
 
 fn get_two_tape_inputs(
@@ -205,20 +221,30 @@ fn get_two_tape_inputs(
 ) -> Result<(usize, usize), TrainError> {
     let incoming = graph.incoming_edges(node_id);
     if incoming.len() < 2 {
-        return Err(TrainError::GraphError(format!("Node {node_id} needs 2 inputs")));
+        return Err(TrainError::GraphError(format!(
+            "Node {node_id} needs 2 inputs"
+        )));
     }
-    let a = node_to_tape.get(&incoming[0].from_node).copied()
+    let a = node_to_tape
+        .get(&incoming[0].from_node)
+        .copied()
         .ok_or(TrainError::GraphError("Input a not in tape".into()))?;
-    let b = node_to_tape.get(&incoming[1].from_node).copied()
+    let b = node_to_tape
+        .get(&incoming[1].from_node)
+        .copied()
         .ok_or(TrainError::GraphError("Input b not in tape".into()))?;
     Ok((a, b))
 }
 
 fn shape_to_vec(shape: &Shape) -> Vec<usize> {
-    shape.0.iter().map(|d| match d {
-        qlang_core::tensor::Dim::Fixed(n) => *n,
-        qlang_core::tensor::Dim::Dynamic => 1,
-    }).collect()
+    shape
+        .0
+        .iter()
+        .map(|d| match d {
+            qlang_core::tensor::Dim::Fixed(n) => *n,
+            qlang_core::tensor::Dim::Dynamic => 1,
+        })
+        .collect()
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -238,12 +264,38 @@ mod tests {
 
     fn build_mlp_graph() -> Graph {
         let mut g = Graph::new("mlp");
-        let x = g.add_node(Op::Input { name: "x".into() }, vec![], vec![TensorType::f32_matrix(2, 4)]);
-        let w = g.add_node(Op::Input { name: "W".into() }, vec![], vec![TensorType::f32_matrix(4, 3)]);
-        let mm = g.add_node(Op::MatMul, vec![TensorType::f32_matrix(2, 4), TensorType::f32_matrix(4, 3)], vec![TensorType::f32_matrix(2, 3)]);
-        let relu = g.add_node(Op::Relu, vec![TensorType::f32_matrix(2, 3)], vec![TensorType::f32_matrix(2, 3)]);
-        let sm = g.add_node(Op::Softmax { axis: 1 }, vec![TensorType::f32_matrix(2, 3)], vec![TensorType::f32_matrix(2, 3)]);
-        let out = g.add_node(Op::Output { name: "probs".into() }, vec![TensorType::f32_matrix(2, 3)], vec![]);
+        let x = g.add_node(
+            Op::Input { name: "x".into() },
+            vec![],
+            vec![TensorType::f32_matrix(2, 4)],
+        );
+        let w = g.add_node(
+            Op::Input { name: "W".into() },
+            vec![],
+            vec![TensorType::f32_matrix(4, 3)],
+        );
+        let mm = g.add_node(
+            Op::MatMul,
+            vec![TensorType::f32_matrix(2, 4), TensorType::f32_matrix(4, 3)],
+            vec![TensorType::f32_matrix(2, 3)],
+        );
+        let relu = g.add_node(
+            Op::Relu,
+            vec![TensorType::f32_matrix(2, 3)],
+            vec![TensorType::f32_matrix(2, 3)],
+        );
+        let sm = g.add_node(
+            Op::Softmax { axis: 1 },
+            vec![TensorType::f32_matrix(2, 3)],
+            vec![TensorType::f32_matrix(2, 3)],
+        );
+        let out = g.add_node(
+            Op::Output {
+                name: "probs".into(),
+            },
+            vec![TensorType::f32_matrix(2, 3)],
+            vec![],
+        );
 
         g.add_edge(x, 0, mm, 0, TensorType::f32_matrix(2, 4));
         g.add_edge(w, 0, mm, 1, TensorType::f32_matrix(4, 3));
@@ -260,7 +312,12 @@ mod tests {
 
         let mut inputs = HashMap::new();
         inputs.insert("x".into(), vec![1.0, 0.0, 0.5, 0.2, 0.0, 1.0, 0.3, 0.8]);
-        inputs.insert("W".into(), vec![0.1, -0.1, 0.2, 0.3, 0.1, -0.2, -0.1, 0.2, 0.1, 0.2, -0.3, 0.1]);
+        inputs.insert(
+            "W".into(),
+            vec![
+                0.1, -0.1, 0.2, 0.3, 0.1, -0.2, -0.1, 0.2, 0.1, 0.2, -0.3, 0.1,
+            ],
+        );
 
         let targets = vec![0u8, 1u8];
 
@@ -277,7 +334,9 @@ mod tests {
         let graph = build_mlp_graph();
 
         let x_data = vec![1.0, 0.0, 0.5, 0.2, 0.0, 1.0, 0.3, 0.8];
-        let mut w_data = vec![0.1, -0.1, 0.2, 0.3, 0.1, -0.2, -0.1, 0.2, 0.1, 0.2, -0.3, 0.1];
+        let mut w_data = vec![
+            0.1, -0.1, 0.2, 0.3, 0.1, -0.2, -0.1, 0.2, 0.1, 0.2, -0.3, 0.1,
+        ];
         let targets = vec![0u8, 1u8];
 
         let mut losses = Vec::new();
@@ -300,8 +359,10 @@ mod tests {
         // Loss should decrease
         let first_avg: f32 = losses[..5].iter().sum::<f32>() / 5.0;
         let last_avg: f32 = losses[15..].iter().sum::<f32>() / 5.0;
-        assert!(last_avg < first_avg,
-            "Loss didn't decrease: first={first_avg:.4}, last={last_avg:.4}");
+        assert!(
+            last_avg < first_avg,
+            "Loss didn't decrease: first={first_avg:.4}, last={last_avg:.4}"
+        );
     }
 
     #[test]

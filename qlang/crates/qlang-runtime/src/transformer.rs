@@ -48,10 +48,13 @@ pub fn gelu(tape: &mut Tape, input: usize) -> usize {
     let data = tape.value(input).to_vec();
     let sqrt_2_over_pi = (2.0f32 / std::f32::consts::PI).sqrt();
 
-    let result: Vec<f32> = data.iter().map(|&x| {
-        let inner = sqrt_2_over_pi * (x + 0.044715 * x.powi(3));
-        0.5 * x * (1.0 + inner.tanh())
-    }).collect();
+    let result: Vec<f32> = data
+        .iter()
+        .map(|&x| {
+            let inner = sqrt_2_over_pi * (x + 0.044715 * x.powi(3));
+            0.5 * x * (1.0 + inner.tanh())
+        })
+        .collect();
 
     let shape = tape.values[input].shape.clone();
     tape.variable(result, shape)
@@ -99,7 +102,9 @@ pub fn scaled_dot_product_attention(
     // Softmax over seq_k dimension (for each query position)
     for i in 0..seq_q {
         let offset = i * seq_k;
-        let max = scores[offset..offset + seq_k].iter().cloned()
+        let max = scores[offset..offset + seq_k]
+            .iter()
+            .cloned()
             .fold(f32::NEG_INFINITY, f32::max);
         let mut sum = 0.0f32;
         for j in 0..seq_k {
@@ -171,10 +176,10 @@ pub fn multi_head_attention(
     q_input: usize,
     k_input: usize,
     v_input: usize,
-    w_q: usize,  // [d_model, d_model]
-    w_k: usize,  // [d_model, d_model]
-    w_v: usize,  // [d_model, d_model]
-    w_o: usize,  // [d_model, d_model]
+    w_q: usize, // [d_model, d_model]
+    w_k: usize, // [d_model, d_model]
+    w_v: usize, // [d_model, d_model]
+    w_o: usize, // [d_model, d_model]
     n_heads: usize,
 ) -> usize {
     let d_model = tape.values[q_input].shape[1];
@@ -214,8 +219,8 @@ pub fn multi_head_attention(
 pub fn feed_forward(
     tape: &mut Tape,
     input: usize,
-    w1: usize,  // [d_model, d_ff]
-    w2: usize,  // [d_ff, d_model]
+    w1: usize, // [d_model, d_ff]
+    w2: usize, // [d_ff, d_model]
 ) -> usize {
     let h = tape.matmul(input, w1);
     let activated = gelu(tape, h);
@@ -227,8 +232,12 @@ pub fn feed_forward(
 pub fn transformer_encoder_layer(
     tape: &mut Tape,
     input: usize,
-    w_q: usize, w_k: usize, w_v: usize, w_o: usize,
-    ff_w1: usize, ff_w2: usize,
+    w_q: usize,
+    w_k: usize,
+    w_v: usize,
+    w_o: usize,
+    ff_w1: usize,
+    ff_w2: usize,
     n_heads: usize,
     d_model: usize,
 ) -> usize {
@@ -325,7 +334,11 @@ mod tests {
         // Different positions should have different encodings
         let pos0 = &pe[0..64];
         let pos1 = &pe[64..128];
-        let diff: f32 = pos0.iter().zip(pos1.iter()).map(|(a, b)| (a - b).abs()).sum();
+        let diff: f32 = pos0
+            .iter()
+            .zip(pos1.iter())
+            .map(|(a, b)| (a - b).abs())
+            .sum();
         assert!(diff > 1.0, "Positional encodings should differ");
     }
 
@@ -343,7 +356,9 @@ mod tests {
 
         // Weight matrices (small random values)
         let make_weights = |tape: &mut Tape, rows: usize, cols: usize| -> usize {
-            let data: Vec<f32> = (0..rows * cols).map(|i| (i as f32 * 0.1).sin() * 0.1).collect();
+            let data: Vec<f32> = (0..rows * cols)
+                .map(|i| (i as f32 * 0.1).sin() * 0.1)
+                .collect();
             tape.variable(data, vec![rows, cols])
         };
 
@@ -355,10 +370,7 @@ mod tests {
         let ff_w2 = make_weights(&mut tape, d_ff, d_model);
 
         let output = transformer_encoder_layer(
-            &mut tape, input,
-            w_q, w_k, w_v, w_o,
-            ff_w1, ff_w2,
-            n_heads, d_model,
+            &mut tape, input, w_q, w_k, w_v, w_o, ff_w1, ff_w2, n_heads, d_model,
         );
 
         let result = tape.value(output);
@@ -387,7 +399,10 @@ mod tests {
         let reconstructed = concat_heads(&heads, seq_len, n_heads, d_k);
         assert_eq!(data.len(), reconstructed.len());
         for (a, b) in data.iter().zip(reconstructed.iter()) {
-            assert!((a - b).abs() < 1e-7, "split_heads + concat_heads should be identity");
+            assert!(
+                (a - b).abs() < 1e-7,
+                "split_heads + concat_heads should be identity"
+            );
         }
     }
 
@@ -401,7 +416,9 @@ mod tests {
         let input = tape.variable(vec![0.1; seq_len * d_model], vec![seq_len, d_model]);
 
         let make_weights = |tape: &mut Tape, rows: usize, cols: usize| -> usize {
-            let data: Vec<f32> = (0..rows * cols).map(|i| (i as f32 * 0.1).sin() * 0.1).collect();
+            let data: Vec<f32> = (0..rows * cols)
+                .map(|i| (i as f32 * 0.1).sin() * 0.1)
+                .collect();
             tape.variable(data, vec![rows, cols])
         };
 
@@ -410,11 +427,8 @@ mod tests {
         let w_v = make_weights(&mut tape, d_model, d_model);
         let w_o = make_weights(&mut tape, d_model, d_model);
 
-        let output = multi_head_attention(
-            &mut tape, input, input, input,
-            w_q, w_k, w_v, w_o,
-            n_heads,
-        );
+        let output =
+            multi_head_attention(&mut tape, input, input, input, w_q, w_k, w_v, w_o, n_heads);
 
         let result = tape.value(output);
         assert_eq!(result.len(), seq_len * d_model);
@@ -429,7 +443,9 @@ mod tests {
         let seq_len = 3;
         let d_model = 4;
 
-        let input_data: Vec<f32> = (0..seq_len * d_model).map(|i| (i as f32 * 0.3).sin()).collect();
+        let input_data: Vec<f32> = (0..seq_len * d_model)
+            .map(|i| (i as f32 * 0.3).sin())
+            .collect();
         let input = tape.variable(input_data.clone(), vec![seq_len, d_model]);
 
         // Identity-ish weight matrices so projection is predictable
@@ -444,9 +460,7 @@ mod tests {
         let w_o = tape.variable(w_data.clone(), vec![d_model, d_model]);
 
         let mha_out = multi_head_attention(
-            &mut tape, input, input, input,
-            w_q, w_k, w_v, w_o,
-            1, // single head
+            &mut tape, input, input, input, w_q, w_k, w_v, w_o, 1, // single head
         );
 
         // Manually compute single-head: project (identity), attention, project (identity)
@@ -474,7 +488,8 @@ mod tests {
             assert!(
                 (a - b).abs() < 1e-5,
                 "n_heads=1 multi-head should match single-head: {} vs {}",
-                a, b
+                a,
+                b
             );
         }
     }

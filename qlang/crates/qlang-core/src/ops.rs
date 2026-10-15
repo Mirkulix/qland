@@ -9,9 +9,13 @@ use std::fmt;
 pub enum Op {
     // === Graph I/O ===
     /// External input to the graph
-    Input { name: String },
+    Input {
+        name: String,
+    },
     /// Output from the graph
-    Output { name: String },
+    Output {
+        name: String,
+    },
     /// Constant tensor embedded in the graph
     Constant,
 
@@ -23,18 +27,33 @@ pub enum Op {
     Neg,
     MatMul,
     Transpose,
-    Reshape { target_shape: Vec<usize> },
-    Slice { start: Vec<usize>, end: Vec<usize> },
-    Concat { axis: usize },
-    ReduceSum { axis: Option<usize> },
-    ReduceMean { axis: Option<usize> },
-    ReduceMax { axis: Option<usize> },
+    Reshape {
+        target_shape: Vec<usize>,
+    },
+    Slice {
+        start: Vec<usize>,
+        end: Vec<usize>,
+    },
+    Concat {
+        axis: usize,
+    },
+    ReduceSum {
+        axis: Option<usize>,
+    },
+    ReduceMean {
+        axis: Option<usize>,
+    },
+    ReduceMax {
+        axis: Option<usize>,
+    },
 
     // === Activation Functions ===
     Relu,
     Sigmoid,
     Tanh,
-    Softmax { axis: usize },
+    Softmax {
+        axis: usize,
+    },
 
     // === Quantum / IGQK Operations ===
     /// Create superposition of multiple states
@@ -57,41 +76,65 @@ pub enum Op {
     /// Project to ternary weights {-1, 0, +1}
     ToTernary,
     /// Low-rank approximation
-    ToLowRank { rank: usize },
+    ToLowRank {
+        rank: usize,
+    },
     /// Sparsification
-    ToSparse { sparsity: f64 },
+    ToSparse {
+        sparsity: f64,
+    },
     /// Compute Fisher information metric
     FisherMetric,
     /// Project onto submanifold
-    Project { manifold: Manifold },
+    Project {
+        manifold: Manifold,
+    },
 
     // === Transformer Operations ===
     /// Layer normalization: (x - mean) / sqrt(var + eps) * gamma + beta
-    LayerNorm { eps: f64 },
+    LayerNorm {
+        eps: f64,
+    },
     /// Scaled dot-product attention: softmax(Q·K^T / sqrt(d_k)) · V
-    Attention { n_heads: usize, d_model: usize },
+    Attention {
+        n_heads: usize,
+        d_model: usize,
+    },
     /// Token/positional embedding lookup
-    Embedding { vocab_size: usize, d_model: usize },
+    Embedding {
+        vocab_size: usize,
+        d_model: usize,
+    },
     /// Residual connection: x + f(x)
     Residual,
     /// GELU activation: x * Φ(x) ≈ 0.5x(1 + tanh(√(2/π)(x + 0.044715x³)))
     Gelu,
     /// Dropout (identity at inference, masks at training)
-    Dropout { rate: f64 },
+    Dropout {
+        rate: f64,
+    },
 
     // === LLM / Ollama Operations ===
     /// Generate text via local Ollama LLM
-    OllamaGenerate { model: String },
+    OllamaGenerate {
+        model: String,
+    },
     /// Chat completion via local Ollama LLM
-    OllamaChat { model: String },
+    OllamaChat {
+        model: String,
+    },
 
     // === Control Flow ===
     /// Conditional: evaluates BOTH branches (quantum-style), selects based on predicate
     Cond,
     /// Bounded iteration
-    Scan { n_iterations: usize },
+    Scan {
+        n_iterations: usize,
+    },
     /// Execute a sub-graph
-    SubGraph { graph_id: String },
+    SubGraph {
+        graph_id: String,
+    },
 }
 
 /// Target manifold for projection operations.
@@ -112,21 +155,43 @@ impl Op {
     pub fn n_inputs(&self) -> usize {
         match self {
             Op::Input { .. } | Op::Constant => 0,
-            Op::Output { .. } | Op::Neg | Op::Relu | Op::Sigmoid | Op::Tanh
-            | Op::Softmax { .. } | Op::Transpose | Op::Reshape { .. }
-            | Op::Slice { .. } | Op::ToTernary | Op::ToLowRank { .. }
-            | Op::ToSparse { .. } | Op::Entropy | Op::Collapse
-            | Op::ReduceSum { .. } | Op::ReduceMean { .. } | Op::ReduceMax { .. }
-            | Op::Project { .. } | Op::LayerNorm { .. } | Op::Gelu
-            | Op::Dropout { .. } | Op::Embedding { .. }
-            | Op::OllamaGenerate { .. } | Op::OllamaChat { .. } => 1,
-            Op::Add | Op::Sub | Op::Mul | Op::Div | Op::MatMul
-            | Op::Concat { .. } | Op::Entangle | Op::FisherMetric
+            Op::Output { .. }
+            | Op::Neg
+            | Op::Relu
+            | Op::Sigmoid
+            | Op::Tanh
+            | Op::Softmax { .. }
+            | Op::Transpose
+            | Op::Reshape { .. }
+            | Op::Slice { .. }
+            | Op::ToTernary
+            | Op::ToLowRank { .. }
+            | Op::ToSparse { .. }
+            | Op::Entropy
+            | Op::Collapse
+            | Op::ReduceSum { .. }
+            | Op::ReduceMean { .. }
+            | Op::ReduceMax { .. }
+            | Op::Project { .. }
+            | Op::LayerNorm { .. }
+            | Op::Gelu
+            | Op::Dropout { .. }
+            | Op::Embedding { .. }
+            | Op::OllamaGenerate { .. }
+            | Op::OllamaChat { .. } => 1,
+            Op::Add
+            | Op::Sub
+            | Op::Mul
+            | Op::Div
+            | Op::MatMul
+            | Op::Concat { .. }
+            | Op::Entangle
+            | Op::FisherMetric
             | Op::Residual => 2,
-            Op::Attention { .. } => 3, // Q, K, V
-            Op::Cond => 3, // predicate, branch_a, branch_b
-            Op::Evolve { .. } => 3, // ρ, hamiltonian, gradient
-            Op::Measure | Op::Superpose => 2, // state + operators/states
+            Op::Attention { .. } => 3,                  // Q, K, V
+            Op::Cond => 3,                              // predicate, branch_a, branch_b
+            Op::Evolve { .. } => 3,                     // ρ, hamiltonian, gradient
+            Op::Measure | Op::Superpose => 2,           // state + operators/states
             Op::Scan { .. } | Op::SubGraph { .. } => 2, // init + body/graph
         }
     }
@@ -141,29 +206,38 @@ impl Op {
 
     /// Whether this operation is deterministic.
     pub fn is_deterministic(&self) -> bool {
-        match self {
-            Op::Measure | Op::Collapse | Op::Superpose | Op::Dropout { .. }
-            | Op::OllamaGenerate { .. } | Op::OllamaChat { .. } => false,
-            _ => true,
-        }
+        !matches!(
+            self,
+            Op::Measure
+                | Op::Collapse
+                | Op::Superpose
+                | Op::Dropout { .. }
+                | Op::OllamaGenerate { .. }
+                | Op::OllamaChat { .. }
+        )
     }
 
     /// Whether this is a quantum/IGQK operation.
     pub fn is_quantum(&self) -> bool {
         matches!(
             self,
-            Op::Superpose | Op::Evolve { .. } | Op::Measure | Op::Entangle
-            | Op::Collapse | Op::Entropy | Op::ToTernary | Op::ToLowRank { .. }
-            | Op::ToSparse { .. } | Op::FisherMetric | Op::Project { .. }
+            Op::Superpose
+                | Op::Evolve { .. }
+                | Op::Measure
+                | Op::Entangle
+                | Op::Collapse
+                | Op::Entropy
+                | Op::ToTernary
+                | Op::ToLowRank { .. }
+                | Op::ToSparse { .. }
+                | Op::FisherMetric
+                | Op::Project { .. }
         )
     }
 
     /// Whether this is an LLM inference operation.
     pub fn is_llm(&self) -> bool {
-        matches!(
-            self,
-            Op::OllamaGenerate { .. } | Op::OllamaChat { .. }
-        )
+        matches!(self, Op::OllamaGenerate { .. } | Op::OllamaChat { .. })
     }
 }
 
@@ -202,8 +276,13 @@ impl fmt::Display for Op {
             Op::FisherMetric => write!(f, "fisher_metric"),
             Op::Project { manifold } => write!(f, "project({manifold:?})"),
             Op::LayerNorm { eps } => write!(f, "layer_norm(eps={eps})"),
-            Op::Attention { n_heads, d_model } => write!(f, "attention(heads={n_heads}, d={d_model})"),
-            Op::Embedding { vocab_size, d_model } => write!(f, "embedding(vocab={vocab_size}, d={d_model})"),
+            Op::Attention { n_heads, d_model } => {
+                write!(f, "attention(heads={n_heads}, d={d_model})")
+            }
+            Op::Embedding {
+                vocab_size,
+                d_model,
+            } => write!(f, "embedding(vocab={vocab_size}, d={d_model})"),
             Op::Residual => write!(f, "residual"),
             Op::Gelu => write!(f, "gelu"),
             Op::Dropout { rate } => write!(f, "dropout(rate={rate})"),

@@ -133,8 +133,7 @@ fn main() {
     for &size in &[1024, 65536, 1048576] {
         let weights: Vec<f32> = (0..size).map(|i| (i as f32 * 0.0001).sin()).collect();
         results.push(bench(&format!("ternary_{size}"), size, 100, || {
-            let mean_abs: f32 =
-                weights.iter().map(|x| x.abs()).sum::<f32>() / weights.len() as f32;
+            let mean_abs: f32 = weights.iter().map(|x| x.abs()).sum::<f32>() / weights.len() as f32;
             let threshold = mean_abs * 0.7;
             let _: Vec<f32> = weights
                 .iter()
@@ -163,11 +162,7 @@ fn main() {
             vec![f32_vec(1024)],
         );
         let relu = g.add_node(Op::Relu, vec![f32_vec(1024)], vec![f32_vec(1024)]);
-        let out = g.add_node(
-            Op::Output { name: "y".into() },
-            vec![f32_vec(1024)],
-            vec![],
-        );
+        let out = g.add_node(Op::Output { name: "y".into() }, vec![f32_vec(1024)], vec![]);
         g.add_edge(inp_a, 0, add, 0, f32_vec(1024));
         g.add_edge(inp_b, 0, add, 1, f32_vec(1024));
         g.add_edge(add, 0, relu, 0, f32_vec(1024));
@@ -185,19 +180,25 @@ fn main() {
     }
 
     // ---- Print results table ----
-    println!("\n╔═══════════════════════════╦═════════╦══════════╦══════════╦══════════╦═══════════╗");
+    println!(
+        "\n╔═══════════════════════════╦═════════╦══════════╦══════════╦══════════╦═══════════╗"
+    );
     println!(
         "║ {:25} ║ {:>7} ║ {:>8} ║ {:>8} ║ {:>8} ║ {:>9} ║",
         "Benchmark", "Size", "Mean(µs)", "Min(µs)", "Max(µs)", "M elem/s"
     );
-    println!("╠═══════════════════════════╬═════════╬══════════╬══════════╬══════════╬═══════════╣");
+    println!(
+        "╠═══════════════════════════╬═════════╬══════════╬══════════╬══════════╬═══════════╣"
+    );
     for r in &results {
         println!(
             "║ {:25} ║ {:>7} ║ {:>8.1} ║ {:>8.1} ║ {:>8.1} ║ {:>9.2} ║",
             r.name, r.size, r.mean_us, r.min_us, r.max_us, r.throughput_mops
         );
     }
-    println!("╚═══════════════════════════╩═════════╩══════════╩══════════╩══════════╩═══════════╝");
+    println!(
+        "╚═══════════════════════════╩═════════╩══════════╩══════════╩══════════╩═══════════╝"
+    );
 
     // ---- JSON output ----
     if std::env::args().any(|a| a == "--json") {

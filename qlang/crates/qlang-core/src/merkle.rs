@@ -182,11 +182,7 @@ mod tests {
         let mut g = Graph::new("merkle_test");
         for i in 0..n_nodes {
             let name = format!("x{}", i);
-            g.add_node(
-                Op::Input { name },
-                vec![],
-                vec![TensorType::f32_vector(4)],
-            );
+            g.add_node(Op::Input { name }, vec![], vec![TensorType::f32_vector(4)]);
         }
         // Wire up sequentially if more than one node
         if n_nodes > 1 {
@@ -214,7 +210,11 @@ mod tests {
             vec![TensorType::f32_vector(8), TensorType::f32_vector(8)],
             vec![TensorType::f32_vector(8)],
         );
-        g.add_node(Op::Relu, vec![TensorType::f32_vector(8)], vec![TensorType::f32_vector(8)]);
+        g.add_node(
+            Op::Relu,
+            vec![TensorType::f32_vector(8)],
+            vec![TensorType::f32_vector(8)],
+        );
         g.add_node(
             Op::Output { name: "y".into() },
             vec![TensorType::f32_vector(8)],

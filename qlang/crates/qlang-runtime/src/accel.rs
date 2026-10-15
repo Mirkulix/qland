@@ -87,7 +87,7 @@ mod platform {
         unsafe {
             cblas_sgemm(
                 CBLAS_ROW_MAJOR,
-                CBLAS_TRANS,   // transpose A
+                CBLAS_TRANS, // transpose A
                 CBLAS_NO_TRANS,
                 m as i32,
                 n as i32,
@@ -335,7 +335,7 @@ pub fn backend_name() -> &'static str {
     }
     #[cfg(all(target_os = "macos", not(feature = "mlx")))]
     {
-        return "Apple Accelerate (CPU BLAS)";
+        "Apple Accelerate (CPU BLAS)"
     }
     #[cfg(not(target_os = "macos"))]
     {

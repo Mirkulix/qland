@@ -96,7 +96,9 @@ pub struct Registry {
 
 impl Registry {
     pub fn new() -> Self {
-        Self { packages: HashMap::new() }
+        Self {
+            packages: HashMap::new(),
+        }
     }
 
     /// Register a package.
@@ -111,7 +113,8 @@ impl Registry {
 
     /// List all packages.
     pub fn list(&self) -> Vec<(&str, &str)> {
-        self.packages.values()
+        self.packages
+            .values()
             .map(|p| (p.name.as_str(), p.version.as_str()))
             .collect()
     }
@@ -128,16 +131,34 @@ impl Registry {
         // Standard dense layer graph
         {
             let mut g = Graph::new("dense");
-            let x = g.add_node(Op::Input { name: "x".into() }, vec![], vec![TensorType::f32_matrix(1, 128)]);
-            let w = g.add_node(Op::Input { name: "W".into() }, vec![], vec![TensorType::f32_matrix(128, 64)]);
-            let mm = g.add_node(Op::MatMul,
-                vec![TensorType::f32_matrix(1, 128), TensorType::f32_matrix(128, 64)],
-                vec![TensorType::f32_matrix(1, 64)]);
-            let relu = g.add_node(Op::Relu,
+            let x = g.add_node(
+                Op::Input { name: "x".into() },
+                vec![],
+                vec![TensorType::f32_matrix(1, 128)],
+            );
+            let w = g.add_node(
+                Op::Input { name: "W".into() },
+                vec![],
+                vec![TensorType::f32_matrix(128, 64)],
+            );
+            let mm = g.add_node(
+                Op::MatMul,
+                vec![
+                    TensorType::f32_matrix(1, 128),
+                    TensorType::f32_matrix(128, 64),
+                ],
                 vec![TensorType::f32_matrix(1, 64)],
-                vec![TensorType::f32_matrix(1, 64)]);
-            let out = g.add_node(Op::Output { name: "y".into() },
-                vec![TensorType::f32_matrix(1, 64)], vec![]);
+            );
+            let relu = g.add_node(
+                Op::Relu,
+                vec![TensorType::f32_matrix(1, 64)],
+                vec![TensorType::f32_matrix(1, 64)],
+            );
+            let out = g.add_node(
+                Op::Output { name: "y".into() },
+                vec![TensorType::f32_matrix(1, 64)],
+                vec![],
+            );
             g.add_edge(x, 0, mm, 0, TensorType::f32_matrix(1, 128));
             g.add_edge(w, 0, mm, 1, TensorType::f32_matrix(128, 64));
             g.add_edge(mm, 0, relu, 0, TensorType::f32_matrix(1, 64));
@@ -148,12 +169,25 @@ impl Registry {
         // IGQK compression graph
         {
             let mut g = Graph::new("igqk_ternary");
-            let w = g.add_node(Op::Input { name: "weights".into() }, vec![], vec![TensorType::f32_matrix(128, 128)]);
-            let t = g.add_node(Op::ToTernary,
+            let w = g.add_node(
+                Op::Input {
+                    name: "weights".into(),
+                },
+                vec![],
                 vec![TensorType::f32_matrix(128, 128)],
-                vec![TensorType::ternary_matrix(128, 128)]);
-            let out = g.add_node(Op::Output { name: "compressed".into() },
-                vec![TensorType::ternary_matrix(128, 128)], vec![]);
+            );
+            let t = g.add_node(
+                Op::ToTernary,
+                vec![TensorType::f32_matrix(128, 128)],
+                vec![TensorType::ternary_matrix(128, 128)],
+            );
+            let out = g.add_node(
+                Op::Output {
+                    name: "compressed".into(),
+                },
+                vec![TensorType::ternary_matrix(128, 128)],
+                vec![],
+            );
             g.add_edge(w, 0, t, 0, TensorType::f32_matrix(128, 128));
             g.add_edge(t, 0, out, 0, TensorType::ternary_matrix(128, 128));
             stdlib.add_graph(g);

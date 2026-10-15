@@ -12,11 +12,11 @@
 //! print(result)
 //! ```
 
-use std::collections::HashMap;
-use crate::vm;
 use crate::executor;
+use crate::vm;
 use qlang_core::graph::Graph;
 use qlang_core::tensor::{Shape, TensorData};
+use std::collections::HashMap;
 
 /// A graph block extracted from source.
 #[derive(Debug)]
@@ -66,8 +66,12 @@ pub fn split_source(source: &str) -> (Vec<GraphBlock>, String) {
             current_graph_name = rest.split('{').next().unwrap_or("").trim().to_string();
             current_graph_source = format!("{}\n", line);
             for c in trimmed.chars() {
-                if c == '{' { brace_depth += 1; }
-                if c == '}' { brace_depth -= 1; }
+                if c == '{' {
+                    brace_depth += 1;
+                }
+                if c == '}' {
+                    brace_depth -= 1;
+                }
             }
             if brace_depth == 0 {
                 in_graph = false;
@@ -80,8 +84,12 @@ pub fn split_source(source: &str) -> (Vec<GraphBlock>, String) {
             current_graph_source.push_str(line);
             current_graph_source.push('\n');
             for c in trimmed.chars() {
-                if c == '{' { brace_depth += 1; }
-                if c == '}' { brace_depth -= 1; }
+                if c == '{' {
+                    brace_depth += 1;
+                }
+                if c == '}' {
+                    brace_depth -= 1;
+                }
             }
             if brace_depth == 0 {
                 in_graph = false;
@@ -136,10 +144,7 @@ pub fn run_graph(
     let mut tensor_inputs = HashMap::new();
     for (name, values) in &inputs {
         let n = values.len();
-        tensor_inputs.insert(
-            name.clone(),
-            TensorData::from_f32(Shape::vector(n), values),
-        );
+        tensor_inputs.insert(name.clone(), TensorData::from_f32(Shape::vector(n), values));
     }
 
     // Execute
@@ -161,19 +166,26 @@ pub fn run_graph(
 pub fn compress_weights(weights: &[f32]) -> Vec<f32> {
     let mean_abs: f32 = weights.iter().map(|x| x.abs()).sum::<f32>() / weights.len() as f32;
     let threshold = mean_abs * 0.7;
-    weights.iter().map(|&x| {
-        if x > threshold { 1.0 }
-        else if x < -threshold { -1.0 }
-        else { 0.0 }
-    }).collect()
+    weights
+        .iter()
+        .map(|&x| {
+            if x > threshold {
+                1.0
+            } else if x < -threshold {
+                -1.0
+            } else {
+                0.0
+            }
+        })
+        .collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
     use qlang_core::ops::Op;
     use qlang_core::tensor::TensorType;
+    use std::collections::HashMap;
 
     #[test]
     fn split_graph_and_script() {
@@ -258,10 +270,26 @@ graph test_model {
     #[test]
     fn run_graph_works() {
         let mut g = Graph::new("test");
-        let a = g.add_node(Op::Input { name: "a".into() }, vec![], vec![TensorType::f32_vector(4)]);
-        let b = g.add_node(Op::Input { name: "b".into() }, vec![], vec![TensorType::f32_vector(4)]);
-        let add = g.add_node(Op::Add, vec![TensorType::f32_vector(4); 2], vec![TensorType::f32_vector(4)]);
-        let out = g.add_node(Op::Output { name: "y".into() }, vec![TensorType::f32_vector(4)], vec![]);
+        let a = g.add_node(
+            Op::Input { name: "a".into() },
+            vec![],
+            vec![TensorType::f32_vector(4)],
+        );
+        let b = g.add_node(
+            Op::Input { name: "b".into() },
+            vec![],
+            vec![TensorType::f32_vector(4)],
+        );
+        let add = g.add_node(
+            Op::Add,
+            vec![TensorType::f32_vector(4); 2],
+            vec![TensorType::f32_vector(4)],
+        );
+        let out = g.add_node(
+            Op::Output { name: "y".into() },
+            vec![TensorType::f32_vector(4)],
+            vec![],
+        );
         g.add_edge(a, 0, add, 0, TensorType::f32_vector(4));
         g.add_edge(b, 0, add, 1, TensorType::f32_vector(4));
         g.add_edge(add, 0, out, 0, TensorType::f32_vector(4));

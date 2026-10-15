@@ -76,27 +76,25 @@ impl TaskPool {
 
         for _ in 0..n_threads {
             let shared_clone = Arc::clone(&shared);
-            workers.push(thread::spawn(move || {
-                loop {
-                    let job = {
-                        let mut q = shared_clone.jobs.lock().unwrap();
-                        loop {
-                            if let Some(job) = q.pop_front() {
-                                break Some(job);
-                            }
-                            if *shared_clone.shutdown.lock().unwrap() {
-                                break None;
-                            }
-                            q = shared_clone.condvar.wait(q).unwrap();
+            workers.push(thread::spawn(move || loop {
+                let job = {
+                    let mut q = shared_clone.jobs.lock().unwrap();
+                    loop {
+                        if let Some(job) = q.pop_front() {
+                            break Some(job);
                         }
-                    };
-                    match job {
-                        Some((f, reply)) => {
-                            let result = f();
-                            let _ = reply.send(result);
+                        if *shared_clone.shutdown.lock().unwrap() {
+                            break None;
                         }
-                        None => return,
+                        q = shared_clone.condvar.wait(q).unwrap();
                     }
+                };
+                match job {
+                    Some((f, reply)) => {
+                        let result = f();
+                        let _ = reply.send(result);
+                    }
+                    None => return,
                 }
             }));
         }
@@ -114,7 +112,9 @@ impl TaskPool {
     {
         let (reply_tx, reply_rx) = std::sync::mpsc::channel();
         let sender = self.sender.as_ref().expect("pool has been shut down");
-        sender.send((Box::new(task), reply_tx)).expect("pool dispatcher gone");
+        sender
+            .send((Box::new(task), reply_tx))
+            .expect("pool dispatcher gone");
         TaskHandle { rx: reply_rx }
     }
 
@@ -160,6 +160,8 @@ pub struct Channel;
 
 impl Channel {
     /// Create a new unbounded channel, returning `(Sender, Receiver)`.
+    // `Channel` is a unit-struct namespace; `new` is a public factory returning the endpoint pair.
+    #[allow(clippy::new_ret_no_self)]
     pub fn new<T>() -> (Sender<T>, Receiver<T>) {
         let (tx, rx) = std::sync::mpsc::channel();
         (Sender { inner: tx }, Receiver { inner: rx })
@@ -234,15 +236,13 @@ impl<T> Clone for SharedState<T> {
 /// separate thread, and the results are concatenated in order.
 pub fn parallel_map(data: Vec<f32>, func: fn(f32) -> f32, n_threads: usize) -> Vec<f32> {
     let n_threads = n_threads.max(1).min(data.len().max(1));
-    let chunk_size = (data.len() + n_threads - 1) / n_threads;
+    let chunk_size = data.len().div_ceil(n_threads);
 
     let chunks: Vec<Vec<f32>> = data.chunks(chunk_size).map(|c| c.to_vec()).collect();
 
     let handles: Vec<_> = chunks
         .into_iter()
-        .map(|chunk| {
-            thread::spawn(move || chunk.into_iter().map(func).collect::<Vec<f32>>())
-        })
+        .map(|chunk| thread::spawn(move || chunk.into_iter().map(func).collect::<Vec<f32>>()))
         .collect();
 
     let mut result = Vec::with_capacity(data.len());
@@ -269,17 +269,13 @@ pub fn parallel_reduce(
     }
 
     let n_threads = n_threads.max(1).min(data.len());
-    let chunk_size = (data.len() + n_threads - 1) / n_threads;
+    let chunk_size = data.len().div_ceil(n_threads);
 
     let chunks: Vec<Vec<f32>> = data.chunks(chunk_size).map(|c| c.to_vec()).collect();
 
     let handles: Vec<_> = chunks
         .into_iter()
-        .map(|chunk| {
-            thread::spawn(move || {
-                chunk.into_iter().fold(identity, func)
-            })
-        })
+        .map(|chunk| thread::spawn(move || chunk.into_iter().fold(identity, func)))
         .collect();
 
     let mut result = identity;
@@ -395,9 +391,7 @@ impl ParallelGraphExecutor {
                     let node_set: HashSet<NodeId> = comp.iter().copied().collect();
                     let sub = Self::subgraph(graph, &node_set);
                     let inputs = Arc::clone(&inputs);
-                    thread::spawn(move || {
-                        executor::execute(&sub, (*inputs).clone())
-                    })
+                    thread::spawn(move || executor::execute(&sub, (*inputs).clone()))
                 })
                 .collect();
 

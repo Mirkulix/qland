@@ -9,9 +9,7 @@
 
 use std::collections::HashMap;
 
-use crate::vm::{
-    tokenize, type_check, BinOp, Expr, Parser, Stmt, UnaryOp, Value, VmError,
-};
+use crate::vm::{tokenize, type_check, BinOp, Expr, Parser, Stmt, UnaryOp, Value, VmError};
 
 // ─── Opcodes ────────────────────────────────────────────────────────────────
 
@@ -20,14 +18,14 @@ use crate::vm::{
 #[repr(u8)]
 pub enum OpCode {
     // Stack operations
-    Const = 0,    // push constant from pool (u16 index)
-    Pop,          // discard top of stack
+    Const = 0, // push constant from pool (u16 index)
+    Pop,       // discard top of stack
 
     // Variables
-    LoadLocal,    // push local variable (u8 slot)
-    StoreLocal,   // pop and store to local (u8 slot)
-    LoadGlobal,   // push global variable (u16 constant index = name)
-    StoreGlobal,  // pop and store to global (u16 constant index = name)
+    LoadLocal,   // push local variable (u8 slot)
+    StoreLocal,  // pop and store to local (u8 slot)
+    LoadGlobal,  // push global variable (u16 constant index = name)
+    StoreGlobal, // pop and store to global (u16 constant index = name)
 
     // Arithmetic
     Add,
@@ -60,27 +58,27 @@ pub enum OpCode {
     Not,
 
     // Control flow
-    Jump,         // unconditional jump (u16 offset)
-    JumpIfFalse,  // pop, jump if false (u16 offset)
-    JumpIfTrue,   // pop, jump if true (u16 offset)
-    Loop,         // jump backward (u16 offset)
+    Jump,        // unconditional jump (u16 offset)
+    JumpIfFalse, // pop, jump if false (u16 offset)
+    JumpIfTrue,  // pop, jump if true (u16 offset)
+    Loop,        // jump backward (u16 offset)
 
     // Functions
     Call,   // call user function (u16 name index, u8 arg count)
     Return, // return from function
 
     // Built-in functions
-    Print,    // pop and print
-    Len,      // pop, push length
-    TypeOf,   // pop, push type name as string
-    Str,      // pop, push string representation
-    Int,      // pop, push floored integer
-    Sqrt,     // pop, push sqrt
-    Abs,      // pop, push abs
-    Floor,    // pop, push floor
-    Min,      // pop 2, push min
-    Max,      // pop 2, push max
-    Push,     // pop value, pop array, push array with value appended
+    Print,  // pop and print
+    Len,    // pop, push length
+    TypeOf, // pop, push type name as string
+    Str,    // pop, push string representation
+    Int,    // pop, push floored integer
+    Sqrt,   // pop, push sqrt
+    Abs,    // pop, push abs
+    Floor,  // pop, push floor
+    Min,    // pop 2, push min
+    Max,    // pop 2, push max
+    Push,   // pop value, pop array, push array with value appended
 
     // Arrays
     MakeArray, // pop N items, push array (u16 count)
@@ -97,24 +95,53 @@ impl OpCode {
     fn from_u8(byte: u8) -> Option<OpCode> {
         use OpCode::*;
         match byte {
-            0 => Some(Const), 1 => Some(Pop),
-            2 => Some(LoadLocal), 3 => Some(StoreLocal),
-            4 => Some(LoadGlobal), 5 => Some(StoreGlobal),
-            6 => Some(Add), 7 => Some(Sub), 8 => Some(Mul), 9 => Some(Div),
-            10 => Some(Mod), 11 => Some(Pow), 12 => Some(Neg),
-            13 => Some(BitAnd), 14 => Some(BitOr), 15 => Some(BitXor),
-            16 => Some(BitNot), 17 => Some(Shl), 18 => Some(Shr),
-            19 => Some(Eq), 20 => Some(Ne), 21 => Some(Lt),
-            22 => Some(Gt), 23 => Some(Le), 24 => Some(Ge),
-            25 => Some(And), 26 => Some(Or), 27 => Some(Not),
-            28 => Some(Jump), 29 => Some(JumpIfFalse),
-            30 => Some(JumpIfTrue), 31 => Some(Loop),
-            32 => Some(Call), 33 => Some(Return),
-            34 => Some(Print), 35 => Some(Len), 36 => Some(TypeOf),
-            37 => Some(Str), 38 => Some(Int), 39 => Some(Sqrt),
-            40 => Some(Abs), 41 => Some(Floor), 42 => Some(Min),
-            43 => Some(Max), 44 => Some(Push),
-            45 => Some(MakeArray), 46 => Some(Index),
+            0 => Some(Const),
+            1 => Some(Pop),
+            2 => Some(LoadLocal),
+            3 => Some(StoreLocal),
+            4 => Some(LoadGlobal),
+            5 => Some(StoreGlobal),
+            6 => Some(Add),
+            7 => Some(Sub),
+            8 => Some(Mul),
+            9 => Some(Div),
+            10 => Some(Mod),
+            11 => Some(Pow),
+            12 => Some(Neg),
+            13 => Some(BitAnd),
+            14 => Some(BitOr),
+            15 => Some(BitXor),
+            16 => Some(BitNot),
+            17 => Some(Shl),
+            18 => Some(Shr),
+            19 => Some(Eq),
+            20 => Some(Ne),
+            21 => Some(Lt),
+            22 => Some(Gt),
+            23 => Some(Le),
+            24 => Some(Ge),
+            25 => Some(And),
+            26 => Some(Or),
+            27 => Some(Not),
+            28 => Some(Jump),
+            29 => Some(JumpIfFalse),
+            30 => Some(JumpIfTrue),
+            31 => Some(Loop),
+            32 => Some(Call),
+            33 => Some(Return),
+            34 => Some(Print),
+            35 => Some(Len),
+            36 => Some(TypeOf),
+            37 => Some(Str),
+            38 => Some(Int),
+            39 => Some(Sqrt),
+            40 => Some(Abs),
+            41 => Some(Floor),
+            42 => Some(Min),
+            43 => Some(Max),
+            44 => Some(Push),
+            45 => Some(MakeArray),
+            46 => Some(Index),
             47 => Some(MakeDict),
             48 => Some(Halt),
             _ => None,
@@ -163,7 +190,6 @@ impl Chunk {
         self.constants.push(val);
         idx as u16
     }
-
 }
 
 /// Check if two Values are identical (used for constant deduplication).
@@ -286,7 +312,11 @@ impl Compiler {
 
     fn compile_stmt(&mut self, stmt: &Stmt) -> Result<(), VmError> {
         match stmt {
-            Stmt::Let { name, type_ann: _, value } => {
+            Stmt::Let {
+                name,
+                type_ann: _,
+                value,
+            } => {
                 self.compile_expr(value)?;
                 self.add_local(name);
                 // The value is on the stack, which IS the local variable slot
@@ -400,7 +430,12 @@ impl Compiler {
                 self.locals.pop();
                 self.chunk.emit(OpCode::Pop);
             }
-            Stmt::FnDef { name, params, return_type: _, body } => {
+            Stmt::FnDef {
+                name,
+                params,
+                return_type: _,
+                body,
+            } => {
                 // Compile the function body into a separate chunk
                 let mut fn_compiler = Compiler::new();
                 // Add params as locals
@@ -674,9 +709,8 @@ impl BytecodeVm {
             let op_byte = chunk.code[ip];
             ip += 1;
 
-            let op = OpCode::from_u8(op_byte).ok_or_else(|| {
-                VmError::RuntimeError(format!("invalid opcode: {}", op_byte))
-            })?;
+            let op = OpCode::from_u8(op_byte)
+                .ok_or_else(|| VmError::RuntimeError(format!("invalid opcode: {}", op_byte)))?;
 
             match op {
                 OpCode::Const => {
@@ -714,7 +748,7 @@ impl BytecodeVm {
                         .globals
                         .get(&name)
                         .cloned()
-                        .ok_or_else(|| VmError::UndefinedVariable(name))?;
+                        .ok_or(VmError::UndefinedVariable(name))?;
                     self.stack.push(val);
                 }
                 OpCode::StoreGlobal => {
@@ -737,8 +771,7 @@ impl BytecodeVm {
                     let a = self.stack.pop().unwrap();
                     // String concatenation
                     if matches!(&a, Value::String(_)) || matches!(&b, Value::String(_)) {
-                        self.stack
-                            .push(Value::String(format!("{}{}", a, b)));
+                        self.stack.push(Value::String(format!("{}{}", a, b)));
                     } else {
                         self.stack
                             .push(Value::Number(a.as_number()? + b.as_number()?));
@@ -905,8 +938,7 @@ impl BytecodeVm {
                             name
                         )));
                     }
-                    let args: Vec<Value> =
-                        self.stack.drain(stack_len - argc..).collect();
+                    let args: Vec<Value> = self.stack.drain(stack_len - argc..).collect();
 
                     // User-defined functions first (so users can override builtins)
                     if let Some(func) = functions.get(&name) {
@@ -916,11 +948,9 @@ impl BytecodeVm {
                                 got: args.len(),
                             });
                         }
-                        let result =
-                            self.execute_function(func, &args, functions)?;
+                        let result = self.execute_function(func, &args, functions)?;
                         self.stack.push(result);
-                    } else if let Some(result) =
-                        crate::graph_ops::try_call_graph_op(&name, &args)?
+                    } else if let Some(result) = crate::graph_ops::try_call_graph_op(&name, &args)?
                     {
                         self.stack.push(result);
                     } else {
@@ -941,15 +971,10 @@ impl BytecodeVm {
                 OpCode::Len => {
                     let v = self.stack.pop().unwrap();
                     match &v {
-                        Value::Array(a) => {
-                            self.stack.push(Value::Number(a.len() as f64))
-                        }
-                        Value::String(s) => {
-                            self.stack.push(Value::Number(s.len() as f64))
-                        }
+                        Value::Array(a) => self.stack.push(Value::Number(a.len() as f64)),
+                        Value::String(s) => self.stack.push(Value::Number(s.len() as f64)),
                         Value::Dict(entries) => {
-                            self.stack
-                                .push(Value::Number(entries.len() as f64))
+                            self.stack.push(Value::Number(entries.len() as f64))
                         }
                         other => {
                             return Err(VmError::TypeError(format!(
@@ -961,9 +986,8 @@ impl BytecodeVm {
                 }
                 OpCode::TypeOf => {
                     let v = self.stack.pop().unwrap();
-                    self.stack.push(Value::String(
-                        v.type_name_static().to_string(),
-                    ));
+                    self.stack
+                        .push(Value::String(v.type_name_static().to_string()));
                 }
                 OpCode::Str => {
                     let v = self.stack.pop().unwrap();
@@ -1047,12 +1071,10 @@ impl BytecodeVm {
                             match found {
                                 Some(v) => self.stack.push(v),
                                 None => {
-                                    return Err(VmError::RuntimeError(
-                                        format!(
-                                            "key '{}' not found in dict",
-                                            key
-                                        ),
-                                    ))
+                                    return Err(VmError::RuntimeError(format!(
+                                        "key '{}' not found in dict",
+                                        key
+                                    )))
                                 }
                             }
                         }
@@ -1065,8 +1087,7 @@ impl BytecodeVm {
                                     len: chars.len(),
                                 });
                             }
-                            self.stack
-                                .push(Value::String(chars[idx].to_string()));
+                            self.stack.push(Value::String(chars[idx].to_string()));
                         }
                         other => {
                             return Err(VmError::TypeError(format!(
@@ -1082,16 +1103,13 @@ impl BytecodeVm {
                     let count = read_u16!() as usize;
                     let pairs_count = count * 2; // key + value per entry
                     let stack_len = self.stack.len();
-                    let items: Vec<Value> =
-                        self.stack.drain(stack_len - pairs_count..).collect();
+                    let items: Vec<Value> = self.stack.drain(stack_len - pairs_count..).collect();
                     let mut entries = Vec::with_capacity(count);
                     for pair in items.chunks(2) {
                         let key = match &pair[0] {
                             Value::String(s) => s.clone(),
                             _ => {
-                                return Err(VmError::RuntimeError(
-                                    "dict key must be string".into(),
-                                ))
+                                return Err(VmError::RuntimeError("dict key must be string".into()))
                             }
                         };
                         entries.push((key, pair[1].clone()));
@@ -1155,9 +1173,8 @@ impl BytecodeVm {
             let op_byte = chunk.code[ip];
             ip += 1;
 
-            let op = OpCode::from_u8(op_byte).ok_or_else(|| {
-                VmError::RuntimeError(format!("invalid opcode: {}", op_byte))
-            })?;
+            let op = OpCode::from_u8(op_byte)
+                .ok_or_else(|| VmError::RuntimeError(format!("invalid opcode: {}", op_byte)))?;
 
             match op {
                 OpCode::Const => {
@@ -1173,8 +1190,7 @@ impl BytecodeVm {
                 }
                 OpCode::StoreLocal => {
                     let slot = read_u8!() as usize;
-                    let val =
-                        self.stack.last().cloned().unwrap_or(Value::Null);
+                    let val = self.stack.last().cloned().unwrap_or(Value::Null);
                     self.stack[base + slot] = val;
                     self.stack.pop();
                 }
@@ -1192,7 +1208,7 @@ impl BytecodeVm {
                         .globals
                         .get(&name)
                         .cloned()
-                        .ok_or_else(|| VmError::UndefinedVariable(name))?;
+                        .ok_or(VmError::UndefinedVariable(name))?;
                     self.stack.push(val);
                 }
                 OpCode::StoreGlobal => {
@@ -1213,15 +1229,11 @@ impl BytecodeVm {
                 OpCode::Add => {
                     let b = self.stack.pop().unwrap();
                     let a = self.stack.pop().unwrap();
-                    if matches!(&a, Value::String(_))
-                        || matches!(&b, Value::String(_))
-                    {
-                        self.stack
-                            .push(Value::String(format!("{}{}", a, b)));
+                    if matches!(&a, Value::String(_)) || matches!(&b, Value::String(_)) {
+                        self.stack.push(Value::String(format!("{}{}", a, b)));
                     } else {
-                        self.stack.push(Value::Number(
-                            a.as_number()? + b.as_number()?,
-                        ));
+                        self.stack
+                            .push(Value::Number(a.as_number()? + b.as_number()?));
                     }
                 }
                 OpCode::Sub => {
@@ -1372,8 +1384,7 @@ impl BytecodeVm {
                     };
 
                     let stack_len = self.stack.len();
-                    let call_args: Vec<Value> =
-                        self.stack.drain(stack_len - argc..).collect();
+                    let call_args: Vec<Value> = self.stack.drain(stack_len - argc..).collect();
 
                     // User-defined first (so users can override builtins)
                     if let Some(f) = all_functions.get(&name) {
@@ -1383,16 +1394,10 @@ impl BytecodeVm {
                                 got: call_args.len(),
                             });
                         }
-                        let result = self.execute_function(
-                            f,
-                            &call_args,
-                            all_functions,
-                        )?;
+                        let result = self.execute_function(f, &call_args, all_functions)?;
                         self.stack.push(result);
                     } else if let Some(result) =
-                        crate::graph_ops::try_call_graph_op(
-                            &name, &call_args,
-                        )?
+                        crate::graph_ops::try_call_graph_op(&name, &call_args)?
                     {
                         self.stack.push(result);
                     } else {
@@ -1402,8 +1407,7 @@ impl BytecodeVm {
 
                 OpCode::Return => {
                     // Pop the return value
-                    let ret_val =
-                        self.stack.pop().unwrap_or(Value::Null);
+                    let ret_val = self.stack.pop().unwrap_or(Value::Null);
                     // Clean up function locals from the stack
                     self.stack.truncate(saved_stack_len);
                     return Ok(ret_val);
@@ -1417,15 +1421,10 @@ impl BytecodeVm {
                 OpCode::Len => {
                     let v = self.stack.pop().unwrap();
                     match &v {
-                        Value::Array(a) => {
-                            self.stack.push(Value::Number(a.len() as f64))
-                        }
-                        Value::String(s) => {
-                            self.stack.push(Value::Number(s.len() as f64))
-                        }
+                        Value::Array(a) => self.stack.push(Value::Number(a.len() as f64)),
+                        Value::String(s) => self.stack.push(Value::Number(s.len() as f64)),
                         Value::Dict(entries) => {
-                            self.stack
-                                .push(Value::Number(entries.len() as f64))
+                            self.stack.push(Value::Number(entries.len() as f64))
                         }
                         other => {
                             return Err(VmError::TypeError(format!(
@@ -1437,9 +1436,8 @@ impl BytecodeVm {
                 }
                 OpCode::TypeOf => {
                     let v = self.stack.pop().unwrap();
-                    self.stack.push(Value::String(
-                        v.type_name_static().to_string(),
-                    ));
+                    self.stack
+                        .push(Value::String(v.type_name_static().to_string()));
                 }
                 OpCode::Str => {
                     let v = self.stack.pop().unwrap();
@@ -1521,12 +1519,10 @@ impl BytecodeVm {
                             match found {
                                 Some(v) => self.stack.push(v),
                                 None => {
-                                    return Err(VmError::RuntimeError(
-                                        format!(
-                                            "key '{}' not found in dict",
-                                            key
-                                        ),
-                                    ))
+                                    return Err(VmError::RuntimeError(format!(
+                                        "key '{}' not found in dict",
+                                        key
+                                    )))
                                 }
                             }
                         }
@@ -1539,9 +1535,7 @@ impl BytecodeVm {
                                     len: chars.len(),
                                 });
                             }
-                            self.stack.push(Value::String(
-                                chars[idx].to_string(),
-                            ));
+                            self.stack.push(Value::String(chars[idx].to_string()));
                         }
                         other => {
                             return Err(VmError::TypeError(format!(
@@ -1556,16 +1550,13 @@ impl BytecodeVm {
                     let count = read_u16!() as usize;
                     let pairs_count = count * 2;
                     let stack_len = self.stack.len();
-                    let items: Vec<Value> =
-                        self.stack.drain(stack_len - pairs_count..).collect();
+                    let items: Vec<Value> = self.stack.drain(stack_len - pairs_count..).collect();
                     let mut entries = Vec::with_capacity(count);
                     for pair in items.chunks(2) {
                         let key = match &pair[0] {
                             Value::String(s) => s.clone(),
                             _ => {
-                                return Err(VmError::RuntimeError(
-                                    "dict key must be string".into(),
-                                ))
+                                return Err(VmError::RuntimeError("dict key must be string".into()))
                             }
                         };
                         entries.push((key, pair[1].clone()));
@@ -1619,99 +1610,116 @@ mod tests {
 
     #[test]
     fn arithmetic_precedence() {
-        let out = run_output(r#"
+        let out = run_output(
+            r#"
             let a = 2 + 3 * 4
             let b = (2 + 3) * 4
             print(a)
             print(b)
-        "#);
+        "#,
+        );
         assert_eq!(out, vec!["14", "20"]);
     }
 
     #[test]
     fn variable_binding() {
-        let out = run_output(r#"
+        let out = run_output(
+            r#"
             let x = 5
             let y = x + 3
             print(y)
-        "#);
+        "#,
+        );
         assert_eq!(out, vec!["8"]);
     }
 
     #[test]
     fn variable_reassignment() {
-        let out = run_output(r#"
+        let out = run_output(
+            r#"
             let x = 10
             x = x + 5
             print(x)
-        "#);
+        "#,
+        );
         assert_eq!(out, vec!["15"]);
     }
 
     #[test]
     fn if_else() {
-        let out = run_output(r#"
+        let out = run_output(
+            r#"
             let x = 10
             if x > 5 {
                 print("big")
             } else {
                 print("small")
             }
-        "#);
+        "#,
+        );
         assert_eq!(out, vec!["big"]);
     }
 
     #[test]
     fn if_else_false() {
-        let out = run_output(r#"
+        let out = run_output(
+            r#"
             let x = 2
             if x > 5 {
                 print("big")
             } else {
                 print("small")
             }
-        "#);
+        "#,
+        );
         assert_eq!(out, vec!["small"]);
     }
 
     #[test]
     fn while_loop() {
-        let out = run_output(r#"
+        let out = run_output(
+            r#"
             let x = 0
             while x < 5 {
                 x = x + 1
             }
             print(x)
-        "#);
+        "#,
+        );
         assert_eq!(out, vec!["5"]);
     }
 
     #[test]
     fn for_loop() {
-        let out = run_output(r#"
+        let out = run_output(
+            r#"
             let sum = 0
             for i in 0..5 {
                 sum = sum + i
             }
             print(sum)
-        "#);
+        "#,
+        );
         assert_eq!(out, vec!["10"]); // 0+1+2+3+4 = 10
     }
 
     #[test]
     fn function_basic() {
-        let out = run_output(r#"
+        let out = run_output(
+            r#"
             fn add(a, b) {
                 return a + b
             }
             print(add(3, 4))
-        "#);
+        "#,
+        );
         assert_eq!(out, vec!["7"]);
     }
 
     #[test]
     fn function_recursive_fibonacci() {
-        let out = run_output(r#"
+        let out = run_output(
+            r#"
             fn fib(n) {
                 if n <= 1 {
                     return n
@@ -1719,96 +1727,114 @@ mod tests {
                 return fib(n - 1) + fib(n - 2)
             }
             print(fib(10))
-        "#);
+        "#,
+        );
         assert_eq!(out, vec!["55"]);
     }
 
     #[test]
     fn string_concatenation() {
-        let out = run_output(r#"
+        let out = run_output(
+            r#"
             let greeting = "hello" + " " + "world"
             print(greeting)
-        "#);
+        "#,
+        );
         assert_eq!(out, vec!["hello world"]);
     }
 
     #[test]
     fn array_basic() {
-        let out = run_output(r#"
+        let out = run_output(
+            r#"
             let arr = [10, 20, 30]
             print(arr[1])
             print(len(arr))
-        "#);
+        "#,
+        );
         assert_eq!(out, vec!["20", "3"]);
     }
 
     #[test]
     fn dict_basic() {
-        let out = run_output(r#"
+        let out = run_output(
+            r#"
             let d = {"name": "qlang", "version": 3}
             print(d["name"])
-        "#);
+        "#,
+        );
         assert_eq!(out, vec!["qlang"]);
     }
 
     #[test]
     fn builtin_functions() {
-        let out = run_output(r#"
+        let out = run_output(
+            r#"
             print(abs(-5))
             print(sqrt(16))
             print(min(3, 7))
             print(max(3, 7))
             print(floor(3.7))
-        "#);
+        "#,
+        );
         assert_eq!(out, vec!["5", "4", "3", "7", "3"]);
     }
 
     #[test]
     fn boolean_logic() {
-        let out = run_output(r#"
+        let out = run_output(
+            r#"
             print(true and false)
             print(true or false)
             print(not true)
-        "#);
+        "#,
+        );
         assert_eq!(out, vec!["false", "true", "false"]);
     }
 
     #[test]
     fn comparison_ops() {
-        let out = run_output(r#"
+        let out = run_output(
+            r#"
             print(3 == 3)
             print(3 != 4)
             print(3 < 4)
             print(4 > 3)
             print(3 <= 3)
             print(4 >= 5)
-        "#);
+        "#,
+        );
         assert_eq!(out, vec!["true", "true", "true", "true", "true", "false"]);
     }
 
     #[test]
     fn bitwise_ops() {
-        let out = run_output(r#"
+        let out = run_output(
+            r#"
             print(5 & 3)
             print(5 | 3)
             print(5 ^ 3)
             print(1 << 3)
             print(8 >> 2)
-        "#);
+        "#,
+        );
         assert_eq!(out, vec!["1", "7", "6", "8", "2"]);
     }
 
     #[test]
     fn power_operator() {
-        let out = run_output(r#"
+        let out = run_output(
+            r#"
             print(2 ** 10)
-        "#);
+        "#,
+        );
         assert_eq!(out, vec!["1024"]);
     }
 
     #[test]
     fn nested_function_calls() {
-        let out = run_output(r#"
+        let out = run_output(
+            r#"
             fn square(x) {
                 return x * x
             }
@@ -1816,13 +1842,15 @@ mod tests {
                 return square(a) + square(b)
             }
             print(sum_squares(3, 4))
-        "#);
+        "#,
+        );
         assert_eq!(out, vec!["25"]); // 9 + 16
     }
 
     #[test]
     fn compound_assignment() {
-        let out = run_output(r#"
+        let out = run_output(
+            r#"
             let x = 10
             x += 5
             print(x)
@@ -1830,25 +1858,29 @@ mod tests {
             print(x)
             x *= 2
             print(x)
-        "#);
+        "#,
+        );
         assert_eq!(out, vec!["15", "12", "24"]);
     }
 
     #[test]
     fn type_function() {
-        let out = run_output(r#"
+        let out = run_output(
+            r#"
             print(type(42))
             print(type("hello"))
             print(type(true))
             print(type([1, 2, 3]))
-        "#);
+        "#,
+        );
         assert_eq!(out, vec!["number", "string", "bool", "array"]);
     }
 
     #[test]
     fn fibonacci_benchmark() {
         // Test that bytecode VM produces correct results for fib(20)
-        let out = run_output(r#"
+        let out = run_output(
+            r#"
             fn fib(n) {
                 if n <= 1 {
                     return n
@@ -1856,7 +1888,8 @@ mod tests {
                 return fib(n - 1) + fib(n - 2)
             }
             print(fib(20))
-        "#);
+        "#,
+        );
         assert_eq!(out, vec!["6765"]);
     }
 
@@ -1888,14 +1921,8 @@ mod tests {
         assert_eq!(tw_out, vec!["75025"]);
 
         // Print timing for information (visible in test output with --nocapture)
-        eprintln!(
-            "fib(25) bytecode VM:    {:?}",
-            bc_elapsed
-        );
-        eprintln!(
-            "fib(25) tree-walking:   {:?}",
-            tw_elapsed
-        );
+        eprintln!("fib(25) bytecode VM:    {:?}", bc_elapsed);
+        eprintln!("fib(25) tree-walking:   {:?}", tw_elapsed);
         eprintln!(
             "speedup: {:.1}x",
             tw_elapsed.as_secs_f64() / bc_elapsed.as_secs_f64()
@@ -1930,14 +1957,8 @@ mod tests {
         assert_eq!(bc_out, vec![expected]);
         assert_eq!(tw_out, vec![expected]);
 
-        eprintln!(
-            "loop(100k) bytecode VM:  {:?}",
-            bc_elapsed
-        );
-        eprintln!(
-            "loop(100k) tree-walking: {:?}",
-            tw_elapsed
-        );
+        eprintln!("loop(100k) bytecode VM:  {:?}", bc_elapsed);
+        eprintln!("loop(100k) tree-walking: {:?}", tw_elapsed);
         eprintln!(
             "speedup: {:.1}x",
             tw_elapsed.as_secs_f64() / bc_elapsed.as_secs_f64()
@@ -1946,18 +1967,21 @@ mod tests {
 
     #[test]
     fn str_function() {
-        let out = run_output(r#"
+        let out = run_output(
+            r#"
             let n = 42
             let s = str(n)
             print(s)
             print(type(s))
-        "#);
+        "#,
+        );
         assert_eq!(out, vec!["42", "string"]);
     }
 
     #[test]
     fn nested_if() {
-        let out = run_output(r#"
+        let out = run_output(
+            r#"
             let x = 15
             if x > 10 {
                 if x > 20 {
@@ -1968,13 +1992,15 @@ mod tests {
             } else {
                 print("small")
             }
-        "#);
+        "#,
+        );
         assert_eq!(out, vec!["medium"]);
     }
 
     #[test]
     fn while_with_return_in_function() {
-        let out = run_output(r#"
+        let out = run_output(
+            r#"
             fn find_first_above(threshold) {
                 let i = 0
                 while i < 100 {
@@ -1986,32 +2012,38 @@ mod tests {
                 return -1
             }
             print(find_first_above(50))
-        "#);
+        "#,
+        );
         assert_eq!(out, vec!["8"]); // 8*8=64 > 50
     }
 
     #[test]
     fn modulo_operator() {
-        let out = run_output(r#"
+        let out = run_output(
+            r#"
             print(10 % 3)
             print(17 % 5)
-        "#);
+        "#,
+        );
         assert_eq!(out, vec!["1", "2"]);
     }
 
     #[test]
     fn negation() {
-        let out = run_output(r#"
+        let out = run_output(
+            r#"
             let x = 5
             print(-x)
             print(-(-x))
-        "#);
+        "#,
+        );
         assert_eq!(out, vec!["-5", "5"]);
     }
 
     #[test]
     fn elif_chain() {
-        let out = run_output(r#"
+        let out = run_output(
+            r#"
             let x = 5
             if x > 10 {
                 print("big")
@@ -2020,13 +2052,15 @@ mod tests {
             } else {
                 print("small")
             }
-        "#);
+        "#,
+        );
         assert_eq!(out, vec!["medium"]);
     }
 
     #[test]
     fn for_loop_with_function() {
-        let out = run_output(r#"
+        let out = run_output(
+            r#"
             fn factorial(n) {
                 let result = 1
                 for i in 1..n {
@@ -2035,17 +2069,20 @@ mod tests {
                 return result
             }
             print(factorial(6))
-        "#);
+        "#,
+        );
         // for i in 1..6 gives i = 1,2,3,4,5 => 1*2*3*4*5 = 120
         assert_eq!(out, vec!["120"]);
     }
 
     #[test]
     fn string_number_concat() {
-        let out = run_output(r#"
+        let out = run_output(
+            r#"
             let result = "value: " + 42
             print(result)
-        "#);
+        "#,
+        );
         assert_eq!(out, vec!["value: 42"]);
     }
 }

@@ -28,7 +28,9 @@ pub enum ParallelStrategy {
     /// Each worker trains on different data, gradients are averaged.
     DataParallel { n_workers: usize },
     /// Different workers own different layers.
-    ModelParallel { layer_assignment: Vec<(usize, usize)> }, // (layer_start, layer_end) per worker
+    ModelParallel {
+        layer_assignment: Vec<(usize, usize)>,
+    }, // (layer_start, layer_end) per worker
     /// Workers form a pipeline.
     Pipeline { n_stages: usize },
 }
@@ -101,10 +103,7 @@ pub enum GradientAggregation {
 }
 
 /// Aggregate gradients from multiple workers.
-pub fn aggregate_gradients(
-    gradients: &[Vec<f32>],
-    method: &GradientAggregation,
-) -> Vec<f32> {
+pub fn aggregate_gradients(gradients: &[Vec<f32>], method: &GradientAggregation) -> Vec<f32> {
     if gradients.is_empty() {
         return Vec::new();
     }
@@ -203,7 +202,9 @@ pub fn simulate_distributed_step(
     }
 
     // Collect gradients
-    let gradients: Vec<Vec<f32>> = job.workers.iter()
+    let gradients: Vec<Vec<f32>> = job
+        .workers
+        .iter()
         .filter(|w| matches!(w.role, WorkerRole::Trainer { .. }))
         .filter_map(|w| worker_gradients.get(&w.id).cloned())
         .collect();
@@ -225,20 +226,14 @@ mod tests {
 
     #[test]
     fn gradient_averaging() {
-        let grads = vec![
-            vec![1.0, 2.0, 3.0],
-            vec![3.0, 4.0, 5.0],
-        ];
+        let grads = vec![vec![1.0, 2.0, 3.0], vec![3.0, 4.0, 5.0]];
         let avg = aggregate_gradients(&grads, &GradientAggregation::Average);
         assert_eq!(avg, vec![2.0, 3.0, 4.0]);
     }
 
     #[test]
     fn weighted_gradient_averaging() {
-        let grads = vec![
-            vec![1.0, 0.0],
-            vec![3.0, 4.0],
-        ];
+        let grads = vec![vec![1.0, 0.0], vec![3.0, 4.0]];
         let weights = vec![1.0, 3.0]; // 25% weight on first, 75% on second
         let avg = aggregate_gradients(&grads, &GradientAggregation::WeightedAverage(weights));
         assert!((avg[0] - 2.5).abs() < 1e-5);

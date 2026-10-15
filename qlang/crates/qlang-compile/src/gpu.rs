@@ -68,7 +68,10 @@ pub fn to_wgsl(graph: &Graph) -> String {
             Op::Div => format!("    let {} = {} / b;\n", result_var, current_var),
             Op::Neg => format!("    let {} = -{};\n", result_var, current_var),
             Op::Relu => format!("    let {} = max({}, 0.0);\n", result_var, current_var),
-            Op::Sigmoid => format!("    let {} = 1.0 / (1.0 + exp(-{}));\n", result_var, current_var),
+            Op::Sigmoid => format!(
+                "    let {} = 1.0 / (1.0 + exp(-{}));\n",
+                result_var, current_var
+            ),
             Op::Tanh => format!("    let {} = tanh({});\n", result_var, current_var),
             Op::ToTernary => {
                 let mut s = String::new();
@@ -82,7 +85,10 @@ pub fn to_wgsl(graph: &Graph) -> String {
                 s.push_str("    }\n");
                 s
             }
-            _ => format!("    let {} = {}; // unsupported: {}\n", result_var, current_var, op),
+            _ => format!(
+                "    let {} = {}; // unsupported: {}\n",
+                result_var, current_var, op
+            ),
         };
         shader.push_str(&expr);
         current_var = result_var;
@@ -105,7 +111,10 @@ pub fn matmul_wgsl(m: usize, k: usize, n: usize) -> String {
 
     let mut shader = String::new();
     shader.push_str("// QLANG Auto-Generated Matrix Multiplication Shader\n");
-    shader.push_str(&format!("// Dimensions: [{}×{}] @ [{}×{}] → [{}×{}]\n\n", m, k, k, n, m, n));
+    shader.push_str(&format!(
+        "// Dimensions: [{}×{}] @ [{}×{}] → [{}×{}]\n\n",
+        m, k, k, n, m, n
+    ));
 
     shader.push_str("@group(0) @binding(0) var<storage, read> A: array<f32>;\n");
     shader.push_str("@group(0) @binding(1) var<storage, read> B: array<f32>;\n");
@@ -180,11 +189,31 @@ mod tests {
     #[test]
     fn wgsl_add_relu() {
         let mut g = Graph::new("gpu_test");
-        let a = g.add_node(Op::Input { name: "a".into() }, vec![], vec![TensorType::f32_vector(1024)]);
-        let b = g.add_node(Op::Input { name: "b".into() }, vec![], vec![TensorType::f32_vector(1024)]);
-        let add = g.add_node(Op::Add, vec![TensorType::f32_vector(1024); 2], vec![TensorType::f32_vector(1024)]);
-        let relu = g.add_node(Op::Relu, vec![TensorType::f32_vector(1024)], vec![TensorType::f32_vector(1024)]);
-        let out = g.add_node(Op::Output { name: "y".into() }, vec![TensorType::f32_vector(1024)], vec![]);
+        let a = g.add_node(
+            Op::Input { name: "a".into() },
+            vec![],
+            vec![TensorType::f32_vector(1024)],
+        );
+        let b = g.add_node(
+            Op::Input { name: "b".into() },
+            vec![],
+            vec![TensorType::f32_vector(1024)],
+        );
+        let add = g.add_node(
+            Op::Add,
+            vec![TensorType::f32_vector(1024); 2],
+            vec![TensorType::f32_vector(1024)],
+        );
+        let relu = g.add_node(
+            Op::Relu,
+            vec![TensorType::f32_vector(1024)],
+            vec![TensorType::f32_vector(1024)],
+        );
+        let out = g.add_node(
+            Op::Output { name: "y".into() },
+            vec![TensorType::f32_vector(1024)],
+            vec![],
+        );
         g.add_edge(a, 0, add, 0, TensorType::f32_vector(1024));
         g.add_edge(b, 0, add, 1, TensorType::f32_vector(1024));
         g.add_edge(add, 0, relu, 0, TensorType::f32_vector(1024));
@@ -200,10 +229,26 @@ mod tests {
     #[test]
     fn wgsl_ternary() {
         let mut g = Graph::new("ternary_gpu");
-        let a = g.add_node(Op::Input { name: "a".into() }, vec![], vec![TensorType::f32_vector(512)]);
-        let _b = g.add_node(Op::Input { name: "b".into() }, vec![], vec![TensorType::f32_vector(512)]);
-        let t = g.add_node(Op::ToTernary, vec![TensorType::f32_vector(512)], vec![TensorType::f32_vector(512)]);
-        let out = g.add_node(Op::Output { name: "y".into() }, vec![TensorType::f32_vector(512)], vec![]);
+        let a = g.add_node(
+            Op::Input { name: "a".into() },
+            vec![],
+            vec![TensorType::f32_vector(512)],
+        );
+        let _b = g.add_node(
+            Op::Input { name: "b".into() },
+            vec![],
+            vec![TensorType::f32_vector(512)],
+        );
+        let t = g.add_node(
+            Op::ToTernary,
+            vec![TensorType::f32_vector(512)],
+            vec![TensorType::f32_vector(512)],
+        );
+        let out = g.add_node(
+            Op::Output { name: "y".into() },
+            vec![TensorType::f32_vector(512)],
+            vec![],
+        );
         g.add_edge(a, 0, t, 0, TensorType::f32_vector(512));
         g.add_edge(t, 0, out, 0, TensorType::f32_vector(512));
 

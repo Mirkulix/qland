@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
-use std::collections::{BinaryHeap, HashMap};
 use std::cmp::Reverse;
+use std::collections::{BinaryHeap, HashMap};
 use std::fmt;
 
 use crate::ops::Op;
@@ -100,7 +100,12 @@ impl Graph {
     }
 
     /// Add a node to the graph, returning its ID.
-    pub fn add_node(&mut self, op: Op, input_types: Vec<TensorType>, output_types: Vec<TensorType>) -> NodeId {
+    pub fn add_node(
+        &mut self,
+        op: Op,
+        input_types: Vec<TensorType>,
+        output_types: Vec<TensorType>,
+    ) -> NodeId {
         let id = self.nodes.len() as NodeId;
         self.nodes.push(Node {
             id,
@@ -146,7 +151,10 @@ impl Graph {
 
     /// Get all edges going OUT of a node.
     pub fn outgoing_edges(&self, node_id: NodeId) -> Vec<&Edge> {
-        self.edges.iter().filter(|e| e.from_node == node_id).collect()
+        self.edges
+            .iter()
+            .filter(|e| e.from_node == node_id)
+            .collect()
     }
 
     /// Topological sort of nodes (execution order).
@@ -158,14 +166,12 @@ impl Graph {
 
         for node in &self.nodes {
             in_degree.entry(node.id).or_insert(0);
-            adj.entry(node.id).or_insert_with(Vec::new);
+            adj.entry(node.id).or_default();
         }
 
         for edge in &self.edges {
             *in_degree.entry(edge.to_node).or_insert(0) += 1;
-            adj.entry(edge.from_node)
-                .or_insert_with(Vec::new)
-                .push(edge.to_node);
+            adj.entry(edge.from_node).or_default().push(edge.to_node);
         }
 
         let mut heap: BinaryHeap<Reverse<NodeId>> = in_degree
@@ -287,19 +293,11 @@ mod tests {
     fn build_simple_graph() {
         let mut g = Graph::new("test");
 
-        let input = g.add_node(
-            Op::Input { name: "x".into() },
-            vec![],
-            vec![f32_vec(4)],
-        );
+        let input = g.add_node(Op::Input { name: "x".into() }, vec![], vec![f32_vec(4)]);
 
         let relu = g.add_node(Op::Relu, vec![f32_vec(4)], vec![f32_vec(4)]);
 
-        let output = g.add_node(
-            Op::Output { name: "y".into() },
-            vec![f32_vec(4)],
-            vec![],
-        );
+        let output = g.add_node(Op::Output { name: "y".into() }, vec![f32_vec(4)], vec![]);
 
         g.add_edge(input, 0, relu, 0, f32_vec(4));
         g.add_edge(relu, 0, output, 0, f32_vec(4));
@@ -338,7 +336,11 @@ mod tests {
     fn display_graph() {
         let mut g = Graph::new("display_test");
         g.add_node(Op::Input { name: "x".into() }, vec![], vec![f32_vec(784)]);
-        g.add_node(Op::ToTernary, vec![f32_vec(784)], vec![TensorType::new(Dtype::Ternary, Shape::vector(784))]);
+        g.add_node(
+            Op::ToTernary,
+            vec![f32_vec(784)],
+            vec![TensorType::new(Dtype::Ternary, Shape::vector(784))],
+        );
         g.add_edge(0, 0, 1, 0, f32_vec(784));
 
         let display = format!("{g}");

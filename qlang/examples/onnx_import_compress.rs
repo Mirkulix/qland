@@ -21,13 +21,12 @@ fn main() {
     println!("================================================================\n");
 
     use qlang_compile::onnx::{
-        OnnxGraph, OnnxNode, OnnxValueInfo, OnnxDim, OnnxInitializer,
-        from_onnx, to_onnx_json,
+        from_onnx, to_onnx_json, OnnxDim, OnnxGraph, OnnxInitializer, OnnxNode, OnnxValueInfo,
     };
+    use qlang_core::tensor::{Shape, TensorData};
     use qlang_runtime::executor;
-    use qlang_runtime::training::MlpWeights;
     use qlang_runtime::mnist::MnistData;
-    use qlang_core::tensor::{TensorData, Shape};
+    use qlang_runtime::training::MlpWeights;
     use std::collections::HashMap;
 
     // ================================================================
@@ -55,13 +54,11 @@ fn main() {
                 shape: vec![OnnxDim::Fixed(128), OnnxDim::Fixed(10)],
             },
         ],
-        outputs: vec![
-            OnnxValueInfo {
-                name: "probs".to_string(),
-                elem_type: "FLOAT".to_string(),
-                shape: vec![OnnxDim::Dynamic("batch".to_string()), OnnxDim::Fixed(10)],
-            },
-        ],
+        outputs: vec![OnnxValueInfo {
+            name: "probs".to_string(),
+            elem_type: "FLOAT".to_string(),
+            shape: vec![OnnxDim::Dynamic("batch".to_string()), OnnxDim::Fixed(10)],
+        }],
         nodes: vec![
             OnnxNode {
                 name: "matmul_1".to_string(),
@@ -110,7 +107,8 @@ fn main() {
         ],
     };
 
-    println!("  ONNX graph: {} nodes, {} inputs, {} outputs, {} initializers",
+    println!(
+        "  ONNX graph: {} nodes, {} inputs, {} outputs, {} initializers",
         onnx_graph.nodes.len(),
         onnx_graph.inputs.len(),
         onnx_graph.outputs.len(),
@@ -130,12 +128,18 @@ fn main() {
     println!("\n--- [2/6] CONVERT TO QLANG GRAPH ---");
 
     let qlang_graph = from_onnx(&onnx_graph).expect("ONNX to QLANG conversion failed");
-    println!("  QLANG graph: {} nodes, {} edges",
-        qlang_graph.nodes.len(), qlang_graph.edges.len());
+    println!(
+        "  QLANG graph: {} nodes, {} edges",
+        qlang_graph.nodes.len(),
+        qlang_graph.edges.len()
+    );
 
     // Verify the converted graph
     let verification = qlang_core::verify::verify_graph(&qlang_graph);
-    println!("  Verification: {} checks passed", verification.passed.len());
+    println!(
+        "  Verification: {} checks passed",
+        verification.passed.len()
+    );
 
     // ================================================================
     // 3. Execute the graph
@@ -145,13 +149,26 @@ fn main() {
 
     // Create a small test input
     let test_input: Vec<f32> = (0..784).map(|i| (i as f32 * 0.0013).sin().abs()).collect();
-    let w1_data: Vec<f32> = (0..784 * 128).map(|i| (i as f32 * 0.4871).sin() * 0.05).collect();
-    let w2_data: Vec<f32> = (0..128 * 10).map(|i| (i as f32 * 0.7291).sin() * 0.1).collect();
+    let w1_data: Vec<f32> = (0..784 * 128)
+        .map(|i| (i as f32 * 0.4871).sin() * 0.05)
+        .collect();
+    let w2_data: Vec<f32> = (0..128 * 10)
+        .map(|i| (i as f32 * 0.7291).sin() * 0.1)
+        .collect();
 
     let mut inputs = HashMap::new();
-    inputs.insert("input".to_string(), TensorData::from_f32(Shape::vector(784), &test_input));
-    inputs.insert("W1".to_string(), TensorData::from_f32(Shape::matrix(784, 128), &w1_data));
-    inputs.insert("W2".to_string(), TensorData::from_f32(Shape::matrix(128, 10), &w2_data));
+    inputs.insert(
+        "input".to_string(),
+        TensorData::from_f32(Shape::vector(784), &test_input),
+    );
+    inputs.insert(
+        "W1".to_string(),
+        TensorData::from_f32(Shape::matrix(784, 128), &w1_data),
+    );
+    inputs.insert(
+        "W2".to_string(),
+        TensorData::from_f32(Shape::matrix(128, 10), &w2_data),
+    );
 
     match executor::execute(&qlang_graph, inputs) {
         Ok(result) => {
@@ -159,15 +176,22 @@ fn main() {
             println!("  Output tensors: {}", result.outputs.len());
             for (name, data) in &result.outputs {
                 if let Some(v) = data.as_f32_slice() {
-                    println!("    {}: {} values, first few: {:?}",
-                        name, v.len(), &v[..v.len().min(5)]);
+                    println!(
+                        "    {}: {} values, first few: {:?}",
+                        name,
+                        v.len(),
+                        &v[..v.len().min(5)]
+                    );
                 } else {
                     println!("    {}: non-f32 output", name);
                 }
             }
         }
         Err(e) => {
-            println!("  Execution note: {} (expected for MatMul in interpreter)", e);
+            println!(
+                "  Execution note: {} (expected for MatMul in interpreter)",
+                e
+            );
             println!("  Using MlpWeights for accuracy comparison instead.");
         }
     }
@@ -224,7 +248,11 @@ fn main() {
     println!("  Original model:");
     println!("    Accuracy: {:.1}%", orig_acc * 100.0);
     println!("    Loss:     {:.4}", orig_loss);
-    println!("    Size:     {:.1} KB ({} params)", orig_bytes as f64 / 1024.0, orig_params);
+    println!(
+        "    Size:     {:.1} KB ({} params)",
+        orig_bytes as f64 / 1024.0,
+        orig_params
+    );
     println!();
     println!("  Compressed model (ternary):");
     println!("    Accuracy: {:.1}%", comp_acc * 100.0);
@@ -267,10 +295,16 @@ fn main() {
     // Summary
     println!("\n================================================================");
     println!("  ONNX Import -> Compress Pipeline Complete");
-    println!("  Imported {} ONNX nodes -> {} QLANG nodes",
-        onnx_graph.nodes.len(), qlang_graph.nodes.len());
-    println!("  Compression: {:.1}x ({:.1}% accuracy retained)",
-        ratio, comp_acc / orig_acc.max(0.001) * 100.0);
+    println!(
+        "  Imported {} ONNX nodes -> {} QLANG nodes",
+        onnx_graph.nodes.len(),
+        qlang_graph.nodes.len()
+    );
+    println!(
+        "  Compression: {:.1}x ({:.1}% accuracy retained)",
+        ratio,
+        comp_acc / orig_acc.max(0.001) * 100.0
+    );
     println!("================================================================");
 
     // Cleanup

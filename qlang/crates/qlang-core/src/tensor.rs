@@ -96,10 +96,13 @@ impl Shape {
         if self.rank() != other.rank() {
             return false;
         }
-        self.0.iter().zip(other.0.iter()).all(|(a, b)| match (a, b) {
-            (Dim::Fixed(x), Dim::Fixed(y)) => x == y,
-            _ => true, // dynamic dims are compatible with anything
-        })
+        self.0
+            .iter()
+            .zip(other.0.iter())
+            .all(|(a, b)| match (a, b) {
+                (Dim::Fixed(x), Dim::Fixed(y)) => x == y,
+                _ => true, // dynamic dims are compatible with anything
+            })
     }
 }
 
@@ -243,7 +246,11 @@ impl TensorData {
     /// The caller is responsible for ensuring `bytes` contains valid data
     /// for the given dtype and shape.
     pub fn from_raw_bytes(dtype: Dtype, shape: Shape, bytes: Vec<u8>) -> Self {
-        Self { dtype, shape, data: bytes }
+        Self {
+            dtype,
+            shape,
+            data: bytes,
+        }
     }
 
     /// Serialize this tensor to a compact binary wire format.
@@ -434,7 +441,10 @@ mod tests {
         let bytes = original.as_bytes().to_vec();
 
         let reconstructed = TensorData::from_raw_bytes(Dtype::F32, Shape::matrix(2, 2), bytes);
-        assert_eq!(reconstructed.as_f32_slice().unwrap(), vec![1.0, 2.0, 3.0, 4.0]);
+        assert_eq!(
+            reconstructed.as_f32_slice().unwrap(),
+            vec![1.0, 2.0, 3.0, 4.0]
+        );
     }
 
     // ---- Wire format tests ----
@@ -447,7 +457,10 @@ mod tests {
         let decoded = TensorData::from_wire_bytes(&wire).unwrap();
         assert_eq!(decoded.dtype, Dtype::F32);
         assert_eq!(decoded.shape, Shape::matrix(3, 2));
-        assert_eq!(decoded.as_f32_slice().unwrap(), vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]);
+        assert_eq!(
+            decoded.as_f32_slice().unwrap(),
+            vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+        );
     }
 
     #[test]
@@ -472,8 +485,12 @@ mod tests {
 
         // Binary should be much smaller than JSON
         // 768 * 4 = 3072 bytes data + small header vs JSON with text floats
-        assert!(wire_bytes.len() < json_bytes.len(),
-            "wire={} should be < json={}", wire_bytes.len(), json_bytes.len());
+        assert!(
+            wire_bytes.len() < json_bytes.len(),
+            "wire={} should be < json={}",
+            wire_bytes.len(),
+            json_bytes.len()
+        );
     }
 
     #[test]

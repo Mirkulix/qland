@@ -73,10 +73,7 @@ impl HttpResponse {
             "Access-Control-Allow-Methods".into(),
             "GET, POST, OPTIONS".into(),
         );
-        headers.insert(
-            "Access-Control-Allow-Headers".into(),
-            "Content-Type".into(),
-        );
+        headers.insert("Access-Control-Allow-Headers".into(), "Content-Type".into());
         headers.insert("Connection".into(), "close".into());
         Self {
             status_code,
@@ -89,10 +86,7 @@ impl HttpResponse {
     /// Serialize the response to bytes suitable for writing to a TCP stream.
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut buf = Vec::new();
-        let status_line = format!(
-            "HTTP/1.1 {} {}\r\n",
-            self.status_code, self.status_text
-        );
+        let status_line = format!("HTTP/1.1 {} {}\r\n", self.status_code, self.status_text);
         buf.extend_from_slice(status_line.as_bytes());
 
         // Always include Content-Length.
@@ -170,10 +164,7 @@ pub fn parse_request(stream: &mut TcpStream) -> Result<HttpRequest, String> {
             break;
         }
         if let Some((key, value)) = line.split_once(':') {
-            headers.insert(
-                key.trim().to_lowercase(),
-                value.trim().to_string(),
-            );
+            headers.insert(key.trim().to_lowercase(), value.trim().to_string());
         }
     }
 
@@ -329,13 +320,14 @@ pub fn handle_execute(body: &[u8]) -> HttpResponse {
 
     let graph: Graph = match serde_json::from_value(graph_val.clone()) {
         Ok(g) => g,
-        Err(e) => {
-            return json_error(400, "Bad Request", &format!("invalid graph: {e}"))
-        }
+        Err(e) => return json_error(400, "Bad Request", &format!("invalid graph: {e}")),
     };
 
     // Build inputs map.
-    let inputs_val = payload.get("inputs").cloned().unwrap_or(serde_json::json!({}));
+    let inputs_val = payload
+        .get("inputs")
+        .cloned()
+        .unwrap_or(serde_json::json!({}));
     let inputs_map = match inputs_val.as_object() {
         Some(m) => m,
         None => return json_error(400, "Bad Request", "'inputs' must be an object"),
@@ -360,10 +352,8 @@ pub fn handle_execute(body: &[u8]) -> HttpResponse {
             let mut output_json = serde_json::Map::new();
             for (name, tensor) in &result.outputs {
                 let floats = tensor.as_f32_slice().unwrap_or_default();
-                let arr: Vec<serde_json::Value> = floats
-                    .iter()
-                    .map(|&f| serde_json::Value::from(f))
-                    .collect();
+                let arr: Vec<serde_json::Value> =
+                    floats.iter().map(|&f| serde_json::Value::from(f)).collect();
                 output_json.insert(name.clone(), serde_json::Value::Array(arr));
             }
             let resp = serde_json::json!({
@@ -566,11 +556,7 @@ pub fn route(request: &HttpRequest) -> HttpResponse {
         (Method::Post, "/compress") => handle_compress(&request.body),
         (Method::Post, "/parse") => handle_parse(&request.body),
         (Method::Post, "/optimize") => handle_optimize(&request.body),
-        (_, path) => json_error(
-            404,
-            "Not Found",
-            &format!("unknown endpoint: {path}"),
-        ),
+        (_, path) => json_error(404, "Not Found", &format!("unknown endpoint: {path}")),
     }
 }
 
@@ -597,10 +583,7 @@ impl ApiServer {
 
     /// Run the server, handling connections in a loop. This blocks forever.
     pub fn run(&self) -> std::io::Result<()> {
-        eprintln!(
-            "qlang-api listening on {}",
-            self.listener.local_addr()?
-        );
+        eprintln!("qlang-api listening on {}", self.listener.local_addr()?);
 
         for stream in self.listener.incoming() {
             match stream {
