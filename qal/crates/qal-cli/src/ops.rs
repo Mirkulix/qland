@@ -218,6 +218,11 @@ impl Ctx {
         out.stdout = Some(stdout[..end].to_string());
     }
 
+    /// True for the MCP server's context (hints then name tools, not CLI commands).
+    fn is_mcp(&self) -> bool {
+        matches!(self.store, StoreAt::Root(_))
+    }
+
     /// A hint for a name that is not in the codebase but was renamed in the store.
     fn renamed_hint(&self, source: &Source, name: &str) -> Option<String> {
         match source {
@@ -316,7 +321,8 @@ pub fn test(ctx: &Ctx, source: &Source, perms: Permissions, names: &[String]) ->
         let mut d = Diagnostic::unknown_name(n, "", n);
         if loaded.typed.fn_index(n).is_some() {
             d.message = format!("`{n}` is a function, not a test");
-            d = d.hint(format!("call it with `qal call {n} ...`, or write a test: `test {n}_works = {n}(...) == ...`"));
+            let call = if ctx.is_mcp() { format!("`qal_call` with fn `{n}`") } else { format!("`qal call {n} ...`") };
+            d = d.hint(format!("call it with {call}, or write a test: `test {n}_works = {n}(...) == ...`"));
         } else if let Some(h) = ctx.renamed_hint(source, n) {
             d = d.hint(h);
         }
@@ -355,7 +361,7 @@ fn find_fn(ctx: &Ctx, source: &Source, loaded: &Loaded, name: &str) -> Result<()
     let mut e = RunError::new("unknown_function", name, format!("no function `{name}`"));
     if loaded.typed.tests.iter().any(|t| t.name == name) {
         e.message = format!("`{name}` is a test, not a function");
-        e.hints.push(format!("run it with `qal test {name}`"));
+        e.hints.push(if ctx.is_mcp() { format!("run it with `qal_test` and names [\"{name}\"]") } else { format!("run it with `qal test {name}`") });
     } else if let Some(h) = ctx.renamed_hint(source, name) {
         e.hints.push(h);
     }

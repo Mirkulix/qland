@@ -30,6 +30,13 @@ fn accepts_well_typed_program() {
 }
 
 #[test]
+fn unknown_function_hints_at_builtins_and_definitions() {
+    let d = one("fn f() -> Int = nosuch(1)");
+    assert_eq!(d.kind, "unknown_name");
+    assert!(d.hints[0].contains("not a built-in or stored definition"), "{:?}", d.hints);
+}
+
+#[test]
 fn reports_type_mismatch_with_path() {
     let d = one("fn f(x: Int) -> Int = if x then 1 else 2");
     assert_eq!((d.kind, d.path.as_str()), ("type_mismatch", "body.cond"));

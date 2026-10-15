@@ -261,6 +261,8 @@ impl<'a> Cx<'a> {
         if Builtin::NAMES.contains(&v) {
             d.message = format!("built-in `{v}` is not a value");
             d = d.hint(format!("built-in `{v}` cannot be used as a value; wrap it in a fn, e.g. `fn my_{v}(...) = {v}(...)`, and pass `my_{v}`"));
+        } else {
+            d = d.hint("not a built-in or stored definition; built-ins are listed in the qal_define description; define it in the same call or check qal_query");
         }
         self.diags.push(d);
         self.poison()
@@ -307,7 +309,7 @@ impl<'a> Cx<'a> {
         if let Some(e) = self.builtin(name, args, path) {
             return e;
         }
-        self.diags.push(Diagnostic::unknown_name(self.def, path, name));
+        self.diags.push(Diagnostic::unknown_name(self.def, path, name).hint("not a built-in or stored definition; built-ins are listed in the qal_define description; define it in the same call or check qal_query"));
         self.infer_all(args, path);
         self.poison()
     }

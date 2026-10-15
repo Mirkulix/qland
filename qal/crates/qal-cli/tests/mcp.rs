@@ -169,6 +169,17 @@ fn an_agent_defines_tests_runs_and_inspects_code() {
     assert_eq!((err, v["diagnostics"][0]["kind"].as_str(), v["diagnostics"][0]["path"].as_str()), (true, Some("type_mismatch"), Some("body")));
     let (err, v) = c.call("qal_test", json!({"names": ["main"]}));
     assert_eq!((err, v["diagnostics"][0]["message"].as_str()), (true, Some("`main` is a function, not a test")));
+    // Hints name MCP tools, never CLI commands.
+    let hint = v["diagnostics"][0]["hints"][0].as_str().unwrap();
+    assert!(hint.contains("qal_call") && !hint.contains("`qal call"), "{hint}");
+    let (err, v) = c.call("qal_define", json!({"source": "test t_ok = 1 == 1"}));
+    assert!(!err, "{v}");
+    let (err, v) = c.call("qal_call", json!({"fn": "t_ok"}));
+    let hint = v["error"]["hints"][0].as_str().unwrap();
+    assert!(err && hint.contains("qal_test") && !hint.contains("`qal test"), "{hint}");
+    let (err, v) = c.call("qal_define", json!({"source": "fn bad() -> Int = nosuchfn(1)"}));
+    assert_eq!((err, v["diagnostics"][0]["kind"].as_str()), (true, Some("unknown_name")));
+    assert!(v["diagnostics"][0]["hints"][0].as_str().unwrap().contains("qal_define"), "{v}");
     let (err, v) = c.call("qal_view", json!({"names": ["parse_age"]}));
     assert_eq!((err, v["diagnostics"][0]["hints"][0].as_str()), (true, Some("`parse_age` was renamed to `parse_years`")));
     assert_eq!(c.finish(), Some(0));
