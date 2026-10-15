@@ -379,3 +379,62 @@ fn the_repository_registers_the_server() {
     let script = std::fs::read_to_string(repo.join("qal/mcp.sh")).unwrap();
     assert!(script.contains("cargo build --release") && script.contains(">&2") && script.contains("mcp --root"), "{script}");
 }
+
+#[test]
+fn view_collapses_duplicates_and_is_bounded() {
+    let mut c = Client::start();
+    c.initialize();
+    let big = |n: usize| format!("fn big{n}() -> Str = \"{}\"", "a".repeat(900_000));
+    for n in 1..=5 {
+        assert!(!c.call("qal_define", json!({"source": big(n)})).0);
+    }
+    let (err, v) = c.call("qal_view", json!({"names": ["big1", "big1", "big1"]}));
+    assert!(!err && v["views"].as_array().unwrap().len() == 1, "duplicates collapse");
+    let many: Vec<String> = (0..257).map(|i| format!("n{i}")).collect();
+    let (err, v) = c.call("qal_view", json!({"names": many}));
+    assert_eq!((err, v["diagnostics"][0]["kind"].as_str()), (true, Some("bad_arguments")));
+    let names: Vec<&str> = (0..200).flat_map(|_| ["big1", "big2", "big3", "big4", "big5"]).take(256).collect();
+    let start = Instant::now();
+    let (err, v) = c.call("qal_view", json!({"names": names}));
+    assert_eq!((err, v["diagnostics"][0]["kind"].as_str()), (true, Some("result_too_large")), "{}", v.to_string().len());
+    assert!(start.elapsed() < Duration::from_secs(2), "{:?}", start.elapsed());
+    let (err, v) = c.call("qal_test", json!({"names": many_names(257)}));
+    assert_eq!((err, v["diagnostics"][0]["kind"].as_str()), (true, Some("bad_arguments")));
+}
+
+fn many_names(n: usize) -> Vec<String> {
+    (0..n).map(|i| format!("t{i}")).collect()
+}
+
+#[test]
+fn echoed_user_input_in_diagnostics_is_truncated() {
+    let mut c = Client::start();
+    c.initialize();
+    assert!(!c.call("qal_define", json!({"source": "fn one() -> Int = 1"})).0);
+    let (err, v) = c.call("qal_view", json!({"names": ["x".repeat(100_000)]}));
+    assert!(err, "{}", v.to_string().len());
+    assert_eq!(v["diagnostics"][0]["kind"], "unknown_name");
+    assert!(v.to_string().len() < 5_000, "{}", v.to_string().len());
+    let (err, v) = c.call("qal_query", json!({"type": "(".repeat(2_000_000)}));
+    assert!(err);
+    assert_ne!(v["diagnostics"][0]["kind"], "result_too_large");
+    assert!(v.to_string().len() < 5_000, "{}", v.to_string().len());
+}
+
+#[test]
+fn a_missing_root_is_named_in_the_error() {
+    let out = Command::new(env!("CARGO_BIN_EXE_qal")).args(["mcp", "--root", "/no/such/qal-root"]).stdin(Stdio::null()).output().unwrap();
+    assert_eq!(out.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("/no/such/qal-root"), "{}", String::from_utf8_lossy(&out.stderr));
+}
+
+#[test]
+fn reference_and_launcher_are_precise() {
+    let r = qal_cli::mcp::REFERENCE;
+    for needle in ["rand_int(lo, hi) -> Int !rand (both ends included)", "!io !fs", "narrowest", "`r` is reserved", "no list patterns", "every field"] {
+        assert!(r.contains(needle), "{needle}");
+    }
+    let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    let script = std::fs::read_to_string(repo.join("qal/mcp.sh")).unwrap();
+    assert!(script.contains("CDPATH=") && script.contains("build failed"), "{script}");
+}

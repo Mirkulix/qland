@@ -250,10 +250,34 @@ pub fn define(ctx: &Ctx, src: &str, agent: &str) -> Reply {
     }
 }
 
+/// Shows the named definitions. Repeated names count once; the views are built one by one under a
+/// byte budget ([`crate::mcp::MAX_RESULT_BYTES`]), so a request can never make this build more than
+/// it may return.
 pub fn view(ctx: &Ctx, names: &[String]) -> Reply {
-    match ctx.open().and_then(|mut s| s.view(names)) {
-        Ok(v) => Reply::new(Output { views: Some(v), ..Output::default() }, 0),
-        Err(d) => Reply::diagnostics(d),
+    let mut store = match ctx.open() {
+        Ok(s) => s,
+        Err(d) => return Reply::diagnostics(d),
+    };
+    let mut seen = std::collections::HashSet::new();
+    let (mut views, mut diags, mut bytes) = (Vec::new(), Vec::new(), 0usize);
+    for n in names.iter().filter(|n| seen.insert(n.as_str())) {
+        match store.view(std::slice::from_ref(n)) {
+            Ok(v) => {
+                bytes += v.iter().map(|v| serde_json::to_vec(v).map_or(usize::MAX, |b| b.len())).fold(0, usize::saturating_add);
+                if bytes > crate::mcp::MAX_RESULT_BYTES {
+                    let limit = crate::mcp::MAX_RESULT_BYTES;
+                    let d = Diagnostic::new("E0702", "result_too_large", "", "", format!("the views are more than {limit} bytes of JSON")).hint("view fewer or smaller definitions per call");
+                    return Reply::diagnostics(vec![d]);
+                }
+                views.extend(v);
+            }
+            Err(d) => diags.extend(d),
+        }
+    }
+    if diags.is_empty() {
+        Reply::new(Output { views: Some(views), ..Output::default() }, 0)
+    } else {
+        Reply::diagnostics(diags)
     }
 }
 

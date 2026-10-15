@@ -147,7 +147,7 @@ fn error_line(id: &J, e: &RpcError) -> String {
 
 impl Server {
     pub fn new(root: &Path) -> std::io::Result<Server> {
-        let root = root.canonicalize()?;
+        let root = root.canonicalize().map_err(|e| std::io::Error::new(e.kind(), format!("{}: {e}", root.display())))?;
         if !root.is_dir() {
             return Err(std::io::Error::other(format!("{} is not a directory", root.display())));
         }
@@ -162,7 +162,11 @@ impl Server {
     pub fn handle(&mut self, line: &[u8]) -> Option<String> {
         match catch_unwind(AssertUnwindSafe(|| self.handle_inner(line))) {
             Ok(r) => r,
-            Err(p) => Some(error_line(&J::Null, &rpc(INTERNAL_ERROR, format!("internal error: {}", panic_message(&p))))),
+            Err(p) => {
+                // Answer with the request's id when the message has a usable one.
+                let id = serde_json::from_slice::<J>(line).ok().and_then(|m| m.get("id").filter(|id| id.is_string() || id.is_i64() || id.is_u64()).cloned()).unwrap_or(J::Null);
+                Some(error_line(&id, &rpc(INTERNAL_ERROR, format!("internal error: {}", panic_message(&p)))))
+            }
         }
     }
 
@@ -295,24 +299,26 @@ impl Server {
                     Err(p) => return Err(rpc(INTERNAL_ERROR, format!("internal error in {name}: {}", panic_message(&p)))),
                 };
                 let modern = era == Era::Modern;
-                let line = move |id: &J, reply: &Reply| {
+                // The output is serialized once; the response holds it twice (as text and as
+                // structured content), so its size follows from the text.
+                let mut text = to_line(&reply.out);
+                let size = text.len() + to_line(&text).len();
+                if size > MAX_RESULT_BYTES {
+                    let d = Diagnostic::new("E0702", "result_too_large", "", "", format!("the result of {name} is about {size} bytes of JSON, more than {MAX_RESULT_BYTES}"))
+                        .hint("return or print less data, e.g. a summary or a prefix");
+                    reply = Reply::diagnostics(vec![d]);
+                    text = to_line(&reply.out);
+                }
+                Ok(Box::new(move |id: &J| {
                     let result = ToolResult {
                         result_type: modern.then_some("complete"),
-                        content: [Text { kind: "text", text: to_line(&reply.out) }],
+                        content: [Text { kind: "text", text }],
                         structured_content: &reply.out,
                         is_error: reply.is_error(),
                         meta: modern.then(|| json!({ META_SERVER: server_info() })),
                     };
                     to_line(&Response { jsonrpc: "2.0", id, result })
-                };
-                // The whole response counts: the text and the structured copy of the same JSON.
-                let size = line(&J::Null, &reply).len();
-                if size > MAX_RESULT_BYTES {
-                    let d = Diagnostic::new("E0702", "result_too_large", "", "", format!("the result of {name} is {size} bytes of JSON, more than {MAX_RESULT_BYTES}"))
-                        .hint("return or print less data, e.g. a summary or a prefix");
-                    reply = Reply::diagnostics(vec![d]);
-                }
-                Ok(Box::new(move |id: &J| line(id, &reply)))
+                }))
             }
             _ => Err(rpc(METHOD_NOT_FOUND, format!("method not found: {method}"))),
         }
@@ -337,6 +343,18 @@ impl Server {
         if let Some(e) = &mut reply.out.error {
             for h in &mut e.hints {
                 *h = allow_hint(h);
+            }
+            for s in [&mut e.def, &mut e.path, &mut e.message].into_iter().chain(e.hints.iter_mut()) {
+                shorten(s);
+            }
+        }
+        // Diagnostics echo what the agent sent (names, patterns): keep the real message readable.
+        for d in reply.out.diagnostics.iter_mut().flatten() {
+            for s in [&mut d.def, &mut d.path, &mut d.message].into_iter().chain(d.hints.iter_mut()) {
+                shorten(s);
+            }
+            for s in d.expected.iter_mut().chain(d.found.iter_mut()).chain(d.dependents.iter_mut()) {
+                shorten(s);
             }
         }
         reply
@@ -365,14 +383,14 @@ impl Server {
                 ops::define(&ctx, &src, &agent(&a)?)
             }
             "qal_view" => {
-                let names = a.strings("names")?.unwrap_or_default();
+                let names = a.names("names")?;
                 if names.is_empty() {
                     return Err("`names` must list at least one name or `#<hash>`".into());
                 }
                 ops::view(&ctx, &names)
             }
             "qal_query" => ops::query(&ctx, &Query { name: a.string("name")?, type_pattern: a.string("type")?, uses: a.string("uses")? }),
-            "qal_test" => ops::test(&ctx, &Source::Store, Permissions::default(), &a.strings("names")?.unwrap_or_default()),
+            "qal_test" => ops::test(&ctx, &Source::Store, Permissions::default(), &a.names("names")?),
             "qal_run" => {
                 let entry = a.string("entry")?.unwrap_or_else(|| "main".into());
                 let perms = perms(&a)?;
@@ -427,6 +445,19 @@ fn invisible(c: char) -> bool {
         )
 }
 
+/// Longest text of a diagnostic field, in characters.
+const MAX_FIELD_CHARS: usize = 300;
+/// Most names a single call may list.
+const MAX_NAMES: usize = 256;
+
+/// Cuts a long text (typically echoed input) to [`MAX_FIELD_CHARS`] characters plus an ellipsis.
+fn shorten(s: &mut String) {
+    if let Some((i, _)) = s.char_indices().nth(MAX_FIELD_CHARS) {
+        s.truncate(i);
+        s.push_str("...");
+    }
+}
+
 /// The runtime's permission hint names the CLI flag (`grant them with `--allow io,fs:<dir>``); an
 /// agent grants effects with the `allow` argument instead.
 fn allow_hint(hint: &str) -> String {
@@ -468,6 +499,15 @@ impl<'a> Args<'a> {
 
     fn required(&self, key: &str) -> Result<String, String> {
         self.string(key)?.ok_or_else(|| format!("`{key}` is required"))
+    }
+
+    /// A list of names, at most [`MAX_NAMES`].
+    fn names(&self, key: &str) -> Result<Vec<String>, String> {
+        let names = self.strings(key)?.unwrap_or_default();
+        if names.len() > MAX_NAMES {
+            return Err(format!("`{key}` lists {} names; at most {MAX_NAMES} per call", names.len()));
+        }
+        Ok(names)
     }
 
     fn strings(&self, key: &str) -> Result<Option<Vec<String>>, String> {
