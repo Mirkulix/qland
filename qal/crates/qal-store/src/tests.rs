@@ -648,14 +648,24 @@ fn a_definition_cannot_name_two_names_of_one_definition() {
     assert_eq!((d[0].code, d[0].kind, d[0].def.as_str()), ("E0404", "alias_reference", "u"));
     assert!(d[0].message.starts_with("`u` refers to `a` and `b`, which are the same definition (#"), "{}", d[0].message);
     assert!(d[0].message.ends_with("a stored definition can name each referenced definition only once."), "{}", d[0].message);
+    assert_eq!(d[0].hints, ["refer to only one of `a`, `b` (they are identical)"]);
     assert_eq!(count(&s, "names"), 0);
     // A later change that makes two referenced names identical is rejected, and nothing changes.
     ok(&mut s, "fn a() -> Int = 1\nfn b() -> Int = 2\nfn u() -> Int = a() * 10 + b()");
     let before = hashes(&mut s);
     let d = err(&mut s, "fn a() -> Int = 2");
     assert_eq!((d[0].code, d[0].kind, d[0].def.as_str()), ("E0404", "alias_reference", "u"));
+    assert_eq!(d[0].hints, ["refer to one of them, or make them differ (redefine `u` in the same call)"]);
     assert_eq!(hashes(&mut s), before);
     assert_eq!(text(&mut s, "u"), "fn u() -> Int\n= a() * 10 + b()");
     // Redefining `u` in the same call is the way out.
     ok(&mut s, "fn a() -> Int = 2\nfn u() -> Int = a() * 10 + a()");
+}
+
+#[test]
+fn alias_reference_hint_does_not_ask_to_redefine_a_definition_already_in_the_call() {
+    let mut s = store();
+    let d = err(&mut s, "fn mk() -> Int = 1\nfn mk2() -> Int = 1\nfn uses_mk() -> Int = mk() + mk2()");
+    assert_eq!((d[0].code, d[0].def.as_str()), ("E0404", "uses_mk"));
+    assert_eq!(d[0].hints, ["refer to only one of `mk`, `mk2` (they are identical)"]);
 }

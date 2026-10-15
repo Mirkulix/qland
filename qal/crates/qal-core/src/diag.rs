@@ -114,6 +114,29 @@ impl Diagnostic {
         d
     }
 
+    /// `def` refers to several names of one definition (`names`, all hashing to `short_hash`); a
+    /// stored definition can name each referenced definition only once.
+    pub fn alias_reference(def: &str, path: &str, names: &[String], short_hash: &str, referrer_in_input: bool) -> Self {
+        let quoted: Vec<String> = names.iter().map(|n| format!("`{n}`")).collect();
+        let list = match quoted.split_last() {
+            Some((last, rest)) if !rest.is_empty() => format!("{} and {last}", rest.join(", ")),
+            _ => quoted.join(""),
+        };
+        let hint = if referrer_in_input {
+            format!("refer to only one of {} (they are identical)", quoted.join(", "))
+        } else {
+            format!("refer to one of them, or make them differ (redefine `{def}` in the same call)")
+        };
+        Diagnostic::new(
+            "E0404",
+            "alias_reference",
+            def,
+            path,
+            format!("`{def}` refers to {list}, which are the same definition (#{short_hash}); a stored definition can name each referenced definition only once."),
+        )
+        .hint(hint)
+    }
+
     /// Mutually recursive definitions that are interchangeable (the same definition under several
     /// names) cannot get name-independent hashes.
     pub fn symmetric_group(names: &[String]) -> Self {
@@ -153,6 +176,16 @@ impl Diagnostic {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn alias_reference_hints_depend_on_where_the_referrer_is() {
+        let names = ["mk".to_string(), "mk2".to_string()];
+        let d = Diagnostic::alias_reference("u", "", &names, "abc123", true);
+        assert_eq!(d.hints, ["refer to only one of `mk`, `mk2` (they are identical)"]);
+        assert_eq!(d.message, "`u` refers to `mk` and `mk2`, which are the same definition (#abc123); a stored definition can name each referenced definition only once.");
+        let d = Diagnostic::alias_reference("u", "", &names, "abc123", false);
+        assert_eq!(d.hints, ["refer to one of them, or make them differ (redefine `u` in the same call)"]);
+    }
 
     #[test]
     fn serializes_without_empty_optionals() {

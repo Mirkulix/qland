@@ -10,7 +10,7 @@
 //!   qal query [--name <prefix>] [--type <pattern>] [--uses <name|#hash>]
 //!                                                    -> {"results":[{name,kind,hash,signature,effects}]}
 //!   qal rename <old> <new> [--agent <name>]          -> {"renamed":{name,kind,hash}}
-//!   qal history <name>                               -> {"history":[{action,name,from_name?,old_hash?,new_hash,agent,at}]}
+//!   qal history <name>                               -> {"history":[{action,name,from_name?,to_name?,old_hash?,new_hash,agent,at}]}
 //! Running code from a file or from the store (`<target>` is a file or a name):
 //!   qal call <file> [--allow <spec>] <fn> [args..]   -> {"ok":<value>,"stdout":".."} | {"error":{...},"stdout":".."} | {"diagnostics":[...]}
 //!   qal call <fn> [--allow <spec>] [args..]          (store)
