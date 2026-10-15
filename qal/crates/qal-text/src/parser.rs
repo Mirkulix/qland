@@ -1,19 +1,30 @@
 //! Recursive-descent parser: tokens -> Program.
 //!
-//! Grammar (Phase 1a):
+//! Grammar (Phase 1b). LOWER = name starting with a lowercase letter or `_`, UPPER = with an uppercase letter.
 //!   program  := def*
-//!   def      := "fn" IDENT "(" params ")" "->" type effect* contract* "=" expr
-//!             | "test" IDENT "=" expr
-//!   params   := (IDENT ":" type ("," IDENT ":" type)* ","?)?
-//!   type     := "Int" | "Bool" | "Unit"
-//!   effect   := "!" IDENT
+//!   def      := "fn" LOWER "(" params ")" "->" type effect* contract* "=" expr
+//!             | "test" LOWER "=" expr
+//!             | "type" UPPER "=" ( "{" fields "}" | "|"? variant ("|" variant)* )
+//!   params   := (LOWER ":" type ("," LOWER ":" type)* ","?)?
+//!   fields   := (LOWER ":" type ("," LOWER ":" type)* ","?)?
+//!   variant  := UPPER ("(" type ("," type)* ","? ")")?
+//!   type     := "Int" | "Float" | "Bool" | "Unit" | "Str" | "List" "[" type "]" | "Option" "[" type "]"
+//!             | "Result" "[" type "," type "]" | UPPER | "fn" "(" (type ("," type)*)? ")" "->" type effect*
+//!             | "(" type ")"
+//!   effect   := "!" LOWER
 //!   contract := ("req" | "ens") expr
-//!   expr     := "let" IDENT "=" expr "in" expr
+//!   expr     := "let" LOWER (":" type)? "=" expr "in" expr
 //!             | "if" expr "then" expr "else" expr
+//!             | "match" expr "{" arm ("," arm)* ","? "}"      (no `Name {` record literal directly in the scrutinee)
 //!             | binary
+//!   arm      := pattern ("if" expr)? "=>" expr
+//!   pattern  := "_" | LOWER | "-"? INT | STR | "true" | "false" | "(" ")"
+//!             | UPPER ("(" pattern ("," pattern)* ","? ")")? | UPPER "{" (LOWER (":" pattern)?),* "}"
 //!   binary   := precedence climbing over BinOp::precedence (comparisons non-associative)
-//!   unary    := ("-" | "!") unary | atom
-//!   atom     := INT | "true" | "false" | "(" ")" | "(" expr ")" | IDENT | IDENT "(" args ")"
+//!   unary    := ("-" | "!") unary | postfix
+//!   postfix  := atom ("." LOWER)*
+//!   atom     := INT | FLOAT | STR | "true" | "false" | "(" ")" | "(" expr ")" | "[" (expr ("," expr)* ","?)? "]"
+//!             | "{" expr (";" expr)* "}" | UPPER "{" (LOWER ":" expr),* "}" | IDENT | IDENT "(" args ")"
 
 use crate::lexer::{lex, Tok, Token, KEYWORDS};
 use qal_core::ast::*;
@@ -25,7 +36,7 @@ const MAX_DEPTH: usize = 256;
 
 pub fn parse_program(src: &str) -> Result<Program, Diagnostic> {
     let tokens = lex(src)?;
-    let mut p = Parser { tokens, pos: 0, depth: 0, height: 0 };
+    let mut p = Parser { tokens, pos: 0, depth: 0, height: 0, no_struct: false };
     let mut defs = Vec::new();
     while p.peek() != &Tok::Eof {
         defs.push(p.def()?);
@@ -36,15 +47,25 @@ pub fn parse_program(src: &str) -> Result<Program, Diagnostic> {
 struct Parser {
     tokens: Vec<Token>,
     pos: usize,
-    /// Current recursion depth of expr()/unary().
+    /// Current recursion depth of expr()/unary()/pattern()/ty().
     depth: usize,
     /// Height of the AST most recently built.
     height: usize,
+    /// True while parsing a match scrutinee: `Name {` is not a record literal there.
+    no_struct: bool,
+}
+
+fn is_upper(s: &str) -> bool {
+    s.starts_with(|c: char| c.is_ascii_uppercase())
 }
 
 impl Parser {
     fn peek(&self) -> &Tok {
         &self.tokens[self.pos].tok
+    }
+
+    fn peek_at(&self, n: usize) -> &Tok {
+        &self.tokens[(self.pos + n).min(self.tokens.len() - 1)].tok
     }
 
     fn next(&mut self) -> Token {
@@ -65,6 +86,14 @@ impl Parser {
         self.err_here(format!("expression nested too deeply (max {MAX_DEPTH} levels)"))
     }
 
+    fn enter(&mut self) -> Result<(), Diagnostic> {
+        self.depth += 1;
+        if self.depth > MAX_DEPTH {
+            return Err(self.too_deep());
+        }
+        Ok(())
+    }
+
     /// Records a new AST node whose tallest child has height `child`.
     fn node(&mut self, child: usize) -> Result<(), Diagnostic> {
         self.height = child + 1;
@@ -78,6 +107,8 @@ impl Parser {
         match tok {
             Tok::Ident(s) => format!("`{s}`"),
             Tok::Int(n) => format!("`{n}`"),
+            Tok::Float(x) => format!("`{x:?}`"),
+            Tok::Str(s) => format!("{s:?}"),
             Tok::Sym(s) => format!("`{s}`"),
             Tok::Eof => "end of input".to_string(),
         }
@@ -119,15 +150,97 @@ impl Parser {
         }
     }
 
+    /// A name for a function, test, parameter, local, field or effect.
+    fn lower(&mut self, what: &str) -> Result<String, Diagnostic> {
+        if matches!(self.peek(), Tok::Ident(s) if is_upper(s)) {
+            return Err(self.err_here(format!("{what} names start with a lowercase letter, found {}", Self::describe(self.peek()))));
+        }
+        self.ident()
+    }
+
+    /// A name for a type or variant.
+    fn upper(&mut self, what: &str) -> Result<String, Diagnostic> {
+        if matches!(self.peek(), Tok::Ident(s) if !is_upper(s)) {
+            return Err(self.err_here(format!("{what} names start with an uppercase letter, found {}", Self::describe(self.peek()))));
+        }
+        self.ident()
+    }
+
+    /// Parses `open item (sep item)* sep? close`, calling `item` for each element.
+    fn list_of<T>(&mut self, close: &str, mut item: impl FnMut(&mut Self) -> Result<T, Diagnostic>) -> Result<Vec<T>, Diagnostic> {
+        let mut out = Vec::new();
+        while !self.is_sym(close) {
+            out.push(item(self)?);
+            if !self.is_sym(close) {
+                self.expect_sym(",")?;
+            }
+        }
+        self.expect_sym(close)?;
+        Ok(out)
+    }
+
     fn ty(&mut self) -> Result<Type, Diagnostic> {
-        let t = match self.peek() {
-            Tok::Ident(s) if s == "Int" => Type::Int,
-            Tok::Ident(s) if s == "Bool" => Type::Bool,
-            Tok::Ident(s) if s == "Unit" => Type::Unit,
-            other => return Err(self.err_here(format!("expected a type (Int, Bool, Unit), found {}", Self::describe(other)))),
+        self.enter()?;
+        let t = self.ty_inner();
+        self.depth -= 1;
+        t
+    }
+
+    fn ty_inner(&mut self) -> Result<Type, Diagnostic> {
+        let name = match self.peek().clone() {
+            Tok::Sym("(") => {
+                self.next();
+                let t = self.ty()?;
+                self.expect_sym(")")?;
+                return Ok(t);
+            }
+            Tok::Ident(s) if s == "fn" => {
+                self.next();
+                self.expect_sym("(")?;
+                let params = self.list_of(")", |p| p.ty())?;
+                self.expect_sym("->")?;
+                let ret = self.ty()?;
+                let effects = self.effects()?;
+                return Ok(Type::Fn(params, Box::new(ret), effects));
+            }
+            Tok::Ident(s) if is_upper(&s) => s,
+            other => return Err(self.err_here(format!("expected a type (e.g. Int, Str, List[Int]), found {}", Self::describe(&other)))),
         };
         self.next();
-        Ok(t)
+        let arg = |p: &mut Self| -> Result<Type, Diagnostic> {
+            p.expect_sym("[")?;
+            let t = p.ty()?;
+            Ok(t)
+        };
+        Ok(match name.as_str() {
+            "Int" => Type::Int,
+            "Float" => Type::Float,
+            "Bool" => Type::Bool,
+            "Unit" => Type::Unit,
+            "Str" => Type::Str,
+            "List" | "Option" => {
+                let t = arg(self)?;
+                self.expect_sym("]")?;
+                if name == "List" { Type::list(t) } else { Type::option(t) }
+            }
+            "Result" => {
+                let t = arg(self)?;
+                self.expect_sym(",")?;
+                let e = self.ty()?;
+                self.expect_sym("]")?;
+                Type::result(t, e)
+            }
+            _ => Type::Named(name),
+        })
+    }
+
+    fn effects(&mut self) -> Result<Vec<String>, Diagnostic> {
+        let mut effects = Vec::new();
+        while self.is_sym("!") {
+            self.next();
+            effects.push(self.lower("effect")?);
+        }
+        Ok(effects)
     }
 
     fn def(&mut self) -> Result<Def, Diagnostic> {
@@ -136,36 +249,62 @@ impl Parser {
             self.fn_def().map(Def::Fn)
         } else if self.is_kw("test") {
             self.next();
-            let name = self.ident()?;
+            let name = self.lower("test")?;
             self.expect_sym("=")?;
             let body = self.expr()?;
             Ok(Def::Test(TestDef { name, body }))
+        } else if self.is_kw("type") {
+            self.next();
+            self.type_def().map(Def::Type)
         } else {
-            Err(self.err_here(format!("expected `fn` or `test`, found {}", Self::describe(self.peek()))))
+            Err(self.err_here(format!("expected `fn`, `type` or `test`, found {}", Self::describe(self.peek()))))
         }
     }
 
-    fn fn_def(&mut self) -> Result<FnDef, Diagnostic> {
-        let name = self.ident()?;
-        self.expect_sym("(")?;
-        let mut params = Vec::new();
-        while !self.is_sym(")") {
-            let pname = self.ident()?;
-            self.expect_sym(":")?;
-            let ty = self.ty()?;
-            params.push(Param { name: pname, ty });
-            if !self.is_sym(")") {
-                self.expect_sym(",")?;
-            }
+    fn type_def(&mut self) -> Result<TypeDef, Diagnostic> {
+        let name = self.upper("type")?;
+        self.expect_sym("=")?;
+        if self.is_sym("{") {
+            self.next();
+            let fields = self.list_of("}", |p| {
+                let f = p.lower("field")?;
+                p.expect_sym(":")?;
+                Ok((f, p.ty()?))
+            })?;
+            return Ok(TypeDef { name, body: TypeBody::Record(fields) });
         }
-        self.expect_sym(")")?;
+        if self.is_sym("|") {
+            self.next();
+        }
+        let mut variants = Vec::new();
+        loop {
+            let vname = self.upper("variant")?;
+            let fields = if self.is_sym("(") {
+                self.next();
+                self.list_of(")", |p| p.ty())?
+            } else {
+                Vec::new()
+            };
+            variants.push(Variant { name: vname, fields });
+            if !self.is_sym("|") {
+                break;
+            }
+            self.next();
+        }
+        Ok(TypeDef { name, body: TypeBody::Enum(variants) })
+    }
+
+    fn fn_def(&mut self) -> Result<FnDef, Diagnostic> {
+        let name = self.lower("function")?;
+        self.expect_sym("(")?;
+        let params = self.list_of(")", |p| {
+            let pname = p.lower("parameter")?;
+            p.expect_sym(":")?;
+            Ok(Param { name: pname, ty: p.ty()? })
+        })?;
         self.expect_sym("->")?;
         let ret = self.ty()?;
-        let mut effects = Vec::new();
-        while self.is_sym("!") {
-            self.next();
-            effects.push(self.ident()?);
-        }
+        let effects = self.effects()?;
         let (mut req, mut ens) = (Vec::new(), Vec::new());
         loop {
             if self.is_kw("req") {
@@ -184,10 +323,7 @@ impl Parser {
     }
 
     fn expr(&mut self) -> Result<Expr, Diagnostic> {
-        self.depth += 1;
-        if self.depth > MAX_DEPTH {
-            return Err(self.too_deep());
-        }
+        self.enter()?;
         let e = self.expr_inner();
         self.depth -= 1;
         e
@@ -198,38 +334,146 @@ impl Parser {
             self.let_expr()
         } else if self.is_kw("if") {
             self.if_expr()
+        } else if self.is_kw("match") {
+            self.match_expr()
         } else {
             self.binary(1)
         }
     }
 
-    // let/if/call/paren live in their own functions so the frames on the common recursion path stay small.
+    // let/if/match/call/paren live in their own functions so the frames on the common recursion path stay small.
     fn let_expr(&mut self) -> Result<Expr, Diagnostic> {
-        {
+        self.next();
+        let name = self.lower("variable")?;
+        let ann = if self.is_sym(":") {
             self.next();
-            let name = self.ident()?;
-            self.expect_sym("=")?;
-            let value = self.expr()?;
-            self.expect_kw("in")?;
-            let value_h = self.height;
-            let body = self.expr()?;
-            self.node(value_h.max(self.height))?;
-            Ok(Expr::Let(name, Box::new(value), Box::new(body)))
-        }
+            Some(self.ty()?)
+        } else {
+            None
+        };
+        self.expect_sym("=")?;
+        let value = self.expr()?;
+        self.expect_kw("in")?;
+        let value_h = self.height;
+        let body = self.expr()?;
+        self.node(value_h.max(self.height))?;
+        Ok(Expr::Let(name, ann, Box::new(value), Box::new(body)))
     }
 
     fn if_expr(&mut self) -> Result<Expr, Diagnostic> {
-        {
-            self.next();
-            let c = self.expr()?;
-            let mut h = self.height;
-            self.expect_kw("then")?;
-            let t = self.expr()?;
-            h = h.max(self.height);
-            self.expect_kw("else")?;
-            let e = self.expr()?;
-            self.node(h.max(self.height))?;
-            Ok(Expr::If(Box::new(c), Box::new(t), Box::new(e)))
+        self.next();
+        let c = self.expr()?;
+        let mut h = self.height;
+        self.expect_kw("then")?;
+        let t = self.expr()?;
+        h = h.max(self.height);
+        self.expect_kw("else")?;
+        let e = self.expr()?;
+        self.node(h.max(self.height))?;
+        Ok(Expr::If(Box::new(c), Box::new(t), Box::new(e)))
+    }
+
+    fn match_expr(&mut self) -> Result<Expr, Diagnostic> {
+        self.next();
+        let saved = std::mem::replace(&mut self.no_struct, true);
+        let scrutinee = self.expr();
+        self.no_struct = saved;
+        let scrutinee = scrutinee?;
+        let mut h = self.height;
+        self.expect_sym("{")?;
+        let arms = self.list_of("}", |p| {
+            let pat = p.pattern()?;
+            h = h.max(p.height);
+            let guard = if p.is_kw("if") {
+                p.next();
+                let g = p.expr()?;
+                h = h.max(p.height);
+                Some(g)
+            } else {
+                None
+            };
+            p.expect_sym("=>")?;
+            let body = p.expr()?;
+            h = h.max(p.height);
+            Ok(Arm { pat, guard, body })
+        })?;
+        if arms.is_empty() {
+            return Err(self.err_here("a match needs at least one arm"));
+        }
+        self.node(h)?;
+        Ok(Expr::Match(Box::new(scrutinee), arms))
+    }
+
+    fn pattern(&mut self) -> Result<Pat, Diagnostic> {
+        self.enter()?;
+        let p = self.pattern_inner();
+        self.depth -= 1;
+        p
+    }
+
+    fn pattern_inner(&mut self) -> Result<Pat, Diagnostic> {
+        self.height = 1;
+        match self.peek().clone() {
+            Tok::Int(n) => {
+                self.next();
+                Ok(Pat::Int(n))
+            }
+            Tok::Sym("-") if matches!(self.peek_at(1), Tok::Int(_)) => {
+                self.next();
+                let Tok::Int(n) = self.next().tok else { unreachable!() };
+                Ok(Pat::Int(-n))
+            }
+            Tok::Str(s) => {
+                self.next();
+                Ok(Pat::Str(s))
+            }
+            Tok::Sym("(") if self.peek_at(1) == &Tok::Sym(")") => {
+                self.next();
+                self.next();
+                Ok(Pat::Unit)
+            }
+            Tok::Ident(s) if s == "true" || s == "false" => {
+                self.next();
+                Ok(Pat::Bool(s == "true"))
+            }
+            Tok::Ident(s) if s == "_" => {
+                self.next();
+                Ok(Pat::Wild)
+            }
+            Tok::Ident(s) if is_upper(&s) => {
+                self.next();
+                if self.is_sym("(") {
+                    self.next();
+                    let mut h = 0;
+                    let ps = self.list_of(")", |p| {
+                        let x = p.pattern()?;
+                        h = h.max(p.height);
+                        Ok(x)
+                    })?;
+                    self.node(h)?;
+                    Ok(Pat::Variant(s, ps))
+                } else if self.is_sym("{") {
+                    self.next();
+                    let mut h = 0;
+                    let fs = self.list_of("}", |p| {
+                        let f = p.lower("field")?;
+                        let x = if p.is_sym(":") {
+                            p.next();
+                            p.pattern()?
+                        } else {
+                            Pat::Bind(f.clone())
+                        };
+                        h = h.max(p.height);
+                        Ok((f, x))
+                    })?;
+                    self.node(h)?;
+                    Ok(Pat::Record(s, fs))
+                } else {
+                    Ok(Pat::Variant(s, vec![]))
+                }
+            }
+            Tok::Ident(_) => Ok(Pat::Bind(self.lower("variable")?)),
+            other => Err(self.err_here(format!("expected a pattern, found {}", Self::describe(&other)))),
         }
     }
 
@@ -240,6 +484,7 @@ impl Parser {
             Tok::Sym("*") => BinOp::Mul,
             Tok::Sym("/") => BinOp::Div,
             Tok::Sym("%") => BinOp::Rem,
+            Tok::Sym("++") => BinOp::Concat,
             Tok::Sym("==") => BinOp::Eq,
             Tok::Sym("!=") => BinOp::Ne,
             Tok::Sym("<") => BinOp::Lt,
@@ -265,12 +510,8 @@ impl Parser {
             let rhs = self.binary(prec + 1)?;
             self.node(lhs_h.max(self.height))?;
             lhs = Expr::Bin(op, Box::new(lhs), Box::new(rhs));
-            if prec == 3 {
-                if let Some(next) = self.peek_binop() {
-                    if next.precedence() == 3 {
-                        return Err(self.chained());
-                    }
-                }
+            if op.is_comparison() && self.peek_binop().is_some_and(BinOp::is_comparison) {
+                return Err(self.chained());
             }
         }
         Ok(lhs)
@@ -287,45 +528,73 @@ impl Parser {
         } else if self.is_sym("!") {
             UnOp::Not
         } else {
-            return self.atom();
+            return self.postfix();
         };
         self.next();
-        self.depth += 1;
-        if self.depth > MAX_DEPTH {
-            return Err(self.too_deep());
-        }
+        self.enter()?;
         let inner = self.unary()?;
         self.depth -= 1;
         self.node(self.height)?;
         Ok(Expr::Un(op, Box::new(inner)))
     }
 
+    fn postfix(&mut self) -> Result<Expr, Diagnostic> {
+        let mut e = self.atom()?;
+        while self.is_sym(".") {
+            self.next();
+            let field = self.lower("field")?;
+            self.node(self.height)?;
+            e = Expr::Field(Box::new(e), field);
+        }
+        Ok(e)
+    }
+
     fn atom(&mut self) -> Result<Expr, Diagnostic> {
+        self.height = 1;
         match self.peek().clone() {
             Tok::Int(n) => {
                 self.next();
-                self.height = 1;
                 Ok(Expr::Int(n))
             }
-            Tok::Ident(s) if s == "true" => {
+            Tok::Float(x) => {
                 self.next();
-                self.height = 1;
-                Ok(Expr::Bool(true))
+                Ok(Expr::Float(x))
             }
-            Tok::Ident(s) if s == "false" => {
+            Tok::Str(s) => {
                 self.next();
-                self.height = 1;
-                Ok(Expr::Bool(false))
+                Ok(Expr::Str(s))
             }
-            Tok::Sym("(") => self.paren(),
-            Tok::Ident(_) => self.name_or_call(),
+            Tok::Ident(s) if s == "true" || s == "false" => {
+                self.next();
+                Ok(Expr::Bool(s == "true"))
+            }
+            Tok::Sym("(") => self.nested(Self::paren),
+            Tok::Sym("[") => self.nested(Self::list_lit),
+            Tok::Sym("{") => self.nested(Self::seq),
+            Tok::Ident(s) if KEYWORDS.contains(&s.as_str()) => Err(self.expected_expr(&Tok::Ident(s))),
+            Tok::Ident(s) if is_upper(&s) && !self.no_struct && self.peek_at(1) == &Tok::Sym("{") => self.nested(Self::record_lit),
+            Tok::Ident(_) => self.nested(Self::name_or_call),
             other => Err(self.expected_expr(&other)),
         }
     }
 
+    /// Runs `f` with record literals allowed again (inside delimiters the match-scrutinee restriction ends).
+    fn nested(&mut self, f: fn(&mut Self) -> Result<Expr, Diagnostic>) -> Result<Expr, Diagnostic> {
+        let saved = std::mem::replace(&mut self.no_struct, false);
+        let e = f(self);
+        self.no_struct = saved;
+        e
+    }
+
     #[cold]
     fn expected_expr(&self, found: &Tok) -> Diagnostic {
-        self.err_here(format!("expected an expression, found {}", Self::describe(found)))
+        let mut msg = format!("expected an expression, found {}", Self::describe(found));
+        if let Tok::Ident(k) = found {
+            if k == "if" || k == "let" || k == "match" {
+                msg.push_str(&format!(" (wrap the `{k}` expression in parentheses here)"));
+            }
+        }
+        self.err_here(msg)
     }
 
     fn paren(&mut self) -> Result<Expr, Diagnostic> {
@@ -340,6 +609,47 @@ impl Parser {
         Ok(e)
     }
 
+    fn list_lit(&mut self) -> Result<Expr, Diagnostic> {
+        self.next();
+        let mut h = 0;
+        let items = self.list_of("]", |p| {
+            let e = p.expr()?;
+            h = h.max(p.height);
+            Ok(e)
+        })?;
+        self.node(h)?;
+        Ok(Expr::List(items))
+    }
+
+    fn seq(&mut self) -> Result<Expr, Diagnostic> {
+        self.next();
+        let mut items = vec![self.expr()?];
+        let mut h = self.height;
+        while self.is_sym(";") {
+            self.next();
+            items.push(self.expr()?);
+            h = h.max(self.height);
+        }
+        self.expect_sym("}")?;
+        self.node(h)?;
+        Ok(Expr::Seq(items))
+    }
+
+    fn record_lit(&mut self) -> Result<Expr, Diagnostic> {
+        let name = self.upper("type")?;
+        self.expect_sym("{")?;
+        let mut h = 0;
+        let fields = self.list_of("}", |p| {
+            let f = p.lower("field")?;
+            p.expect_sym(":")?;
+            let e = p.expr()?;
+            h = h.max(p.height);
+            Ok((f, e))
+        })?;
+        self.node(h)?;
+        Ok(Expr::Record(name, fields))
+    }
+
     fn name_or_call(&mut self) -> Result<Expr, Diagnostic> {
         let name = self.ident()?;
         if !self.is_sym("(") {
@@ -347,16 +657,12 @@ impl Parser {
             return Ok(Expr::Var(name));
         }
         self.next();
-        let mut args = Vec::new();
         let mut h = 0;
-        while !self.is_sym(")") {
-            args.push(self.expr()?);
-            h = h.max(self.height);
-            if !self.is_sym(")") {
-                self.expect_sym(",")?;
-            }
-        }
-        self.expect_sym(")")?;
+        let args = self.list_of(")", |p| {
+            let e = p.expr()?;
+            h = h.max(p.height);
+            Ok(e)
+        })?;
         self.node(h)?;
         Ok(Expr::Call(name, args))
     }
@@ -371,6 +677,11 @@ mod tests {
     }
     fn var(s: &str) -> Box<Expr> {
         Box::new(Expr::Var(s.into()))
+    }
+    fn body(src: &str) -> Expr {
+        let p = parse_program(&format!("test t = {src}")).unwrap();
+        let Def::Test(t) = &p.defs[0] else { panic!() };
+        t.body.clone()
     }
 
     #[test]
@@ -388,11 +699,11 @@ mod tests {
 
     #[test]
     fn respects_precedence_and_left_associativity() {
-        let p = parse_program("test t = 1 + 2 * 3 - 4 == 3 || false").unwrap();
-        let Def::Test(t) = &p.defs[0] else { panic!() };
         let sum = Expr::Bin(BinOp::Sub, Box::new(Expr::Bin(BinOp::Add, int(1), Box::new(Expr::Bin(BinOp::Mul, int(2), int(3))))), int(4));
         let cmp = Expr::Bin(BinOp::Eq, Box::new(sum), int(3));
-        assert_eq!(t.body, Expr::Bin(BinOp::Or, Box::new(cmp), Box::new(Expr::Bool(false))));
+        assert_eq!(body("1 + 2 * 3 - 4 == 3 || false"), Expr::Bin(BinOp::Or, Box::new(cmp), Box::new(Expr::Bool(false))));
+        let s = |x: &str| Box::new(Expr::Str(x.into()));
+        assert_eq!(body(r#""a" ++ "b" == "ab""#), Expr::Bin(BinOp::Eq, Box::new(Expr::Bin(BinOp::Concat, s("a"), s("b"))), s("ab")));
     }
 
     #[test]
@@ -404,7 +715,73 @@ mod tests {
         let neg = Expr::Un(UnOp::Neg, Box::new(call));
         let cond = Expr::Un(UnOp::Not, Box::new(Expr::Bool(true)));
         let iff = Expr::If(Box::new(cond), var("y"), var("y"));
-        assert_eq!(t.body, Expr::Let("y".into(), Box::new(neg), Box::new(iff)));
+        assert_eq!(t.body, Expr::Let("y".into(), None, Box::new(neg), Box::new(iff)));
+    }
+
+    #[test]
+    fn parses_type_definitions_and_type_syntax() {
+        let p = parse_program(
+            "type User = { id: Int, name: Str, }\n\
+             type Err = Empty | NotNumber(Str) | Pair(Int, List[Float])\n\
+             type One = | Only\n\
+             fn f(u: User, k: fn(Int) -> Option[Int] !io, r2: Result[Unit, Str]) -> List[Err] = []",
+        )
+        .unwrap();
+        assert_eq!(
+            p.defs[0],
+            Def::Type(TypeDef { name: "User".into(), body: TypeBody::Record(vec![("id".into(), Type::Int), ("name".into(), Type::Str)]) })
+        );
+        let Def::Type(TypeDef { body: TypeBody::Enum(vs), .. }) = &p.defs[1] else { panic!() };
+        assert_eq!(vs.iter().map(|v| (v.name.as_str(), v.fields.len())).collect::<Vec<_>>(), vec![("Empty", 0), ("NotNumber", 1), ("Pair", 2)]);
+        assert_eq!(vs[2].fields[1], Type::list(Type::Float));
+        let Def::Type(TypeDef { body: TypeBody::Enum(one), .. }) = &p.defs[2] else { panic!() };
+        assert_eq!(one.len(), 1);
+        let Def::Fn(f) = &p.defs[3] else { panic!() };
+        assert_eq!(f.params[1].ty, Type::Fn(vec![Type::Int], Box::new(Type::option(Type::Int)), vec!["io".into()]));
+        assert_eq!(f.params[2].ty, Type::result(Type::Unit, Type::Str));
+        assert_eq!(f.ret, Type::list(Type::Named("Err".into())));
+    }
+
+    #[test]
+    fn parses_data_expressions() {
+        assert_eq!(body("[1, 2,]"), Expr::List(vec![Expr::Int(1), Expr::Int(2)]));
+        assert_eq!(body("[]"), Expr::List(vec![]));
+        assert_eq!(body("{ print(\"a\"); 1 }"), Expr::Seq(vec![Expr::Call("print".into(), vec![Expr::Str("a".into())]), Expr::Int(1)]));
+        assert_eq!(
+            body("User { id: 1, name: \"a\" }.name"),
+            Expr::Field(Box::new(Expr::Record("User".into(), vec![("id".into(), Expr::Int(1)), ("name".into(), Expr::Str("a".into()))])), "name".into())
+        );
+        assert_eq!(body("-a.b.c"), Expr::Un(UnOp::Neg, Box::new(Expr::Field(Box::new(Expr::Field(var("a"), "b".into())), "c".into()))));
+        assert_eq!(body("let x: Option[Int] = None in x"), Expr::Let("x".into(), Some(Type::option(Type::Int)), var("None"), var("x")));
+        assert_eq!(body("1.5"), Expr::Float(1.5));
+    }
+
+    #[test]
+    fn parses_match_with_patterns_and_guards() {
+        let e = body("match get(xs, 0) { None => 0, Some(n) if n < 0 => -1, Some(_) => 1, }");
+        let Expr::Match(scrut, arms) = e else { panic!() };
+        assert_eq!(*scrut, Expr::Call("get".into(), vec![Expr::Var("xs".into()), Expr::Int(0)]));
+        assert_eq!(arms.len(), 3);
+        assert_eq!(arms[0].pat, Pat::Variant("None".into(), vec![]));
+        assert_eq!(arms[1].pat, Pat::Variant("Some".into(), vec![Pat::Bind("n".into())]));
+        assert_eq!(arms[1].guard, Some(Expr::Bin(BinOp::Lt, var("n"), int(0))));
+        assert_eq!(arms[2].pat, Pat::Variant("Some".into(), vec![Pat::Wild]));
+        let Expr::Match(_, arms) = body("match u { User { id: 1, name } => name, _ => \"\" }") else { panic!() };
+        assert_eq!(arms[0].pat, Pat::Record("User".into(), vec![("id".into(), Pat::Int(1)), ("name".into(), Pat::Bind("name".into()))]));
+        let Expr::Match(_, arms) = body("match x { -1 => 0, \"s\" => 1, true => 2, () => 3 }") else { panic!() };
+        let pats: Vec<Pat> = arms.into_iter().map(|a| a.pat).collect();
+        assert_eq!(pats, vec![Pat::Int(-1), Pat::Str("s".into()), Pat::Bool(true), Pat::Unit]);
+    }
+
+    #[test]
+    fn record_literal_is_not_parsed_in_match_scrutinee() {
+        // `match Empty { ... }`: the braces open the arms, not a record literal.
+        let Expr::Match(scrut, arms) = body("match Empty { Empty => 1, _ => 2 }") else { panic!() };
+        assert_eq!(*scrut, Expr::Var("Empty".into()));
+        assert_eq!(arms.len(), 2);
+        // Inside parentheses record literals are allowed again.
+        let Expr::Match(scrut, _) = body("match (P { x: 1 }) { _ => 1 }") else { panic!() };
+        assert_eq!(*scrut, Expr::Record("P".into(), vec![("x".into(), Expr::Int(1))]));
     }
 
     #[test]
@@ -417,13 +794,31 @@ mod tests {
         assert!(e.message.contains("expected a name"), "{}", e.message);
         let e = parse_program("test t = 1 < 2 < 3").unwrap_err();
         assert!(e.message.contains("chained"), "{}", e.message);
-        let e = parse_program("fn f() -> Float = 1").unwrap_err();
+        let e = parse_program("fn f() -> 3 = 1").unwrap_err();
         assert!(e.message.contains("expected a type"), "{}", e.message);
+    }
+
+    #[test]
+    fn keyword_in_expression_position_is_expected_an_expression() {
+        let e = parse_program("fn f() -> Int = then").unwrap_err();
+        assert_eq!(e.message, "expected an expression, found `then`");
+        let e = parse_program("test t = 1 + if true then 1 else 2 == 2").unwrap_err();
+        assert!(e.message.starts_with("expected an expression, found `if` (wrap"), "{}", e.message);
+    }
+
+    #[test]
+    fn enforces_name_case() {
+        assert!(parse_program("fn F() -> Int = 1").unwrap_err().message.contains("function names start with a lowercase letter"));
+        assert!(parse_program("type user = { a: Int }").unwrap_err().message.contains("type names start with an uppercase letter"));
+        assert!(parse_program("type U = a | B").unwrap_err().message.contains("variant names start with an uppercase letter"));
+        assert!(parse_program("test t = let X = 1 in X").unwrap_err().message.contains("variable names"));
+        assert!(parse_program("test t = {}").unwrap_err().message.contains("expected an expression, found `}`"));
+        assert!(parse_program("test t = match x { }").unwrap_err().message.contains("at least one arm"));
     }
 
     /// Debug-build parser frames are large; give deep-but-legal inputs more room than a 2 MiB test thread.
     fn parse_big_stack(src: String) -> Result<Program, Diagnostic> {
-        std::thread::Builder::new().stack_size(32 << 20).spawn(move || parse_program(&src)).unwrap().join().unwrap()
+        std::thread::Builder::new().stack_size(64 << 20).spawn(move || parse_program(&src)).unwrap().join().unwrap()
     }
 
     fn rejects_deep(src: String) {
@@ -455,6 +850,15 @@ mod tests {
     #[test]
     fn rejects_deeply_nested_lets() {
         rejects_deep(format!("test t = {}1", "let x = 1 in ".repeat(10_000)));
+    }
+
+    #[test]
+    fn rejects_deeply_nested_data_and_patterns() {
+        rejects_deep(format!("test t = {}1{}", "[".repeat(10_000), "]".repeat(10_000)));
+        rejects_deep(format!("test t = {}1{}", "{".repeat(10_000), "}".repeat(10_000)));
+        rejects_deep(format!("test t = x{}", ".f".repeat(10_000)));
+        rejects_deep(format!("test t = match x {{ {}_{} => 1 }}", "Some(".repeat(10_000), ")".repeat(10_000)));
+        rejects_deep(format!("fn f(x: {}Int{}) -> Int = 1", "List[".repeat(10_000), "]".repeat(10_000)));
     }
 
     #[test]

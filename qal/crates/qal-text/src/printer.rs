@@ -14,9 +14,33 @@ pub fn print_program(p: &Program) -> String {
 fn print_def(d: &Def) -> String {
     match d {
         Def::Test(t) => format!("test {} = {}", t.name, print_expr(&t.body)),
+        Def::Type(t) => match &t.body {
+            TypeBody::Record(fields) => {
+                let fs: Vec<String> = fields.iter().map(|(n, ty)| format!("{n}: {ty}")).collect();
+                format!("type {} = {{ {} }}", t.name, fs.join(", "))
+            }
+            TypeBody::Enum(variants) => {
+                let vs: Vec<String> = variants
+                    .iter()
+                    .map(|v| {
+                        if v.fields.is_empty() {
+                            v.name.clone()
+                        } else {
+                            let fs: Vec<String> = v.fields.iter().map(|f| f.to_string()).collect();
+                            format!("{}({})", v.name, fs.join(", "))
+                        }
+                    })
+                    .collect();
+                format!("type {} = {}", t.name, vs.join(" | "))
+            }
+        },
         Def::Fn(f) => {
-            let params: Vec<String> = f.params.iter().map(|p| format!("{}: {}", p.name, p.ty.name())).collect();
-            let mut s = format!("fn {}({}) -> {}", f.name, params.join(", "), f.ret.name());
+            let params: Vec<String> = f.params.iter().map(|p| format!("{}: {}", p.name, p.ty)).collect();
+            let mut s = match f.ret {
+                // `fn f() -> fn() -> Int !io` would give `!io` to the result type; parenthesize it.
+                Type::Fn(..) => format!("fn {}({}) -> ({})", f.name, params.join(", "), f.ret),
+                _ => format!("fn {}({}) -> {}", f.name, params.join(", "), f.ret),
+            };
             for e in &f.effects {
                 s.push_str(&format!(" !{e}"));
             }
@@ -35,10 +59,11 @@ fn print_def(d: &Def) -> String {
 /// Precedence of an expression's outermost construct (higher binds tighter).
 fn prec(e: &Expr) -> u8 {
     match e {
-        Expr::Let(..) | Expr::If(..) => 0,
+        Expr::Let(..) | Expr::If(..) | Expr::Match(..) => 0,
         Expr::Bin(op, ..) => op.precedence(),
         Expr::Un(..) => 6,
-        _ => 7,
+        Expr::Field(..) => 8,
+        _ => 9,
     }
 }
 
@@ -51,16 +76,85 @@ fn wrap(e: &Expr, needs_parens: bool) -> String {
     }
 }
 
+/// True if `e` contains a record literal outside of any delimiter, which a match scrutinee must not.
+fn has_bare_record(e: &Expr) -> bool {
+    match e {
+        Expr::Record(..) => true,
+        Expr::Bin(_, l, r) => has_bare_record(l) || has_bare_record(r),
+        Expr::Un(_, x) | Expr::Field(x, _) => has_bare_record(x),
+        Expr::If(c, t, f) => has_bare_record(c) || has_bare_record(t) || has_bare_record(f),
+        Expr::Let(_, _, v, b) => has_bare_record(v) || has_bare_record(b),
+        Expr::Match(s, arms) => {
+            has_bare_record(s) || arms.iter().any(|a| a.guard.as_ref().is_some_and(has_bare_record) || has_bare_record(&a.body))
+        }
+        _ => false,
+    }
+}
+
+pub fn print_str(s: &str) -> String {
+    let mut out = String::from("\"");
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\t' => out.push_str("\\t"),
+            '\r' => out.push_str("\\r"),
+            '\0' => out.push_str("\\0"),
+            c if c.is_control() => out.push_str(&format!("\\u{{{:x}}}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
+pub fn print_pat(p: &Pat) -> String {
+    match p {
+        Pat::Wild => "_".into(),
+        Pat::Bind(n) => n.clone(),
+        Pat::Int(n) => n.to_string(),
+        Pat::Str(s) => print_str(s),
+        Pat::Bool(b) => b.to_string(),
+        Pat::Unit => "()".into(),
+        Pat::Variant(n, ps) if ps.is_empty() => n.clone(),
+        Pat::Variant(n, ps) => {
+            let ps: Vec<String> = ps.iter().map(print_pat).collect();
+            format!("{n}({})", ps.join(", "))
+        }
+        Pat::Record(n, fs) => {
+            let fs: Vec<String> = fs
+                .iter()
+                .map(|(f, p)| match p {
+                    Pat::Bind(b) if b == f => f.clone(),
+                    _ => format!("{f}: {}", print_pat(p)),
+                })
+                .collect();
+            format!("{n} {{ {} }}", fs.join(", "))
+        }
+    }
+}
+
+fn comma(items: &[Expr]) -> String {
+    items.iter().map(print_expr).collect::<Vec<_>>().join(", ")
+}
+
 pub fn print_expr(e: &Expr) -> String {
     match e {
         Expr::Int(n) => n.to_string(),
+        Expr::Float(x) => format!("{x:?}"),
         Expr::Bool(b) => b.to_string(),
+        Expr::Str(s) => print_str(s),
         Expr::Unit => "()".to_string(),
         Expr::Var(v) => v.clone(),
-        Expr::Call(f, args) => {
-            let a: Vec<String> = args.iter().map(print_expr).collect();
-            format!("{f}({})", a.join(", "))
+        Expr::Call(f, args) => format!("{f}({})", comma(args)),
+        Expr::List(items) => format!("[{}]", comma(items)),
+        Expr::Seq(items) => format!("{{ {} }}", items.iter().map(print_expr).collect::<Vec<_>>().join("; ")),
+        Expr::Record(n, fs) => {
+            let fs: Vec<String> = fs.iter().map(|(f, v)| format!("{f}: {}", print_expr(v))).collect();
+            format!("{n} {{ {} }}", fs.join(", "))
         }
+        Expr::Field(t, f) => format!("{}.{f}", wrap(t, prec(t) < 8)),
         Expr::Un(op, x) => {
             let sym = match op {
                 UnOp::Neg => "-",
@@ -71,13 +165,26 @@ pub fn print_expr(e: &Expr) -> String {
         Expr::Bin(op, l, r) => {
             let p = op.precedence();
             // Left-associative: the left side may share our precedence, the right may not.
-            // Comparisons (3) are non-associative: neither side may share it.
-            let left_parens = prec(l) < p || (p == 3 && prec(l) == 3);
+            // Comparisons are non-associative: neither side may share it.
+            let left_parens = prec(l) < p || (op.is_comparison() && prec(l) == p);
             let right_parens = prec(r) <= p;
             format!("{} {} {}", wrap(l, left_parens), op.symbol(), wrap(r, right_parens))
         }
         Expr::If(c, t, f) => format!("if {} then {} else {}", print_expr(c), print_expr(t), print_expr(f)),
-        Expr::Let(n, v, b) => format!("let {n} = {} in {}", print_expr(v), print_expr(b)),
+        Expr::Let(n, ann, v, b) => match ann {
+            Some(t) => format!("let {n}: {t} = {} in {}", print_expr(v), print_expr(b)),
+            None => format!("let {n} = {} in {}", print_expr(v), print_expr(b)),
+        },
+        Expr::Match(s, arms) => {
+            let arms: Vec<String> = arms
+                .iter()
+                .map(|a| match &a.guard {
+                    Some(g) => format!("{} if {} => {}", print_pat(&a.pat), print_expr(g), print_expr(&a.body)),
+                    None => format!("{} => {}", print_pat(&a.pat), print_expr(&a.body)),
+                })
+                .collect();
+            format!("match {} {{ {} }}", wrap(s, has_bare_record(s)), arms.join(", "))
+        }
     }
 }
 
@@ -106,11 +213,33 @@ mod tests {
     }
 
     #[test]
+    fn prints_data_definitions_and_match() {
+        let src = "type   E =|A|B( Int,Str )\ntype R={x:Float,}\n\
+                   fn f(e: E) -> Str = match e {A=>\"a\\n\",B(n,s) if n>0=>s,_=>\"\"}";
+        let p = parse_program(src).unwrap();
+        assert_eq!(
+            print_program(&p),
+            "type E = A | B(Int, Str)\n\ntype R = { x: Float }\n\n\
+             fn f(e: E) -> Str\n= match e { A => \"a\\n\", B(n, s) if n > 0 => s, _ => \"\" }\n"
+        );
+    }
+
+    #[test]
     fn roundtrips_all_constructs() {
         roundtrip("fn f(x: Int) -> Int req x > 0 ens r >= 1 = if x == 1 then 1 else x * f(x - 1)");
         roundtrip("test t = let a = (if true then 1 else 2) in a + (let b = 3 in b)");
         roundtrip("test t = -(-1) == 1 && !(1 < 2) || (1 == 1) == true");
         roundtrip("fn u() -> Unit !io !fs = ()");
         roundtrip("test t = 1 - (2 - 3) - 4 * (5 % 2) / 1");
+        roundtrip("type User = { id: Int, tags: List[Str] }\ntype T = Leaf | Node(T, Int, T)");
+        roundtrip("fn g(k: fn(Int, Str) -> Option[Int] !io, r2: Result[Unit, Str]) -> List[Float] = [1.5, 0.1, 1e300, 2.5e-7]");
+        roundtrip("fn f() -> (fn(Int) -> Int) !io = g\nfn h() -> fn(Int) -> Int !io = g\nfn k(x: fn() -> (fn() -> Int !io)) -> Int = 1");
+        roundtrip(r#"test t = "q\"\\\n\t\r\0\u{7}é" ++ "x" == "y""#);
+        roundtrip("test t = { print(\"a\"); { 1 }; 2 } == (User { id: 1, n: [] }).id");
+        roundtrip("test t = (-a).b.c == -a.b.c && (a + b).c == 1");
+        roundtrip("test t = let x: Option[List[Int]] = None in match x { Some(_) => 0, None => 1 }");
+        roundtrip("test t = match (P { x: 1 }) { P { x: 1, y } => y, P { x: n } if n < -1 => -1, _ => match y { -3 => 1, () => 2 } }");
+        roundtrip("test t = match (P { x: 1 }.x + 1) { _ => (match a { _ => 1 }) + 1 }");
+        roundtrip("test t = match f(P { x: 1 }) { \"s\" => true, _ => false }");
     }
 }

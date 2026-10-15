@@ -5,4 +5,4 @@ pub mod parser;
 pub mod printer;
 
 pub use parser::parse_program;
-pub use printer::{print_expr, print_program};
+pub use printer::{print_expr, print_pat, print_program};
