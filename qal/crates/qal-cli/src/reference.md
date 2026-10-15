@@ -6,9 +6,15 @@ Definitions (any order, any number per call; `#` starts a comment):
   fn area(s: Shape) -> Int = match s { Circle(r) => 3 * r * r, Rect(w, h) => w * h, Dot => 0 }
   test area_rect = area(Rect(2, 3)) == 6           test: pure Bool expression
   fn main(args: List[Str]) -> Int !io = { print("hi"); 0 }   entry point; result = exit code
-Every parameter and result is typed. fn/test names start lowercase, type and variant names uppercase.
+Every parameter and result is typed. fn/test names start lowercase, type and variant names uppercase. Built-in names (below) are reserved.
 
-Types: Int (64-bit; overflow and division by zero are runtime errors), Float, Bool, Unit (value `()`), Str, List[T], Option[T] = Some(x) | None, Result[T, E] = Ok(x) | Err(e), fn(A) -> B !e. No null, exceptions, implicit conversions, user generics, closures or loops: recurse (a call in tail position is a loop; a fn with `ens` makes no tail calls), and pass named functions as values: map(xs, double). Built-ins are not values: wrap them (fn show(n: Int) -> Str = from_int(n)).
+Types: Int (64-bit; overflow and division by zero are runtime errors), Float, Bool, Unit (value `()`), Str, Bytes, List[T], Map[K, V] (ordered by key), Option[T] = Some(x) | None, Result[T, E] = Ok(x) | Err(e), fn(A) -> B !e. No null, exceptions, implicit conversions or loops: recurse (a call in tail position is a loop; a fn with `ens` makes no tail calls). Built-ins are not values: wrap them (fn show(n: Int) -> Str = from_int(n)).
+Generics: type Pair[A, B] = { fst: A, snd: B }   type Tree[T] = Leaf | Node(Tree[T], T, Tree[T])
+  fn swap[A, B](p: Pair[A, B]) -> Pair[B, A] = Pair { fst: p.snd, snd: p.fst }   type arguments are inferred at calls
+  A recursive generic calls itself only at its own parameters (`size[T]` calls `size(l)` on a Tree[T]).
+Closures: fn(x) => x + n   fn(x: Int, y) => ...   capture the locals they use (values are immutable). A closure's type
+  carries the effects of its body: fn(Str) -> Unit !io; calling it needs them, creating it does not. Functions, named or
+  not, are values: map(xs, fn(x) => x * k), compose(f, g). Functions cannot be compared or be map keys.
 
 Expressions (everything is an expression, there are no statements):
   let x = e in body     let x: T = e in body     if c then a else b   (else is required)
@@ -33,7 +39,10 @@ Built-ins (indices count characters; slice and range are half-open: the end is e
   List len(xs) get(xs, i) -> Option[T] push(xs, x) concat(xs, ys) map(xs, f) filter(xs, pred) fold(xs, init, f) with f(acc, x)
        (f may carry effects; the caller then declares them. For-each: fn step(acc: Int, x: Int) -> Int !io = { print(from_int(x)); acc }, then fold(xs, 0, step))
        range(from, to) -> List[Int]  reverse(xs)  sort_int(xs)  sort_str(xs)
-  Num  int_to_float(n)  float_to_int(x) -> Option[Int]
+  Map  map_new() map_put(m, k, v) map_get(m, k) -> Option[V] map_del(m, k) map_has(m, k) map_size(m) map_keys(m) map_values(m)
+  Bytes to_bytes(s) bytes_len(b) bytes_get(b, i) -> Option[Int] bytes_slice(b, from, to) bytes_from(xs) (0..=255) bytes_to_list(b) bytes_to_str(b) -> Option[Str]  b1 ++ b2
+  Num  int_to_float(n)  float_to_int(x) -> Option[Int]   compare(a, b) -> Int: -1, 0 or 1 for any two values without functions
+       (Str bytewise, lists/records/variants in order): sort any list with it
   Sys  print(s) !io (writes s and a newline)  read_line() -> Option[Str] !io (next line without its `\n` or `\r\n`; None at end)
        read_all() -> Str !io (all remaining input including `\r`; "" at end; invalid UTF-8 becomes U+FFFD, as in read_line)
        read_file(path) -> Result[Str, Str] !fs  write_file(path, text) -> Result[Unit, Str] !fs  now_ms() -> Int !time  rand_int(lo, hi) -> Int !rand (both ends included; lo <= hi, else contract_violation)

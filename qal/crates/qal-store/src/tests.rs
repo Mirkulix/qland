@@ -752,3 +752,62 @@ fn definitions_named_like_new_builtins_can_be_renamed_one_by_one() {
     // Renaming onto a built-in name is still refused.
     assert_eq!(s.rename("bang", "index_of", "test").unwrap_err()[0].message, "`index_of` is the name of a built-in function");
 }
+
+// ---------------------------------------------------------------------------------------------
+// Phase 2a: generic definitions, closures, maps and bytes in the store
+
+const PHASE2A: &str = "type Pair[A, B] = { fst: A, snd: B }\n\
+    type Tree[T] = Leaf | Node(Tree[T], T, Tree[T])\n\
+    fn swap[A, B](p: Pair[A, B]) -> Pair[B, A] = Pair { fst: p.snd, snd: p.fst }\n\
+    fn size[T](t: Tree[T]) -> Int = match t { Leaf => 0, Node(l, _, r) => size(l) + 1 + size(r) }\n\
+    fn adder(n: Int) -> fn(Int) -> Int = fn(x) => x + n\n\
+    fn tally(ws: List[Str]) -> Map[Str, Int] = fold(ws, map_new(), fn(m, w) => map_put(m, w, 1))\n\
+    fn raw(s: Str) -> Bytes = to_bytes(s)\n\
+    test t = size(Node(Leaf, swap(Pair { fst: 1, snd: true }), Leaf)) == 1";
+
+#[test]
+fn generic_and_closure_definitions_round_trip_through_the_store() {
+    let mut s = store();
+    ok(&mut s, PHASE2A);
+    assert_eq!(text(&mut s, "swap"), "fn swap[A, B](p: Pair[A, B]) -> Pair[B, A]\n= Pair { fst: p.snd, snd: p.fst }");
+    assert_eq!(text(&mut s, "adder"), "fn adder(n: Int) -> (fn(Int) -> Int)\n= fn(x) => x + n");
+    assert_eq!(text(&mut s, "Tree"), "type Tree[T] = Leaf | Node(Tree[T], T, Tree[T])");
+    let entries = s.query(&Query::default()).unwrap();
+    let sig = |n: &str| entries.iter().find(|e| e.name == n).unwrap().signature.clone();
+    assert_eq!(sig("swap"), "fn[A, B](Pair[A, B]) -> Pair[B, A]");
+    // The whole stored codebase rehashes to its stored hashes and checks again.
+    let p = s.program().unwrap();
+    qal_check::check(&p).unwrap();
+    let rehashed = hash_program(&p).unwrap();
+    for c in rehashed.defs {
+        assert_eq!(c.hash.to_hex(), hash(&mut s, &c.name), "{}", c.name);
+    }
+}
+
+#[test]
+fn renaming_type_parameters_and_closure_parameters_changes_no_hash() {
+    let mut s = store();
+    ok(&mut s, PHASE2A);
+    let before = hashes(&mut s);
+    let renamed = PHASE2A
+        .replace("fn swap[A, B](p: Pair[A, B]) -> Pair[B, A]", "fn swap[X, Y](q: Pair[X, Y]) -> Pair[Y, X]")
+        .replace("Pair { fst: p.snd, snd: p.fst }", "Pair { fst: q.snd, snd: q.fst }")
+        .replace("fn(x) => x + n", "fn(y) => y + n")
+        .replace("type Tree[T] = Leaf | Node(Tree[T], T, Tree[T])", "type Tree[E] = Leaf | Node(Tree[E], E, Tree[E])");
+    let d = ok(&mut s, &renamed);
+    assert!(d.iter().all(|d| d.status == "unchanged"), "{d:#?}");
+    assert_eq!(hashes(&mut s), before);
+    // The text shows the latest local names.
+    assert!(text(&mut s, "swap").starts_with("fn swap[X, Y](q: Pair[X, Y])"));
+}
+
+#[test]
+fn phase1_definitions_keep_their_hashes() {
+    // Hash of `fn f(x: Int) -> Int = x` under the Phase 1 canonical format (version 1).
+    let mut s = store();
+    ok(&mut s, "fn f(x: Int) -> Int = x");
+    let p = qal_text::parse_program("fn f(x: Int) -> Int = x").unwrap();
+    let c = &hash_program(&p).unwrap().defs[0];
+    assert_eq!(c.canonical[4], 1);
+    assert_eq!(hash(&mut s, "f"), c.hash.to_hex());
+}

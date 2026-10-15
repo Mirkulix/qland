@@ -558,7 +558,7 @@ pub fn tools() -> J {
          "description": "Run a stored entry point `fn(List[Str]) -> Int` (default `main`) with string arguments. Result: exit_code and stdout, or a runtime `error` (contract violation, overflow, timeout after 10 s, ...). Effects the program declares must be granted with `allow`.",
          "inputSchema": {"type": "object", "properties": {"entry": s("Entry point name (default main)."), "args": list("Program arguments."), "stdin": stdin.clone(), "allow": allow.clone()}, "additionalProperties": false}},
         {"name": "qal_call", "title": "Call a QAL function", "annotations": {"readOnlyHint": false, "destructiveHint": false, "openWorldHint": false},
-         "description": "Call any stored function with JSON arguments (Int, Float, Bool, Str, null for Unit, and arrays of those) and get its result as JSON: records are objects, `None` is \"None\", `Some(3)` is {\"Some\":[3]}.",
+         "description": "Call any stored function with JSON arguments and get its result as JSON, both in the same form: numbers, strings, true/false, null for Unit, arrays for List and Bytes, [[key, value], ...] for Map, objects for records, `None` is \"None\", `Some(3)` is {\"Some\":[3]}. Function values cannot be passed.",
          "inputSchema": {"type": "object", "properties": {"fn": s("Function name."), "args": {"type": "array", "description": "Arguments in parameter order."}, "stdin": stdin, "allow": allow}, "required": ["fn"], "additionalProperties": false}},
         {"name": "qal_view", "title": "View QAL definitions", "annotations": read_only,
          "description": "Show stored definitions as text with their hash, signature, effects and the signatures of their direct dependencies. Names, or `#<hash>` for old versions from the history.",

@@ -161,8 +161,10 @@ pub fn parse_args(typed: &TProgram, name: &str, raw: &[String]) -> Result<Vec<Va
         .collect()
 }
 
-/// Converts JSON arguments to values according to the signature of fn `name`: Int, Float, Bool,
-/// Unit (`null`), Str and lists of those.
+/// Converts JSON arguments to values according to the signature of fn `name`, in the JSON form
+/// results are reported in (`qal_run::from_json`): numbers, strings, Bool, `null` for Unit, arrays
+/// for List and Bytes, `[[key, value], ...]` for Map, objects for records, `"None"` / `{"Some": [3]}`
+/// for variants.
 pub fn json_args(typed: &TProgram, name: &str, raw: &[serde_json::Value]) -> Result<Vec<Value>, RunError> {
     let f = typed.fns.iter().find(|f| f.def.name == name).ok_or_else(|| RunError::new("unknown_function", name, format!("no function `{name}`")))?;
     if f.def.params.len() != raw.len() {
@@ -172,25 +174,8 @@ pub fn json_args(typed: &TProgram, name: &str, raw: &[serde_json::Value]) -> Res
         .params
         .iter()
         .zip(raw)
-        .map(|(p, v)| json_value(&p.ty, v).map_err(|m| RunError::new("bad_args", name, format!("`{}`: {m}", p.name))))
+        .map(|(p, v)| qal_run::from_json(typed, &p.ty, v).map_err(|m| RunError::new("bad_args", name, format!("`{}`: {m}", p.name))))
         .collect()
-}
-
-fn json_value(ty: &Type, v: &serde_json::Value) -> Result<Value, String> {
-    use serde_json::Value as J;
-    Ok(match (ty, v) {
-        (Type::Int, J::Number(n)) => Value::Int(n.as_i64().ok_or_else(|| format!("expected Int, got {n}"))?),
-        (Type::Float, J::Number(n)) => Value::Float(n.as_f64().ok_or_else(|| format!("expected Float, got {n}"))?),
-        (Type::Bool, J::Bool(b)) => Value::Bool(*b),
-        (Type::Unit, J::Null) => Value::Unit,
-        (Type::Str, J::String(s)) => Value::Str(s.clone()),
-        (Type::List(elem), J::Array(xs)) => Value::List(xs.iter().map(|x| json_value(elem, x)).collect::<Result<_, _>>()?),
-        (Type::Int | Type::Float | Type::Bool | Type::Unit | Type::Str | Type::List(_), other) => {
-            let shown: String = other.to_string().chars().take(40).collect();
-            return Err(format!("expected {ty}, got {shown}"));
-        }
-        (t, _) => return Err(format!("has type {t}, which cannot be passed as an argument (only Int, Float, Bool, Unit, Str and lists of them)")),
-    })
 }
 
 #[cfg(test)]
@@ -275,7 +260,8 @@ mod tests {
         assert_eq!(v, vec![Value::Int(-3), Value::Float(2.0), Value::Str("hi".into()), Value::Bool(true), Value::Unit, list]);
         let e = json_args(&l.typed, "f", &[json!(1.5), json!(2), json!("hi"), json!(true), json!(null), json!([])]).unwrap_err();
         assert_eq!((e.kind, e.message.as_str()), ("bad_args", "`a`: expected Int, got 1.5"));
-        assert!(json_args(&l.typed, "g", &[json!({"x": 1})]).unwrap_err().message.contains("cannot be passed"));
+        assert_eq!(json_args(&l.typed, "g", &[json!({"x": 1})]).unwrap(), vec![Value::Record("P".into(), vec![("x".into(), Value::Int(1))])]);
+        assert_eq!(json_args(&l.typed, "g", &[json!({"y": 1})]).unwrap_err().message, "`p`: P has no field `y`");
         assert!(json_args(&l.typed, "f", &[]).unwrap_err().message.contains("takes 6 argument(s), 0 given"));
         assert_eq!(json_args(&l.typed, "h", &[]).unwrap_err().kind, "unknown_function");
     }

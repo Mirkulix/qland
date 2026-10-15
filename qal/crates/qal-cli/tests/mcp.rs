@@ -122,7 +122,7 @@ fn handshake_lists_the_tools_with_the_language_reference() {
     let reference = tools[0]["description"].as_str().unwrap();
     assert!(reference.contains("QAL language reference") && reference.contains("alias_reference") && reference.contains("signature_change"));
     // "At most one page": a bounded size.
-    assert!(qal_cli::mcp::REFERENCE.lines().count() <= 45 && qal_cli::mcp::REFERENCE.len() <= 6000, "{} lines, {} bytes", qal_cli::mcp::REFERENCE.lines().count(), qal_cli::mcp::REFERENCE.len());
+    assert!(qal_cli::mcp::REFERENCE.lines().count() <= 60 && qal_cli::mcp::REFERENCE.len() <= 7500, "{} lines, {} bytes", qal_cli::mcp::REFERENCE.lines().count(), qal_cli::mcp::REFERENCE.len());
     // An unknown version gets the newest legacy one.
     let r = c.request("initialize", json!({"protocolVersion": "1999-01-01", "capabilities": {}, "clientInfo": {"name": "x", "version": "1"}}));
     assert_eq!(r["result"]["protocolVersion"], "2025-11-25");
