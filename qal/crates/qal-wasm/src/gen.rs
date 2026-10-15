@@ -180,10 +180,16 @@ impl<'g, 'p> FnGen<'g, 'p> {
                 self.store_slots(p, 8, xs);
                 self.a.i(I::LocalGet(p));
             }
-            TKind::Record(xs) => {
+            TKind::Record(fs) => {
                 let p = self.temp(Repr::I32);
-                self.alloc(8 * xs.len() as i64, p);
-                self.store_slots(p, 0, xs);
+                self.alloc(8 * fs.len() as i64, p);
+                // Evaluated in source order, each stored at its declared slot.
+                for (i, x) in fs {
+                    self.a.i(I::LocalGet(p));
+                    self.expr(x, false);
+                    self.a.opt(to_slot(Repr::of(&x.ty)));
+                    self.a.i(I::I64Store(m64(8 * *i as u64)));
+                }
                 self.a.i(I::LocalGet(p));
             }
             TKind::Field(x, i) => {

@@ -311,15 +311,15 @@ impl<'a> Cx<'a> {
                 return self.poison();
             }
         };
-        let mut values: Vec<Option<TExpr>> = vec![None; decl.len()];
+        let mut out: Vec<(u32, TExpr)> = Vec::new();
         for (f, e) in fields {
             let p = format!("{path}.fields.{f}");
             match decl.iter().position(|(n, _)| n == f) {
-                Some(i) if values[i].is_some() => {
+                Some(i) if out.iter().any(|(k, _)| *k == i as u32) => {
                     self.diags.push(Diagnostic::duplicate_name(self.def, &p, f));
                     self.infer(e, &p);
                 }
-                Some(i) => values[i] = Some(self.expect(e, &decl[i].1, &p)),
+                Some(i) => out.push((i as u32, self.expect(e, &decl[i].1, &p))),
                 None => {
                     let names: Vec<&str> = decl.iter().map(|(n, _)| n.as_str()).collect();
                     self.diags.push(Diagnostic::unknown_name(self.def, &p, f).hint(format!("fields of `{name}`: {}", names.join(", "))));
@@ -327,11 +327,9 @@ impl<'a> Cx<'a> {
                 }
             }
         }
-        let mut out = Vec::new();
-        for (v, (f, _)) in values.into_iter().zip(&decl) {
-            match v {
-                Some(v) => out.push(v),
-                None => self.diags.push(Diagnostic::missing_field(self.def, path, name, f)),
+        for (i, (f, _)) in decl.iter().enumerate() {
+            if !out.iter().any(|(k, _)| *k == i as u32) {
+                self.diags.push(Diagnostic::missing_field(self.def, path, name, f));
             }
         }
         TExpr { ty: Type::Named(name.into()), kind: TKind::Record(out) }
@@ -504,9 +502,10 @@ impl<'a> Cx<'a> {
                 self.zonk(t);
                 self.zonk(f);
             }
-            TKind::Call(_, xs) | TKind::List(xs) | TKind::Variant(_, xs) | TKind::Record(xs) | TKind::Seq(xs) => {
+            TKind::Call(_, xs) | TKind::List(xs) | TKind::Variant(_, xs) | TKind::Seq(xs) => {
                 xs.iter_mut().for_each(|x| self.zonk(x));
             }
+            TKind::Record(fs) => fs.iter_mut().for_each(|(_, x)| self.zonk(x)),
             TKind::CallIndirect(f, xs) => {
                 self.zonk(f);
                 xs.iter_mut().for_each(|x| self.zonk(x));

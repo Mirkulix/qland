@@ -168,6 +168,16 @@ fn effects_must_be_granted() {
 }
 
 #[test]
+fn record_fields_are_evaluated_in_source_order() {
+    let src = "type P = { x: Unit, y: Unit }\nfn main(args: List[Str]) -> Int !io = let p = P { y: print(\"y\"), x: print(\"x\") } in 0";
+    assert_eq!(main_runner(src, "io").run_main(&[]).stdout, "y\nx\n");
+    let r = runner("type Q = { a: Int, b: Int }\nfn mk(n: Int) -> Q = Q { b: 1 / n, a: 9223372036854775807 + 1 }");
+    let e = r.call("mk", &[Value::Int(0)]).unwrap_err();
+    assert_eq!((e.kind, e.path.as_str()), ("div_by_zero", "body.fields.b"));
+    assert_eq!(r.call("mk", &[Value::Int(1)]).unwrap_err().kind, "int_overflow");
+}
+
+#[test]
 fn referencing_an_effectful_fn_needs_no_permission() {
     let src = "fn pr(x: Int) -> Int !io = { print(\"p\"); x }\nfn main(args: List[Str]) -> Int = let f = pr in 0";
     assert_eq!(main_runner(src, "").run_main(&[]).result, Ok(Value::Int(0)));

@@ -158,7 +158,8 @@ fn records_and_fields() {
                test t = mk().name == \"a\" && mk() == User { id: 1, name: \"a\" }";
     let tp = typed(src);
     let TKind::Record(fields) = &tp.fns[0].body.kind else { panic!() };
-    assert_eq!(fields[0].kind, TKind::Int(1), "fields are stored in declaration order");
+    let order: Vec<(u32, &TKind)> = fields.iter().map(|(i, x)| (*i, &x.kind)).collect();
+    assert_eq!(order, vec![(1, &TKind::Str("a".into())), (0, &TKind::Int(1))], "source order with declaration indices");
     let ty = "type User = { id: Int, name: Str }\n";
     let d = one(&format!("{ty}fn f() -> User = User {{ id: 1 }}"));
     assert_eq!((d.code, d.message.as_str()), ("E0206", "`User` needs field `name`"));

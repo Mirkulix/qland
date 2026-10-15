@@ -277,7 +277,8 @@ fn walk(e: &TExpr, fns: &mut Vec<usize>, builtins: &mut BTreeSet<Builtin>) {
             walk(f, fns, builtins);
             xs.iter().for_each(|x| walk(x, fns, builtins));
         }
-        TKind::List(xs) | TKind::Variant(_, xs) | TKind::Record(xs) | TKind::Seq(xs) => xs.iter().for_each(|x| walk(x, fns, builtins)),
+        TKind::List(xs) | TKind::Variant(_, xs) | TKind::Seq(xs) => xs.iter().for_each(|x| walk(x, fns, builtins)),
+        TKind::Record(fs) => fs.iter().for_each(|(_, x)| walk(x, fns, builtins)),
         TKind::Match(s, arms) => {
             walk(s, fns, builtins);
             for a in arms {

@@ -131,8 +131,9 @@ pub enum TKind {
     List(Vec<TExpr>),
     /// Variant of the enum/Option/Result type `ty`, with payload values.
     Variant(u32, Vec<TExpr>),
-    /// Record of type `ty`; fields in declaration order.
-    Record(Vec<TExpr>),
+    /// Record of type `ty`: (declaration index, value) for every field, in source order
+    /// (the order in which the values are evaluated).
+    Record(Vec<(u32, TExpr)>),
     /// Field access by declaration-order index.
     Field(Box<TExpr>, u32),
     Match(Box<TExpr>, Vec<TArm>),
