@@ -34,6 +34,7 @@ impl Permissions {
                 "fs" => return Err("`fs` needs a directory: `fs:<dir>`, e.g. `fs:./data`".into()),
                 _ => match item.strip_prefix("fs:") {
                     Some(dir) => {
+                        require_nofollow(O_NOFOLLOW)?;
                         let canonical = Path::new(dir).canonicalize().map_err(|e| format!("fs:{dir}: {e}"))?;
                         if !canonical.is_dir() {
                             return Err(format!("fs:{dir}: not a directory"));
@@ -146,15 +147,51 @@ fn same_file(_: &std::fs::Metadata, _: &std::fs::Metadata) -> bool {
     true
 }
 
-#[cfg(all(unix, any(target_os = "macos", target_os = "ios", target_os = "freebsd")))]
-const O_NOFOLLOW: i32 = 0x0100;
-#[cfg(all(unix, any(target_os = "linux", target_os = "android"), any(target_arch = "aarch64", target_arch = "arm")))]
-const O_NOFOLLOW: i32 = 0o100000;
-#[cfg(all(unix, any(target_os = "linux", target_os = "android"), not(any(target_arch = "aarch64", target_arch = "arm"))))]
-const O_NOFOLLOW: i32 = 0o400000;
+/// `O_NOFOLLOW` where its value is known; `fs` is refused elsewhere (and on non-Unix targets,
+/// where `same_file` cannot verify the opened file) instead of silently opening less safely.
+const O_NOFOLLOW: Option<i32> = if cfg!(all(
+    unix,
+    any(target_os = "macos", target_os = "ios", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd", target_os = "dragonfly")
+)) {
+    Some(0x0100)
+} else if cfg!(all(
+    any(target_os = "linux", target_os = "android"),
+    any(target_arch = "aarch64", target_arch = "arm", target_arch = "powerpc", target_arch = "powerpc64", target_arch = "m68k")
+)) {
+    Some(0o100000)
+} else if cfg!(all(
+    any(target_os = "linux", target_os = "android"),
+    any(
+        target_arch = "x86",
+        target_arch = "x86_64",
+        target_arch = "riscv32",
+        target_arch = "riscv64",
+        target_arch = "loongarch64",
+        target_arch = "s390x",
+        target_arch = "mips",
+        target_arch = "mips64",
+        target_arch = "sparc",
+        target_arch = "sparc64"
+    )
+)) {
+    Some(0o400000)
+} else {
+    None
+};
+
+fn require_nofollow(flag: Option<i32>) -> Result<i32, String> {
+    flag.ok_or_else(|| "the `fs` effect is not supported on this platform: files cannot be opened without following symbolic links".into())
+}
 
 /// Opens for reading, or for writing (created if missing, not truncated: the caller truncates once verified).
+///
+/// Known limitation: only the final path component is opened without following links, so a
+/// co-located process that swaps a directory of the path for a symlink between `check_path` and
+/// this call can make a write create an EMPTY file outside the granted directories (`verify_opened`
+/// then refuses to write to it). The proper fix, opening with `openat` relative to a verified
+/// parent directory descriptor, is planned for Phase 3.
 fn open_nofollow(path: &Path, write: bool) -> std::io::Result<File> {
+    let flag = require_nofollow(O_NOFOLLOW).map_err(std::io::Error::other)?;
     let mut o = std::fs::OpenOptions::new();
     if write {
         o.write(true).create(true);
@@ -164,8 +201,10 @@ fn open_nofollow(path: &Path, write: bool) -> std::io::Result<File> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
-        o.custom_flags(O_NOFOLLOW);
+        o.custom_flags(flag);
     }
+    #[cfg(not(unix))]
+    let _ = flag;
     o.open(path)
 }
 
@@ -422,6 +461,15 @@ mod tests {
         assert!(p.verify_opened(&a, &canon).is_ok());
         assert!(p.verify_opened(&outside, &canon).unwrap_err().starts_with("permission denied"));
         assert!(p.verify_opened(&outside, &root.join("secret.txt").canonicalize().unwrap()).unwrap_err().starts_with("permission denied"));
+    }
+
+    #[test]
+    fn fs_needs_a_known_nofollow_flag() {
+        assert_eq!(require_nofollow(Some(0x100)), Ok(0x100));
+        let e = require_nofollow(None).unwrap_err();
+        assert!(e.starts_with("the `fs` effect is not supported on this platform"), "{e}");
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        assert!(O_NOFOLLOW.is_some(), "supported on the development platforms");
     }
 
     #[test]
