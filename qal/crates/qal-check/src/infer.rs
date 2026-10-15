@@ -125,6 +125,12 @@ impl<'a> Cx<'a> {
             Expr::Lambda(params, body) => self.lambda_against(params, body, acc, path),
             _ => self.infer(e, path),
         };
+        // Without a function type where effects join, the join is plain unification (and far
+        // cheaper for deeply nested data: no rebuilt types).
+        if !self.sub.has_join_fn(acc) && !self.sub.has_join_fn(&t.ty) {
+            self.unify_at(path, acc, &t.ty);
+            return (t, acc.clone());
+        }
         let joined = self.sub.join(acc, &t.ty, true);
         let limits = self.sub.too_deep || self.sub.too_large;
         match joined {
@@ -250,17 +256,13 @@ impl<'a> Cx<'a> {
                     // A non-last item's value is discarded, except a Result: errors must be handled.
                     // A type not known yet becomes Unit (as for `print(..)`).
                     if i + 1 < n {
-                        match self.sub.resolve(&t.ty) {
-                            Type::Var(_) => {
-                                self.unify_at(&p, &Type::Unit, &t.ty);
+                        if matches!(self.sub.resolve(&t.ty), Type::Var(_)) {
+                            self.unify_at(&p, &Type::Unit, &t.ty);
+                        } else if contains_result(self.g, &self.sub.finish(&t.ty), &[], &[], &mut Vec::new()) {
+                            self.mismatch(&p, &Type::Unit, &t.ty);
+                            if let Some(d) = self.diags.last_mut() {
+                                d.hints = vec!["a Result must be handled with `match` (or bound with `let`), also inside a List, Option, Map or record; only other values can be discarded in `{ a; b }`".into()];
                             }
-                            Type::Result(..) => {
-                                self.mismatch(&p, &Type::Unit, &t.ty);
-                                if let Some(d) = self.diags.last_mut() {
-                                    d.hints = vec!["a Result must be handled with `match` (or bound with `let`); only other values can be discarded in `{ a; b }`".into()];
-                                }
-                            }
-                            _ => {}
                         }
                     }
                     out.push(t);
@@ -784,6 +786,36 @@ pub fn children(e: &TExpr) -> Vec<&TExpr> {
 
 /// Distinct declared types a type walk expands at most (see `contains_fn`).
 pub(crate) const MAX_EXPANSIONS: usize = 256;
+
+/// True if a value of type `t` can hold a `Result` (a discarded one would drop an error): directly
+/// or inside List/Option/Map/Result and the fields of records and variants; not inside a function
+/// type (a closure is not an error value) or a rigid type parameter. `params`/`flags`: the type
+/// parameters of the declaration being walked and whether the instance's argument for each holds
+/// a Result. Each (type, flags) pair is expanded once, at most `MAX_EXPANSIONS` of them (then: no).
+fn contains_result(g: &Globals, t: &Type, params: &[String], flags: &[bool], seen: &mut Vec<(String, Vec<bool>)>) -> bool {
+    match t {
+        Type::Result(..) => true,
+        Type::List(x) | Type::Option(x) => contains_result(g, x, params, flags, seen),
+        Type::Map(a, b) => contains_result(g, a, params, flags, seen) || contains_result(g, b, params, flags, seen),
+        Type::Param(p) => params.iter().position(|q| q == p).and_then(|i| flags.get(i).copied()).unwrap_or(false),
+        Type::Named(n) | Type::App(n, _) => {
+            let args: &[Type] = if let Type::App(_, a) = t { a } else { &[] };
+            let arg_flags: Vec<bool> = args.iter().map(|a| contains_result(g, a, params, flags, seen)).collect();
+            let key = (n.clone(), arg_flags);
+            if seen.len() >= MAX_EXPANSIONS || seen.contains(&key) {
+                return false;
+            }
+            let Some(d) = g.type_def(n) else { return false };
+            seen.push(key.clone());
+            let fields: Vec<&Type> = match &d.body {
+                TypeBody::Record(fs) => fs.iter().map(|(_, f)| f).collect(),
+                TypeBody::Enum(vs) => vs.iter().flat_map(|v| v.fields.iter()).collect(),
+            };
+            fields.into_iter().any(|f| contains_result(g, f, &d.params, &key.1, seen))
+        }
+        _ => false,
+    }
+}
 
 /// True if a value of type `t` can contain a function (`seen` guards recursive types).
 pub(crate) fn contains_fn(tp: &TProgram, t: &Type, seen: &mut Vec<String>) -> bool {

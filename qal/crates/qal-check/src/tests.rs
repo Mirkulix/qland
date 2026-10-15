@@ -234,6 +234,27 @@ fn sequences_discard_values_but_not_results() {
     let d = one("fn f() -> Int !fs = { write_file(\"a\", \"b\"); 2 }");
     assert_eq!((d.kind, d.path.as_str(), d.expected.as_deref()), ("type_mismatch", "body.items[0]", Some("Unit")));
     assert!(d.hints[0].starts_with("a Result must be handled with `match` (or bound with `let`)"), "{:?}", d.hints);
+    // Also a Result inside the discarded value (re-review N2): a for-each write drops every error.
+    for item in [
+        "map(ps, fn(p) => write_file(p, \"s\"))",
+        "Some(write_file(\"a\", \"b\"))",
+        "[read_file(\"a\")]",
+        "map_put(map_new(), 1, read_file(\"a\"))",
+        "W { r: read_file(\"a\") }",
+        "B { v: [read_file(\"a\")] }",
+        "Hold(Some(read_file(\"a\")))",
+    ] {
+        let src = format!("type W = {{ r: Result[Str, Str] }}\ntype B[T] = {{ v: T }}\ntype H = Hold(Option[Result[Str, Str]]) | Empty\nfn f(ps: List[Str]) -> Int !fs = {{ {item}; 0 }}");
+        let d = one(&src);
+        assert_eq!((d.kind, d.path.as_str()), ("type_mismatch", "body.items[0]"), "{item}");
+        assert!(d.hints[0].starts_with("a Result must be handled with `match` (or bound with `let`), also inside"), "{item}: {:?}", d.hints);
+    }
+    // Closures returning a Result, generic records without one and rigid type parameters are fine.
+    let ok = "type B[T] = { v: T }\ntype Tree[T] = Leaf | Node(Tree[T], T, Tree[T])\n\
+              fn f() -> Int = { fn() => read_file_ok(); B { v: 1 }; Node(Leaf, 2, Leaf); 0 }\n\
+              fn read_file_ok() -> Result[Int, Str] = Ok(1)\n\
+              fn ig[T](x: T) -> Int = { x; 0 }";
+    assert_eq!(check_src(ok), vec![]);
     // A value of a type not known yet becomes Unit, as before.
     let tp = typed("fn f() -> Int = { []; 1 }");
     let TKind::Seq(items) = &tp.fns[0].body.kind else { panic!() };
@@ -704,4 +725,25 @@ fn branches_and_list_items_join_function_effects() {
     // Other mismatches are still reported at the later branch.
     let d = one("fn f(b: Bool) -> Int = if b then 1 else \"s\"");
     assert_eq!((d.kind, d.path.as_str()), ("type_mismatch", "body.else"));
+}
+
+#[test]
+fn joining_list_items_stays_linear_in_type_depth() {
+    // Re-review N1: the effect join rebuilt shared types as trees, so each item of a list of
+    // deeply nested values cost O(depth^2) (100 000 items at depth 250: 259 s instead of 5 s).
+    let deep = format!("{}1{}", "Some(".repeat(250), ")".repeat(250));
+    let items = vec!["x"; 2_000].join(", ");
+    let src = format!("fn f(c: Bool) -> Int = let x = {deep} in let ys = [{items}] in let z = if c then x else x in let w = match c {{ true => x, false => z }} in len(ys)");
+    let start = std::time::Instant::now();
+    assert_eq!(check_src(&src), vec![]);
+    let plain = start.elapsed();
+    // Joined closures, deeply nested: the joined type is rebuilt only where effects change.
+    let p = "fn p() -> Unit !io = print(\"x\")\n";
+    let wrap = |e: &str| format!("{}{e}{}", "Some(".repeat(200), ")".repeat(200));
+    let (pure, io) = (wrap("fn() => ()"), wrap("p"));
+    let src = format!("{p}fn f(c: Bool) -> Int !io = let a = {pure} in let b = {io} in let ys = [a, b, {}] in len(ys)", vec!["a"; 2_000].join(", "));
+    let start = std::time::Instant::now();
+    assert_eq!(check_src(&src), vec![]);
+    let closures = start.elapsed();
+    assert!(plain + closures < std::time::Duration::from_secs(3), "{plain:?} {closures:?}");
 }

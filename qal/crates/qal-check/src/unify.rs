@@ -203,6 +203,12 @@ impl Subst {
     /// `exact` mode (equal effect sets), not once in each direction, which would cost 2^depth for
     /// nested type applications such as `B[B[B[Int]]]`.
     fn unify_in(&mut self, expected: &Type, found: &Type, exact: bool) -> bool {
+        // A variable unifies with itself (without resolving: that clones its binding's top node).
+        if let (Type::Var(x), Type::Var(y)) = (expected, found) {
+            if x == y {
+                return true;
+            }
+        }
         let (a, b) = (self.resolve(expected), self.resolve(found));
         if a == b && !Self::has_vars(&a) {
             return true;
@@ -242,39 +248,88 @@ impl Subst {
         }
     }
 
+    /// True if a value of type `t` (through bound variables) has a function type at a position
+    /// where effects join: inside List/Option/Result/Map and function types. Generic type
+    /// arguments are invariant, so they are not searched. Linear in the distinct nodes of `t`.
+    pub fn has_join_fn(&self, t: &Type) -> bool {
+        self.join_fn_in(t, &mut HashSet::new())
+    }
+
+    fn join_fn_in(&self, t: &Type, seen: &mut HashSet<u32>) -> bool {
+        match t {
+            Type::Var(v) => seen.insert(*v) && self.vars[*v as usize].as_ref().is_some_and(|b| self.join_fn_in(b, seen)),
+            Type::Fn(..) => true,
+            Type::List(x) | Type::Option(x) => self.join_fn_in(x, seen),
+            Type::Result(a, b) | Type::Map(a, b) => self.join_fn_in(a, seen) || self.join_fn_in(b, seen),
+            _ => false,
+        }
+    }
+
     /// The least type both `a` and `b` can be used as (`covariant`), or the greatest type usable as
     /// both (`!covariant`, for function parameters): function types join their effects (union, or
     /// intersection for parameters) through List/Option/Result/Map and function results and
     /// parameters; every other position is unified exactly. So `if c then fn() => () else p` with
     /// `p: fn() -> Unit !io` has the type of `p` whichever branch comes first. None if the types
     /// do not fit together (bindings made so far are kept, as for `unify`).
+    ///
+    /// Where the join equals `a`, `a` itself is returned (as written, usually a variable), so
+    /// repeated joins (one per list item) keep types shared instead of rebuilding them as trees.
     pub fn join(&mut self, a: &Type, b: &Type, covariant: bool) -> Option<Type> {
+        self.join_in(a, b, covariant).map(|(t, _)| t)
+    }
+
+    /// The join and whether it differs from `a`.
+    fn join_in(&mut self, a: &Type, b: &Type, covariant: bool) -> Option<(Type, bool)> {
         let (ra, rb) = (self.resolve(a), self.resolve(b));
-        Some(match (&ra, &rb) {
-            (Type::List(x), Type::List(y)) => Type::list(self.join(x, y, covariant)?),
-            (Type::Option(x), Type::Option(y)) => Type::option(self.join(x, y, covariant)?),
-            (Type::Result(a1, b1), Type::Result(a2, b2)) => Type::result(self.join(a1, a2, covariant)?, self.join(b1, b2, covariant)?),
-            (Type::Map(a1, b1), Type::Map(a2, b2)) => Type::map(self.join(a1, a2, covariant)?, self.join(b1, b2, covariant)?),
+        if let (Type::Var(x), Type::Var(y)) = (a, b) {
+            if x == y {
+                return Some((a.clone(), false));
+            }
+        }
+        // A changed node is bound to a fresh variable, so that the joined type stays a chain of
+        // variables: `resolve` (one clone of the top node per level) stays cheap on it.
+        let same = |s: &mut Self, t: Type, changed: bool| Some(if changed { (s.wrap(t), true) } else { (a.clone(), false) });
+        match (&ra, &rb) {
+            (Type::List(x), Type::List(y)) => {
+                let (j, c) = self.join_in(x, y, covariant)?;
+                same(self, Type::list(j), c)
+            }
+            (Type::Option(x), Type::Option(y)) => {
+                let (j, c) = self.join_in(x, y, covariant)?;
+                same(self, Type::option(j), c)
+            }
+            (Type::Result(a1, b1), Type::Result(a2, b2)) => {
+                let ((ja, ca), (jb, cb)) = (self.join_in(a1, a2, covariant)?, self.join_in(b1, b2, covariant)?);
+                same(self, Type::result(ja, jb), ca || cb)
+            }
+            (Type::Map(a1, b1), Type::Map(a2, b2)) => {
+                let ((ja, ca), (jb, cb)) = (self.join_in(a1, a2, covariant)?, self.join_in(b1, b2, covariant)?);
+                same(self, Type::map(ja, jb), ca || cb)
+            }
             (Type::Fn(p1, r1, e1), Type::Fn(p2, r2, e2)) if p1.len() == p2.len() => {
                 let mut ps = Vec::with_capacity(p1.len());
+                let mut changed = false;
                 for (x, y) in p1.iter().zip(p2) {
-                    ps.push(self.join(x, y, !covariant)?);
+                    let (j, c) = self.join_in(x, y, !covariant)?;
+                    changed |= c;
+                    ps.push(j);
                 }
-                let r = self.join(r1, r2, covariant)?;
+                let (r, c) = self.join_in(r1, r2, covariant)?;
                 let effs: Vec<String> = if covariant {
                     e1.iter().chain(e2).collect::<BTreeSet<_>>().into_iter().cloned().collect()
                 } else {
                     e1.iter().filter(|e| e2.contains(e)).collect::<BTreeSet<_>>().into_iter().cloned().collect()
                 };
-                Type::Fn(ps, Box::new(r), effs)
+                let changed = changed || c || effs.len() != e1.len() || !effs.iter().all(|e| e1.contains(e));
+                same(self, Type::Fn(ps, Box::new(r), effs), changed)
             }
             _ => {
                 if !self.unify_exact(&ra, &rb) {
                     return None;
                 }
-                ra
+                Some((a.clone(), false))
             }
-        })
+        }
     }
 }
 

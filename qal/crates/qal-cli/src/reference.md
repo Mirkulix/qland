@@ -20,7 +20,7 @@ Expressions (everything is an expression, there are no statements):
   let x = e in body     let x: T = e in body     if c then a else b   (else is required)
   match e { Some(n) if n > 0 => n, Some(_) => 0, None => -1 }   arms separated by `,`; must be exhaustive
     patterns: _  x  42  "s"  true  Variant(p, ..)  Point { x: p, y }  plus guards `if cond`
-  { a; b; c }   sequence: the values of a and b are discarded (a Result must be handled with match); the value is c. A `let` inside one item ends at
+  { a; b; c }   sequence: the values of a and b are discarded (a Result, also in a List/Option/record, must be handled with match); the value is c. A `let` inside one item ends at
     its `;`, so bind first: let x = f(y) in { print(x); x }
   "text"  escapes \n \t \r \0 \\ \" \u{1F600}
   [1, 2]  f(x)  p.x  -x  !b  * / %  + -  ++ (Str or List concatenation)  == != (any type)  < <= > >= (Int, Float, Str)  && ||
