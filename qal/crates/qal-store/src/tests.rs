@@ -391,12 +391,12 @@ fn replacing_one_name_of_a_shared_hash_keeps_the_other_users() {
     let before_user = hash(&mut s, "user");
     // `one` keeps the old hash, so nothing that uses that hash changes (whichever name it was written with).
     let d = ok(&mut s, "fn uno() -> Int = 10");
-    assert_eq!(statuses(&d), vec![("uno", "replaced")]);
+    assert_eq!(statuses(&d), vec![("uno", "replaced"), ("user2", "relinked")]);
     assert_eq!(hash(&mut s, "user"), before_user);
-    assert_eq!(text(&mut s, "user2"), "fn user2() -> Int\n= one() * 2");
-    // Now `one` is the only name of that hash: replacing it moves the users, so the rule applies.
+    assert_eq!(text(&mut s, "user2"), "fn user2() -> Int\n= uno() * 2");
+    // Users follow the name they were written against: only `user` is left on `one`.
     let d = err(&mut s, "fn one(s: Str) -> Int = len(s)");
-    assert_eq!((d[0].kind, d[0].dependents.clone()), ("signature_change", vec!["user".to_string(), "user2".to_string()]));
+    assert_eq!((d[0].kind, d[0].dependents.clone()), ("signature_change", vec!["user".to_string()]));
     // A different signature for one name of a shared hash is not a change for the users of the hash.
     let mut s = store();
     ok(&mut s, "fn one() -> Int = 1\nfn uno() -> Int = 1\nfn user() -> Int = one() + 1");
@@ -503,12 +503,139 @@ fn restating_an_unchanged_alias_keeps_its_users() {
     assert_eq!(statuses(&d), vec![("g", "unchanged"), ("f", "replaced")]);
     assert_eq!(hash(&mut s, "user"), before);
     assert_eq!(text(&mut s, "user"), "fn user(x: Int) -> Int\n= g(x) * 2");
-    // Both names changed differently: the users cannot follow both.
+    // Both names changed, differently: the user follows the name it was written against.
     let mut s = store();
     ok(&mut s, "fn f(n: Int) -> Int = n + 1\nfn g(n: Int) -> Int = n + 1\nfn user(x: Int) -> Int = g(x) * 2");
-    let d = err(&mut s, "fn f(n: Int) -> Int = n + 3\nfn g(n: Int) -> Int = n + 4");
-    assert_eq!((d[0].code, d[0].kind, d[0].dependents.clone()), ("E0403", "ambiguous_replacement", vec!["user".to_string()]));
-    // Both changed the same way: the users follow.
-    let d = ok(&mut s, "fn f(n: Int) -> Int = n + 3\nfn g(n: Int) -> Int = n + 3");
+    let d = ok(&mut s, "fn f(n: Int) -> Int = n + 3\nfn g(n: Int) -> Int = n + 4");
     assert_eq!(statuses(&d), vec![("f", "replaced"), ("g", "replaced"), ("user", "relinked")]);
+    assert_eq!(text(&mut s, "user"), "fn user(x: Int) -> Int\n= g(x) * 2");
+}
+
+#[test]
+fn an_accidental_alias_does_not_retarget_users() {
+    let mut s = store();
+    ok(&mut s, "fn a() -> Int = 1\nfn b() -> Int = 2\nfn ua() -> Int = a() + 1\nfn ub() -> Int = b() + 1\nfn top() -> Int = ub()");
+    let top = hash(&mut s, "top");
+    let d = ok(&mut s, "fn a() -> Int = 2");
+    assert_eq!(statuses(&d), vec![("a", "replaced"), ("ua", "relinked")]);
+    // `a` now has the hash of `b`, and `ua` that of `ub`; every text still reads as written.
+    assert_eq!(hash(&mut s, "a"), hash(&mut s, "b"));
+    assert_eq!(hash(&mut s, "ua"), hash(&mut s, "ub"));
+    assert_eq!(hash(&mut s, "top"), top);
+    assert_eq!(text(&mut s, "top"), "fn top() -> Int\n= ub()");
+    assert_eq!(text(&mut s, "ub"), "fn ub() -> Int\n= b() + 1");
+    assert_eq!(text(&mut s, "ua"), "fn ua() -> Int\n= a() + 1");
+    let (ua, ub, a) = (hash(&mut s, "ua"), hash(&mut s, "ub"), hash(&mut s, "a"));
+    // Replacing `b` moves the users of `b` (and theirs), not the users of `a`.
+    let d = ok(&mut s, "fn b() -> Int = 3");
+    assert_eq!(statuses(&d), vec![("b", "replaced"), ("top", "relinked"), ("ub", "relinked")]);
+    assert_eq!((hash(&mut s, "ua"), hash(&mut s, "a")), (ua.clone(), a));
+    assert_ne!(hash(&mut s, "ub"), ub);
+    assert_ne!(hash(&mut s, "top"), top);
+    assert_eq!(text(&mut s, "ub"), "fn ub() -> Int\n= b() + 1");
+    assert_eq!(text(&mut s, "ua"), "fn ua() -> Int\n= a() + 1");
+    // `ub` now has the shape of `b = 3`: viewing it shows `b` as its dependency.
+    let v = s.view(&["ub".to_string()]).unwrap().remove(0);
+    assert_eq!(v.deps.iter().map(|d| d.name.as_str()).collect::<Vec<_>>(), vec!["b"]);
+    let v = s.view(&["ua".to_string()]).unwrap().remove(0);
+    assert_eq!(v.deps.iter().map(|d| d.name.as_str()).collect::<Vec<_>>(), vec!["a"]);
+    assert_eq!(s.query(&Query { uses: Some("a".into()), ..Query::default() }).unwrap().into_iter().map(|e| e.name).collect::<Vec<_>>(), vec!["ua"]);
+    assert_eq!(s.program().unwrap().defs.len(), 5);
+}
+
+#[test]
+fn a_deliberate_alias_relinks_only_its_own_users() {
+    let mut s = store();
+    ok(&mut s, "fn a() -> Int = 1\nfn b() -> Int = 1\nfn ua() -> Int = a() + 1\nfn ub() -> Int = b() + 1");
+    assert_eq!(hash(&mut s, "a"), hash(&mut s, "b"));
+    assert_eq!(hash(&mut s, "ua"), hash(&mut s, "ub"));
+    let before = hash(&mut s, "ub");
+    let d = ok(&mut s, "fn a() -> Int = 7");
+    assert_eq!(statuses(&d), vec![("a", "replaced"), ("ua", "relinked")]);
+    assert_eq!(hash(&mut s, "ub"), before);
+    assert_eq!(text(&mut s, "ub"), "fn ub() -> Int\n= b() + 1");
+    assert_eq!(text(&mut s, "ua"), "fn ua() -> Int\n= a() + 1");
+}
+
+#[test]
+fn renamed_names_keep_their_users_attached() {
+    let mut s = store();
+    ok(&mut s, "fn a() -> Int = 1\nfn user() -> Int = a() + 1");
+    s.rename("a", "alpha", "test").unwrap();
+    assert_eq!(text(&mut s, "user"), "fn user() -> Int\n= alpha() + 1");
+    let d = ok(&mut s, "fn alpha() -> Int = 5");
+    assert_eq!(statuses(&d), vec![("alpha", "replaced"), ("user", "relinked")]);
+    assert_eq!(text(&mut s, "user"), "fn user() -> Int\n= alpha() + 1");
+}
+
+#[test]
+fn large_groups_load_in_linear_time() {
+    let n = 1000;
+    let mut src = String::from("fn f0(n: Int) -> Int = if n == 0 then 0 else f1(n - 1)\n");
+    for i in 1..n {
+        src += &format!("fn f{i}(n: Int) -> Int = f{}(n)\n", (i + 1) % n);
+    }
+    let mut s = store();
+    ok(&mut s, &src);
+    // Loading the group is linear: reading the whole codebase and viewing members is fast. (Hashing
+    // the group again on `define` is `hash_program`'s cost and is not part of this bound.)
+    let start = std::time::Instant::now();
+    let all = s.query(&Query::default()).unwrap();
+    assert_eq!(all.len(), n);
+    assert_eq!(s.program().unwrap().defs.len(), n);
+    for name in ["f0", "f500", "f999"] {
+        assert!(s.view(&[name.to_string()]).unwrap()[0].text.starts_with(&format!("fn {name}(n: Int) -> Int")));
+    }
+    assert!(start.elapsed() < std::time::Duration::from_secs(2), "took {:?}", start.elapsed());
+    let start = std::time::Instant::now();
+    ok(&mut s, "fn unrelated() -> Int = 1");
+    assert!(start.elapsed() < std::time::Duration::from_secs(20), "took {:?}", start.elapsed());
+}
+
+#[test]
+fn rename_history_records_both_names() {
+    let mut s = store();
+    ok(&mut s, "fn g() -> Int = 1");
+    s.rename("g", "h", "agent-1").unwrap();
+    s.rename("h", "g", "agent-2").unwrap();
+    let h = s.history("g").unwrap();
+    assert_eq!(h.iter().map(|e| e.action.as_str()).collect::<Vec<_>>(), vec!["added", "renamed", "renamed"]);
+    let renames: Vec<(Option<&str>, Option<&str>)> = h[1..].iter().map(|e| (e.from_name.as_deref(), e.to_name.as_deref())).collect();
+    assert_eq!(renames, vec![(Some("g"), Some("h")), (Some("h"), Some("g"))]);
+    assert_eq!((h[0].from_name.clone(), h[0].to_name.clone()), (None, None));
+}
+
+#[test]
+fn init_validates_before_changing_anything() {
+    let mode = |path: &std::path::Path| -> String { Connection::open(path).unwrap().query_row("PRAGMA journal_mode", [], |r| r.get(0)).unwrap() };
+    // A store of another version is left alone.
+    let dir = project();
+    std::fs::create_dir_all(dir.join(STORE_DIR)).unwrap();
+    let path = dir.join(STORE_DIR).join(STORE_FILE);
+    let c = Connection::open(&path).unwrap();
+    c.execute_batch("CREATE TABLE names (x); PRAGMA user_version = 99;").unwrap();
+    drop(c);
+    let d = Store::init(&dir).err().unwrap();
+    assert!(d[0].kind == "store_error" && d[0].message.contains("found version 99"), "{d:#?}");
+    assert_eq!(mode(&path), "delete");
+    // A foreign database is refused and gets no QAL tables.
+    let dir = project();
+    std::fs::create_dir_all(dir.join(STORE_DIR)).unwrap();
+    let path = dir.join(STORE_DIR).join(STORE_FILE);
+    let c = Connection::open(&path).unwrap();
+    c.execute_batch("CREATE TABLE notes (x);").unwrap();
+    drop(c);
+    let d = Store::init(&dir).err().unwrap();
+    assert!(d[0].kind == "store_error" && d[0].message.contains("not a QAL store"), "{d:#?}");
+    let c = Connection::open(&path).unwrap();
+    let tables: i64 = c.query_row("SELECT count(*) FROM sqlite_master WHERE name IN ('names', 'defs', 'history')", [], |r| r.get(0)).unwrap();
+    assert_eq!(tables, 0);
+    assert_eq!(mode(&path), "delete");
+    // An empty file is fine.
+    let dir = project();
+    std::fs::create_dir_all(dir.join(STORE_DIR)).unwrap();
+    std::fs::write(dir.join(STORE_DIR).join(STORE_FILE), b"").unwrap();
+    let mut s = Store::init(&dir).unwrap();
+    assert_eq!(hashes(&mut s).len(), 0);
+    assert_eq!(mode(s.path()), "wal");
 }

@@ -150,6 +150,10 @@ pub struct Canon {
     pub local_names: Vec<String>,
     /// Hashes of the other definitions this one refers to (sorted, without duplicates and itself).
     pub deps: Vec<Hash>,
+    /// Names (in the program) of the definitions this one refers to, as written: sorted, without
+    /// duplicates and itself. Several names can stand behind one dependency hash (identical
+    /// definitions under two names); this says which ones the text used.
+    pub refs: Vec<String>,
     /// The signature with type references written as `#<hash>`: `fn(Int, #…) -> Str !io` for
     /// functions, the body (`{ x: Int }`, `A | B(Int)`) for types, `Bool` for tests.
     pub signature: String,
@@ -827,9 +831,11 @@ pub fn hash_program(p: &Program) -> Result<Hashed, HashError> {
         }
     }
     let mut edges = Vec::with_capacity(p.defs.len());
+    let mut ref_names: Vec<Vec<String>> = Vec::with_capacity(p.defs.len());
     for d in &p.defs {
         let names = references(&env, d).map_err(internal)?;
         edges.push(names.iter().filter_map(|n| by_name.get(n.as_str()).copied()).collect::<Vec<_>>());
+        ref_names.push(names.into_iter().filter(|n| n != d.name() && by_name.contains_key(n.as_str())).collect::<Vec<_>>());
     }
     let mut hashes: Vec<Option<Hash>> = vec![None; p.defs.len()];
     let mut out: Vec<Option<Canon>> = vec![None; p.defs.len()];
@@ -871,6 +877,7 @@ pub fn hash_program(p: &Program) -> Result<Hashed, HashError> {
                 group,
                 local_names: std::mem::take(&mut locals[k]),
                 deps,
+                refs: std::mem::take(&mut ref_names[d]),
                 signature: signature_text(def, &sig_name),
                 effects: match def {
                     Def::Fn(f) => sorted_effects(&f.effects),
@@ -1109,10 +1116,16 @@ pub fn count_binders(form: Form) -> Result<usize, String> {
 /// order), and every referenced definition through `name_of`. Local names that would capture a
 /// referenced definition's name are renamed (`x` -> `x_1`), so the result means what was stored.
 pub fn decode(form: Form, name: &str, local_names: &[String], name_of: &mut dyn FnMut(&Hash) -> String) -> Result<Def, String> {
+    decode_with(&|n, l, f| decode_raw(form, n, l, f), name, local_names, name_of)
+}
+
+type RawDecoder<'a> = dyn Fn(&str, &[String], &mut dyn FnMut(&Hash) -> String) -> Result<(Def, bool), String> + 'a;
+
+fn decode_with(raw: &RawDecoder, name: &str, local_names: &[String], name_of: &mut dyn FnMut(&Hash) -> String) -> Result<Def, String> {
     // First pass: which definition names does the text refer to?
     let mut cache: HashMap<Hash, String> = HashMap::new();
     let mut globals: HashSet<String> = HashSet::new();
-    let (_, self_ref) = decode_raw(form, name, local_names, &mut |h| {
+    let (_, self_ref) = raw(name, local_names, &mut |h| {
         let n = cache.entry(*h).or_insert_with(|| name_of(h)).clone();
         globals.insert(n.clone());
         n
@@ -1121,7 +1134,7 @@ pub fn decode(form: Form, name: &str, local_names: &[String], name_of: &mut dyn 
         globals.insert(name.to_string());
     }
     let locals = avoid_capture(local_names, &globals);
-    let (def, _) = decode_raw(form, name, &locals, &mut |h| cache.get(h).cloned().unwrap_or_default())?;
+    let (def, _) = raw(name, &locals, &mut |h| cache.get(h).cloned().unwrap_or_default())?;
     Ok(def)
 }
 
@@ -1178,6 +1191,76 @@ fn decode_raw(form: Form, name: &str, local_names: &[String], name_of: &mut dyn 
     result.ok_or_else(|| "member index out of range".into())
 }
 
+/// What a member of a group says about itself: its number of local binders and the hashes of the
+/// definitions it refers to (sorted, without duplicates, without itself).
+#[derive(Debug, Clone, PartialEq)]
+pub struct MemberInfo {
+    pub binders: usize,
+    pub refs: Vec<Hash>,
+}
+
+/// A group form scanned once: per-member info and where each member starts, so that members can be
+/// decoded one by one without re-reading the whole group each time.
+#[derive(Debug, Clone)]
+pub struct GroupIndex {
+    pub members: Vec<MemberInfo>,
+    offsets: Vec<usize>,
+    hashes: Vec<Hash>,
+}
+
+impl GroupIndex {
+    /// Scans (and validates) the group form `group`, which must hash to `gh`.
+    pub fn new(group: &[u8], gh: &Hash) -> Result<GroupIndex, String> {
+        if Hash::of(group) != *gh {
+            return Err("the group form does not match its hash".into());
+        }
+        let mut d = Dec::new(group);
+        let size = d.prefix()?;
+        let hashes: Vec<Hash> = (0..size).map(|j| Hash::of(&member_form(size, j, gh))).collect();
+        d.size = size;
+        d.others = hashes.iter().map(|h| Some(*h)).collect();
+        d.collect = true;
+        let (mut members, mut offsets) = (Vec::new(), Vec::new());
+        for k in 0..size {
+            d.index = k;
+            offsets.push(d.pos);
+            let before = d.binders;
+            let mut seen = Vec::new();
+            d.member_def("x", &mut |h| {
+                seen.push(*h);
+                String::new()
+            })?;
+            seen.sort();
+            seen.dedup();
+            members.push(MemberInfo { binders: d.binders - before, refs: seen });
+        }
+        if d.pos != d.b.len() {
+            return Err("trailing bytes after the last group member".into());
+        }
+        Ok(GroupIndex { members, offsets, hashes })
+    }
+
+    /// Like [`decode`] for member `index` of the group form `group` (the one this was built from).
+    pub fn decode(&self, group: &[u8], index: usize, name: &str, local_names: &[String], name_of: &mut dyn FnMut(&Hash) -> String) -> Result<Def, String> {
+        let offset = *self.offsets.get(index).ok_or("member index out of range")?;
+        let raw = |name: &str, locals: &[String], f: &mut dyn FnMut(&Hash) -> String| -> Result<(Def, bool), String> {
+            let mut d = Dec::new(group);
+            d.pos = offset;
+            d.size = self.hashes.len();
+            d.index = index;
+            d.others = self.hashes.iter().enumerate().map(|(j, h)| if j == index { None } else { Some(*h) }).collect();
+            d.counting = false;
+            d.names = locals.to_vec();
+            let def = d.member_def(name, f)?;
+            if d.next_name != locals.len() {
+                return Err(format!("{} local names stored, {} binders", locals.len(), d.next_name));
+            }
+            Ok((def, d.self_refs))
+        };
+        decode_with(&raw, name, local_names, name_of)
+    }
+}
+
 struct Dec<'b> {
     b: &'b [u8],
     pos: usize,
@@ -1189,6 +1272,8 @@ struct Dec<'b> {
     others: Vec<Option<Hash>>,
     /// Skipping (not building) a member: names are not needed, binders are only counted.
     counting: bool,
+    /// With `counting`: still report references (a scan of a whole group).
+    collect: bool,
     binders: usize,
     self_refs: bool,
     names: Vec<String>,
@@ -1214,6 +1299,7 @@ impl<'b> Dec<'b> {
             index: 0,
             others: Vec::new(),
             counting: true,
+            collect: false,
             binders: 0,
             self_refs: false,
             names: Vec::new(),
@@ -1346,7 +1432,7 @@ impl<'b> Dec<'b> {
                 let bytes = self.b.get(self.pos..self.pos + 32).ok_or("truncated canonical form")?;
                 self.pos += 32;
                 let h = Hash(bytes.try_into().expect("32 bytes"));
-                Ok(if self.counting { String::new() } else { name_of(&h) })
+                Ok(if self.counting && !self.collect { String::new() } else { name_of(&h) })
             }
             R_GROUP => {
                 let j = self.index()?;
@@ -1357,7 +1443,7 @@ impl<'b> Dec<'b> {
                     self.self_refs = true;
                     return Ok(own.to_string());
                 }
-                if self.counting {
+                if self.counting && !self.collect {
                     return Ok(String::new());
                 }
                 let h = self.others[j].ok_or("bad group reference")?;

@@ -40,48 +40,11 @@ pub fn define(conn: &mut Connection, src: &str, agent: &str) -> Result<Vec<Defin
     let snap = Snapshot::load(&tx)?;
 
     let input_names: HashSet<&str> = input.defs.iter().map(|d| d.name()).collect();
-    // Hashes with several names, all redefined, where one name is restated unchanged: that name
-    // keeps the hash (and its users). Found by a trial hash of the assembled program.
-    let mut keep: HashMap<Hash, String> = HashMap::new();
-    let (mut overrides, mut replaced) = plan_overrides(&snap, &input_names, &keep);
-    let shared: Vec<Hash> = replaced.iter().filter(|h| snap.by_hash.get(h).is_some_and(|ns| ns.len() > 1)).copied().collect();
-    if !shared.is_empty() {
-        let mut trial = snap.program(&tx, &overrides, &|n| input_names.contains(n))?;
-        trial.defs.extend(input.defs.iter().cloned());
-        if let Ok(t) = canon::hash_program(&trial) {
-            let new_of: HashMap<&str, Hash> = t.defs.iter().map(|c| (c.name.as_str(), c.hash)).collect();
-            let mut diags = Vec::new();
-            for h in &shared {
-                let names = &snap.by_hash[h];
-                if let Some(same) = names.iter().find(|n| new_of.get(n.as_str()) == Some(h)) {
-                    keep.insert(*h, same.clone());
-                    continue;
-                }
-                let news: HashSet<Hash> = names.iter().filter_map(|n| new_of.get(n.as_str()).copied()).collect();
-                let users: Vec<String> = snap.dependents(&tx, h)?.into_iter().filter(|n| !input_names.contains(n.as_str())).collect();
-                if news.len() > 1 && !users.is_empty() {
-                    let mut d = Diagnostic::new(
-                        "E0403",
-                        "ambiguous_replacement",
-                        &names[0],
-                        "",
-                        format!("{} were the same definition and now differ; its stored users cannot follow both", names.iter().map(|n| format!("`{n}`")).collect::<Vec<_>>().join(", ")),
-                    )
-                    .hint(format!("redefine {} in the same call, or keep one of the names unchanged", users.join(", ")));
-                    d.dependents = users;
-                    diags.push(d);
-                }
-            }
-            if !diags.is_empty() {
-                return Err(diags);
-            }
-        }
-        (overrides, replaced) = plan_overrides(&snap, &input_names, &keep);
-    }
+    replacement_rule(&tx, &snap, &input, &input_names)?;
 
-    replacement_rule(&tx, &snap, &input, &input_names, &overrides, &replaced)?;
-
-    let stored = snap.program(&tx, &overrides, &|n| input_names.contains(n))?;
+    // Stored definitions keep the names they were written against; the ones that refer to a
+    // redefined name get new hashes when the combined program is hashed.
+    let stored = snap.program(&tx, &|n| input_names.contains(n))?;
     let mut combined = stored;
     combined.defs.extend(input.defs.iter().cloned());
     qal_check::check(&combined)?;
@@ -89,30 +52,11 @@ pub fn define(conn: &mut Connection, src: &str, agent: &str) -> Result<Vec<Defin
     let hashed = hash(&combined)?;
     identical_types(&hashed.defs)?;
     group_aliases(&hashed.defs)?;
-    canonical_check(&tx, &snap, &input_names, &replaced, &hashed.defs)?;
+    canonical_check(&snap, &input_names, &hashed.defs)?;
 
     let out = write(&tx, &snap, &input, &hashed, agent)?;
     tx.commit().map_err(sql)?;
     Ok(out)
-}
-
-/// Which stored hashes the input replaces, and the names their users are decoded with. A hash is
-/// replaced only if all its names are redefined (and none is kept unchanged, `keep`); otherwise its
-/// users keep a name that still has it.
-fn plan_overrides(snap: &Snapshot, input_names: &HashSet<&str>, keep: &HashMap<Hash, String>) -> (HashMap<Hash, String>, HashSet<Hash>) {
-    let mut overrides = HashMap::new();
-    let mut replaced = HashSet::new();
-    for (h, names) in &snap.by_hash {
-        let (redefined, kept): (Vec<&String>, Vec<&String>) = names.iter().partition(|n| input_names.contains(n.as_str()));
-        let Some(first) = redefined.first() else { continue };
-        if let Some(k) = keep.get(h).or(kept.first().copied()) {
-            overrides.insert(*h, k.clone());
-        } else {
-            overrides.insert(*h, (*first).clone());
-            replaced.insert(*h);
-        }
-    }
-    (overrides, replaced)
 }
 
 /// A member of a recursive group can have only one name: a second name would decode its sibling
@@ -139,37 +83,28 @@ fn group_aliases(canons: &[Canon]) -> Result<(), Vec<Diagnostic>> {
     }
 }
 
-/// A stored definition may only get a new hash if it (transitively) uses a replaced one; anything
-/// else means its stored bytes were not in canonical form.
-fn canonical_check(tx: &Transaction, snap: &Snapshot, input_names: &HashSet<&str>, replaced: &HashSet<Hash>, canons: &[Canon]) -> Result<(), Vec<Diagnostic>> {
-    let mut affected = replaced.clone();
-    let mut refs: HashMap<Hash, Vec<Hash>> = HashMap::new();
-    for (name, (h, _)) in &snap.names {
-        if !input_names.contains(name.as_str()) && !refs.contains_key(h) {
-            let row = snap.row(tx, h)?.ok_or_else(|| vec![Diagnostic::store_error(format!("the store is corrupt: definition #{h} is missing"))])?;
-            refs.insert(*h, canon::references_of(row.form()).map_err(|e| vec![Diagnostic::store_error(e)])?);
-        }
-    }
-    loop {
-        let before = affected.len();
-        for (h, rs) in &refs {
-            if !affected.contains(h) && rs.iter().any(|r| affected.contains(r)) {
-                affected.insert(*h);
+/// A stored definition may only get a new hash if it (transitively) refers to a redefined name
+/// whose hash changed; anything else means its stored bytes were not in canonical form.
+fn canonical_check(snap: &Snapshot, input_names: &HashSet<&str>, canons: &[Canon]) -> Result<(), Vec<Diagnostic>> {
+    let mut affected: HashSet<&str> =
+        canons.iter().filter(|c| input_names.contains(c.name.as_str()) && snap.names.get(&c.name).is_none_or(|e| e.hash != c.hash)).map(|c| c.name.as_str()).collect();
+    let mut queue: Vec<&str> = affected.iter().copied().collect();
+    while let Some(n) = queue.pop() {
+        for u in snap.users.get(n).into_iter().flatten() {
+            if affected.insert(u.as_str()) {
+                queue.push(u.as_str());
             }
-        }
-        if affected.len() == before {
-            break;
         }
     }
     for c in canons {
         if input_names.contains(c.name.as_str()) {
             continue;
         }
-        if let Some((old, _)) = snap.names.get(&c.name) {
-            if *old != c.hash && !affected.contains(old) {
+        if let Some(e) = snap.names.get(&c.name) {
+            if e.hash != c.hash && !affected.contains(c.name.as_str()) {
                 return Err(vec![Diagnostic::store_error(format!(
-                    "the store is corrupt: the stored definition `{}` (#{old}) is not in canonical form",
-                    c.name
+                    "the store is corrupt: the stored definition `{}` (#{}) is not in canonical form",
+                    c.name, e.hash
                 ))]);
             }
         }
@@ -178,29 +113,20 @@ fn canonical_check(tx: &Transaction, snap: &Snapshot, input_names: &HashSet<&str
 }
 
 /// Replacing a definition with a different signature fails unless the call also redefines every
-/// stored definition that refers to it.
-fn replacement_rule(
-    tx: &Transaction,
-    snap: &Snapshot,
-    input: &Program,
-    input_names: &HashSet<&str>,
-    overrides: &HashMap<Hash, String>,
-    replaced: &HashSet<Hash>,
-) -> Result<(), Vec<Diagnostic>> {
+/// stored definition written against it.
+fn replacement_rule(tx: &Transaction, snap: &Snapshot, input: &Program, input_names: &HashSet<&str>) -> Result<(), Vec<Diagnostic>> {
     let mut diags = Vec::new();
     let mut seen = HashSet::new();
     for d in &input.defs {
-        let Some((old_hash, _)) = snap.names.get(d.name()) else { continue };
-        // A hash that keeps another name is not replaced: nothing refers to the new version yet.
-        if !replaced.contains(old_hash) || !seen.insert(d.name()) {
+        if !snap.names.contains_key(d.name()) || !seen.insert(d.name()) {
             continue;
         }
-        let old = snap.decode_name(tx, d.name(), overrides)?;
+        let old = snap.decode_name(tx, d.name())?;
         let (before, after) = (signature(&old), signature(d));
         if before == after {
             continue;
         }
-        let dependents: Vec<String> = snap.dependents(tx, old_hash)?.into_iter().filter(|n| !input_names.contains(n.as_str())).collect();
+        let dependents: Vec<String> = snap.dependents(d.name()).into_iter().filter(|n| !input_names.contains(n.as_str())).collect();
         if !dependents.is_empty() {
             diags.push(Diagnostic::signature_change(d.name(), &show(&before), &show(&after), &dependents));
         }
@@ -240,6 +166,20 @@ fn json(list: &[String]) -> String {
     serde_json::Value::from(list.to_vec()).to_string()
 }
 
+/// The names a definition is stored as written against: one per dependency hash (the first of the
+/// names it used for that hash), sorted.
+fn ref_names(c: &Canon, hash_of: &HashMap<&str, Hash>) -> Vec<String> {
+    let mut seen = HashSet::new();
+    let mut out: Vec<String> = c
+        .refs
+        .iter()
+        .filter(|n| hash_of.get(n.as_str()).is_some_and(|h| c.deps.contains(h) && seen.insert(*h)))
+        .cloned()
+        .collect();
+    out.sort();
+    out
+}
+
 /// Writes new definitions, dependencies, names and history; returns the per-name results:
 /// the input definitions in input order, then relinked dependents by name.
 fn write(tx: &Transaction, snap: &Snapshot, input: &Program, hashed: &Hashed, agent: &str) -> Result<Vec<Defined>, Vec<Diagnostic>> {
@@ -261,28 +201,30 @@ fn write(tx: &Transaction, snap: &Snapshot, input: &Program, hashed: &Hashed, ag
             tx.execute("INSERT OR IGNORE INTO deps (hash, dep_hash) VALUES (?1, ?2)", params![c.hash.to_hex(), d.to_hex()]).map_err(sql)?;
         }
     }
+    let hash_of: HashMap<&str, Hash> = canons.iter().map(|c| (c.name.as_str(), c.hash)).collect();
     let mut results: HashMap<&str, Defined> = HashMap::new();
     for c in canons {
         let old = snap.names.get(&c.name);
+        let refs = ref_names(c, &hash_of);
         let is_input = input_names.contains(c.name.as_str());
         let status = match old {
             None => "added",
-            Some((h, _)) if *h == c.hash => "unchanged",
+            Some(e) if e.hash == c.hash => "unchanged",
             Some(_) if is_input => "replaced",
             Some(_) => "relinked",
         };
         if status == "unchanged" && !is_input {
             continue;
         }
-        if status != "unchanged" || old.is_some_and(|(_, l)| *l != c.local_names) {
+        if status != "unchanged" || old.is_some_and(|e| e.locals != c.local_names || e.refs != refs) {
             tx.execute(
-                "INSERT INTO names (name, hash, local_names, updated_at) VALUES (?1, ?2, ?3, ?4) \
-                 ON CONFLICT(name) DO UPDATE SET hash = excluded.hash, local_names = excluded.local_names, updated_at = excluded.updated_at",
-                params![c.name, c.hash.to_hex(), json(&c.local_names), now],
+                "INSERT INTO names (name, hash, local_names, refs, updated_at) VALUES (?1, ?2, ?3, ?4, ?5) \
+                 ON CONFLICT(name) DO UPDATE SET hash = excluded.hash, local_names = excluded.local_names, refs = excluded.refs, updated_at = excluded.updated_at",
+                params![c.name, c.hash.to_hex(), json(&c.local_names), json(&refs), now],
             )
             .map_err(sql)?;
         }
-        let old_hash = old.map(|(h, _)| h.to_hex());
+        let old_hash = old.map(|e| e.hash.to_hex());
         if status != "unchanged" {
             tx.execute(
                 "INSERT INTO history (name, action, old_hash, new_hash, agent, at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",

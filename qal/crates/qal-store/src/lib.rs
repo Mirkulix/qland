@@ -22,7 +22,6 @@ use qal_core::diag::Diagnostic;
 use rusqlite::Connection;
 use serde::Serialize;
 use snapshot::Snapshot;
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 /// The store directory and file inside a project.
@@ -64,7 +63,7 @@ impl Store {
         let path = dir.join(STORE_FILE);
         let mut conn = Connection::open(&path).map_err(sql)?;
         schema::configure(&conn).map_err(sql)?;
-        schema::create(&mut conn).map_err(sql)?;
+        schema::create(&mut conn, &path)?;
         Store::checked(conn, path)
     }
 
@@ -110,7 +109,7 @@ impl Store {
     pub fn program(&mut self) -> Result<Program, Vec<Diagnostic>> {
         let tx = self.conn.transaction().map_err(sql)?;
         let snap = Snapshot::load(&tx)?;
-        snap.program(&tx, &HashMap::new(), &|_| false)
+        snap.program(&tx, &|_| false)
     }
 
     /// Adds or replaces the definitions in `src` (spec §6). Either everything is stored and the

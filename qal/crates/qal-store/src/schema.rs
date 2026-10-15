@@ -1,10 +1,13 @@
 //! SQLite schema of `.qal/store.db` (spec §6) and connection setup.
 
+use crate::sql;
+use qal_core::diag::Diagnostic;
 use rusqlite::Connection;
+use std::path::Path;
 use std::time::Duration;
 
 /// `PRAGMA user_version` of stores this code reads and writes.
-pub const SCHEMA_VERSION: i64 = 1;
+pub const SCHEMA_VERSION: i64 = 2;
 
 /// How long a writer waits for another process's `define`/`rename` to finish.
 pub const BUSY_TIMEOUT: Duration = Duration::from_secs(10);
@@ -14,6 +17,8 @@ pub const BUSY_TIMEOUT: Duration = Duration::from_secs(10);
 /// the group form itself is stored once in `groups`.
 /// `names.local_names` is the local-variable naming of that name's latest text (two names can share
 /// a hash but name their locals differently); `defs.local_names` is the one it was first stored with.
+/// `names.refs` is the JSON list of names that text refers to (one per referenced hash): users follow
+/// the name they were written against, even when other names share its hash.
 pub const SCHEMA: &str = "
 CREATE TABLE groups (
     hash TEXT PRIMARY KEY,
@@ -38,6 +43,7 @@ CREATE TABLE names (
     name        TEXT PRIMARY KEY,
     hash        TEXT NOT NULL REFERENCES defs(hash),
     local_names TEXT NOT NULL,
+    refs        TEXT NOT NULL,
     updated_at  INTEGER NOT NULL
 );
 CREATE INDEX names_by_hash ON names(hash);
@@ -48,6 +54,7 @@ CREATE TABLE history (
     old_hash  TEXT,
     new_hash  TEXT NOT NULL,
     from_name TEXT,
+    to_name   TEXT,
     agent     TEXT NOT NULL,
     at        INTEGER NOT NULL
 );
@@ -62,14 +69,20 @@ pub fn configure(conn: &Connection) -> rusqlite::Result<()> {
 }
 
 /// Creates the tables in an empty database (one transaction) and switches it to WAL mode, so
-/// readers (`view`, `query`, `run`) are not blocked by a running `define`.
-pub fn create(conn: &mut Connection) -> rusqlite::Result<()> {
-    conn.pragma_update(None, "journal_mode", "WAL")?;
-    let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-    let version: i64 = tx.query_row("PRAGMA user_version", [], |r| r.get(0))?;
-    if version == 0 {
-        tx.execute_batch(SCHEMA)?;
-        tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+/// readers (`view`, `query`, `run`) are not blocked by a running `define`. Nothing is changed in a
+/// database that is not empty and not a QAL store of this version.
+pub fn create(conn: &mut Connection, path: &Path) -> Result<(), Vec<Diagnostic>> {
+    let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate).map_err(sql)?;
+    let version: i64 = tx.query_row("PRAGMA user_version", [], |r| r.get(0)).map_err(sql)?;
+    let objects: i64 = tx.query_row("SELECT count(*) FROM sqlite_master", [], |r| r.get(0)).map_err(sql)?;
+    if version == 0 && objects == 0 {
+        tx.execute_batch(SCHEMA).map_err(sql)?;
+        tx.pragma_update(None, "user_version", SCHEMA_VERSION).map_err(sql)?;
+    } else if version != SCHEMA_VERSION {
+        let what = if version == 0 { "not a QAL store".to_string() } else { format!("not a QAL store of version {SCHEMA_VERSION} (found version {version})") };
+        return Err(vec![Diagnostic::store_error(format!("{} is {what}", path.display()))]);
     }
-    tx.commit()
+    tx.commit().map_err(sql)?;
+    conn.pragma_update(None, "journal_mode", "WAL").map_err(sql)?;
+    Ok(())
 }
