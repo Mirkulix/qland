@@ -1,0 +1,545 @@
+//! Type inference for one definition: expressions, patterns, and the final resolution pass.
+
+use crate::exhaust::missing_pattern;
+use crate::unify::Subst;
+use crate::{validate_type, Globals};
+use qal_core::ast::*;
+use qal_core::diag::Diagnostic;
+use qal_core::tast::*;
+
+/// Checks that need fully inferred types; run by `finish`.
+enum Deferred {
+    /// `==`/`!=` operand type (functions cannot be compared).
+    Eq(String, Type),
+    /// `++` operand type (must be Str or List).
+    Concat(String, Type),
+    /// Match scrutinee type and the unguarded arm patterns.
+    Exhaust(String, Type, Vec<TPat>),
+}
+
+pub(crate) struct Cx<'a> {
+    pub g: &'a Globals,
+    pub def: &'a str,
+    /// Effects the current expression may use (empty for contracts and tests).
+    pub effects: &'a [String],
+    pub diags: &'a mut Vec<Diagnostic>,
+    /// Number of diagnostics when this definition started; more means it has errors.
+    pub start: usize,
+    pub sub: Subst,
+    /// Type of each local by id.
+    locals: Vec<Type>,
+    /// Visible names, innermost last.
+    scope: Vec<(String, u32)>,
+    deferred: Vec<Deferred>,
+}
+
+impl<'a> Cx<'a> {
+    pub fn new(g: &'a Globals, def: &'a str, effects: &'a [String], diags: &'a mut Vec<Diagnostic>) -> Self {
+        let start = diags.len();
+        Cx { g, def, effects, diags, start, sub: Subst::default(), locals: Vec::new(), scope: Vec::new(), deferred: Vec::new() }
+    }
+
+    pub fn bind(&mut self, name: &str, ty: Type) -> u32 {
+        let id = self.locals.len() as u32;
+        self.locals.push(ty);
+        self.scope.push((name.to_string(), id));
+        id
+    }
+
+    pub fn unbind(&mut self) {
+        self.scope.pop();
+    }
+
+    fn lookup(&self, name: &str) -> Option<u32> {
+        self.scope.iter().rev().find(|(n, _)| n == name).map(|(_, id)| *id)
+    }
+
+    fn has_errors(&self) -> bool {
+        self.diags.len() > self.start
+    }
+
+    /// An expression whose type is unknown because of an error already reported.
+    pub fn poison(&mut self) -> TExpr {
+        TExpr { ty: self.sub.fresh(), kind: TKind::Unit }
+    }
+
+    pub fn mismatch(&mut self, path: &str, expected: &Type, found: &Type) {
+        let (e, f) = (self.sub.finish(expected), self.sub.finish(found));
+        let mut d = Diagnostic::type_mismatch(self.def, path, &e.to_string(), &f.to_string());
+        match (&e, &f) {
+            (Type::Bool, Type::Int) => d = d.hint("compare explicitly, e.g. `x != 0`"),
+            (Type::Option(x), y) if **x == *y => d = d.hint("wrap the value: `Some(...)`"),
+            (x, Type::Option(y)) if *x == **y => d = d.hint("unpack the Option with `match v { Some(x) => ..., None => ... }`"),
+            (x, Type::Result(y, _)) if *x == **y => d = d.hint("unpack the Result with `match v { Ok(x) => ..., Err(e) => ... }`"),
+            (Type::Float, Type::Int) => d = d.hint("convert with `int_to_float(n)`"),
+            (Type::Int, Type::Float) => d = d.hint("convert with `float_to_int(x)` (returns Option[Int])"),
+            (Type::Str, Type::Int) => d = d.hint("convert with `from_int(n)`"),
+            _ => {}
+        }
+        self.diags.push(d);
+    }
+
+    /// Unifies and reports a mismatch at `path`. Returns false on mismatch.
+    pub fn unify_at(&mut self, path: &str, expected: &Type, found: &Type) -> bool {
+        if self.sub.unify(expected, found) {
+            true
+        } else {
+            self.mismatch(path, expected, found);
+            false
+        }
+    }
+
+    pub fn expect(&mut self, e: &Expr, want: &Type, path: &str) -> TExpr {
+        let t = self.infer(e, path);
+        self.unify_at(path, want, &t.ty);
+        t
+    }
+
+    pub fn effect_check(&mut self, path: &str, callee: &str, needed: &[String]) {
+        let missing: Vec<String> = needed.iter().filter(|e| !self.effects.contains(e)).cloned().collect();
+        if !missing.is_empty() {
+            self.diags.push(Diagnostic::effect_violation(self.def, path, callee, &missing));
+        }
+    }
+
+    pub fn infer_all(&mut self, args: &[Expr], path: &str) -> Vec<TExpr> {
+        args.iter().enumerate().map(|(i, a)| self.infer(a, &format!("{path}.args[{i}]"))).collect()
+    }
+
+    /// Checks `args` against `params`; on an arity mismatch reports it and still checks every argument.
+    pub fn args(&mut self, callee: &str, args: &[Expr], params: &[Type], path: &str) -> Vec<TExpr> {
+        if args.len() != params.len() {
+            self.diags.push(Diagnostic::arity(self.def, path, callee, params.len(), args.len()));
+            return self.infer_all(args, path);
+        }
+        args.iter().zip(params).enumerate().map(|(i, (a, t))| self.expect(a, t, &format!("{path}.args[{i}]"))).collect()
+    }
+
+    pub fn infer(&mut self, e: &Expr, path: &str) -> TExpr {
+        let (ty, kind) = match e {
+            Expr::Int(n) => (Type::Int, TKind::Int(*n)),
+            Expr::Float(x) => (Type::Float, TKind::Float(*x)),
+            Expr::Bool(b) => (Type::Bool, TKind::Bool(*b)),
+            Expr::Str(s) => (Type::Str, TKind::Str(s.clone())),
+            Expr::Unit => (Type::Unit, TKind::Unit),
+            Expr::Var(v) => return self.var(v, path),
+            Expr::Call(name, args) => return self.call(name, args, path),
+            Expr::Un(UnOp::Not, x) => (Type::Bool, TKind::Un(UnOp::Not, Box::new(self.expect(x, &Type::Bool, &format!("{path}.operand"))), path.into())),
+            Expr::Un(UnOp::Neg, x) => {
+                let x = self.infer(x, &format!("{path}.operand"));
+                let t = self.numeric(&format!("{path}.operand"), &x.ty);
+                (t, TKind::Un(UnOp::Neg, Box::new(x), path.into()))
+            }
+            Expr::Bin(op, l, r) => return self.binary(*op, l, r, path),
+            Expr::If(c, t, f) => {
+                let c = self.expect(c, &Type::Bool, &format!("{path}.cond"));
+                let t = self.infer(t, &format!("{path}.then"));
+                let f = self.expect(f, &t.ty, &format!("{path}.else"));
+                (t.ty.clone(), TKind::If(Box::new(c), Box::new(t), Box::new(f)))
+            }
+            Expr::Let(name, ann, v, body) => {
+                let v = match ann {
+                    Some(t) if validate_type(self.g, t, self.def, &format!("{path}.type"), self.diags) => {
+                        self.expect(v, t, &format!("{path}.value"))
+                    }
+                    _ => self.infer(v, &format!("{path}.value")),
+                };
+                // Even if the value had errors, the body is checked with the (possibly unknown) type.
+                let id = self.bind(name, v.ty.clone());
+                let b = self.infer(body, &format!("{path}.body"));
+                self.unbind();
+                (b.ty.clone(), TKind::Let(id, Box::new(v), Box::new(b)))
+            }
+            Expr::List(items) => {
+                let elem = self.sub.fresh();
+                let items: Vec<TExpr> = items.iter().enumerate().map(|(i, x)| self.expect(x, &elem, &format!("{path}.items[{i}]"))).collect();
+                (Type::list(elem), TKind::List(items))
+            }
+            Expr::Seq(items) => {
+                let n = items.len();
+                let mut out = Vec::new();
+                for (i, x) in items.iter().enumerate() {
+                    let p = format!("{path}.items[{i}]");
+                    let t = self.infer(x, &p);
+                    if i + 1 < n && !self.sub.unify(&Type::Unit, &t.ty) {
+                        self.mismatch(&p, &Type::Unit, &t.ty);
+                        self.diags.last_mut().expect("just pushed").hints =
+                            vec!["only Unit values can be discarded in `{ a; b }`; bind the value with `let` or handle it with `match`".into()];
+                    }
+                    out.push(t);
+                }
+                (out.last().expect("parser: non-empty").ty.clone(), TKind::Seq(out))
+            }
+            Expr::Record(name, fields) => return self.record(name, fields, path),
+            Expr::Field(target, field) => return self.field(target, field, path),
+            Expr::Match(s, arms) => return self.match_expr(s, arms, path),
+        };
+        TExpr { ty, kind }
+    }
+
+    /// The type of a numeric operand: Int or Float (an unknown type defaults to Int).
+    fn numeric(&mut self, path: &str, t: &Type) -> Type {
+        match self.sub.resolve(t) {
+            Type::Int => Type::Int,
+            Type::Float => Type::Float,
+            Type::Var(_) => {
+                self.sub.unify(&Type::Int, t);
+                Type::Int
+            }
+            other => {
+                self.diags.push(Diagnostic::type_mismatch(self.def, path, "Int or Float", &self.sub.finish(&other).to_string()));
+                self.sub.fresh()
+            }
+        }
+    }
+
+    fn binary(&mut self, op: BinOp, l: &Expr, r: &Expr, path: &str) -> TExpr {
+        let (lp, rp) = (format!("{path}.left"), format!("{path}.right"));
+        let (l, r, ty) = match op {
+            BinOp::And | BinOp::Or => (self.expect(l, &Type::Bool, &lp), self.expect(r, &Type::Bool, &rp), Type::Bool),
+            BinOp::Rem => (self.expect(l, &Type::Int, &lp), self.expect(r, &Type::Int, &rp), Type::Int),
+            BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => {
+                let l = self.infer(l, &lp);
+                let r = self.infer(r, &rp);
+                let t = self.numeric(&lp, &l.ty);
+                self.unify_at(&rp, &t, &r.ty);
+                (l, r, if op.is_comparison() { Type::Bool } else { t })
+            }
+            BinOp::Eq | BinOp::Ne => {
+                let l = self.infer(l, &lp);
+                let r = self.expect(r, &l.ty, &rp);
+                self.deferred.push(Deferred::Eq(path.into(), l.ty.clone()));
+                (l, r, Type::Bool)
+            }
+            BinOp::Concat => {
+                let l = self.infer(l, &lp);
+                let r = self.expect(r, &l.ty, &rp);
+                self.deferred.push(Deferred::Concat(lp, l.ty.clone()));
+                let t = l.ty.clone();
+                (l, r, t)
+            }
+        };
+        TExpr { ty, kind: TKind::Bin(op, Box::new(l), Box::new(r), path.into()) }
+    }
+
+    fn var(&mut self, v: &str, path: &str) -> TExpr {
+        if let Some(id) = self.lookup(v) {
+            return TExpr { ty: self.locals[id as usize].clone(), kind: TKind::Local(id) };
+        }
+        if let Some((idx, sig)) = self.g.fns.get(v) {
+            return TExpr { ty: sig.fn_type(), kind: TKind::FnRef(*idx) };
+        }
+        if let Some((ty, tag, fields)) = self.variant(v) {
+            if !fields.is_empty() {
+                self.diags.push(Diagnostic::arity(self.def, path, v, fields.len(), 0));
+                return self.poison();
+            }
+            return TExpr { ty, kind: TKind::Variant(tag, vec![]) };
+        }
+        let mut d = Diagnostic::unknown_name(self.def, path, v);
+        if Builtin::NAMES.contains(&v) {
+            d = d.hint(format!("built-in `{v}` cannot be used as a value; wrap it in a fn"));
+        }
+        self.diags.push(d);
+        self.poison()
+    }
+
+    /// Looks up a variant by name: (its sum type, with fresh variables for Option/Result), tag, payload types.
+    fn variant(&mut self, name: &str) -> Option<(Type, u32, Vec<Type>)> {
+        let (a, b) = (self.sub.fresh(), self.sub.fresh());
+        Some(match name {
+            "None" => (Type::option(a), TAG_NONE, vec![]),
+            "Some" => (Type::option(a.clone()), TAG_SOME, vec![a]),
+            "Ok" => (Type::result(a.clone(), b), TAG_OK, vec![a]),
+            "Err" => (Type::result(a, b.clone()), TAG_ERR, vec![b]),
+            _ => {
+                let (enum_name, tag, fields) = self.g.variants.get(name)?;
+                (Type::Named(enum_name.clone()), *tag, fields.clone())
+            }
+        })
+    }
+
+    fn call(&mut self, name: &str, args: &[Expr], path: &str) -> TExpr {
+        if let Some(id) = self.lookup(name) {
+            let callee = TExpr { ty: self.locals[id as usize].clone(), kind: TKind::Local(id) };
+            let Type::Fn(params, ret, effs) = self.sub.resolve(&callee.ty) else {
+                let found = self.sub.finish(&callee.ty).to_string();
+                self.diags.push(Diagnostic::type_mismatch(self.def, path, "a function", &found).hint(format!("`{name}` is a local value of type {found}")));
+                self.infer_all(args, path);
+                return self.poison();
+            };
+            let args = self.args(name, args, &params, path);
+            self.effect_check(path, name, &effs);
+            return TExpr { ty: *ret, kind: TKind::CallIndirect(Box::new(callee), args) };
+        }
+        if let Some((idx, sig)) = self.g.fns.get(name) {
+            let (idx, sig) = (*idx, sig.clone());
+            let args = self.args(name, args, &sig.params, path);
+            self.effect_check(path, name, &sig.effects);
+            return TExpr { ty: sig.ret, kind: TKind::Call(idx, args) };
+        }
+        if let Some((ty, tag, fields)) = self.variant(name) {
+            let args = self.args(name, args, &fields, path);
+            return TExpr { ty, kind: TKind::Variant(tag, args) };
+        }
+        if let Some(e) = self.builtin(name, args, path) {
+            return e;
+        }
+        self.diags.push(Diagnostic::unknown_name(self.def, path, name));
+        self.infer_all(args, path);
+        self.poison()
+    }
+
+    fn record(&mut self, name: &str, fields: &[(String, Expr)], path: &str) -> TExpr {
+        let decl = match self.g.tp.type_def(name).map(|d| &d.body) {
+            Some(TypeBody::Record(fs)) => fs.clone(),
+            other => {
+                let mut d = Diagnostic::unknown_name(self.def, path, name);
+                if other.is_some() {
+                    d = Diagnostic::type_mismatch(self.def, path, "a record type", name)
+                        .hint(format!("`{name}` is an enum; construct one of its variants instead"));
+                }
+                self.diags.push(d);
+                for (f, e) in fields {
+                    self.infer(e, &format!("{path}.fields.{f}"));
+                }
+                return self.poison();
+            }
+        };
+        let mut values: Vec<Option<TExpr>> = vec![None; decl.len()];
+        for (f, e) in fields {
+            let p = format!("{path}.fields.{f}");
+            match decl.iter().position(|(n, _)| n == f) {
+                Some(i) if values[i].is_some() => {
+                    self.diags.push(Diagnostic::duplicate_name(self.def, &p, f));
+                    self.infer(e, &p);
+                }
+                Some(i) => values[i] = Some(self.expect(e, &decl[i].1, &p)),
+                None => {
+                    let names: Vec<&str> = decl.iter().map(|(n, _)| n.as_str()).collect();
+                    self.diags.push(Diagnostic::unknown_name(self.def, &p, f).hint(format!("fields of `{name}`: {}", names.join(", "))));
+                    self.infer(e, &p);
+                }
+            }
+        }
+        let mut out = Vec::new();
+        for (v, (f, _)) in values.into_iter().zip(&decl) {
+            match v {
+                Some(v) => out.push(v),
+                None => self.diags.push(Diagnostic::missing_field(self.def, path, name, f)),
+            }
+        }
+        TExpr { ty: Type::Named(name.into()), kind: TKind::Record(out) }
+    }
+
+    fn field(&mut self, target: &Expr, field: &str, path: &str) -> TExpr {
+        let t = self.infer(target, &format!("{path}.target"));
+        let ty = self.sub.resolve(&t.ty);
+        let fields = match &ty {
+            Type::Named(n) => match self.g.tp.type_def(n).map(|d| &d.body) {
+                Some(TypeBody::Record(fs)) => Some(fs.clone()),
+                _ => None,
+            },
+            _ => None,
+        };
+        let Some(fields) = fields else {
+            if !matches!(ty, Type::Var(_)) || !self.has_errors() {
+                let mut d = Diagnostic::type_mismatch(self.def, path, "a record", &self.sub.finish(&ty).to_string());
+                if matches!(ty, Type::Var(_)) {
+                    d = d.hint("the type is not known yet here; annotate it, e.g. `let x: User = ... in x.field`");
+                }
+                self.diags.push(d);
+            }
+            return self.poison();
+        };
+        match fields.iter().position(|(n, _)| n == field) {
+            Some(i) => TExpr { ty: fields[i].1.clone(), kind: TKind::Field(Box::new(t), i as u32) },
+            None => {
+                let names: Vec<&str> = fields.iter().map(|(n, _)| n.as_str()).collect();
+                self.diags.push(Diagnostic::unknown_name(self.def, path, field).hint(format!("fields of `{ty}`: {}", names.join(", "))));
+                self.poison()
+            }
+        }
+    }
+
+    fn match_expr(&mut self, s: &Expr, arms: &[Arm], path: &str) -> TExpr {
+        let s = self.infer(s, &format!("{path}.scrutinee"));
+        let result = self.sub.fresh();
+        let mut tarms = Vec::new();
+        let mut rows = Vec::new();
+        for (i, a) in arms.iter().enumerate() {
+            let depth = self.scope.len();
+            let mut bound = Vec::new();
+            let pat = self.pattern(&a.pat, &s.ty, &format!("{path}.arms[{i}].pattern"), &mut bound);
+            let guard = a.guard.as_ref().map(|g| self.expect(g, &Type::Bool, &format!("{path}.arms[{i}].guard")));
+            let body = self.expect(&a.body, &result, &format!("{path}.arms[{i}].body"));
+            self.scope.truncate(depth);
+            if guard.is_none() {
+                rows.push(pat.clone());
+            }
+            tarms.push(TArm { pat, guard, body });
+        }
+        self.deferred.push(Deferred::Exhaust(path.into(), s.ty.clone(), rows));
+        TExpr { ty: result, kind: TKind::Match(Box::new(s), tarms) }
+    }
+
+    fn pattern(&mut self, p: &Pat, ty: &Type, path: &str, bound: &mut Vec<String>) -> TPat {
+        let lit = |cx: &mut Self, t: Type, pat: TPat| {
+            cx.unify_at(path, ty, &t);
+            pat
+        };
+        match p {
+            Pat::Wild => TPat::Wild,
+            Pat::Bind(n) => {
+                if bound.contains(n) {
+                    self.diags.push(Diagnostic::duplicate_name(self.def, path, n));
+                }
+                bound.push(n.clone());
+                TPat::Bind(self.bind(n, ty.clone()))
+            }
+            Pat::Int(n) => lit(self, Type::Int, TPat::Int(*n)),
+            Pat::Str(s) => lit(self, Type::Str, TPat::Str(s.clone())),
+            Pat::Bool(b) => lit(self, Type::Bool, TPat::Bool(*b)),
+            Pat::Unit => lit(self, Type::Unit, TPat::Unit),
+            Pat::Variant(name, ps) => {
+                let Some((vty, tag, fields)) = self.variant(name) else {
+                    self.diags.push(Diagnostic::unknown_name(self.def, path, name));
+                    return TPat::Wild;
+                };
+                if !self.unify_at(path, ty, &vty) {
+                    return TPat::Wild;
+                }
+                if ps.len() != fields.len() {
+                    self.diags.push(Diagnostic::arity(self.def, path, name, fields.len(), ps.len()));
+                    return TPat::Wild;
+                }
+                let sub = ps.iter().zip(&fields).enumerate().map(|(i, (p, t))| self.pattern(p, t, &format!("{path}.args[{i}]"), bound)).collect();
+                TPat::Variant(tag, sub)
+            }
+            Pat::Record(name, fs) => {
+                let decl = match self.g.tp.type_def(name).map(|d| &d.body) {
+                    Some(TypeBody::Record(decl)) => decl.clone(),
+                    _ => {
+                        self.diags.push(Diagnostic::unknown_name(self.def, path, name));
+                        return TPat::Wild;
+                    }
+                };
+                if !self.unify_at(path, ty, &Type::Named(name.clone())) {
+                    return TPat::Wild;
+                }
+                let mut out = Vec::new();
+                for (f, p) in fs {
+                    let fp = format!("{path}.fields.{f}");
+                    match decl.iter().position(|(n, _)| n == f) {
+                        Some(i) => out.push((i as u32, self.pattern(p, &decl[i].1, &fp, bound))),
+                        None => self.diags.push(Diagnostic::unknown_name(self.def, &fp, f)),
+                    }
+                }
+                TPat::Record(out)
+            }
+        }
+    }
+
+    /// Resolves all types, runs deferred checks, and returns (local types, expressions);
+    /// None if this definition has errors.
+    pub fn finish(mut self, mut exprs: Vec<TExpr>) -> Option<(Vec<Type>, Vec<TExpr>)> {
+        if self.has_errors() {
+            return None;
+        }
+        for d in std::mem::take(&mut self.deferred) {
+            match d {
+                Deferred::Eq(path, t) => {
+                    let t = self.sub.finish(&t);
+                    if contains_fn(&self.g.tp, &t, &mut Vec::new()) {
+                        self.diags.push(Diagnostic::type_mismatch(self.def, &path, "a comparable type", &t.to_string()).hint("functions cannot be compared"));
+                    }
+                }
+                Deferred::Concat(path, t) => {
+                    let t = self.sub.resolve(&t);
+                    if !matches!(t, Type::Str | Type::List(_)) {
+                        self.diags.push(Diagnostic::type_mismatch(self.def, &path, "Str or List[_]", &self.sub.finish(&t).to_string()));
+                    }
+                }
+                Deferred::Exhaust(path, t, rows) => {
+                    let t = self.sub.finish(&t);
+                    if let Some(w) = missing_pattern(&self.g.tp, &t, &rows.iter().collect::<Vec<_>>()) {
+                        self.diags.push(Diagnostic::non_exhaustive(self.def, &path, &w));
+                    }
+                }
+            }
+        }
+        for e in &mut exprs {
+            self.zonk(e);
+        }
+        if self.has_errors() {
+            return None;
+        }
+        let locals = self.locals.iter().map(|t| self.sub.finish(t)).collect();
+        Some((locals, exprs))
+    }
+
+    /// Replaces inference variables by their final types and picks `len` by argument type.
+    fn zonk(&mut self, e: &mut TExpr) {
+        e.ty = self.sub.finish(&e.ty);
+        match &mut e.kind {
+            TKind::Int(_) | TKind::Float(_) | TKind::Bool(_) | TKind::Str(_) | TKind::Unit | TKind::Local(_) | TKind::FnRef(_) => {}
+            TKind::Un(_, x, _) | TKind::Field(x, _) => self.zonk(x),
+            TKind::Bin(_, l, r, _) | TKind::Let(_, l, r) => {
+                self.zonk(l);
+                self.zonk(r);
+            }
+            TKind::If(c, t, f) => {
+                self.zonk(c);
+                self.zonk(t);
+                self.zonk(f);
+            }
+            TKind::Call(_, xs) | TKind::List(xs) | TKind::Variant(_, xs) | TKind::Record(xs) | TKind::Seq(xs) => {
+                xs.iter_mut().for_each(|x| self.zonk(x));
+            }
+            TKind::CallIndirect(f, xs) => {
+                self.zonk(f);
+                xs.iter_mut().for_each(|x| self.zonk(x));
+            }
+            TKind::Builtin(b, xs, path) => {
+                xs.iter_mut().for_each(|x| self.zonk(x));
+                if matches!(b, Builtin::StrLen | Builtin::ListLen) {
+                    match &xs[0].ty {
+                        Type::Str => *b = Builtin::StrLen,
+                        Type::List(_) => *b = Builtin::ListLen,
+                        other => {
+                            let d = Diagnostic::type_mismatch(self.def, &format!("{path}.args[0]"), "Str or List[_]", &other.to_string());
+                            self.diags.push(d);
+                        }
+                    }
+                }
+            }
+            TKind::Match(s, arms) => {
+                self.zonk(s);
+                for a in arms {
+                    if let Some(g) = &mut a.guard {
+                        self.zonk(g);
+                    }
+                    self.zonk(&mut a.body);
+                }
+            }
+        }
+    }
+}
+
+/// True if a value of type `t` can contain a function (`seen` guards recursive types).
+fn contains_fn(tp: &TProgram, t: &Type, seen: &mut Vec<String>) -> bool {
+    match t {
+        Type::Fn(..) => true,
+        Type::List(x) | Type::Option(x) => contains_fn(tp, x, seen),
+        Type::Result(a, b) => contains_fn(tp, a, seen) || contains_fn(tp, b, seen),
+        Type::Named(n) if !seen.contains(n) => {
+            seen.push(n.clone());
+            match tp.type_def(n).map(|d| &d.body) {
+                Some(TypeBody::Record(fs)) => fs.iter().any(|(_, f)| contains_fn(tp, f, seen)),
+                Some(TypeBody::Enum(vs)) => vs.iter().any(|v| v.fields.iter().any(|f| contains_fn(tp, f, seen))),
+                None => false,
+            }
+        }
+        _ => false,
+    }
+}
