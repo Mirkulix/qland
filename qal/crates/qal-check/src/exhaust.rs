@@ -138,6 +138,10 @@ fn missing(tp: &TProgram, rows: &[Vec<P>], tys: &[Type]) -> Option<Vec<W>> {
     let heads: Vec<&Key> = rows.iter().filter_map(|r| head(r)).collect();
     let all = ctors(tp, &tys[0]);
     if let Some(all) = &all {
+        if all.is_empty() {
+            // An enum without variants has no values: nothing in this column can be missing.
+            return None;
+        }
         if !all.is_empty() && all.iter().all(|c| heads.contains(&&c.key)) {
             for c in all {
                 let sub = specialize(rows, &c.key, c.args.len());

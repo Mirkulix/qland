@@ -333,3 +333,9 @@ fn only_needed_host_functions_are_imported() {
         .collect();
     assert_eq!(imports, vec!["fail", "io.print"]);
 }
+
+#[test]
+fn match_on_an_enum_without_variants_compiles() {
+    let m = build("type Never = |\nfn absurd(n: Never) -> Int = match n { }\nfn main(args: List[Str]) -> Int = 0", Entry::All);
+    assert!(m.func("absurd").is_some());
+}

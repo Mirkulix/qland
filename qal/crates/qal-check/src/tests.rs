@@ -309,3 +309,38 @@ fn effect_hint_parenthesizes_a_function_result_type() {
     let d = one(&format!("{inc}fn mk() -> (fn(Int) -> Int !rand) !time = {{ print(\"m\"); inc }}"));
     assert_eq!(d.hints, vec!["add `!io` to the signature of `mk`: `-> (fn(Int) -> Int !rand) !time !io`".to_string()]);
 }
+
+/// `let a1 = if true then Ok(a0) else Err(a0) in ...`: each step doubles the inferred type.
+fn doubling_lets(lets: usize) -> String {
+    let mut s = "test t = let a0 = 1 in ".to_string();
+    for i in 1..=lets {
+        s += &format!("let a{i} = if true then Ok(a{p}) else Err(a{p}) in ", p = i - 1);
+    }
+    s + "true"
+}
+
+#[test]
+fn exponentially_growing_inferred_types_are_rejected_quickly() {
+    assert_eq!(check_src(&doubling_lets(10)), vec![], "2^11 - 1 nodes are fine");
+    let start = std::time::Instant::now();
+    let d = check_src(&doubling_lets(60));
+    assert!(start.elapsed() < std::time::Duration::from_secs(2), "took {:?}", start.elapsed());
+    assert!(!d.is_empty() && d.iter().all(|d| (d.code, d.kind) == ("E0208", "type_too_large")), "{d:#?}");
+    assert_eq!(d[0].message, "inferred type is too large (max 4096 nodes)");
+}
+
+#[test]
+fn enums_without_variants_and_empty_sequences() {
+    assert_eq!(check_src("type Never = |\nfn absurd(n: Never) -> Int = match n { }"), vec![]);
+    assert_eq!(kinds("fn f(x: Option[Int]) -> Int = match x { }"), vec![("non_exhaustive_match", "f".into(), "body".into())]);
+    // `{}` cannot be parsed, but a hand-built empty sequence must not crash the checker.
+    let p = Program { defs: vec![Def::Test(TestDef { name: "t".into(), body: Expr::Bin(BinOp::Eq, Box::new(Expr::Seq(vec![])), Box::new(Expr::Unit)) })] };
+    assert_eq!(check_program(&p), vec![]);
+}
+
+#[test]
+fn a_function_cannot_be_named_r() {
+    let d = one("fn r() -> Int = 1");
+    assert_eq!((d.kind, d.hints[0].as_str()), ("duplicate_name", "`r` names the result inside `ens`; choose another function name"));
+    assert_eq!(check_src("test r = true\nfn f(r: Int) -> Int = r"), vec![]);
+}

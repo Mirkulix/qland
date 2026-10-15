@@ -148,6 +148,9 @@ fn globals(p: &Program, diags: &mut Vec<Diagnostic>) -> Globals {
             diags.push(Diagnostic::duplicate_name(d.name(), "", d.name()).hint(format!("`{}` is a built-in function", d.name())));
         } else if RESERVED_EXPORTS.contains(&d.name()) {
             diags.push(Diagnostic::duplicate_name(d.name(), "", d.name()).hint(format!("`{}` is reserved by the runtime", d.name())));
+        } else if d.name() == RESULT_VAR && matches!(d, Def::Fn(_)) {
+            // A function named `r` could not be referred to inside `ens`, where `r` is the result.
+            diags.push(Diagnostic::duplicate_name(d.name(), "", d.name()).hint("`r` names the result inside `ens`; choose another function name"));
         }
         if let Def::Fn(f) = d {
             g.fns.entry(f.name.clone()).or_insert_with(|| {

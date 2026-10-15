@@ -1,7 +1,7 @@
 //! Type inference for one definition: expressions, patterns, and the final resolution pass.
 
 use crate::exhaust::missing_pattern;
-use crate::unify::{Subst, MAX_TYPE_DEPTH};
+use crate::unify::{Subst, MAX_TYPE_DEPTH, MAX_TYPE_SIZE};
 use crate::{validate_type, Globals};
 use qal_core::ast::*;
 use qal_core::diag::Diagnostic;
@@ -68,6 +68,10 @@ impl<'a> Cx<'a> {
     pub fn mismatch(&mut self, path: &str, expected: &Type, found: &Type) {
         if std::mem::take(&mut self.sub.too_deep) {
             self.diags.push(Diagnostic::type_too_deep(self.def, path, MAX_TYPE_DEPTH));
+            return;
+        }
+        if std::mem::take(&mut self.sub.too_large) {
+            self.diags.push(Diagnostic::type_too_large(self.def, path, MAX_TYPE_SIZE));
             return;
         }
         let (e, f) = (self.sub.finish(expected), self.sub.finish(found));
@@ -169,6 +173,8 @@ impl<'a> Cx<'a> {
                 let items: Vec<TExpr> = items.iter().enumerate().map(|(i, x)| self.expect(x, &elem, &format!("{path}.items[{i}]"))).collect();
                 (ty, TKind::List(items))
             }
+            // Only built by hand (the parser needs at least one item): evaluates to `()`.
+            Expr::Seq(items) if items.is_empty() => (Type::Unit, TKind::Unit),
             Expr::Seq(items) => {
                 let n = items.len();
                 let mut out = Vec::new();
@@ -182,7 +188,7 @@ impl<'a> Cx<'a> {
                     }
                     out.push(t);
                 }
-                (out.last().expect("parser: non-empty").ty.clone(), TKind::Seq(out))
+                (out.last().expect("non-empty").ty.clone(), TKind::Seq(out))
             }
             Expr::Record(name, fields) => return self.record(name, fields, path),
             Expr::Field(target, field) => return self.field(target, field, path),

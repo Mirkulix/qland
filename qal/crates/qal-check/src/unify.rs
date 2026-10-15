@@ -1,15 +1,20 @@
 //! Type variables and unification for local type inference inside one definition.
 //!
-//! Inferred types can nest far deeper than the AST (each `let` may wrap the previous value), so
-//! the depth of every variable's binding is tracked exactly and capped at [`MAX_TYPE_DEPTH`]; all
-//! later recursion over types (display, drop, equality, decoding) is bounded by it. Variables are
-//! only ever resolved shallowly, so no operation re-walks a whole nested type at every level.
+//! Inferred types can nest far deeper than the AST (each `let` may wrap the previous value), and
+//! because variables are shared they can also grow exponentially in size (`if c then Ok(a) else
+//! Err(a)` doubles the type of `a`). The depth and the size (number of nodes when fully expanded) of
+//! every variable's binding are tracked exactly and capped at [`MAX_TYPE_DEPTH`] and
+//! [`MAX_TYPE_SIZE`]; all later work on types (resolution, display, equality, decoding) is bounded
+//! by them. Variables are only ever resolved shallowly, so no operation re-walks a whole nested
+//! type at every level.
 
 use qal_core::ast::Type;
 use std::collections::HashSet;
 
 /// Maximum nesting depth of an inferred type.
 pub const MAX_TYPE_DEPTH: u32 = 256;
+/// Maximum size (nodes of the fully expanded tree) of an inferred type.
+pub const MAX_TYPE_SIZE: u32 = 4096;
 
 #[derive(Debug, Default)]
 pub struct Subst {
@@ -17,16 +22,21 @@ pub struct Subst {
     vars: Vec<Option<Type>>,
     /// Depth of each variable's type (1 while unbound), kept exact as inner variables get bound.
     depth: Vec<u32>,
+    /// Size of each variable's type (1 while unbound), saturating just above `MAX_TYPE_SIZE`.
+    size: Vec<u32>,
     /// For each variable, the variables whose binding mentions it directly.
     users: Vec<Vec<u32>>,
     /// Set when a unification failed because a type would exceed `MAX_TYPE_DEPTH`.
     pub too_deep: bool,
+    /// Set when a unification failed because a type would exceed `MAX_TYPE_SIZE`.
+    pub too_large: bool,
 }
 
 impl Subst {
     pub fn fresh(&mut self) -> Type {
         self.vars.push(None);
         self.depth.push(1);
+        self.size.push(1);
         self.users.push(Vec::new());
         Type::Var(self.vars.len() as u32 - 1)
     }
@@ -75,6 +85,31 @@ impl Subst {
         }
     }
 
+    /// Size of `t`, using the tracked size of its variables; saturates at `MAX_TYPE_SIZE + 1`.
+    fn size_of(&self, t: &Type) -> u32 {
+        let n = match t {
+            Type::Var(v) => self.size[*v as usize],
+            Type::List(x) | Type::Option(x) => 1 + self.size_of(x),
+            Type::Result(a, b) => 1 + self.size_of(a) + self.size_of(b),
+            Type::Fn(ps, r, _) => ps.iter().fold(1 + self.size_of(r), |n, p| n.saturating_add(self.size_of(p))),
+            _ => 1,
+        };
+        n.min(MAX_TYPE_SIZE + 1)
+    }
+
+    /// Records a limit violation; true if `(depth, size)` is within the limits.
+    fn within_limits(&mut self, depth: u32, size: u32) -> bool {
+        if depth > MAX_TYPE_DEPTH {
+            self.too_deep = true;
+            return false;
+        }
+        if size > MAX_TYPE_SIZE {
+            self.too_large = true;
+            return false;
+        }
+        true
+    }
+
     /// The variables `t` mentions directly (as written).
     fn vars_in(t: &Type, out: &mut Vec<u32>) {
         match t {
@@ -89,12 +124,11 @@ impl Subst {
         }
     }
 
-    /// Binds unbound `x` to `t` and updates the depth of every binding that (transitively) mentions
-    /// `x`. Fails, setting `too_deep`, if any of them would exceed `MAX_TYPE_DEPTH`.
+    /// Binds unbound `x` to `t` and updates the depth and size of every binding that (transitively)
+    /// mentions `x`. Fails, setting `too_deep` or `too_large`, if any of them would exceed a limit.
     fn bind(&mut self, x: u32, t: Type) -> bool {
-        let d = self.depth_of(&t);
-        if d > MAX_TYPE_DEPTH {
-            self.too_deep = true;
+        let (d, n) = (self.depth_of(&t), self.size_of(&t));
+        if !self.within_limits(d, n) {
             return false;
         }
         let mut direct = Vec::new();
@@ -104,18 +138,20 @@ impl Subst {
         }
         self.vars[x as usize] = Some(t);
         self.depth[x as usize] = d;
-        // Depths only grow and are capped, so each variable is revisited at most MAX_TYPE_DEPTH times.
+        self.size[x as usize] = n;
+        // Depths and sizes only grow and are capped, so each variable is revisited a bounded number of times.
         let mut changed = vec![x];
         while let Some(v) = changed.pop() {
             for k in 0..self.users[v as usize].len() {
                 let u = self.users[v as usize][k];
-                let nd = self.depth_of(self.vars[u as usize].as_ref().expect("users are bound"));
-                if nd > self.depth[u as usize] {
-                    if nd > MAX_TYPE_DEPTH {
-                        self.too_deep = true;
+                let bound = self.vars[u as usize].as_ref().expect("users are bound");
+                let (nd, nn) = (self.depth_of(bound), self.size_of(bound));
+                if nd > self.depth[u as usize] || nn > self.size[u as usize] {
+                    if !self.within_limits(nd, nn) {
                         return false;
                     }
                     self.depth[u as usize] = nd;
+                    self.size[u as usize] = nn;
                     changed.push(u);
                 }
             }
@@ -186,6 +222,22 @@ mod tests {
         let mut s = Subst::default();
         let a = s.fresh();
         assert!(!s.unify(&a, &Type::list(a.clone())));
+    }
+
+    #[test]
+    fn sizes_of_shared_variables_are_capped() {
+        let mut s = Subst::default();
+        let mut t = s.fresh();
+        assert!(s.unify(&t, &Type::Int));
+        // Each step builds Result[t, t]: the size doubles while the depth grows by one.
+        for _ in 0..11 {
+            let v = s.fresh();
+            assert!(s.unify(&v, &Type::result(t.clone(), t.clone())));
+            t = v;
+        }
+        let v = s.fresh();
+        assert!(!s.unify(&v, &Type::result(t.clone(), t.clone())), "4095 * 2 + 1 nodes exceed 4096");
+        assert!(s.too_large && !s.too_deep);
     }
 
     #[test]
