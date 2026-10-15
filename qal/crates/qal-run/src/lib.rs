@@ -98,7 +98,7 @@ pub struct Outcome {
     pub stdout_bytes: usize,
 }
 
-/// Wasm call stack limit; hosts need a native stack larger than this.
+/// Wasm call stack limit; every invocation runs on a thread with a larger native stack.
 pub const WASM_STACK_BYTES: usize = 64 << 20;
 
 pub struct Runner {
@@ -126,9 +126,8 @@ impl Runner {
         // allocation. Phase 1 programs are bounded by fuel, not by speed.
         config.cranelift_opt_level(wasmtime::OptLevel::None);
         config.cranelift_regalloc_algorithm(wasmtime::RegallocAlgorithm::SinglePass);
-        // The unoptimized frames are large: allow ~20 000+ nested non-tail calls. Hosts must run
-        // guest code on a thread whose native stack is bigger than this (the CLI and the MCP
-        // worker use 256 MiB); deeper recursion reports `stack_overflow`.
+        // The unoptimized frames are large: allow ~20 000+ nested non-tail calls; deeper recursion
+        // reports `stack_overflow` (`invoke` runs guest code on a thread with a larger native stack).
         config.max_wasm_stack(WASM_STACK_BYTES);
         config.async_stack_size(WASM_STACK_BYTES); // only validated against the limit; calls are synchronous
         let engine = Engine::new(&config).map_err(|e| e.to_string())?;
@@ -211,7 +210,20 @@ impl Runner {
         }
     }
 
+    /// Runs one invocation on a dedicated thread whose native stack exceeds the wasm stack limit,
+    /// so deep guest recursion reports `stack_overflow` whatever thread the caller is on.
     pub fn invoke(&self, export: &str, args: &[Value]) -> Outcome {
+        let failed = |m: String| Outcome { result: Err(RunError::new("trap", export, m)), stdout: String::new(), stdout_bytes: 0 };
+        std::thread::scope(|scope| {
+            let spawned = std::thread::Builder::new().name("qal-guest".into()).stack_size(WASM_STACK_BYTES + (64 << 20)).spawn_scoped(scope, || self.invoke_here(export, args));
+            match spawned {
+                Ok(h) => h.join().unwrap_or_else(|_| failed("the runtime panicked while running the program".into())),
+                Err(e) => failed(format!("cannot start the execution thread: {e}")),
+            }
+        })
+    }
+
+    fn invoke_here(&self, export: &str, args: &[Value]) -> Outcome {
         let stdin: Box<dyn std::io::BufRead + Send> = match &self.stdin {
             Some(bytes) => Box::new(Cursor::new(bytes.clone())),
             None => Box::new(std::io::BufReader::new(std::io::stdin())),

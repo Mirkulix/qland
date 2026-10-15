@@ -124,19 +124,24 @@ fn deep_non_tail_recursion_reports_stack_overflow() {
     assert!(e.hints[0].contains("tail-recursive"));
 }
 
-/// Runs `f` on a thread with a large native stack, as the hosts do (CLI and MCP worker).
-fn on_big_stack<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T {
-    std::thread::Builder::new().stack_size(256 << 20).spawn(f).unwrap().join().unwrap()
+#[test]
+fn recursion_depth_of_twenty_thousand_works() {
+    let r = runner("fn deep(n: Int) -> Int = if n == 0 then 0 else 1 + deep(n - 1)");
+    assert_eq!(r.call("deep", &[Value::Int(20_000)]), Ok(Value::Int(20_000)));
 }
 
 #[test]
-fn recursion_depth_of_ten_thousand_works() {
-    let (ok, overflow) = on_big_stack(|| {
-        let r = runner("fn deep(n: Int) -> Int = if n == 0 then 0 else 1 + deep(n - 1)");
-        (r.call("deep", &[Value::Int(20_000)]), r.call("deep", &[Value::Int(100_000_000)]))
-    });
-    assert_eq!(ok, Ok(Value::Int(20_000)));
-    assert_eq!(overflow.unwrap_err().kind, "stack_overflow");
+fn deep_recursion_is_safe_on_a_small_caller_stack() {
+    let r = runner("fn deep(n: Int) -> Int = if n == 0 then 0 else 1 + deep(n - 1)");
+    let kind = std::thread::Builder::new()
+        .stack_size(256 << 10)
+        .spawn(move || {
+            (r.call("deep", &[Value::Int(20_000)]), r.call("deep", &[Value::Int(100_000_000)]).unwrap_err().kind)
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+    assert_eq!(kind, (Ok(Value::Int(20_000)), "stack_overflow"));
 }
 
 #[test]
