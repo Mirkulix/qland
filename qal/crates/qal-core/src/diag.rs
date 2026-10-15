@@ -162,6 +162,19 @@ impl Diagnostic {
         Diagnostic::new("E0402", "missing_dep", def, "", format!("`{def}` refers to definition #{hash}, which has no name in the store"))
     }
 
+    /// A stored name would change what kind of definition it is (e.g. a function redefined as a test).
+    pub fn kind_change(def: &str, old: &str, new: &str) -> Self {
+        Diagnostic::new("E0405", "kind_change", def, "", format!("`{def}` is a {old} in the store and cannot be redefined as a {new}"))
+            .expected_found(old, new)
+            .hint(format!("give the {new} another name, or rename the stored {old} first"))
+    }
+
+    /// A `query` signature pattern that cannot match anything (unbalanced brackets, empty, too long).
+    pub fn bad_pattern(pattern: &str, reason: &str) -> Self {
+        Diagnostic::new("E0102", "bad_pattern", "", "", format!("invalid signature pattern `{pattern}`: {reason}"))
+            .hint("write a signature with `_` for any one type, e.g. `fn(Str, _) -> Int` or `fn(_) -> Option[_]`")
+    }
+
     /// The store itself failed: SQLite error, unreadable or corrupt file, hash mismatch.
     pub fn store_error(message: impl Into<String>) -> Self {
         Diagnostic::new("E0601", "store_error", "", "", message)
@@ -227,5 +240,9 @@ mod tests {
         let d = Diagnostic::symmetric_group(&["f".into(), "g".into()]);
         assert_eq!((d.code, d.kind, d.def.as_str()), ("E0209", "duplicate_name", "f"));
         assert_eq!(Diagnostic::group_too_large(&["a".into()]).code, "E0210");
+        let d = Diagnostic::kind_change("t", "fn", "test");
+        assert_eq!((d.code, d.kind, d.message.as_str()), ("E0405", "kind_change", "`t` is a fn in the store and cannot be redefined as a test"));
+        let d = Diagnostic::bad_pattern("fn(", "unclosed `(`");
+        assert_eq!((d.code, d.kind, d.message.as_str()), ("E0102", "bad_pattern", "invalid signature pattern `fn(`: unclosed `(`"));
     }
 }

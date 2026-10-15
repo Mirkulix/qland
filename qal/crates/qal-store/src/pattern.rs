@@ -31,6 +31,39 @@ fn tokens(s: &str) -> Vec<String> {
     out
 }
 
+/// Why `pattern` can never match a signature, if it cannot: empty, too long, or brackets that
+/// do not balance.
+pub fn validate(pattern: &str) -> Result<(), String> {
+    let p = tokens(pattern);
+    if p.is_empty() {
+        return Err("the pattern is empty".into());
+    }
+    if p.len() > MAX_PATTERN_TOKENS {
+        return Err(format!("the pattern has more than {MAX_PATTERN_TOKENS} tokens"));
+    }
+    let mut open: Vec<&str> = Vec::new();
+    for t in &p {
+        match t.as_str() {
+            "(" | "[" | "{" => open.push(t),
+            ")" | "]" | "}" => {
+                let want = match t.as_str() {
+                    ")" => "(",
+                    "]" => "[",
+                    _ => "{",
+                };
+                if open.pop() != Some(want) {
+                    return Err(format!("unbalanced `{t}`"));
+                }
+            }
+            _ => {}
+        }
+    }
+    match open.last() {
+        Some(o) => Err(format!("unclosed `{o}`")),
+        None => Ok(()),
+    }
+}
+
 /// True if `signature` matches `pattern`.
 pub fn matches(pattern: &str, signature: &str) -> bool {
     let p = tokens(pattern);
@@ -97,5 +130,16 @@ mod tests {
         assert!(!matches("_", "A | B(Int)"));
         assert!(!matches("", "Bool"));
         assert!(!matches(&"_ ".repeat(300), "Bool"));
+    }
+
+    #[test]
+    fn invalid_patterns_are_reported() {
+        use super::validate;
+        assert_eq!(validate("fn(_) -> Option[_]"), Ok(()));
+        assert_eq!(validate("fn("), Err("unclosed `(`".into()));
+        assert_eq!(validate("fn(Int]) -> Int"), Err("unbalanced `]`".into()));
+        assert_eq!(validate(")"), Err("unbalanced `)`".into()));
+        assert_eq!(validate("  "), Err("the pattern is empty".into()));
+        assert!(validate(&"_ ".repeat(300)).unwrap_err().contains("more than 256 tokens"));
     }
 }

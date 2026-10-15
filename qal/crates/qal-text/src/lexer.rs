@@ -22,6 +22,9 @@ pub struct Token {
     pub col: usize,
 }
 
+/// Longest identifier, in characters (names become file names in `qal build`).
+pub const MAX_NAME_LEN: usize = 128;
+
 pub const KEYWORDS: &[&str] =
     &["fn", "type", "test", "let", "in", "if", "then", "else", "match", "req", "ens", "true", "false"];
 
@@ -107,6 +110,9 @@ pub fn lex(src: &str) -> Result<Vec<Token>, Diagnostic> {
                 i += 1;
             }
             col += i - start;
+            if i - start > MAX_NAME_LEN {
+                return Err(Diagnostic::parse(start_line, start_col, format!("identifier longer than {MAX_NAME_LEN} characters")));
+            }
             let text: String = chars[start..i].iter().collect();
             out.push(Token { tok: Tok::Ident(text), line: start_line, col: start_col });
             continue;
@@ -196,6 +202,13 @@ mod tests {
 
     fn toks(src: &str) -> Vec<Tok> {
         lex(src).unwrap().into_iter().map(|t| t.tok).collect()
+    }
+
+    #[test]
+    fn identifiers_have_a_length_limit() {
+        assert!(lex(&"a".repeat(MAX_NAME_LEN)).is_ok());
+        let e = lex(&format!("fn {}", "a".repeat(MAX_NAME_LEN + 1))).unwrap_err();
+        assert_eq!((e.path.as_str(), e.message.as_str()), ("1:4", "identifier longer than 128 characters"));
     }
 
     #[test]

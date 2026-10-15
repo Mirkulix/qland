@@ -6,7 +6,7 @@ use crate::{now_ms, sql};
 use qal_core::ast::{Def, Program};
 use qal_core::canon::{self, Hash, Kind};
 use qal_core::diag::Diagnostic;
-use qal_text::lexer::KEYWORDS;
+use qal_text::lexer::{KEYWORDS, MAX_NAME_LEN};
 use rusqlite::{params, Connection, TransactionBehavior};
 use serde::Serialize;
 
@@ -94,6 +94,41 @@ fn missing_row(h: &Hash) -> Vec<Diagnostic> {
     vec![Diagnostic::store_error(format!("the store is corrupt: definition #{h} is missing"))]
 }
 
+/// The current name of a definition that was once called `old` and renamed (following chains of
+/// renames), if it still has that name.
+pub(crate) fn renamed_to(conn: &Connection, names: &dyn Fn(&str) -> bool, old: &str) -> Result<Option<String>, Vec<Diagnostic>> {
+    // Follow the latest rename of each name until the chain ends or comes back to a name already
+    // seen (renames back and forth); the answer is the last name on the way that still exists.
+    let mut seen = std::collections::HashSet::from([old.to_string()]);
+    let mut current = old.to_string();
+    let mut found = None;
+    for _ in 0..1024 {
+        let next: Option<String> = conn
+            .query_row("SELECT to_name FROM history WHERE action = 'renamed' AND from_name = ?1 ORDER BY id DESC LIMIT 1", params![current], |r| r.get(0))
+            .map(Some)
+            .or_else(|e| if e == rusqlite::Error::QueryReturnedNoRows { Ok(None) } else { Err(e) })
+            .map_err(sql)?;
+        let Some(n) = next else { break };
+        if names(&n) {
+            found = Some(n.clone());
+        }
+        if !seen.insert(n.clone()) {
+            break;
+        }
+        current = n;
+    }
+    Ok(found)
+}
+
+/// `unknown_name` for `name`, with a hint if the definition was renamed.
+pub(crate) fn unknown(conn: &Connection, names: &dyn Fn(&str) -> bool, name: &str) -> Diagnostic {
+    let d = Diagnostic::unknown_name(name, "", name);
+    match renamed_to(conn, names, name) {
+        Ok(Some(new)) => d.hint(format!("`{name}` was renamed to `{new}`")),
+        _ => d,
+    }
+}
+
 /// A name or `#<64 hex digits>` -> the hash it stands for.
 fn resolve(snap: &Snapshot, conn: &Connection, s: &str) -> Result<Hash, Vec<Diagnostic>> {
     if let Some(hex) = s.strip_prefix('#') {
@@ -104,7 +139,7 @@ fn resolve(snap: &Snapshot, conn: &Connection, s: &str) -> Result<Hash, Vec<Diag
         }
         return Err(vec![Diagnostic::unknown_name("", "", s).hint("give a stored name or `#` followed by a full 64-digit hash")]);
     }
-    snap.names.get(s).map(|e| e.hash).ok_or_else(|| vec![Diagnostic::unknown_name(s, "", s)])
+    snap.names.get(s).map(|e| e.hash).ok_or_else(|| vec![unknown(conn, &|n| snap.names.contains_key(n), s)])
 }
 
 /// Names follow the text form's rules: types start uppercase, functions and tests lowercase.
@@ -114,21 +149,21 @@ fn valid_name(name: &str, kind: Kind) -> Result<(), Vec<Diagnostic>> {
         Kind::Fn => "function",
         Kind::Test => "test",
     };
-    let chars_ok = name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') && !name.starts_with(|c: char| c.is_ascii_digit()) && name != "_";
+    let chars_ok = name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') && !name.starts_with(|c: char| c.is_ascii_digit()) && name != "_" && name.len() <= MAX_NAME_LEN;
     let case_ok = !name.is_empty() && name.starts_with(|c: char| c.is_ascii_uppercase()) == (kind == Kind::Type);
     if chars_ok && case_ok && !KEYWORDS.contains(&name) {
         return Ok(());
     }
     let rule = if kind == Kind::Type { "start with an uppercase letter" } else { "start with a lowercase letter or `_`" };
     Err(vec![Diagnostic::new("E0100", "parse", name, "", format!("`{name}` is not a valid {what} name"))
-        .hint(format!("{what} names {rule} and contain only ASCII letters, digits and `_` (no keywords)"))])
+        .hint(format!("{what} names {rule} and contain only ASCII letters, digits and `_`, at most {MAX_NAME_LEN} (no keywords)"))])
 }
 
 pub fn rename(conn: &mut Connection, old: &str, new: &str, agent: &str) -> Result<Renamed, Vec<Diagnostic>> {
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(sql)?;
     let snap = Snapshot::load(&tx)?;
     let Some(hash) = snap.names.get(old).map(|e| e.hash) else {
-        return Err(vec![Diagnostic::unknown_name(old, "", old)]);
+        return Err(vec![unknown(&tx, &|n| snap.names.contains_key(n), old)]);
     };
     let kind = snap.row(&tx, &hash)?.map(|r| r.kind).ok_or_else(|| vec![Diagnostic::store_error(format!("`{old}` has no definition"))])?;
     if snap.names.contains_key(new) {
@@ -211,6 +246,9 @@ pub fn view(conn: &mut Connection, names: &[String]) -> Result<Vec<View>, Vec<Di
 }
 
 pub fn query(conn: &mut Connection, q: &Query) -> Result<Vec<Entry>, Vec<Diagnostic>> {
+    if let Some(p) = &q.type_pattern {
+        pattern::validate(p).map_err(|reason| vec![Diagnostic::bad_pattern(p, &reason)])?;
+    }
     let tx = conn.transaction().map_err(sql)?;
     let snap = Snapshot::load(&tx)?;
     // `uses` is a name (the definitions written against it) or `#<hash>` (those that refer to the hash).
@@ -251,7 +289,8 @@ pub fn history(conn: &mut Connection, name: &str) -> Result<Vec<HistoryEntry>, V
         .map_err(sql)?;
     let out = rows.collect::<Result<Vec<_>, _>>().map_err(sql)?;
     if out.is_empty() {
-        return Err(vec![Diagnostic::unknown_name(name, "", name)]);
+        let current = |n: &str| tx.query_row("SELECT 1 FROM names WHERE name = ?1", params![n], |_| Ok(())).is_ok();
+        return Err(vec![unknown(&tx, &current, name)]);
     }
     Ok(out)
 }

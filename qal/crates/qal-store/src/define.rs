@@ -151,6 +151,10 @@ fn replacement_rule(tx: &Transaction, snap: &Snapshot, input: &Program, input_na
         if before == after {
             continue;
         }
+        if before.0 != after.0 {
+            diags.push(Diagnostic::kind_change(d.name(), before.0.as_str(), after.0.as_str()));
+            continue;
+        }
         let dependents: Vec<String> = snap.dependents(d.name()).into_iter().filter(|n| !input_names.contains(n.as_str())).collect();
         if !dependents.is_empty() {
             diags.push(Diagnostic::signature_change(d.name(), &show(&before), &show(&after), &dependents));

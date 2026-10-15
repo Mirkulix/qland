@@ -134,6 +134,14 @@ impl Store {
         ops::query(&mut self.conn, q)
     }
 
+    /// The current name of a definition that was renamed from `old` (None if it was not, or if
+    /// the definition no longer has a name).
+    pub fn renamed_to(&mut self, old: &str) -> Result<Option<String>, Vec<Diagnostic>> {
+        let conn = &self.conn;
+        let current = |n: &str| conn.query_row("SELECT 1 FROM names WHERE name = ?1", [n], |_| Ok(())).is_ok();
+        ops::renamed_to(conn, &current, old)
+    }
+
     /// Every recorded change of `name`, oldest first.
     pub fn history(&mut self, name: &str) -> Result<Vec<HistoryEntry>, Vec<Diagnostic>> {
         ops::history(&mut self.conn, name)

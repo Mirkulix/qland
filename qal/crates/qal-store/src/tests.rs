@@ -669,3 +669,56 @@ fn alias_reference_hint_does_not_ask_to_redefine_a_definition_already_in_the_cal
     assert_eq!((d[0].code, d[0].def.as_str()), ("E0404", "uses_mk"));
     assert_eq!(d[0].hints, ["refer to only one of `mk`, `mk2` (they are identical)"]);
 }
+
+#[test]
+fn a_name_cannot_change_its_kind() {
+    let mut s = store();
+    ok(&mut s, "fn check() -> Bool = true\ntest t = check()");
+    let before = hashes(&mut s);
+    let d = err(&mut s, "test check = true");
+    assert_eq!((d[0].code, d[0].kind, d[0].def.as_str()), ("E0405", "kind_change", "check"));
+    assert_eq!((d[0].expected.as_deref(), d[0].found.as_deref()), (Some("fn"), Some("test")));
+    let d = err(&mut s, "fn t() -> Bool = false");
+    assert_eq!((d[0].kind, d[0].message.as_str()), ("kind_change", "`t` is a test in the store and cannot be redefined as a fn"));
+    assert_eq!(hashes(&mut s), before, "nothing changed");
+}
+
+#[test]
+fn old_names_point_to_the_new_name() {
+    let mut s = store();
+    ok(&mut s, "fn one() -> Int = 1");
+    s.rename("one", "uno", "a").unwrap();
+    s.rename("uno", "eins", "a").unwrap();
+    assert_eq!(s.renamed_to("one").unwrap(), Some("eins".to_string()));
+    assert_eq!(s.renamed_to("uno").unwrap(), Some("eins".to_string()));
+    assert_eq!(s.renamed_to("eins").unwrap(), None);
+    assert_eq!(s.renamed_to("never").unwrap(), None);
+    let hint = vec!["`one` was renamed to `eins`".to_string()];
+    let d = s.view(&["one".to_string()]).unwrap_err();
+    assert_eq!((d[0].kind, &d[0].hints), ("unknown_name", &hint));
+    assert_eq!(s.history("one").unwrap_err()[0].hints, hint);
+    assert_eq!(s.rename("one", "x", "a").unwrap_err()[0].hints, hint);
+    assert_eq!(s.query(&Query { uses: Some("one".into()), ..Query::default() }).unwrap_err()[0].hints, hint);
+    // Renames back and forth end at the name that exists now.
+    ok(&mut s, "fn two() -> Int = 2");
+    s.rename("two", "b", "a").unwrap();
+    s.rename("b", "c", "a").unwrap();
+    s.rename("c", "b", "a").unwrap();
+    assert_eq!(s.renamed_to("two").unwrap(), Some("b".to_string()));
+    assert_eq!(s.renamed_to("c").unwrap(), Some("b".to_string()));
+    let long = "x".repeat(129);
+    assert_eq!(s.rename("b", &long, "a").unwrap_err()[0].kind, "parse");
+    // A name that was renamed away and then reused is current again: no hint.
+    ok(&mut s, "fn one() -> Int = 11");
+    assert_eq!(s.renamed_to("one").unwrap(), Some("eins".to_string()));
+    assert_eq!(text(&mut s, "one"), "fn one() -> Int\n= 11");
+}
+
+#[test]
+fn invalid_signature_patterns_are_diagnostics() {
+    let mut s = store();
+    ok(&mut s, "fn f(x: Int) -> Int = x");
+    let d = s.query(&Query { type_pattern: Some("fn(".into()), ..Query::default() }).unwrap_err();
+    assert_eq!((d[0].code, d[0].kind, d[0].message.as_str()), ("E0102", "bad_pattern", "invalid signature pattern `fn(`: unclosed `(`"));
+    assert_eq!(s.query(&Query { type_pattern: Some("fn(_) -> _".into()), ..Query::default() }).unwrap().len(), 1);
+}
