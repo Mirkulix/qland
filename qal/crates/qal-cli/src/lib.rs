@@ -1,10 +1,12 @@
-//! The QAL pipeline: text -> parse -> check -> compile (per entry point) -> runner.
+//! The QAL pipeline: text or store -> parse -> check -> compile (per entry point) -> runner.
 
 use qal_core::ast::{Program, Type};
 use qal_core::diag::Diagnostic;
 use qal_core::tast::TProgram;
 use qal_run::{Permissions, RunError, Runner, Value};
+use qal_store::Store;
 use qal_wasm::Entry;
+use std::collections::HashMap;
 
 pub struct Loaded {
     pub program: Program,
@@ -14,8 +16,60 @@ pub struct Loaded {
 /// Parses and checks `src`. Any diagnostic means nothing can be compiled.
 pub fn load(src: &str) -> Result<Loaded, Vec<Diagnostic>> {
     let program = qal_text::parse_program(src).map_err(|d| vec![d])?;
+    load_program(program)
+}
+
+/// Checks an already parsed (or stored) program.
+pub fn load_program(program: Program) -> Result<Loaded, Vec<Diagnostic>> {
     let typed = qal_check::check(&program)?;
     Ok(Loaded { program, typed })
+}
+
+/// A command's target is a source file if it ends in `.qal`, otherwise a name in the store
+/// (definition names never contain a dot).
+pub fn is_file(target: &str) -> bool {
+    target.ends_with(".qal")
+}
+
+/// The store of the project around the current directory.
+pub fn open_store() -> Result<Store, Vec<Diagnostic>> {
+    let cwd = std::env::current_dir().map_err(|e| vec![Diagnostic::store_error(format!("no current directory: {e}"))])?;
+    Store::discover(&cwd)
+}
+
+/// Loads the whole codebase of the project's store.
+pub fn load_store() -> Result<Loaded, Vec<Diagnostic>> {
+    load_program(open_store()?.program()?)
+}
+
+/// Splits `--flag value` options (only those in `flags`, anywhere in `args`) from positional
+/// arguments. Unknown `--options` are an error.
+pub fn take_flags(args: &[String], flags: &[&str]) -> Result<(HashMap<String, String>, Vec<String>), String> {
+    let mut found = HashMap::new();
+    let mut rest = Vec::new();
+    let mut i = 0;
+    while i < args.len() {
+        let a = &args[i];
+        if let Some(flag) = a.strip_prefix("--") {
+            if !flags.contains(&flag) {
+                return Err(format!("unknown option `{a}`"));
+            }
+            let value = args.get(i + 1).ok_or_else(|| format!("`{a}` needs a value"))?;
+            if found.insert(flag.to_string(), value.clone()).is_some() {
+                return Err(format!("`{a}` given twice"));
+            }
+            i += 2;
+        } else {
+            rest.push(a.clone());
+            i += 1;
+        }
+    }
+    Ok((found, rest))
+}
+
+/// True if `name` is a function `fn(List[Str]) -> Int` (with any effects), i.e. runnable by `qal run`.
+pub fn is_entry_point(typed: &TProgram, name: &str) -> bool {
+    typed.fns.iter().any(|f| f.def.name == name && f.def.ret == Type::Int && f.def.params.len() == 1 && f.def.params[0].ty == Type::list(Type::Str))
 }
 
 impl Loaded {
@@ -92,6 +146,23 @@ mod tests {
         assert_eq!((p, rest), (Permissions::default(), strings(&["--allow", "x"])));
         assert!(take_options(&strings(&["--allow"])).is_err());
         assert!(take_options(&strings(&["--allow", "net"])).unwrap_err().contains("unknown effect"));
+    }
+
+    #[test]
+    fn flags_are_taken_from_anywhere() {
+        let (f, rest) = take_flags(&strings(&["a", "--agent", "x", "b"]), &["agent"]).unwrap();
+        assert_eq!((f.get("agent").map(String::as_str), rest), (Some("x"), strings(&["a", "b"])));
+        assert!(take_flags(&strings(&["--nope", "1"]), &["agent"]).unwrap_err().contains("unknown option"));
+        assert!(take_flags(&strings(&["--agent"]), &["agent"]).unwrap_err().contains("needs a value"));
+        assert!(take_flags(&strings(&["--agent", "a", "--agent", "b"]), &["agent"]).unwrap_err().contains("twice"));
+        assert!(is_file("x/y.qal") && !is_file("main"));
+    }
+
+    #[test]
+    fn entry_points_take_a_string_list_and_return_int() {
+        let l = load("fn main(args: List[Str]) -> Int = 0\nfn app(a: List[Str]) -> Int !io = 1\nfn f(a: Int) -> Int = a").unwrap();
+        assert!(is_entry_point(&l.typed, "main") && is_entry_point(&l.typed, "app"));
+        assert!(!is_entry_point(&l.typed, "f") && !is_entry_point(&l.typed, "g"));
     }
 
     #[test]

@@ -178,3 +178,139 @@ fn check_rejects_deeply_nested_input_with_json_diagnostic() {
     assert_eq!(v["diagnostics"][0]["kind"], "parse");
     assert!(v["diagnostics"][0]["message"].as_str().unwrap().contains("nested too deeply"), "{v}");
 }
+
+/// A fresh project directory (no store yet).
+fn project(tag: &str) -> PathBuf {
+    let dir = temp_dir().join(format!("project-{tag}"));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+fn qal_in(dir: &PathBuf, args: &[&str]) -> (i32, Value) {
+    let out = Command::new(env!("CARGO_BIN_EXE_qal")).args(args).current_dir(dir).stdin(Stdio::null()).output().unwrap();
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    (out.status.code().unwrap(), serde_json::from_str(&stdout).unwrap_or_else(|e| panic!("not JSON ({e}): {stdout}")))
+}
+
+fn write(dir: &PathBuf, name: &str, content: &str) -> String {
+    let path = dir.join(name);
+    std::fs::write(&path, content).unwrap();
+    path.to_string_lossy().into_owned()
+}
+
+#[test]
+fn store_workflow_define_view_query_rename_history() {
+    let dir = project("workflow");
+    let (code, v) = qal_in(&dir, &["init"]);
+    assert_eq!((code, v["ok"].as_bool()), (0, Some(true)));
+    assert!(dir.join(".qal/store.db").is_file());
+    let (code, v) = qal_in(&dir, &["define", &example("math.qal"), "--agent", "agent-a"]);
+    assert_eq!(code, 0, "{v}");
+    assert_eq!(v["defined"].as_array().unwrap().len(), 8);
+    assert_eq!((v["defined"][1]["name"].as_str(), v["defined"][1]["status"].as_str()), (Some("gcd"), Some("added")));
+    assert_eq!(v["defined"][1]["hash"].as_str().unwrap().len(), 64);
+    let (code, v) = qal_in(&dir, &["view", "is_prime"]);
+    assert_eq!(code, 0);
+    assert_eq!(v["views"][0]["text"], "fn is_prime(n: Int) -> Bool\n= n >= 2 && no_divisor(n, 2)");
+    assert_eq!(v["views"][0]["deps"][0]["signature"], "fn(Int, Int) -> Bool");
+    let (_, v) = qal_in(&dir, &["query", "--type", "fn(Int, Int) -> _"]);
+    let names: Vec<&str> = v["results"].as_array().unwrap().iter().map(|e| e["name"].as_str().unwrap()).collect();
+    assert_eq!(names, vec!["gcd", "no_divisor"]);
+    let hash = v["results"][1]["hash"].clone();
+    let (code, v) = qal_in(&dir, &["rename", "no_divisor", "has_no_divisor", "--agent", "agent-b"]);
+    assert_eq!((code, &v["renamed"]["hash"]), (0, &hash));
+    let (_, v) = qal_in(&dir, &["view", "is_prime"]);
+    assert_eq!(v["views"][0]["text"], "fn is_prime(n: Int) -> Bool\n= n >= 2 && has_no_divisor(n, 2)");
+    let (_, v) = qal_in(&dir, &["history", "has_no_divisor"]);
+    assert_eq!(v["history"][0]["agent"], "agent-a");
+    assert_eq!((v["history"][1]["action"].as_str(), v["history"][1]["from_name"].as_str()), (Some("renamed"), Some("no_divisor")));
+    let (code, v) = qal_in(&dir, &["view", "no_divisor"]);
+    assert_eq!((code, v["diagnostics"][0]["kind"].as_str()), (1, Some("unknown_name")));
+}
+
+#[test]
+fn store_code_can_be_called_tested_and_run() {
+    let dir = project("run");
+    qal_in(&dir, &["init"]);
+    assert_eq!(qal_in(&dir, &["define", &example("age.qal")]).0, 0);
+    assert_eq!(qal_in(&dir, &["run", "main", "--allow", "io", "--", " 42"]), (0, json!({"exit_code": 0, "stdout": "ok 42\n"})));
+    assert_eq!(qal_in(&dir, &["run", "main", "--allow", "io", "abc"]), (1, json!({"exit_code": 1, "stdout": "invalid\n"})));
+    let (code, v) = qal_in(&dir, &["run", "main", "42"]);
+    assert_eq!((code, v["error"]["kind"].as_str()), (1, Some("permission_denied")));
+    let (code, v) = qal_in(&dir, &["call", "parse_age", " 7 "]);
+    assert_eq!((code, &v["ok"]), (0, &json!({"Ok": [7]})));
+    let (code, v) = qal_in(&dir, &["test"]);
+    assert_eq!((code, v["passed"].as_u64(), v["failed"].as_u64()), (0, Some(2), Some(0)));
+    let (code, v) = qal_in(&dir, &["test", "parse_age_ok"]);
+    assert_eq!((code, v["passed"].as_u64(), v["tests"].as_array().unwrap().len()), (0, Some(1), 1));
+    let (code, v) = qal_in(&dir, &["test", "nope"]);
+    assert_eq!((code, v["diagnostics"][0]["kind"].as_str()), (1, Some("unknown_name")));
+    // Any `fn(List[Str]) -> Int` can be run; other functions cannot.
+    let app = write(&dir, "app.qal", "fn app(args: List[Str]) -> Int = len(args)");
+    qal_in(&dir, &["define", &app]);
+    assert_eq!(qal_in(&dir, &["run", "app", "a", "b"]), (2, json!({"exit_code": 2, "stdout": ""})));
+    let (code, v) = qal_in(&dir, &["run", "parse_age"]);
+    assert_eq!((code, v["error"]["kind"].as_str()), (1, Some("bad_args")));
+    let (code, v) = qal_in(&dir, &["run", "nope"]);
+    assert_eq!((code, v["error"]["kind"].as_str()), (1, Some("unknown_function")));
+}
+
+#[test]
+fn define_reports_diagnostics_and_signature_changes_as_json() {
+    let dir = project("define-errors");
+    qal_in(&dir, &["init"]);
+    let base = write(&dir, "base.qal", "fn base() -> Int = 1\nfn user() -> Int = base() + 1");
+    assert_eq!(qal_in(&dir, &["define", &base]).0, 0);
+    let bad = write(&dir, "bad.qal", "fn base(x: Int) -> Int = x");
+    let (code, v) = qal_in(&dir, &["define", &bad]);
+    assert_eq!(code, 1);
+    assert_eq!(v["diagnostics"][0]["kind"], "signature_change");
+    assert_eq!(v["diagnostics"][0]["dependents"], json!(["user"]));
+    let same = write(&dir, "same.qal", "fn base() -> Int = 2");
+    let (_, v) = qal_in(&dir, &["define", &same]);
+    let statuses: Vec<(&str, &str)> = v["defined"].as_array().unwrap().iter().map(|d| (d["name"].as_str().unwrap(), d["status"].as_str().unwrap())).collect();
+    assert_eq!(statuses, vec![("base", "replaced"), ("user", "relinked")]);
+    assert_eq!(qal_in(&dir, &["call", "user"]).1["ok"], 3);
+    let broken = write(&dir, "broken.qal", "fn f( -> Int = 1");
+    let (code, v) = qal_in(&dir, &["define", &broken]);
+    assert_eq!((code, v["diagnostics"][0]["kind"].as_str()), (1, Some("parse")));
+}
+
+#[test]
+fn missing_or_corrupt_store_is_exit_2_with_json() {
+    let dir = project("no-store");
+    for args in [&["view", "x"][..], &["query"], &["run", "main"], &["test"], &["history", "x"]] {
+        let (code, v) = qal_in(&dir, args);
+        assert_eq!((code, v["diagnostics"][0]["kind"].as_str()), (2, Some("store_error")), "{args:?}");
+        assert_eq!(v["diagnostics"][0]["hints"][0], "create one with `qal init`");
+    }
+    std::fs::create_dir_all(dir.join(".qal")).unwrap();
+    std::fs::write(dir.join(".qal/store.db"), "garbage that is not a database at all, really not").unwrap();
+    let (code, v) = qal_in(&dir, &["query"]);
+    assert_eq!((code, v["diagnostics"][0]["kind"].as_str()), (2, Some("store_error")));
+    // Usage errors stay exit 2 without touching the store.
+    assert_eq!(qal(&["define"]).0, 2);
+    assert_eq!(qal(&["rename", "a"]).0, 2);
+    assert_eq!(qal(&["query", "--bogus", "1"]).0, 2);
+    assert_eq!(qal(&["test", &example("math.qal"), "extra"]).0, 2);
+}
+
+#[test]
+fn concurrent_define_processes_both_succeed() {
+    let dir = project("concurrent");
+    qal_in(&dir, &["init"]);
+    let files: Vec<String> = (0..4).map(|i| write(&dir, &format!("f{i}.qal"), &format!("fn f{i}() -> Int = {i}\nfn shared() -> Int = {i}"))).collect();
+    let children: Vec<_> = files
+        .iter()
+        .map(|f| Command::new(env!("CARGO_BIN_EXE_qal")).args(["define", f]).current_dir(&dir).stdout(Stdio::piped()).spawn().unwrap())
+        .collect();
+    for c in children {
+        let out = c.wait_with_output().unwrap();
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stdout));
+    }
+    let (_, v) = qal_in(&dir, &["query"]);
+    assert_eq!(v["results"].as_array().unwrap().len(), 5);
+    let (_, v) = qal_in(&dir, &["history", "shared"]);
+    assert_eq!(v["history"].as_array().unwrap().len(), 4);
+}
