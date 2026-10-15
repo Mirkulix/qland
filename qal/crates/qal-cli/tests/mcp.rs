@@ -431,7 +431,7 @@ fn a_missing_root_is_named_in_the_error() {
 #[test]
 fn reference_and_launcher_are_precise() {
     let r = qal_cli::mcp::REFERENCE;
-    for needle in ["rand_int(lo, hi) -> Int !rand (both ends included)", "!io !fs", "narrowest", "`r` is reserved", "no list patterns", "every field"] {
+    for needle in ["rand_int(lo, hi) -> Int !rand (both ends included; lo <= hi", "!io !fs", "narrowest", "fold(xs, 0, step)", "quadratic", "`r` cannot be a definition name", "no list patterns", "every field"] {
         assert!(r.contains(needle), "{needle}");
     }
     let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..");

@@ -21,18 +21,20 @@ Expressions (everything is an expression, there are no statements):
   / truncates toward zero; % has the sign of the left operand.
 Effects: a fn that uses the system declares it after the result type and callers declare the union:
   !io print, read_line   !fs read_file, write_file   !time now_ms   !rand rand_int.  Several: `-> Int !io !fs`. Tests and contracts are pure.
-Contracts: fn sqrt_floor(n: Int) -> Int req n >= 0 ens r * r <= n = ...   (`r` is the result, so `r` is reserved; checked at run time)
+Contracts: fn sqrt_floor(n: Int) -> Int req n >= 0 ens r * r <= n = ...   (`r` is the result inside `ens`; `r` cannot be a definition name, nor a parameter of a fn with `ens`; elsewhere parameters and locals named `r` are fine; checked at run time)
 Record construction needs every field (`field: value`). There are no list patterns: use len and get.
 
 Built-ins (indices count characters; slice and range are half-open: the end is excluded):
   Str  len(s) slice(s, from, to) split(s, sep) -> List[Str] join(xs, sep) trim(s) contains(s, sub) starts_with(s, prefix)
        chars(s) -> List[Str]  to_int(s) -> Option[Int]  to_float(s) -> Option[Float]  from_int(n) -> Str  from_float(x) -> Str
   List len(xs) get(xs, i) -> Option[T] push(xs, x) concat(xs, ys) map(xs, f) filter(xs, pred) fold(xs, init, f) with f(acc, x)
+       (f may carry effects; the caller then declares them. For-each: fn step(acc: Int, x: Int) -> Int !io = { print(from_int(x)); acc }, then fold(xs, 0, step))
        range(from, to) -> List[Int]  reverse(xs)  sort_int(xs)
   Num  int_to_float(n)  float_to_int(x) -> Option[Int]
   Sys  print(s) !io (writes s and a newline)  read_line() -> Option[Str] !io (next line without its `\n` or `\r\n`; None at end)
-       read_file(path) -> Result[Str, Str] !fs  write_file(path, text) -> Result[Unit, Str] !fs  now_ms() -> Int !time  rand_int(lo, hi) -> Int !rand (both ends included)
-  to_int accepts an optional sign and digits only (no spaces: trim first). Deep non-tail recursion can overflow the stack.
+       read_file(path) -> Result[Str, Str] !fs  write_file(path, text) -> Result[Unit, Str] !fs  now_ms() -> Int !time  rand_int(lo, hi) -> Int !rand (both ends included; lo <= hi, else contract_violation)
+  to_int accepts an optional sign and digits only (no spaces: trim first). Deep non-tail recursion can overflow the stack (about 100 000 calls).
+Performance: push on a list or ++ on a string in a loop is quadratic (about 8 000 elements at most): build lists with split/map/filter/range. len and slice on Str are O(n): iterate with chars.
 
 Store rules: defining an existing name replaces it. Same signature: everything using it is relinked and re-checked automatically. Changed signature: rejected (`signature_change`, lists `dependents`) unless the same call also redefines those dependents. A name keeps its kind (fn, test, type). References bind to names: qal_rename changes no hash and users follow the new name. Two names can hold the identical definition, but one definition cannot refer to both (E0404 `alias_reference`): use one name.
 Workflow: qal_define -> qal_test -> qal_run (entry point; grant effects with allow: ["io"], "fs:<dir>" grants read AND write of all non-hidden files under that project dir, e.g. Cargo.toml: grant the narrowest dir) or qal_call (any fn, JSON args). Read the codebase with qal_query and qal_view.
