@@ -314,3 +314,109 @@ fn concurrent_define_processes_both_succeed() {
     let (_, v) = qal_in(&dir, &["history", "shared"]);
     assert_eq!(v["history"].as_array().unwrap().len(), 4);
 }
+
+#[test]
+fn options_may_come_before_the_file_or_name() {
+    let age = example("age.qal");
+    assert_eq!(qal_json(&["run", "--allow", "io", &age, "--", " 42"]), (0, json!({"exit_code": 0, "stdout": "ok 42\n"})));
+    let src = temp_file("say2.qal", "fn say(s: Str) -> Int !io = { print(s); len(s) }");
+    assert_eq!(qal_json(&["call", "--allow", "io", &src, "say", "hey"]), (0, json!({"ok": 3, "stdout": "hey\n"})));
+    assert_eq!(qal_json(&["test", "--allow", "io", &age]).0, 0);
+    // After the file, an unknown `--x` is the first program argument (as before this change).
+    let count = temp_file("argc2.qal", "fn main(args: List[Str]) -> Int = len(args)");
+    assert_eq!(qal_json(&["run", &count, "--verbose", "x"]), (2, json!({"exit_code": 2, "stdout": ""})));
+    let dir = project("options-first");
+    qal_in(&dir, &["init"]);
+    assert_eq!(qal_in(&dir, &["define", "--agent", "first", &age]).0, 0);
+    assert_eq!(qal_in(&dir, &["run", "--allow", "io", "main", "--", " 42"]), (0, json!({"exit_code": 0, "stdout": "ok 42\n"})));
+    assert_eq!(qal_in(&dir, &["call", "--allow", "io", "parse_age", "5"]).1["ok"], json!({"Ok": [5]}));
+    assert_eq!(qal_in(&dir, &["history", "main"]).1["history"][0]["agent"], "first");
+}
+
+#[test]
+fn extra_arguments_and_unknown_options_are_usage_errors() {
+    let math = example("math.qal");
+    assert_eq!(qal(&["check", &math, "extra"]).0, 2);
+    assert_eq!(qal(&["fmt", &math, "extra"]).0, 2);
+    assert_eq!(qal(&["check", "--allow", "io", &math]).0, 2);
+    assert_eq!(qal(&["test", &math, "fact_5"]).0, 2);
+    assert_eq!(qal(&["test", &math, "--", "x"]).0, 2);
+    assert_eq!(qal(&["run", "--bogus", "x", &math]).0, 2);
+    assert_eq!(qal(&["mcp", "extra"]).0, 2);
+    assert_eq!(qal(&["build"]).0, 2);
+}
+
+#[test]
+fn paths_with_a_separator_are_files_and_plain_words_are_names() {
+    let dir = project("file-or-name");
+    qal_in(&dir, &["init"]);
+    // `./age` is a file (missing: exit 2), `age` a stored name (unknown: exit 1).
+    let out = Command::new(env!("CARGO_BIN_EXE_qal")).args(["run", "./age"]).current_dir(&dir).output().unwrap();
+    assert_eq!(out.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("cannot read ./age"));
+    let (code, v) = qal_in(&dir, &["run", "age"]);
+    assert_eq!((code, v["error"]["kind"].as_str(), v["error"]["message"].as_str()), (1, Some("unknown_function"), Some("no entry point `age`")));
+    // A file without the .qal extension works when it has a path.
+    write(&dir, "prog", "fn main(args: List[Str]) -> Int = 3");
+    assert_eq!(qal_in(&dir, &["run", "./prog"]), (3, json!({"exit_code": 3, "stdout": ""})));
+}
+
+#[test]
+fn store_errors_name_tests_functions_and_renamed_names() {
+    let dir = project("store-messages");
+    qal_in(&dir, &["init"]);
+    qal_in(&dir, &["define", &example("math.qal")]);
+    let (code, v) = qal_in(&dir, &["test", "gcd"]);
+    assert_eq!((code, v["diagnostics"][0]["message"].as_str()), (1, Some("`gcd` is a function, not a test")));
+    assert!(v["diagnostics"][0]["hints"][0].as_str().unwrap().contains("qal call gcd"));
+    let (code, v) = qal_in(&dir, &["call", "fact_5"]);
+    assert_eq!((code, v["error"]["message"].as_str()), (1, Some("`fact_5` is a test, not a function")));
+    qal_in(&dir, &["rename", "gcd", "greatest_common_divisor"]);
+    let renamed = json!(["`gcd` was renamed to `greatest_common_divisor`"]);
+    assert_eq!(qal_in(&dir, &["view", "gcd"]).1["diagnostics"][0]["hints"], renamed);
+    assert_eq!(qal_in(&dir, &["history", "gcd"]).1["diagnostics"][0]["hints"], renamed);
+    assert_eq!(qal_in(&dir, &["call", "gcd", "4", "6"]).1["error"]["hints"], renamed);
+    assert_eq!(qal_in(&dir, &["call", "greatest_common_divisor", "4", "6"]).1["ok"], 2);
+    let (code, v) = qal_in(&dir, &["query", "--type", "fn("]);
+    assert_eq!((code, v["diagnostics"][0]["kind"].as_str()), (1, Some("bad_pattern")));
+    let as_test = write(&dir, "kind.qal", "test fact = true");
+    let (code, v) = qal_in(&dir, &["define", &as_test]);
+    assert_eq!((code, v["diagnostics"][0]["kind"].as_str()), (1, Some("kind_change")));
+}
+
+#[test]
+fn build_writes_a_module_and_its_manifest() {
+    let dir = project("build");
+    qal_in(&dir, &["init"]);
+    qal_in(&dir, &["define", &example("wordcount.qal")]);
+    let (code, v) = qal_in(&dir, &["build", "main"]);
+    assert_eq!(code, 0, "{v}");
+    let b = &v["built"];
+    assert_eq!((b["wasm"].as_str(), b["manifest"].as_str()), (Some(".qal/build/main.wasm"), Some(".qal/build/main.manifest.json")));
+    assert_eq!(b["effects"], json!(["fs", "io"]));
+    let wasm = std::fs::read(dir.join(".qal/build/main.wasm")).unwrap();
+    assert_eq!(&wasm[..4], b"\0asm");
+    assert_eq!(b["bytes"].as_u64(), Some(wasm.len() as u64));
+    let m: Value = serde_json::from_str(&std::fs::read_to_string(dir.join(".qal/build/main.manifest.json")).unwrap()).unwrap();
+    assert_eq!((m["format"].as_str(), m["name"].as_str(), m["entry_point"].as_bool()), (Some("qal-build/1"), Some("main"), Some(true)));
+    assert_eq!(m["hash"], b["hash"]);
+    assert_eq!(m["signature"], "fn(List[Str]) -> Int !fs !io");
+    assert_eq!(m["imports"], json!(["fail", "io.print", "fs.read_file"]));
+    assert_eq!(m["bytes"].as_u64(), Some(wasm.len() as u64));
+    assert_eq!(m["wasm_sha256"].as_str().map(str::len), Some(64));
+    let (code, v) = qal_in(&dir, &["build", "nope"]);
+    assert_eq!((code, v["error"]["kind"].as_str()), (1, Some("unknown_function")));
+}
+
+#[test]
+fn a_closed_stdout_is_not_a_panic() {
+    let (reader, writer) = std::io::pipe().unwrap();
+    drop(reader);
+    let status = Command::new(env!("CARGO_BIN_EXE_qal")).args(["check", &example("math.qal")]).stdout(writer).stderr(Stdio::piped()).output().unwrap();
+    assert_eq!(status.status.code(), Some(0), "{}", String::from_utf8_lossy(&status.stderr));
+    assert!(!String::from_utf8_lossy(&status.stderr).contains("panicked"));
+    let (reader, writer) = std::io::pipe().unwrap();
+    drop(reader);
+    let status = Command::new(env!("CARGO_BIN_EXE_qal")).args(["fmt", &example("math.qal")]).stdout(writer).output().unwrap();
+    assert_eq!(status.status.code(), Some(0));
+}

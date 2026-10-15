@@ -1,4 +1,7 @@
-//! The QAL pipeline: text or store -> parse -> check -> compile (per entry point) -> runner.
+//! The QAL pipeline: text or store -> parse -> check -> compile (per entry point) -> runner, plus
+//! the operations shared by the command line (`main.rs`) and the MCP server ([`mcp`]).
+
+pub mod ops;
 
 use qal_core::ast::{Program, Type};
 use qal_core::diag::Diagnostic;
@@ -25,10 +28,10 @@ pub fn load_program(program: Program) -> Result<Loaded, Vec<Diagnostic>> {
     Ok(Loaded { program, typed })
 }
 
-/// A command's target is a source file if it ends in `.qal`, otherwise a name in the store
-/// (definition names never contain a dot).
+/// A command's target is a source file if it ends in `.qal` or contains a path separator
+/// (`./foo`, `dir/foo`), otherwise a name in the store (names never contain `.` or `/`).
 pub fn is_file(target: &str) -> bool {
-    target.ends_with(".qal")
+    target.ends_with(".qal") || target.contains('/') || target.contains('\\')
 }
 
 /// The store of the project around the current directory.
@@ -42,31 +45,6 @@ pub fn load_store() -> Result<Loaded, Vec<Diagnostic>> {
     load_program(open_store()?.program()?)
 }
 
-/// Splits `--flag value` options (only those in `flags`, anywhere in `args`) from positional
-/// arguments. Unknown `--options` are an error.
-pub fn take_flags(args: &[String], flags: &[&str]) -> Result<(HashMap<String, String>, Vec<String>), String> {
-    let mut found = HashMap::new();
-    let mut rest = Vec::new();
-    let mut i = 0;
-    while i < args.len() {
-        let a = &args[i];
-        if let Some(flag) = a.strip_prefix("--") {
-            if !flags.contains(&flag) {
-                return Err(format!("unknown option `{a}`"));
-            }
-            let value = args.get(i + 1).ok_or_else(|| format!("`{a}` needs a value"))?;
-            if found.insert(flag.to_string(), value.clone()).is_some() {
-                return Err(format!("`{a}` given twice"));
-            }
-            i += 2;
-        } else {
-            rest.push(a.clone());
-            i += 1;
-        }
-    }
-    Ok((found, rest))
-}
-
 /// True if `name` is a function `fn(List[Str]) -> Int` (with any effects), i.e. runnable by `qal run`.
 pub fn is_entry_point(typed: &TProgram, name: &str) -> bool {
     typed.fns.iter().any(|f| f.def.name == name && f.def.ret == Type::Int && f.def.params.len() == 1 && f.def.params[0].ty == Type::list(Type::Str))
@@ -74,31 +52,83 @@ pub fn is_entry_point(typed: &TProgram, name: &str) -> bool {
 
 impl Loaded {
     /// Compiles only the code reachable from `entry` and prepares a runner with `perms`.
-    pub fn runner(&self, entry: &Entry, perms: Permissions) -> Runner {
-        // Task 4 turns both failures into a `compile_error` runtime error.
-        Runner::new(qal_wasm::compile(&self.typed, entry).expect("checked programs compile")).expect("checked programs compile to valid wasm").with_permissions(perms)
+    /// The caller has checked that `entry` names an existing function.
+    pub fn runner(&self, entry: &Entry, perms: Permissions) -> Result<Runner, RunError> {
+        let def = match entry {
+            Entry::Fn(name) => name.as_str(),
+            Entry::Tests | Entry::All => "",
+        };
+        let compile_error = |m: String| {
+            let mut e = RunError::new("compile_error", def, format!("the program cannot be compiled to WebAssembly: {m}"));
+            e.hints.push("this is a limitation of the compiler, not an error in the program; try splitting very large functions or list literals".into());
+            e
+        };
+        let module = qal_wasm::compile(&self.typed, entry).map_err(compile_error)?;
+        Ok(Runner::new(module).map_err(compile_error)?.with_permissions(perms))
     }
 }
 
-/// Splits leading options off `args`: `--allow <spec>` (repeatable) and an optional `--` separator.
-pub fn take_options(args: &[String]) -> Result<(Permissions, Vec<String>), String> {
-    let mut spec = Vec::new();
+/// Command-line arguments split into options, targets and program arguments.
+#[derive(Debug, Default, PartialEq)]
+pub struct Split {
+    /// Values of each `--option` (in order; repeatable options have several).
+    pub options: HashMap<String, Vec<String>>,
+    /// Positional arguments that name what to work on (files, names).
+    pub targets: Vec<String>,
+    /// Everything after the targets: arguments for the program (`run`, `call`).
+    pub rest: Vec<String>,
+}
+
+impl Split {
+    /// The single value of `--name`, if given.
+    pub fn one(&self, name: &str) -> Option<&str> {
+        self.options.get(name).and_then(|v| v.first()).map(String::as_str)
+    }
+}
+
+/// Splits `args` into `--option value` pairs (only the ones in `options`; `repeatable` ones may
+/// occur several times), targets and program arguments. Options are accepted anywhere before the
+/// program arguments start: those start after `--`, or once `targets(&targets_so_far)` targets
+/// have been collected, at the first argument that is not a known option (so `run f.qal --verbose`
+/// passes `--verbose` to the program). An unknown option before that is an error.
+pub fn split_args(args: &[String], options: &[&str], repeatable: &[&str], targets: &dyn Fn(&[String]) -> usize) -> Result<Split, String> {
+    let mut out = Split::default();
     let mut i = 0;
     while i < args.len() {
-        match args[i].as_str() {
-            "--allow" => {
-                let value = args.get(i + 1).ok_or("`--allow` needs a value, e.g. `--allow io,fs:./data`")?;
-                spec.push(value.clone());
-                i += 2;
-            }
-            "--" => {
-                i += 1;
-                break;
-            }
-            _ => break,
+        let a = &args[i];
+        if a == "--" {
+            out.rest = args[i + 1..].to_vec();
+            return Ok(out);
         }
+        let complete = out.targets.len() >= targets(&out.targets);
+        if let Some(name) = a.strip_prefix("--").filter(|n| options.contains(n) || !complete) {
+            if !options.contains(&name) {
+                return Err(format!("unknown option `{a}`"));
+            }
+            let value = args.get(i + 1).ok_or_else(|| format!("`{a}` needs a value"))?;
+            let values = out.options.entry(name.to_string()).or_default();
+            if !values.is_empty() && !repeatable.contains(&name) {
+                return Err(format!("`{a}` given twice"));
+            }
+            values.push(value.clone());
+            i += 2;
+            continue;
+        }
+        if !complete {
+            out.targets.push(a.clone());
+            i += 1;
+            continue;
+        }
+        out.rest = args[i..].to_vec();
+        return Ok(out);
     }
-    Ok((Permissions::parse(&spec.join(","))?, args[i..].to_vec()))
+    Ok(out)
+}
+
+/// Parses `--allow` values (each a comma-separated list) into permissions.
+pub fn permissions(split: &Split) -> Result<Permissions, String> {
+    let spec = split.options.get("allow").map(|v| v.join(",")).unwrap_or_default();
+    Permissions::parse(&spec)
 }
 
 /// Converts CLI strings to values according to the signature of fn `name` (Int, Float, Bool, Unit, Str).
@@ -130,6 +160,38 @@ pub fn parse_args(typed: &TProgram, name: &str, raw: &[String]) -> Result<Vec<Va
         .collect()
 }
 
+/// Converts JSON arguments to values according to the signature of fn `name`: Int, Float, Bool,
+/// Unit (`null`), Str and lists of those.
+pub fn json_args(typed: &TProgram, name: &str, raw: &[serde_json::Value]) -> Result<Vec<Value>, RunError> {
+    let f = typed.fns.iter().find(|f| f.def.name == name).ok_or_else(|| RunError::new("unknown_function", name, format!("no function `{name}`")))?;
+    if f.def.params.len() != raw.len() {
+        return Err(RunError::new("bad_args", name, format!("`{name}` takes {} argument(s), {} given", f.def.params.len(), raw.len())));
+    }
+    f.def
+        .params
+        .iter()
+        .zip(raw)
+        .map(|(p, v)| json_value(&p.ty, v).map_err(|m| RunError::new("bad_args", name, format!("`{}`: {m}", p.name))))
+        .collect()
+}
+
+fn json_value(ty: &Type, v: &serde_json::Value) -> Result<Value, String> {
+    use serde_json::Value as J;
+    Ok(match (ty, v) {
+        (Type::Int, J::Number(n)) => Value::Int(n.as_i64().ok_or_else(|| format!("expected Int, got {n}"))?),
+        (Type::Float, J::Number(n)) => Value::Float(n.as_f64().ok_or_else(|| format!("expected Float, got {n}"))?),
+        (Type::Bool, J::Bool(b)) => Value::Bool(*b),
+        (Type::Unit, J::Null) => Value::Unit,
+        (Type::Str, J::String(s)) => Value::Str(s.clone()),
+        (Type::List(elem), J::Array(xs)) => Value::List(xs.iter().map(|x| json_value(elem, x)).collect::<Result<_, _>>()?),
+        (Type::Int | Type::Float | Type::Bool | Type::Unit | Type::Str | Type::List(_), other) => {
+            let shown: String = other.to_string().chars().take(40).collect();
+            return Err(format!("expected {ty}, got {shown}"));
+        }
+        (t, _) => return Err(format!("has type {t}, which cannot be passed as an argument (only Int, Float, Bool, Unit, Str and lists of them)")),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -138,25 +200,52 @@ mod tests {
         xs.iter().map(|s| s.to_string()).collect()
     }
 
-    #[test]
-    fn options_are_taken_from_the_front() {
-        let (p, rest) = take_options(&strings(&["--allow", "io", "--allow", "time", "a", "--allow"])).unwrap();
-        assert!(p.io && p.time && !p.rand);
-        assert_eq!(rest, strings(&["a", "--allow"]));
-        let (p, rest) = take_options(&strings(&["--", "--allow", "x"])).unwrap();
-        assert_eq!((p, rest), (Permissions::default(), strings(&["--allow", "x"])));
-        assert!(take_options(&strings(&["--allow"])).is_err());
-        assert!(take_options(&strings(&["--allow", "net"])).unwrap_err().contains("unknown effect"));
+    fn run_split(args: &[&str]) -> Result<Split, String> {
+        // `run`-style: one target, then program arguments.
+        split_args(&strings(args), &["allow"], &["allow"], &|_| 1)
     }
 
     #[test]
-    fn flags_are_taken_from_anywhere() {
-        let (f, rest) = take_flags(&strings(&["a", "--agent", "x", "b"]), &["agent"]).unwrap();
-        assert_eq!((f.get("agent").map(String::as_str), rest), (Some("x"), strings(&["a", "b"])));
-        assert!(take_flags(&strings(&["--nope", "1"]), &["agent"]).unwrap_err().contains("unknown option"));
-        assert!(take_flags(&strings(&["--agent"]), &["agent"]).unwrap_err().contains("needs a value"));
-        assert!(take_flags(&strings(&["--agent", "a", "--agent", "b"]), &["agent"]).unwrap_err().contains("twice"));
-        assert!(is_file("x/y.qal") && !is_file("main"));
+    fn options_are_accepted_before_and_after_the_target() {
+        let s = run_split(&["--allow", "io", "main", "--allow", "time", "a", "--allow"]).unwrap();
+        assert_eq!(s.targets, strings(&["main"]));
+        assert_eq!(s.options["allow"], strings(&["io", "time"]));
+        assert_eq!(s.rest, strings(&["a", "--allow"]));
+        let p = permissions(&s).unwrap();
+        assert!(p.io && p.time && !p.rand);
+        let s = run_split(&["main", "--", "--allow", "x"]).unwrap();
+        assert_eq!((s.targets, s.rest), (strings(&["main"]), strings(&["--allow", "x"])));
+        assert!(s.options.is_empty());
+        assert!(run_split(&["--allow"]).unwrap_err().contains("needs a value"));
+        assert!(run_split(&["--bogus", "1", "main"]).unwrap_err().contains("unknown option"));
+        // After the target, an unknown `--x` is the first program argument.
+        let s = run_split(&["main", "--allow", "io", "--verbose", "--allow", "x"]).unwrap();
+        assert_eq!((s.options["allow"].clone(), s.rest), (strings(&["io"]), strings(&["--verbose", "--allow", "x"])));
+        assert!(permissions(&run_split(&["main", "--allow", "net"]).unwrap()).unwrap_err().contains("unknown effect"));
+    }
+
+    #[test]
+    fn targets_can_depend_on_the_first_one() {
+        // `call`: a file needs a function name as second target, a stored name does not.
+        let call = |args: &[&str]| split_args(&strings(args), &["allow"], &["allow"], &|t: &[String]| if t.first().is_some_and(|f| is_file(f)) { 2 } else { 1 }).unwrap();
+        let s = call(&["--allow", "io", "x.qal", "--allow", "time", "f", "1", "2"]);
+        assert_eq!((s.targets, s.rest), (strings(&["x.qal", "f"]), strings(&["1", "2"])));
+        let s = call(&["f", "--allow", "io", "1"]);
+        assert_eq!((s.targets, s.rest), (strings(&["f"]), strings(&["1"])));
+    }
+
+    #[test]
+    fn non_repeatable_options_once() {
+        let all = |_: &[String]| usize::MAX;
+        let s = split_args(&strings(&["a", "--agent", "x", "b"]), &["agent"], &[], &all).unwrap();
+        assert_eq!((s.one("agent"), &s.targets), (Some("x"), &strings(&["a", "b"])));
+        assert!(split_args(&strings(&["--agent", "a", "--agent", "b"]), &["agent"], &[], &all).unwrap_err().contains("twice"));
+    }
+
+    #[test]
+    fn files_end_in_qal_or_contain_a_path_separator() {
+        assert!(is_file("x/y.qal") && is_file("y.qal") && is_file("./foo") && is_file("dir/foo") && is_file(".\\foo"));
+        assert!(!is_file("main") && !is_file("parse_age"));
     }
 
     #[test]
@@ -174,5 +263,19 @@ mod tests {
         assert_eq!(parse_args(&l.typed, "f", &strings(&["x", "1", "", "true"])).unwrap_err().kind, "bad_args");
         assert!(parse_args(&l.typed, "g", &strings(&["[]"])).unwrap_err().message.contains("cannot be passed"));
         assert_eq!(parse_args(&l.typed, "h", &[]).unwrap_err().kind, "unknown_function");
+    }
+
+    #[test]
+    fn converts_json_arguments_by_signature() {
+        use serde_json::json;
+        let l = load("type P = { x: Int }\nfn f(a: Int, b: Float, c: Str, d: Bool, e: Unit, xs: List[List[Int]]) -> Int = a\nfn g(p: P) -> Int = p.x").unwrap();
+        let v = json_args(&l.typed, "f", &[json!(-3), json!(2), json!("hi"), json!(true), json!(null), json!([[1], []])]).unwrap();
+        let list = Value::List(vec![Value::List(vec![Value::Int(1)]), Value::List(vec![])]);
+        assert_eq!(v, vec![Value::Int(-3), Value::Float(2.0), Value::Str("hi".into()), Value::Bool(true), Value::Unit, list]);
+        let e = json_args(&l.typed, "f", &[json!(1.5), json!(2), json!("hi"), json!(true), json!(null), json!([])]).unwrap_err();
+        assert_eq!((e.kind, e.message.as_str()), ("bad_args", "`a`: expected Int, got 1.5"));
+        assert!(json_args(&l.typed, "g", &[json!({"x": 1})]).unwrap_err().message.contains("cannot be passed"));
+        assert!(json_args(&l.typed, "f", &[]).unwrap_err().message.contains("takes 6 argument(s), 0 given"));
+        assert_eq!(json_args(&l.typed, "h", &[]).unwrap_err().kind, "unknown_function");
     }
 }
