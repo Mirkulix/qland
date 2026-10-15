@@ -265,3 +265,35 @@ fn duplicate_fields_in_record_patterns_are_rejected() {
     let k = kinds(src);
     assert_eq!(k[0], ("duplicate_name", "f".into(), "body.arms[0].pattern.fields.x".into()));
 }
+
+/// `let a1 = [[…a0…]] in let a2 = [[…a1…]] …`: small ASTs, but the inferred type nests `lets * 100` deep.
+fn nested_lets(lets: usize) -> String {
+    let mut s = "fn main(args: List[Str]) -> Int = let a0 = 1 in ".to_string();
+    for i in 1..=lets {
+        s += &format!("let a{i} = {}a{}{} in ", "[".repeat(100), i - 1, "]".repeat(100));
+    }
+    s + &format!("if a{lets} == a{lets} then 0 else 1")
+}
+
+#[test]
+fn deeply_nested_inferred_types_are_rejected_quickly() {
+    assert_eq!(check_src(&nested_lets(2)), vec![], "depth 201 is fine");
+    let start = std::time::Instant::now();
+    let d = check_src(&nested_lets(16));
+    assert!(start.elapsed() < std::time::Duration::from_secs(2), "took {:?}", start.elapsed());
+    assert!(!d.is_empty() && d.iter().all(|d| (d.code, d.kind) == ("E0207", "type_too_deep")), "{d:#?}");
+    assert_eq!(d[0].message, "inferred type is nested too deeply (max 256 levels)");
+    assert_eq!(d[0].path, format!("body.body.body.body.value{}", ".items[0]".repeat(45)), "a3 = List^100(a2: depth 201) crosses 256");
+}
+
+#[test]
+fn type_depth_is_tracked_when_inner_variables_are_bound_later() {
+    // `a` is List^100 of a still unknown element; binding it to List^201 afterwards makes `a` too deep.
+    let src = format!(
+        "test t = let x = [] in let a = {o}x{c} in let b1 = {o}1{c} in let b = {o}b1{c} in x == [b] && len(a) == 0",
+        o = "[".repeat(100),
+        c = "]".repeat(100)
+    );
+    let d = check_src(&src);
+    assert!(!d.is_empty() && d.iter().all(|d| d.kind == "type_too_deep"), "{d:#?}");
+}

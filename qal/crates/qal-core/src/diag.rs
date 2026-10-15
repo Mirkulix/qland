@@ -85,6 +85,11 @@ impl Diagnostic {
             .hint(format!("add an arm `{missing} => ...` or a final `_ => ...` arm"))
     }
 
+    pub fn type_too_deep(def: &str, path: &str, max: u32) -> Self {
+        Diagnostic::new("E0207", "type_too_deep", def, path, format!("inferred type is nested too deeply (max {max} levels)"))
+            .hint("declare a record or enum type for the nested data instead of nesting List/Option/Result this deeply")
+    }
+
     pub fn missing_field(def: &str, path: &str, record: &str, field: &str) -> Self {
         Diagnostic::new("E0206", "type_mismatch", def, path, format!("`{record}` needs field `{field}`"))
             .hint(format!("add `{field}: ...` to the `{record} {{ ... }}` literal"))

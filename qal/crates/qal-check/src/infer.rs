@@ -1,7 +1,7 @@
 //! Type inference for one definition: expressions, patterns, and the final resolution pass.
 
 use crate::exhaust::missing_pattern;
-use crate::unify::Subst;
+use crate::unify::{Subst, MAX_TYPE_DEPTH};
 use crate::{validate_type, Globals};
 use qal_core::ast::*;
 use qal_core::diag::Diagnostic;
@@ -64,6 +64,10 @@ impl<'a> Cx<'a> {
     }
 
     pub fn mismatch(&mut self, path: &str, expected: &Type, found: &Type) {
+        if std::mem::take(&mut self.sub.too_deep) {
+            self.diags.push(Diagnostic::type_too_deep(self.def, path, MAX_TYPE_DEPTH));
+            return;
+        }
         let (e, f) = (self.sub.finish(expected), self.sub.finish(found));
         let mut d = Diagnostic::type_mismatch(self.def, path, &e.to_string(), &f.to_string());
         match (&e, &f) {
@@ -152,8 +156,9 @@ impl<'a> Cx<'a> {
             }
             Expr::List(items) => {
                 let elem = self.sub.fresh();
+                let ty = self.sub.wrap(Type::list(elem.clone()));
                 let items: Vec<TExpr> = items.iter().enumerate().map(|(i, x)| self.expect(x, &elem, &format!("{path}.items[{i}]"))).collect();
-                (Type::list(elem), TKind::List(items))
+                (ty, TKind::List(items))
             }
             Expr::Seq(items) => {
                 let n = items.len();
@@ -248,10 +253,10 @@ impl<'a> Cx<'a> {
     fn variant(&mut self, name: &str) -> Option<(Type, u32, Vec<Type>)> {
         let (a, b) = (self.sub.fresh(), self.sub.fresh());
         Some(match name {
-            "None" => (Type::option(a), TAG_NONE, vec![]),
-            "Some" => (Type::option(a.clone()), TAG_SOME, vec![a]),
-            "Ok" => (Type::result(a.clone(), b), TAG_OK, vec![a]),
-            "Err" => (Type::result(a, b.clone()), TAG_ERR, vec![b]),
+            "None" => (self.sub.wrap(Type::option(a)), TAG_NONE, vec![]),
+            "Some" => (self.sub.wrap(Type::option(a.clone())), TAG_SOME, vec![a]),
+            "Ok" => (self.sub.wrap(Type::result(a.clone(), b)), TAG_OK, vec![a]),
+            "Err" => (self.sub.wrap(Type::result(a, b.clone())), TAG_ERR, vec![b]),
             _ => {
                 let (enum_name, tag, fields) = self.g.variants.get(name)?;
                 (Type::Named(enum_name.clone()), *tag, fields.clone())

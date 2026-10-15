@@ -44,6 +44,8 @@ impl Cx<'_> {
             "rand_int" => (B::RandInt, vec![Type::Int, Type::Int], Type::Int),
             _ => return None,
         };
+        // Bound before the arguments bind `a`/`b`, so the result's depth stays tracked.
+        let ret = self.sub.wrap(ret);
         if args.len() != params.len() {
             self.diags.push(Diagnostic::arity(self.def, path, name, params.len(), args.len()));
             self.infer_all(args, path);

@@ -1,35 +1,58 @@
 //! Type variables and unification for local type inference inside one definition.
+//!
+//! Inferred types can nest far deeper than the AST (each `let` may wrap the previous value), so
+//! the depth of every variable's binding is tracked exactly and capped at [`MAX_TYPE_DEPTH`]; all
+//! later recursion over types (display, drop, equality, decoding) is bounded by it. Variables are
+//! only ever resolved shallowly, so no operation re-walks a whole nested type at every level.
 
 use qal_core::ast::Type;
+use std::collections::HashSet;
+
+/// Maximum nesting depth of an inferred type.
+pub const MAX_TYPE_DEPTH: u32 = 256;
 
 #[derive(Debug, Default)]
 pub struct Subst {
     /// Binding of each inference variable `Type::Var(i)`.
     vars: Vec<Option<Type>>,
+    /// Depth of each variable's type (1 while unbound), kept exact as inner variables get bound.
+    depth: Vec<u32>,
+    /// For each variable, the variables whose binding mentions it directly.
+    users: Vec<Vec<u32>>,
+    /// Set when a unification failed because a type would exceed `MAX_TYPE_DEPTH`.
+    pub too_deep: bool,
 }
 
 impl Subst {
     pub fn fresh(&mut self) -> Type {
         self.vars.push(None);
+        self.depth.push(1);
+        self.users.push(Vec::new());
         Type::Var(self.vars.len() as u32 - 1)
     }
 
-    /// Replaces bound variables (deeply). Unbound variables stay.
-    pub fn resolve(&self, t: &Type) -> Type {
-        match t {
-            Type::Var(v) => match &self.vars[*v as usize] {
-                Some(b) => self.resolve(b),
-                None => t.clone(),
-            },
-            Type::List(x) => Type::list(self.resolve(x)),
-            Type::Option(x) => Type::option(self.resolve(x)),
-            Type::Result(a, b) => Type::result(self.resolve(a), self.resolve(b)),
-            Type::Fn(ps, r, e) => Type::Fn(ps.iter().map(|p| self.resolve(p)).collect(), Box::new(self.resolve(r)), e.clone()),
-            _ => t.clone(),
-        }
+    /// A variable bound to `t` (with unbound variables inside), so that `t`'s depth stays tracked
+    /// as those get bound. Used for constructed List/Option/Result types.
+    pub fn wrap(&mut self, t: Type) -> Type {
+        let v = self.fresh();
+        let ok = self.unify(&v, &t);
+        debug_assert!(ok, "binding a fresh variable");
+        v
     }
 
-    /// Like `resolve`, but unbound variables become `Unit` (their representation never matters).
+    /// Follows variable bindings at the top level only. Unbound variables stay.
+    pub fn resolve(&self, t: &Type) -> Type {
+        let mut t = t;
+        while let Type::Var(v) = t {
+            match &self.vars[*v as usize] {
+                Some(b) => t = b,
+                None => break,
+            }
+        }
+        t.clone()
+    }
+
+    /// Replaces all bound variables; unbound ones become `Unit` (their representation never matters).
     pub fn finish(&self, t: &Type) -> Type {
         match self.resolve(t) {
             Type::Var(_) => Type::Unit,
@@ -41,12 +64,78 @@ impl Subst {
         }
     }
 
-    fn occurs(&self, v: u32, t: &Type) -> bool {
-        match self.resolve(t) {
-            Type::Var(w) => v == w,
-            Type::List(x) | Type::Option(x) => self.occurs(v, &x),
-            Type::Result(a, b) => self.occurs(v, &a) || self.occurs(v, &b),
-            Type::Fn(ps, r, _) => ps.iter().any(|p| self.occurs(v, p)) || self.occurs(v, &r),
+    /// Depth of `t`, using the tracked depth of its variables (recursion only over `t` as written).
+    fn depth_of(&self, t: &Type) -> u32 {
+        match t {
+            Type::Var(v) => self.depth[*v as usize],
+            Type::List(x) | Type::Option(x) => 1 + self.depth_of(x),
+            Type::Result(a, b) => 1 + self.depth_of(a).max(self.depth_of(b)),
+            Type::Fn(ps, r, _) => 1 + ps.iter().map(|p| self.depth_of(p)).max().unwrap_or(0).max(self.depth_of(r)),
+            _ => 1,
+        }
+    }
+
+    /// The variables `t` mentions directly (as written).
+    fn vars_in(t: &Type, out: &mut Vec<u32>) {
+        match t {
+            Type::Var(v) => out.push(*v),
+            Type::List(x) | Type::Option(x) => Self::vars_in(x, out),
+            Type::Result(a, b) => {
+                Self::vars_in(a, out);
+                Self::vars_in(b, out);
+            }
+            Type::Fn(ps, r, _) => ps.iter().chain([&**r]).for_each(|p| Self::vars_in(p, out)),
+            _ => {}
+        }
+    }
+
+    /// Binds unbound `x` to `t` and updates the depth of every binding that (transitively) mentions
+    /// `x`. Fails, setting `too_deep`, if any of them would exceed `MAX_TYPE_DEPTH`.
+    fn bind(&mut self, x: u32, t: Type) -> bool {
+        let d = self.depth_of(&t);
+        if d > MAX_TYPE_DEPTH {
+            self.too_deep = true;
+            return false;
+        }
+        let mut direct = Vec::new();
+        Self::vars_in(&t, &mut direct);
+        for w in direct {
+            self.users[w as usize].push(x);
+        }
+        self.vars[x as usize] = Some(t);
+        self.depth[x as usize] = d;
+        // Depths only grow and are capped, so each variable is revisited at most MAX_TYPE_DEPTH times.
+        let mut changed = vec![x];
+        while let Some(v) = changed.pop() {
+            for k in 0..self.users[v as usize].len() {
+                let u = self.users[v as usize][k];
+                let nd = self.depth_of(self.vars[u as usize].as_ref().expect("users are bound"));
+                if nd > self.depth[u as usize] {
+                    if nd > MAX_TYPE_DEPTH {
+                        self.too_deep = true;
+                        return false;
+                    }
+                    self.depth[u as usize] = nd;
+                    changed.push(u);
+                }
+            }
+        }
+        true
+    }
+
+    /// True if variable `v` occurs in `t` (`seen` skips variables already searched).
+    fn occurs(&self, v: u32, t: &Type, seen: &mut HashSet<u32>) -> bool {
+        match t {
+            Type::Var(w) if *w == v => true,
+            Type::Var(w) => {
+                if !seen.insert(*w) {
+                    return false;
+                }
+                self.vars[*w as usize].as_ref().is_some_and(|b| self.occurs(v, b, seen))
+            }
+            Type::List(x) | Type::Option(x) => self.occurs(v, x, seen),
+            Type::Result(a, b) => self.occurs(v, a, seen) || self.occurs(v, b, seen),
+            Type::Fn(ps, r, _) => ps.iter().any(|p| self.occurs(v, p, seen)) || self.occurs(v, r, seen),
             _ => false,
         }
     }
@@ -58,11 +147,10 @@ impl Subst {
         match (&a, &b) {
             (Type::Var(x), Type::Var(y)) if x == y => true,
             (Type::Var(x), t) | (t, Type::Var(x)) => {
-                if self.occurs(*x, t) {
+                if self.occurs(*x, t, &mut HashSet::new()) {
                     return false;
                 }
-                self.vars[*x as usize] = Some(t.clone());
-                true
+                self.bind(*x, t.clone())
             }
             (Type::List(x), Type::List(y)) | (Type::Option(x), Type::Option(y)) => self.unify(x, y),
             (Type::Result(a1, b1), Type::Result(a2, b2)) => self.unify(a1, a2) && self.unify(b1, b2),
@@ -87,7 +175,7 @@ mod tests {
         let mut s = Subst::default();
         let a = s.fresh();
         assert!(s.unify(&Type::list(a.clone()), &Type::list(Type::Int)));
-        assert_eq!(s.resolve(&Type::option(a.clone())), Type::option(Type::Int));
+        assert_eq!(s.finish(&Type::option(a.clone())), Type::option(Type::Int));
         assert!(!s.unify(&a, &Type::Str));
         let b = s.fresh();
         assert_eq!(s.finish(&Type::list(b)), Type::list(Type::Unit));

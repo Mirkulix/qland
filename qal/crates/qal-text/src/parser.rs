@@ -30,8 +30,10 @@ use crate::lexer::{lex, Tok, Token, KEYWORDS};
 use qal_core::ast::*;
 use qal_core::diag::Diagnostic;
 
-/// Maximum AST height (and parser nesting). Every later stage only sees parser-built ASTs and
-/// recurses over them, so bounding this here bounds recursion everywhere.
+/// Maximum AST height (and parser nesting). Every later stage only sees parser-built ASTs, so this
+/// bounds all recursion over expressions, patterns and written types. Inferred types can still
+/// nest deeper than the AST (each `let` may wrap the previous value); the checker caps those
+/// separately (`type_too_deep`).
 const MAX_DEPTH: usize = 256;
 
 pub fn parse_program(src: &str) -> Result<Program, Diagnostic> {
