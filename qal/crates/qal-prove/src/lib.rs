@@ -52,6 +52,7 @@ pub const PROVER_VERSION: &str = "qal-prove/2";
 const NOT_ATTEMPTED: &str = "not attempted:";
 const TIMED_OUT: &str = "the solver timed out after";
 const INTERNAL: &str = "internal prover error";
+const TIMED_OUT_RUN: &str = "a counterexample candidate was not confirmed: running it hit the wall-clock limit";
 
 /// Longest time a counterexample candidate is run to confirm it.
 const CONFIRM_TIMEOUT: Duration = Duration::from_secs(5);
@@ -115,7 +116,7 @@ impl Report {
     /// False for results that another run could improve without any change (time budget used up,
     /// wall-clock timeout, internal error): those are not stored.
     pub fn is_stable(&self) -> bool {
-        self.reason.as_deref().is_none_or(|r| !(r.starts_with(NOT_ATTEMPTED) || r.starts_with(TIMED_OUT) || r.starts_with(INTERNAL)))
+        self.reason.as_deref().is_none_or(|r| !(r.starts_with(NOT_ATTEMPTED) || r.starts_with(TIMED_OUT) || r.starts_with(INTERNAL) || r.starts_with(TIMED_OUT_RUN)))
     }
 
     /// `refuted` is the error `contract_refuted` (E0801); `unknown` the warning `contract_unproven` (E0802).
@@ -149,11 +150,13 @@ enum Why {
     NoValue(usize),
     /// Not stored.
     Internal,
+    /// Running the candidate hit its wall-clock limit (depends on the machine): not stored.
+    RunTimedOut,
 }
 
 impl Why {
     fn is_stable(&self) -> bool {
-        !matches!(self, Why::TimedOut(_) | Why::Internal)
+        !matches!(self, Why::TimedOut(_) | Why::Internal | Why::RunTimedOut)
     }
 }
 
@@ -283,6 +286,7 @@ impl Shape {
                 format!("a counterexample candidate was found, but parameter `{n}` has no value of at most {} nodes to run it with{}", gen::MAX_VALUE_NODES, ignores())
             }
             Why::Internal => INTERNAL.to_string(),
+            Why::RunTimedOut => format!("{TIMED_OUT_RUN}{}", ignores()),
         }
     }
 
@@ -347,7 +351,8 @@ fn prove_one(tp: &TProgram, name: &str, which: Which, start: Instant, opts: &Opt
         return unstable(vec![summary(name, "all", not_attempted(opts))]);
     }
     let deadline = start + opts.budget;
-    // One context per definition: encoded once, each obligation solved by a fresh solver.
+    // One context per definition: encoded once, each obligation checked (and a counterexample
+    // candidate confirmed) right away, so an early refutation is never lost to a later timeout.
     let solved = in_context(opts, || {
         let vc = encode(tp, which, deadline)?;
         let shape = Shape::of(&vc);
@@ -364,20 +369,38 @@ fn prove_one(tp: &TProgram, name: &str, which: Which, start: Instant, opts: &Opt
             for (g, o) in guards.iter().zip(&vc.obligations) {
                 s.assert(g.implies(vc::and(&[o.hyp.clone(), o.holds.not()])));
             }
-            for k in 0..vc.obligations.len() {
+            for (k, m) in shape.metas.iter().enumerate() {
                 if start.elapsed() > opts.budget {
                     break;
                 }
                 // The wall-clock limit of one obligation never reaches past the budget.
                 let left = opts.budget.saturating_sub(start.elapsed()).as_millis().max(1) as u32;
                 let only: Vec<Bool> = guards.iter().enumerate().map(|(j, g)| if j == k { g.clone() } else { g.not() }).collect();
-                out.push(solve(&s, &only, &vc, k, opts.rlimit, opts.timeout_ms.min(left)));
+                let o = match solve(&s, &only, &vc, k, opts.rlimit, opts.timeout_ms.min(left)) {
+                    Solved::Proven => Outcome::new(Status::Proven),
+                    Solved::Unknown(why) => Outcome { why: Some(why), ..Outcome::new(Status::Unknown) },
+                    Solved::Model(params, call, others) => {
+                        let left = opts.budget.saturating_sub(start.elapsed());
+                        if left.is_zero() {
+                            break;
+                        }
+                        let candidate: Vec<(usize, serde_json::Value)> = params.iter().enumerate().filter_map(|(k, (_, _, v))| v.as_ref().and_then(|v| serde_json::to_value(v).ok()).map(|j| (k, j))).collect();
+                        let slot = runner.get_or_insert_with(|| qal_wasm::compile(tp, &Entry::All).ok().and_then(|m| Runner::new(m).ok()).map(|r| r.with_fuel(opts.confirm_fuel)));
+                        // Running the candidate never reaches past the budget either.
+                        *slot = slot.take().map(|r| r.with_timeout(CONFIRM_TIMEOUT.min(left)));
+                        match confirm(tp, which, &m.goal, &params, &call, &others, slot.as_ref()) {
+                            Ok(values) => Outcome { cex: values.iter().enumerate().filter_map(|(k, v)| serde_json::to_value(v).ok().map(|j| (k, j))).collect(), ..Outcome::new(Status::Refuted) },
+                            Err(why) => Outcome { status: Status::Unknown, cex: candidate, why: Some(why) },
+                        }
+                    }
+                };
+                out.push(o);
             }
         }
         Some((shape, out))
     })
     .flatten();
-    let Some((shape, solved)) = solved else {
+    let Some((shape, results)) = solved else {
         return unstable(vec![summary(name, "all", INTERNAL.to_string())]);
     };
     if shape.out_of_time {
@@ -386,28 +409,6 @@ fn prove_one(tp: &TProgram, name: &str, which: Which, start: Instant, opts: &Opt
     if shape.too_large {
         let rec = Record { too_large: true, results: Vec::new() };
         return Proof { def: name.to_string(), reports: shape.reports(name, &rec), record: Some(rec) };
-    }
-    let mut results = Vec::new();
-    for (s, m) in solved.into_iter().zip(&shape.metas) {
-        let o = match s {
-            Solved::Proven => Outcome::new(Status::Proven),
-            Solved::Unknown(why) => Outcome { why: Some(why), ..Outcome::new(Status::Unknown) },
-            Solved::Model(params, call, others) => {
-                let left = opts.budget.saturating_sub(start.elapsed());
-                if left.is_zero() {
-                    break;
-                }
-                let candidate: Vec<(usize, serde_json::Value)> = params.iter().enumerate().filter_map(|(k, (_, _, v))| v.as_ref().and_then(|v| serde_json::to_value(v).ok()).map(|j| (k, j))).collect();
-                let slot = runner.get_or_insert_with(|| qal_wasm::compile(tp, &Entry::All).ok().and_then(|m| Runner::new(m).ok()).map(|r| r.with_fuel(opts.confirm_fuel)));
-                // Running the candidate never reaches past the budget either.
-                *slot = slot.take().map(|r| r.with_timeout(CONFIRM_TIMEOUT.min(left)));
-                match confirm(tp, which, &m.goal, &params, &call, &others, slot.as_ref()) {
-                    Ok(values) => Outcome { cex: values.iter().enumerate().filter_map(|(k, v)| serde_json::to_value(v).ok().map(|j| (k, j))).collect(), ..Outcome::new(Status::Refuted) },
-                    Err(why) => Outcome { status: Status::Unknown, cex: candidate, why: Some(why) },
-                }
-            }
-        };
-        results.push(o);
     }
     let left_out = shape.metas.len() - results.len().min(shape.metas.len());
     let stable = left_out == 0 && results.iter().all(|o| o.why.as_ref().is_none_or(Why::is_stable));
@@ -530,17 +531,22 @@ fn confirm(tp: &TProgram, which: Which, goal: &Goal, params: &[(String, Type, Op
         // the same contract failing at another call of the callee is not this obligation.
         Err(e) if violates(&e, def, &label) && matches(&e, call) && !others.iter().any(|o| matches(&e, o)) => Ok(values),
         Err(e) if violates(&e, def, &label) => Err(unconfirmed("a counterexample candidate was not confirmed: running it violated the same contract, maybe at another call")),
+        // The instruction budget is deterministic, the wall clock is not.
+        Err(e) if e.kind == "timeout" && e.message.starts_with("wall-clock") => Err(Why::RunTimedOut),
         Err(e) => Err(Why::Unconfirmed(format!("a counterexample candidate was not confirmed: running it ended with `{}` instead", e.kind))),
         Ok(_) => Err(unconfirmed("a counterexample candidate was not confirmed: running it satisfied the contract")),
     }
 }
 
 /// True if running `which` can call `fns[callee]` other than through a direct call in its own
-/// code: some other function it can run (through calls, function values or contracts, the
-/// callee included) calls or refers to the callee, or its own code uses the callee as a value.
+/// body (the calls that have obligations): its own contracts or some other function it can run
+/// (through calls, function values or contracts, the callee included) call or refer to the callee,
+/// or its own body uses the callee as a value.
 fn reaches_elsewhere(tp: &TProgram, which: Which, callee: usize) -> bool {
     let (own, roots): (Option<usize>, Vec<&TExpr>) = match which {
         Which::Fn(i) => match tp.fns.get(i) {
+            // Calls in its own `req`/`ens` have no obligation (review finding N1): like other code.
+            Some(f) if f.req.iter().chain(&f.ens).any(|c| mentions(c, callee)) => return true,
             Some(f) => (Some(i), f.req.iter().chain(&f.ens).chain([&f.body]).collect()),
             None => return true,
         },
@@ -573,6 +579,18 @@ fn reaches_elsewhere(tp: &TProgram, which: Which, callee: usize) -> bool {
             }
             stack.extend(props::children(e));
         }
+    }
+    false
+}
+
+/// True if `e` calls or refers to `fns[callee]` directly (closure bodies included).
+fn mentions(e: &TExpr, callee: usize) -> bool {
+    let mut stack = vec![e];
+    while let Some(e) = stack.pop() {
+        if matches!(&e.kind, TKind::Call(c, _) | TKind::FnRef(c) if *c == callee) {
+            return true;
+        }
+        stack.extend(props::children(e));
     }
     false
 }

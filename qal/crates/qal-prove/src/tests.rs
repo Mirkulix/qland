@@ -413,6 +413,11 @@ fn a_violation_in_another_function_is_not_blamed_on_this_call() {
     let src = "fn g(t: Str, n: Int) -> Int req len(t) == 0 = if n > 0 then g(\"x\", n - 1) else 0\nfn f(t: Str) -> Int = g(t, 1)";
     let r = reports(src).into_iter().find(|r| r.def == "f").unwrap();
     assert_eq!(r.status, Status::Unknown, "{r:#?}");
+    // N1 (re-review): a call in the definition's own `ens` has no obligation, so a violation it
+    // raises is no proof against the guarded body call.
+    let src = "fn g(t: Str) -> Int req len(t) == 0 = 0\nfn f(t: Str) -> Int ens g(\"x\") == 0 = if len(t) == 0 then g(t) else 0";
+    let r = reports(src).into_iter().find(|r| r.def == "f" && r.path == "body.then").unwrap();
+    assert_eq!(r.status, Status::Unknown, "{r:#?}");
     // Still refuted: the only call of the callee is this one.
     let r = reports("fn g(t: Str) -> Int req len(t) > 0 = 0\nfn f(t: Str) -> Int = g(t)").into_iter().find(|r| r.def == "f").unwrap();
     assert_eq!(r.status, Status::Refuted, "{r:#?}");
@@ -472,4 +477,27 @@ fn a_refuted_test_does_not_promise_a_counterexample() {
     assert_eq!((r.status, &r.counterexample), (Status::Refuted, &None));
     let d = r.diagnostic().unwrap();
     assert_eq!(d.message, "`req x > 0` (req[0] of sq) does not hold: running `t1` violates it");
+}
+
+#[test]
+fn an_early_refutation_is_not_lost_to_the_budget() {
+    // N2 (re-review): all obligations were solved before any candidate was confirmed, so a budget
+    // used up by later satisfiable obligations dropped the refutation of the first one.
+    let calls = (0..3000).map(|i| format!("g(x - {i})")).collect::<Vec<_>>().join(", ");
+    let src = format!("fn g(a: Int) -> Int req a > 0 = a\nfn f(x: Int) -> Int = len([{calls}])");
+    let start = std::time::Instant::now();
+    let rs: Vec<Report> = prove(&typed(&src), None, &Options { budget: Duration::from_secs(2), ..Options::default() }).into_iter().filter(|r| r.def == "f").collect();
+    assert!(start.elapsed() < Duration::from_secs(5), "{:?}", start.elapsed());
+    assert_eq!((rs[0].path.as_str(), rs[0].status), ("body.args[0].items[0]", Status::Refuted), "{:#?}", &rs[..2.min(rs.len())]);
+}
+
+#[test]
+fn a_candidate_run_stopped_by_the_clock_is_not_stored() {
+    // N3 (re-review): a confirmation run cut by the wall clock was a stable `unknown`.
+    let src = "fn spin(n: Int, acc: Int) -> Int = if n == 0 then acc else spin(n - 1, acc + 1)\n\
+               fn f(x: Int) -> Int ens r == 0 = spin(1000000000, x)";
+    let ps = prove_defs(&typed(src), Some(&["f".to_string()]), &Options { budget: Duration::from_millis(500), confirm_fuel: u64::MAX / 4, ..Options::default() });
+    assert_eq!(ps.len(), 1);
+    assert!(ps[0].reports[0].reason.as_deref().unwrap_or("").contains("wall-clock"), "{:#?}", ps[0].reports);
+    assert_eq!(ps[0].record, None);
 }
