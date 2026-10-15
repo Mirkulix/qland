@@ -91,10 +91,25 @@ pub fn parse(file: &str) -> Result<Package, Vec<Diagnostic>> {
         offset += line.len();
         let def = def.trim_end_matches('\n');
         let mut p = def.splitn(3, ' ');
-        let (Some(n), Some(h), Some(agent)) = (p.next(), p.next(), p.next()) else { return Err(mismatch(format!("malformed `# def` line `{def}`"))) };
+        let shown = || def.chars().take(80).collect::<String>();
+        let (Some(n), Some(h), Some(agent)) = (p.next(), p.next(), p.next()) else { return Err(mismatch(format!("malformed `# def` line `{}`", shown()))) };
+        // The checksum covers these lines but anyone can recompute it: everything is untrusted.
+        let is_name = n.len() <= 256 && n.starts_with(|c: char| c.is_ascii_alphabetic()) && n.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+        let is_hash = h.len() == 64 && h.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
+        if !is_name || !is_hash || agent.is_empty() || agent.chars().any(char::is_control) {
+            return Err(mismatch(format!("malformed `# def` line `{}`: expected `# def <name> <64 hex digits> <agent>`", shown())));
+        }
+        if defs.iter().any(|d: &PackageDef| d.name == n) {
+            return Err(mismatch(format!("`{n}` is listed twice")));
+        }
         defs.push(PackageDef { name: n.into(), hash: h.into(), agent: agent.into() });
     }
     Ok(Package { name: name.into(), hash: hash.into(), defs, text: body[offset..].to_string() })
+}
+
+/// The first 12 characters of a hash (never splits a character).
+fn short(h: &str) -> &str {
+    h.char_indices().nth(12).map_or(h, |(i, _)| &h[..i])
 }
 
 /// Builds the package file of `name` from the definitions in `text` and their `# def` lines.
@@ -185,7 +200,7 @@ pub fn import(conn: &mut Connection, file: &str, verify: Option<&mut Verify>) ->
         for (name, hash) in &expected {
             let stored: Option<String> = tx.query_row("SELECT hash FROM names WHERE name = ?1", params![name], |r| r.get(0)).optional().map_err(sql)?;
             if stored.as_deref() != Some(*hash) {
-                return Err(mismatch(format!("`{name}` was recorded with hash {} but defines as {}", &hash[..hash.len().min(12)], stored.as_deref().map_or("nothing", |s| &s[..s.len().min(12)]))));
+                return Err(mismatch(format!("`{name}` was recorded with hash {} but defines as {}", short(hash), stored.as_deref().map_or("nothing", short))));
             }
         }
         // A package may replace only what an earlier import of the same package defined, never

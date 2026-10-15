@@ -1051,6 +1051,46 @@ fn stores_with_definitions_named_like_prelude_types_keep_working_and_can_be_repa
 }
 
 #[test]
+fn crafted_packages_are_refused_without_panicking() {
+    // Final review I3: a non-ASCII `# def` hash made the error message slice inside a character.
+    let file = |defs: &str, text: &str| {
+        let body = format!("{defs}\n{text}");
+        format!("# qal-pkg 1\n# package evil {}\n{body}", Hash::of(body.as_bytes()).to_hex())
+    };
+    let fx = "fn f(x: Int) -> Int = x\n";
+    let good = Hash::of(b"x").to_hex();
+    let defs = [
+        format!("# def f a{} someone\n", "é".repeat(10)),
+        format!("# def f {} someone\n", "é".repeat(32)),
+        format!("# def f {} someone\n", &good[..63]),
+        format!("# def f {} someone\n", good.to_uppercase()),
+        format!("# def f {good}\n"),
+        format!("# def f {good} \n"),
+        format!("# def é {good} a\n"),
+        format!("# def 1f {good} a\n"),
+        format!("# def f {good} a\u{7}b\n"),
+        format!("# def f {good} a\n# def f {good} a\n"),
+        "# def\n".to_string(),
+        "# def  \n".to_string(),
+        format!("# def f {good} a\n"),
+    ];
+    let mut s = store();
+    for d in &defs {
+        let e = s.import(&file(d, fx)).unwrap_err();
+        assert_eq!(e[0].code, "E0243", "{d:?}: {e:#?}");
+    }
+    for bad in ["", "\n", "# qal-pkg 1", "# qal-pkg 1\n", "# qal-pkg 1\n# package", "# qal-pkg 1\n# package é é\n", "# qal-pkg 2\n# package a b\n"] {
+        assert!(s.import(bad).is_err(), "{bad:?}");
+    }
+    // Arbitrary bytes after a valid header: refused, never a panic.
+    for n in 0..200u32 {
+        let junk: String = (0..(n % 23)).map(|k| char::from_u32(0x20 + (n * 7919 + k * 104729) % 0x2FF).unwrap_or('x')).collect();
+        let _ = s.import(&file(&format!("# def {junk}\n"), &junk));
+    }
+    assert!(hashes(&mut s).is_empty());
+}
+
+#[test]
 fn imports_are_verified_like_define() {
     let mut src = store();
     ok(&mut src, "fn lib_one() -> Int = 1\nfn lib_two(x: Int) -> Int = x + lib_one()");
