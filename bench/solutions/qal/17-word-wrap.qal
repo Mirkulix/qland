@@ -1,0 +1,49 @@
+# Greedy word wrap of paragraphs separated by blank lines.
+
+fn is_blank(c: Str) -> Bool = c == " " || c == "\t"
+
+fn space_out(c: Str) -> Str = if is_blank(c) then " " else c
+
+fn non_empty(s: Str) -> Bool = s != ""
+
+fn words_of(line: Str) -> List[Str] = filter(split(join(map(chars(line), space_out), ""), " "), non_empty)
+
+# Paragraphs as word lists; `cur` collects the lines of the paragraph being read.
+type P = { paras: List[List[Str]], cur: List[Str] }
+
+fn close(p: P) -> List[List[Str]] = if len(p.cur) > 0 then push(p.paras, words_of(join(p.cur, " "))) else p.paras
+
+fn para_step(p: P, line: Str) -> P =
+  if len(words_of(line)) == 0 then P { paras: close(p), cur: [] } else P { paras: p.paras, cur: push(p.cur, line) }
+
+type W = { width: Int, lines: List[Str], line: Str }
+
+fn wrap_step(w: W, word: Str) -> W =
+  if w.line == "" then W { width: w.width, lines: w.lines, line: word }
+  else if len(w.line) + 1 + len(word) <= w.width then W { width: w.width, lines: w.lines, line: w.line ++ " " ++ word }
+  else W { width: w.width, lines: push(w.lines, w.line), line: word }
+
+fn wrap(words: List[Str], width: Int) -> List[Str] =
+  let w = fold(words, W { width: width, lines: [], line: "" }, wrap_step) in push(w.lines, w.line)
+
+test wrapping = wrap(["The", "quick", "brown", "fox"], 9) == ["The quick", "brown fox"] && wrap(["a", "verylong", "b"], 5) == ["a", "verylong", "b"]
+
+fn print_lines(n: Int, l: Str) -> Int !io = { print(l); n }
+
+fn print_paras(ps: List[List[Str]], i: Int, width: Int) -> Int !io =
+  match get(ps, i) {
+    None => 0,
+    Some(p) => { if i > 0 then print("") else (); let n = fold(wrap(p, width), 0, print_lines) in print_paras(ps, i + 1, width) },
+  }
+
+fn read_lines(acc: List[Str]) -> List[Str] !io = match read_line() { None => acc, Some(l) => read_lines(push(acc, l)) }
+
+fn is_digit(c: Str) -> Bool = c >= "0" && c <= "9"
+
+fn main(args: List[Str]) -> Int !io =
+  let width = match get(args, 0) {
+    Some(a) if len(args) == 1 && a != "" && len(filter(chars(a), is_digit)) == len(a) => match to_int(a) { Some(n) => n, None => 0 },
+    _ => 0,
+  } in
+  if width < 1 then { print("usage: word_wrap <width>"); 2 }
+  else let p = fold(read_lines([]), P { paras: [], cur: [] }, para_step) in print_paras(close(p), 0, width)

@@ -1,0 +1,21 @@
+# wc -lwm of stdin: newlines, whitespace-separated words, Unicode characters.
+
+fn is_space(c: Str) -> Bool = c == " " || c == "\t" || c == "\r" || c == "\n"
+
+fn space_out(c: Str) -> Str = if is_space(c) then " " else c
+
+fn non_empty(s: Str) -> Bool = s != ""
+
+fn is_newline(c: Str) -> Bool = c == "\n"
+
+fn words(text: Str) -> Int = len(filter(split(join(map(chars(text), space_out), ""), " "), non_empty))
+
+test words_tabs = words(" a\tb \n c ") == 3
+test words_empty = words("") == 0
+
+fn main(args: List[Str]) -> Int !io =
+  let text = read_all() in
+  let cs = chars(text) in {
+    print(from_int(len(filter(cs, is_newline))) ++ " " ++ from_int(words(text)) ++ " " ++ from_int(len(cs)));
+    0
+  }

@@ -1,0 +1,42 @@
+# The K most frequent words, by count (descending) and then alphabetically.
+
+fn is_letter(c: Str) -> Bool = (c >= "a" && c <= "z") || (c >= "A" && c <= "Z")
+
+fn letter_or_space(c: Str) -> Str = if is_letter(c) then c else " "
+
+fn non_empty(s: Str) -> Bool = s != ""
+
+fn words(text: Str) -> List[Str] = filter(split(to_lower(join(map(chars(text), letter_or_space), "")), " "), non_empty)
+
+type Runs = { keys: List[Str], cur: Str, run: Int }
+
+# Sort key `<10000000000 - count> <word>`: fixed width (counts < 10^9), so string order is the ranking.
+fn key(word: Str, count: Int) -> Str = from_int(10000000000 - count) ++ " " ++ word
+
+fn close(r: Runs) -> List[Str] = if r.run > 0 then push(r.keys, key(r.cur, r.run)) else r.keys
+
+fn count_step(r: Runs, w: Str) -> Runs =
+  if w == r.cur then Runs { keys: r.keys, cur: w, run: r.run + 1 } else Runs { keys: close(r), cur: w, run: 1 }
+
+fn ranked(text: Str) -> List[Str] = sort_str(close(fold(sort_str(words(text)), Runs { keys: [], cur: "", run: 0 }, count_step)))
+
+fn line(k: Str) -> Str =
+  let parts = split(k, " ") in
+  match get(parts, 0) {
+    Some(c) => from_int(10000000000 - (match to_int(c) { Some(n) => n, None => 0 })) ++ " " ++ (match get(parts, 1) { Some(w) => w, None => "" }),
+    None => "",
+  }
+
+test example = map(ranked("the cat and the dog and the bird"), line) == ["3 the", "2 and", "1 bird", "1 cat", "1 dog"]
+
+fn print_top(xs: List[Str], i: Int, k: Int) -> Int !io =
+  if i >= k then 0 else match get(xs, i) { None => 0, Some(x) => { print(line(x)); print_top(xs, i + 1, k) } }
+
+fn is_digit(c: Str) -> Bool = c >= "0" && c <= "9"
+
+fn main(args: List[Str]) -> Int !io =
+  let k = match get(args, 0) {
+    Some(a) if len(args) == 1 && a != "" && len(filter(chars(a), is_digit)) == len(a) => match to_int(a) { Some(n) => n, None => 0 },
+    _ => 0,
+  } in
+  if k < 1 then { print("usage: word_freq <k>"); 2 } else print_top(ranked(read_all()), 0, k)
