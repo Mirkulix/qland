@@ -22,6 +22,8 @@ pub(crate) struct Cx<'a> {
     pub def: &'a str,
     /// Effects the current expression may use (empty for contracts and tests).
     pub effects: &'a [String],
+    /// Declared result type while checking a fn body (for effect hints).
+    pub ret: Option<&'a Type>,
     pub diags: &'a mut Vec<Diagnostic>,
     /// Number of diagnostics when this definition started; more means it has errors.
     pub start: usize,
@@ -36,7 +38,7 @@ pub(crate) struct Cx<'a> {
 impl<'a> Cx<'a> {
     pub fn new(g: &'a Globals, def: &'a str, effects: &'a [String], diags: &'a mut Vec<Diagnostic>) -> Self {
         let start = diags.len();
-        Cx { g, def, effects, diags, start, sub: Subst::default(), locals: Vec::new(), scope: Vec::new(), deferred: Vec::new() }
+        Cx { g, def, effects, ret: None, diags, start, sub: Subst::default(), locals: Vec::new(), scope: Vec::new(), deferred: Vec::new() }
     }
 
     pub fn bind(&mut self, name: &str, ty: Type) -> u32 {
@@ -101,9 +103,16 @@ impl<'a> Cx<'a> {
 
     pub fn effect_check(&mut self, path: &str, callee: &str, needed: &[String]) {
         let missing: Vec<String> = needed.iter().filter(|e| !self.effects.contains(e)).cloned().collect();
-        if !missing.is_empty() {
-            self.diags.push(Diagnostic::effect_violation(self.def, path, callee, &missing));
+        if missing.is_empty() {
+            return;
         }
+        let mut d = Diagnostic::effect_violation(self.def, path, callee, &missing);
+        if let Some(ret @ Type::Fn(..)) = self.ret {
+            // `-> fn(..) -> T !e` would give the effect to the returned function: show the parenthesized form.
+            let effs: String = self.effects.iter().chain(&missing).map(|e| format!(" !{e}")).collect();
+            d.hints = vec![format!("add `!{}` to the signature of `{}`: `-> ({ret}){effs}`", missing.join(" !"), self.def)];
+        }
+        self.diags.push(d);
     }
 
     pub fn infer_all(&mut self, args: &[Expr], path: &str) -> Vec<TExpr> {

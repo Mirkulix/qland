@@ -246,6 +246,7 @@ fn check_fn(f: &FnDef, g: &Globals, diags: &mut Vec<Diagnostic>) -> Option<TFn> 
         cx.unbind();
     }
     cx.effects = &f.effects;
+    cx.ret = Some(&f.ret);
     exprs.push(cx.expect(&f.body, &f.ret, "body"));
     let (locals, mut exprs) = cx.finish(exprs)?;
     let body = exprs.pop().expect("body");

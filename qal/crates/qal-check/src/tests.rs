@@ -298,3 +298,14 @@ fn type_depth_is_tracked_when_inner_variables_are_bound_later() {
     let d = check_src(&src);
     assert!(!d.is_empty() && d.iter().all(|d| d.kind == "type_too_deep"), "{d:#?}");
 }
+
+#[test]
+fn effect_hint_parenthesizes_a_function_result_type() {
+    // `-> fn(Int) -> Int !io` would give the effect to the returned function, not to `mk`.
+    let inc = "fn inc(x: Int) -> Int = x + 1\n";
+    let d = one(&format!("{inc}fn mk() -> fn(Int) -> Int = {{ print(\"m\"); inc }}"));
+    assert_eq!(d.kind, "effect_violation");
+    assert_eq!(d.hints, vec!["add `!io` to the signature of `mk`: `-> (fn(Int) -> Int) !io`".to_string()]);
+    let d = one(&format!("{inc}fn mk() -> (fn(Int) -> Int !rand) !time = {{ print(\"m\"); inc }}"));
+    assert_eq!(d.hints, vec!["add `!io` to the signature of `mk`: `-> (fn(Int) -> Int !rand) !time !io`".to_string()]);
+}
