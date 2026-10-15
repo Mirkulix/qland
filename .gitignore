@@ -24,6 +24,7 @@ Thumbs.db
 # Rust
 target/
 Cargo.lock
+!qal/Cargo.lock
 
 # IGQK specific
 *.db
