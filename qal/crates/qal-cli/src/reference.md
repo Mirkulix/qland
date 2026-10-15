@@ -26,7 +26,7 @@ Expressions (everything is an expression, there are no statements):
   [1, 2]  f(x)  p.x  -x  !b  * / %  + -  ++ (Str or List concatenation)  == != (any type)  < <= > >= (Int, Float, Str)  && ||
   / truncates toward zero; % has the sign of the left operand. Str order compares Unicode code points ("B" < "a" < "é").
 Effects: a fn that uses the system declares it after the result type and callers declare the union:
-  !io print, read_line, read_all   !fs read_file, write_file   !time now_ms   !rand rand_int.  Several: `-> Int !io !fs`. Tests and contracts are pure.
+  !io print, read_line, read_all   !fs read_file, write_file   !time now_ms   !rand rand_int   !net http   !db db_exec, db_query.  Several: `-> Int !io !fs`. Tests and contracts are pure.
 Contracts: fn sqrt_floor(n: Int) -> Int req n >= 0 ens r * r <= n = ...   (`r` is the result inside `ens`; `r` cannot be a definition name, nor a parameter of a fn with `ens`; elsewhere parameters and locals named `r` are fine; always checked at run time)
   qal_define proves them with Z3: each `ens`, and the `req` of every function at each call. A function whose contract
   is refuted is not stored; the diagnostic (E0801) has a counterexample. Proofs are exact for Int and Bool (overflow
@@ -55,5 +55,15 @@ Built-ins (indices count characters; slice and range are half-open: the end is e
   to_int accepts an optional sign and digits only (no spaces: trim first). Deep non-tail recursion can overflow the stack (about 100 000 calls).
 Performance: push on a list or ++ on a string in a loop is quadratic (about 8 000 elements at most): build lists with split/map/filter/range. len and slice on Str are O(n): iterate with chars.
 
+Services (prelude types exist in every program; their names and variants are reserved):
+  HttpHeader = { name: Str, value: Str }  HttpRequest = { method: Str, path: Str, query: Str, headers: List[HttpHeader], body: Str }
+  HttpResponse = { status: Int, headers: List[HttpHeader], body: Str }  HttpCall = { method: Str, url: Str, headers: List[HttpHeader], body: Str }
+  A service handler is `fn handle(rq: HttpRequest) -> HttpResponse` (any effects; header names arrive lowercase); test it with qal_request.
+  db_exec(sql, params) -> Result[Int, DbError] !db (changed rows)  db_query(sql, params) -> Result[DbRows, DbError] !db
+    sql must be a string literal with `?` placeholders, one statement, no PRAGMA/ATTACH/BEGIN/COMMIT (E0241, E0242); values go in params: [SqlInt(id), SqlText(t)]
+    SqlValue = SqlNull | SqlInt(Int) | SqlFloat(Float) | SqlText(Str)  DbRows = { columns: List[Str], rows: List[List[SqlValue]] }
+    DbError = DbConstraint(Str) | DbSql(Str) | DbBusy | DbFull | DbTooLarge. One transaction per execution, committed only for status 100-399 (qal_call: no error, qal_run: exit 0).
+  http(call) -> Result[HttpResponse, NetError] !net  NetError = NetDenied(Str) | NetInvalid(Str) | NetConnect(Str) | NetTimeout | NetTooLarge; redirects are not followed.
+  Grant "db:mem" (fresh in-memory database), "db" or "db:<name>" (.qal/db/<name>.sqlite), "net:<host>[:port]". Library: qal_query name "std.".
 Store rules: defining an existing name replaces it. Same signature: everything using it is relinked and re-checked automatically. Changed signature: rejected (`signature_change`, lists `dependents`) unless the same call also redefines those dependents. A name keeps its kind (fn, test, type). References bind to names: qal_rename changes no hash and users follow the new name. Two names can hold the identical definition, but one definition cannot refer to both (E0404 `alias_reference`): use one name.
 Workflow: qal_define -> qal_test -> qal_run (entry point; grant effects with allow: ["io"], "fs:<dir>" grants read AND write of all non-hidden files under that project dir, e.g. Cargo.toml: grant the narrowest dir) or qal_call (any fn, JSON args). qal_prove shows the proof status. Read the codebase with qal_query and qal_view.

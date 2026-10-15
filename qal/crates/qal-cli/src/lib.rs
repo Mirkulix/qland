@@ -4,6 +4,10 @@
 pub mod mcp;
 pub mod ops;
 
+/// The standard library package (spec Phase 3 §4.3), embedded in the binary. Phase 3a ships it
+/// empty (headers only); Phase 3b fills it and imports it into projects.
+pub const STD_PACKAGE: &str = include_str!("../../../std/std.qalpkg");
+
 use qal_core::ast::{Program, Type};
 use qal_core::diag::Diagnostic;
 use qal_core::tast::TProgram;
@@ -57,7 +61,7 @@ impl Loaded {
     pub fn runner(&self, entry: &Entry, perms: Permissions) -> Result<Runner, RunError> {
         let def = match entry {
             Entry::Fn(name) => name.as_str(),
-            Entry::Tests | Entry::All => "",
+            Entry::Tests | Entry::All | Entry::Fns(_) => "",
         };
         let compile_error = |m: String| {
             let mut e = RunError::new("compile_error", def, format!("the program cannot be compiled to WebAssembly: {m}"));
@@ -228,7 +232,8 @@ mod tests {
         // After the target, an unknown `--x` is the first program argument.
         let s = run_split(&["main", "--allow", "io", "--verbose", "--allow", "x"]).unwrap();
         assert_eq!((s.options["allow"].clone(), s.rest), (strings(&["io"]), strings(&["--verbose", "--allow", "x"])));
-        assert!(permissions(&run_split(&["main", "--allow", "net"]).unwrap()).unwrap_err().contains("unknown effect"));
+        assert!(permissions(&run_split(&["main", "--allow", "web"]).unwrap()).unwrap_err().contains("unknown effect"));
+        assert!(permissions(&run_split(&["main", "--allow", "net"]).unwrap()).unwrap_err().contains("needs a host"));
     }
 
     #[test]
@@ -247,6 +252,12 @@ mod tests {
         let s = split_args(&strings(&["a", "--agent", "x", "b"]), &["agent"], &[], &all).unwrap();
         assert_eq!((s.one("agent"), &s.targets), (Some("x"), &strings(&["a", "b"])));
         assert!(split_args(&strings(&["--agent", "a", "--agent", "b"]), &["agent"], &[], &all).unwrap_err().contains("twice"));
+    }
+
+    #[test]
+    fn the_embedded_standard_library_is_a_valid_package() {
+        let p = qal_store::package::parse(STD_PACKAGE).unwrap();
+        assert_eq!((p.name.as_str(), p.defs.len(), p.text.as_str()), ("std", 0, ""));
     }
 
     #[test]

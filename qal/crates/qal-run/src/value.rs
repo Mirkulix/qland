@@ -381,6 +381,112 @@ pub fn compare(tp: &TProgram, ty: &Type, a: &Value, b: &Value) -> std::cmp::Orde
     }
 }
 
+/// Host bytes one decoded node is counted as (the `Value` plus its share of names and vectors).
+pub const NODE_BYTES: usize = 64;
+
+/// Decodes a value the host acts on (an `HttpCall`, SQL parameters, a handler's `HttpResponse`):
+/// exactly, without cutting strings, and failing on anything malformed or on more than `max_bytes`
+/// (string bytes plus [`NODE_BYTES`] per node).
+pub fn decode_exact(tp: &TProgram, mem: &[u8], ty: &Type, slot: i64, max_bytes: usize) -> Result<Value, String> {
+    decode_exact_counted(tp, mem, ty, slot, max_bytes).map(|(v, _)| v)
+}
+
+/// [`decode_exact`], also returning the host bytes the value is counted as.
+pub fn decode_exact_counted(tp: &TProgram, mem: &[u8], ty: &Type, slot: i64, max_bytes: usize) -> Result<(Value, usize), String> {
+    let mut used = 0usize;
+    let v = exact_at(tp, mem, ty, slot, 0, max_bytes, &mut used)?;
+    Ok((v, used))
+}
+
+fn exact_at(tp: &TProgram, mem: &[u8], ty: &Type, slot: i64, depth: usize, max: usize, used: &mut usize) -> Result<Value, String> {
+    *used = used.saturating_add(NODE_BYTES);
+    if *used > max {
+        return Err(format!("the value is larger than {max} bytes"));
+    }
+    if depth > MAX_DEPTH {
+        return Err("the value is nested too deeply".into());
+    }
+    let ptr = slot as u32 as usize;
+    let bad = || format!("invalid {ty} at {ptr}");
+    Ok(match ty {
+        Type::Int => Value::Int(slot),
+        Type::Float => Value::Float(f64::from_bits(slot as u64)),
+        Type::Bool => Value::Bool(slot != 0),
+        Type::Unit => Value::Unit,
+        Type::Str => {
+            let len = u32_at(mem, ptr).ok_or_else(bad)? as usize;
+            *used = used.saturating_add(len);
+            if *used > max {
+                return Err(format!("the value is larger than {max} bytes"));
+            }
+            let bytes = mem.get(ptr + 4..ptr + 4 + len).ok_or_else(bad)?;
+            Value::Str(String::from_utf8(bytes.to_vec()).map_err(|_| format!("a string is not valid UTF-8 at {ptr}"))?)
+        }
+        Type::List(elem) => {
+            let len = u32_at(mem, ptr).ok_or_else(bad)? as usize;
+            let mut out = Vec::with_capacity(len.min(1024));
+            for k in 0..len {
+                let s = slot_at(mem, ptr + 8 + 8 * k).ok_or_else(bad)?;
+                out.push(exact_at(tp, mem, elem, s, depth + 1, max, used)?);
+            }
+            Value::List(out)
+        }
+        Type::Bytes => {
+            let len = u32_at(mem, ptr).ok_or_else(bad)? as usize;
+            *used = used.saturating_add(len);
+            if *used > max {
+                return Err(format!("the value is larger than {max} bytes"));
+            }
+            Value::Bytes(mem.get(ptr + 4..ptr + 4 + len).ok_or_else(bad)?.to_vec(), 0)
+        }
+        Type::Map(kt, vt) => {
+            let mut out = Vec::new();
+            exact_map(tp, mem, (kt, vt), ptr as u32, 0, depth, max, used, &mut out)?;
+            Value::Map(out)
+        }
+        Type::Fn(..) | Type::Var(_) | Type::Param(_) => return Err(format!("{ty} cannot be read by the host")),
+        // Records and enums, also generic instances (`Type::App`), and Option/Result.
+        _ if tp.is_record(ty) => {
+            let mut fields = Vec::new();
+            for (k, (f, ft)) in tp.record_fields(ty).iter().enumerate() {
+                let s = slot_at(mem, ptr + 8 * k).ok_or_else(bad)?;
+                fields.push((f.clone(), exact_at(tp, mem, ft, s, depth + 1, max, used)?));
+            }
+            Value::Record(ty.to_string(), fields)
+        }
+        _ => {
+            let tag = u32_at(mem, ptr).ok_or_else(bad)?;
+            let names = tp.variant_names(ty);
+            let name = names.get(tag as usize).ok_or_else(bad)?;
+            let mut payload = Vec::new();
+            for (k, ft) in tp.variant_fields(ty, tag).iter().enumerate() {
+                let s = slot_at(mem, ptr + 8 + 8 * k).ok_or_else(bad)?;
+                payload.push(exact_at(tp, mem, ft, s, depth + 1, max, used)?);
+            }
+            Value::Variant(name.clone(), payload)
+        }
+    })
+}
+
+/// The entries of the map tree at `ptr` in key order, exactly (a malformed tree is an error).
+#[allow(clippy::too_many_arguments)]
+fn exact_map(tp: &TProgram, mem: &[u8], (kt, vt): (&Type, &Type), ptr: u32, height: usize, depth: usize, max: usize, used: &mut usize, out: &mut Vec<(Value, Value)>) -> Result<(), String> {
+    if ptr == 0 {
+        return Ok(());
+    }
+    let at = ptr as usize;
+    let (Some(k), Some(v), Some(l), Some(r)) = (slot_at(mem, at + 8), slot_at(mem, at + 16), u32_at(mem, at + 24), u32_at(mem, at + 28)) else {
+        return Err(format!("invalid map at {ptr}"));
+    };
+    if height > MAX_MAP_HEIGHT {
+        return Err(format!("invalid map at {ptr}"));
+    }
+    exact_map(tp, mem, (kt, vt), l, height + 1, depth, max, used, out)?;
+    let key = exact_at(tp, mem, kt, k, depth + 1, max, used)?;
+    out.push((key, exact_at(tp, mem, vt, v, depth + 1, max, used)?));
+    exact_map(tp, mem, (kt, vt), r, height + 1, depth, max, used, out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -471,5 +577,23 @@ mod tests {
         let Value::Str(first) = &xs[0] else { panic!("not a string") };
         assert_eq!(first.len(), MAX_STR_BYTES + format!("...(+{} bytes)", len - MAX_STR_BYTES).len());
         assert_eq!(xs[1], Value::Str(format!("...(+{len} bytes)")));
+    }
+
+    #[test]
+    fn exact_decoding_never_cuts_and_bounds_the_size() {
+        let tp = TProgram::default();
+        let mut mem = vec![0u8; 64];
+        mem[0..4].copy_from_slice(&5u32.to_le_bytes());
+        mem[4..9].copy_from_slice(b"hello");
+        mem[16..20].copy_from_slice(&2u32.to_le_bytes());
+        mem[24..32].copy_from_slice(&0i64.to_le_bytes());
+        mem[32..40].copy_from_slice(&0i64.to_le_bytes());
+        let list = Type::list(Type::Str);
+        assert_eq!(decode_exact_counted(&tp, &mem, &list, 16, 1000), Ok((Value::List(vec![Value::Str("hello".into()), Value::Str("hello".into())]), 3 * NODE_BYTES + 10)));
+        assert_eq!(decode_exact(&tp, &mem, &list, 16, 100).unwrap_err(), "the value is larger than 100 bytes");
+        mem[4] = 0xff;
+        assert!(decode_exact(&tp, &mem, &Type::Str, 0, 1000).unwrap_err().contains("not valid UTF-8"));
+        assert!(decode_exact(&tp, &mem, &Type::Str, 1 << 20, 1000).unwrap_err().starts_with("invalid Str"));
+        assert!(decode_exact(&tp, &mem, &Type::option(Type::Int), 4, 1000).is_err(), "tag out of range");
     }
 }

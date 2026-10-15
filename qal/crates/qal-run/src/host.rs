@@ -1,8 +1,15 @@
 //! Host functions (`qal_host.*`) and the permission model: only granted effect groups are linked
-//! (ungranted ones are stubs that fail with `permission_denied`), and `fs` only reaches files
-//! inside granted directories.
+//! (ungranted ones are stubs that fail with `permission_denied`), `fs` only reaches files inside
+//! granted directories (through their descriptors, see [`crate::fs`]), and everything the host
+//! buffers for the guest counts against the execution's memory limit.
 
-use crate::value::read_str;
+use crate::db::{Db, DbErr, DbGrant, SqlVal};
+use crate::fs::{self as gfs, Access, FsRoot};
+use crate::guest::Guest;
+use crate::net::{self, Call, Lookup, NetErr, NetGrant};
+use crate::value::{decode_exact_counted, read_str, Value};
+use qal_core::ast::Type;
+use qal_core::tast::TProgram;
 use qal_wasm::{host, FAIL_OOM, HOST_MODULE, OOM_SCRATCH};
 use std::fs::File;
 use std::io::{BufRead, Read, Write};
@@ -11,6 +18,10 @@ use wasmtime::{Caller, Extern, FuncType, Linker, Memory, StoreLimits, ValType};
 
 /// Failure kind recorded by the stub of an ungranted effect function; `func` indexes `host::EFFECT_FNS`.
 pub const FAIL_DENIED: i32 = -1;
+/// Failure kind recorded by the host when a per-execution budget is used up (see [`BudgetHit`]).
+pub const FAIL_BUDGET: i32 = -2;
+/// Failure kind recorded by the host when the wall-clock limit passed inside a host call.
+pub const FAIL_TIMEOUT: i32 = -3;
 
 /// Effect permissions for one execution, e.g. parsed from `--allow io,fs:./data`.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -18,13 +29,36 @@ pub struct Permissions {
     pub io: bool,
     pub time: bool,
     pub rand: bool,
-    /// Canonical directories `fs` may read and write below. Empty = no `fs`.
-    pub fs: Vec<PathBuf>,
+    /// Directories `fs` may read and write below, held open. Empty = no `fs`.
+    pub fs: Vec<FsRoot>,
     /// Directory that relative guest paths are resolved against (None: the working directory).
     pub base: Option<PathBuf>,
     /// If set, no path component below a granted directory may start with `.` (protects `.git`,
     /// `.qal`, `.claude`, `.env`, ... inside a granted project directory).
     pub no_hidden: bool,
+    /// The database grant (`db`, `db:<name>`, `db:mem`); at most one per execution.
+    pub db: Option<DbGrant>,
+    /// Where database files live (`<project>/.qal/db`); None: `.qal/db` below the working directory.
+    pub db_dir: Option<PathBuf>,
+    /// Hosts outgoing HTTP may reach (`net:<host>[:port]`, repeatable). Empty = no `net`.
+    pub net: Vec<NetGrant>,
+}
+
+/// Known grants, for error messages.
+const KNOWN_GRANTS: &str = "io, time, rand, fs:<dir>, net:<host>[:port], db, db:<name>, db:mem";
+
+/// Adds a database grant (only one per execution).
+fn grant_db(p: &mut Permissions, item: &str) -> Result<(), String> {
+    let g = DbGrant::parse(item)?;
+    if let Some(old) = &p.db {
+        return Err(format!("only one database can be granted per execution: `{}` and `{item}`", old.spec()));
+    }
+    p.db = Some(g);
+    Ok(())
+}
+
+fn is_db_item(item: &str) -> bool {
+    item == "db" || item.starts_with("db:")
 }
 
 impl Permissions {
@@ -37,16 +71,11 @@ impl Permissions {
                 "time" => p.time = true,
                 "rand" => p.rand = true,
                 "fs" => return Err("`fs` needs a directory: `fs:<dir>`, e.g. `fs:./data`".into()),
+                _ if is_db_item(item) => grant_db(&mut p, item)?,
+                _ if item == "net" || item.starts_with("net:") => p.net.push(NetGrant::parse(item)?),
                 _ => match item.strip_prefix("fs:") {
-                    Some(dir) => {
-                        require_open_flags()?;
-                        let canonical = Path::new(dir).canonicalize().map_err(|e| format!("fs:{dir}: {e}"))?;
-                        if !canonical.is_dir() {
-                            return Err(format!("fs:{dir}: not a directory"));
-                        }
-                        p.fs.push(canonical);
-                    }
-                    None => return Err(format!("unknown effect `{item}` (known: io, fs:<dir>, time, rand)")),
+                    Some(dir) => p.fs.push(FsRoot::open(Path::new(dir))?),
+                    None => return Err(format!("unknown effect `{item}` (known: {KNOWN_GRANTS})")),
                 },
             }
         }
@@ -57,34 +86,50 @@ impl Permissions {
     /// but `fs:<dir>` is relative to `root` and must stay inside it, hidden entries (`.git`, `.qal`,
     /// ...) can neither be granted nor reached, and guest paths are resolved against `root`.
     pub fn parse_in(items: &[String], root: &Path) -> Result<Permissions, String> {
+        let given = root.to_path_buf();
         let root = root.canonicalize().map_err(|e| format!("project root {}: {e}", root.display()))?;
-        let mut p = Permissions { base: Some(root.clone()), no_hidden: true, ..Permissions::default() };
+        let mut p = Permissions { base: Some(root.clone()), no_hidden: true, db_dir: Some(root.join(".qal").join("db")), ..Permissions::default() };
         for item in items.iter().map(|s| s.trim()) {
             match item {
                 "io" => p.io = true,
                 "time" => p.time = true,
                 "rand" => p.rand = true,
                 "fs" => return Err("`fs` needs a directory: `fs:<dir>` relative to the project root, e.g. `fs:data` or `fs:.`".into()),
+                _ if is_db_item(item) => grant_db(&mut p, item)?,
+                _ if item == "net" || item.starts_with("net:") => p.net.push(NetGrant::parse(item)?),
                 _ => match item.strip_prefix("fs:") {
                     Some(dir) if dir.trim().is_empty() => return Err("`fs:` needs a directory: `fs:<dir>` relative to the project root, e.g. `fs:data` or `fs:.`".into()),
                     Some(dir) => {
                         let dir = dir.trim();
-                        require_open_flags()?;
                         let canonical = root.join(dir).canonicalize().map_err(|_| format!("fs:{dir}: no such directory in the project"))?;
                         let rel = canonical.strip_prefix(&root).map_err(|_| format!("fs:{dir}: outside the project root"))?;
                         if hidden(rel) {
                             return Err(format!("fs:{dir}: hidden directories (starting with `.`) cannot be granted"));
                         }
-                        if !canonical.is_dir() {
-                            return Err(format!("fs:{dir}: not a directory"));
-                        }
-                        p.fs.push(canonical);
+                        // Opened by the path as given, so guest paths may use either spelling of the root.
+                        let path = given.join(dir);
+                        p.fs.push(FsRoot::open(&path).map_err(|e| e.replace(&format!("fs:{}", path.display()), &format!("fs:{dir}")))?);
                     }
-                    None => return Err(format!("unknown effect `{item}` (known: io, fs:<dir>, time, rand)")),
+                    None => return Err(format!("unknown effect `{item}` (known: {KNOWN_GRANTS})")),
                 },
             }
         }
         Ok(p)
+    }
+
+    /// Sets where database files live (the CLI passes `<project>/.qal/db` of the store it found).
+    pub fn with_db_dir(mut self, dir: PathBuf) -> Permissions {
+        self.db_dir = Some(dir);
+        self
+    }
+
+    /// The directory of the database files.
+    pub fn db_dir(&self) -> PathBuf {
+        match (&self.db_dir, &self.base) {
+            (Some(d), _) => d.clone(),
+            (None, Some(b)) => b.join(".qal").join("db"),
+            (None, None) => PathBuf::from(".qal").join("db"),
+        }
     }
 
     pub fn allows(&self, effect: &str) -> bool {
@@ -93,214 +138,25 @@ impl Permissions {
             "time" => self.time,
             "rand" => self.rand,
             "fs" => !self.fs.is_empty(),
+            "db" => self.db.is_some(),
+            "net" => !self.net.is_empty(),
             _ => false,
         }
     }
 
-    fn inside(&self, p: &Path) -> bool {
-        self.fs.iter().any(|root| p.strip_prefix(root).is_ok_and(|rel| !(self.no_hidden && hidden(rel))))
-    }
-
-    /// A guest path as the host sees it: relative paths are taken from `base` if set.
-    fn resolve(&self, path: &str) -> PathBuf {
-        match &self.base {
-            Some(base) => base.join(path),
-            None => PathBuf::from(path),
-        }
-    }
-
-    /// Uniform refusal: identical for paths that exist and paths that do not, so file existence
-    /// outside the granted directories cannot be probed.
-    fn denied(path: &str) -> String {
-        format!("permission denied: `{path}` is outside the allowed directories")
-    }
-
-    /// A path that could not be resolved: the real error is only shown if the nearest existing
-    /// ancestor lies inside a granted directory, otherwise it is the uniform refusal.
-    fn unresolved(&self, p: &Path, path: &str, err: std::io::Error) -> String {
-        for anc in p.ancestors().skip(1) {
-            let anc = if anc.as_os_str().is_empty() { Path::new(".") } else { anc };
-            if let Ok(c) = anc.canonicalize() {
-                return if self.inside(&c) { format!("{path}: {err}") } else { Self::denied(path) };
-            }
-        }
-        Self::denied(path)
-    }
-
-    /// Resolves `path` (relative to the working directory) and checks it lies inside a granted directory.
-    /// For writing, the file itself may not exist yet, but its directory must.
-    pub fn check_path(&self, path: &str, for_write: bool) -> Result<PathBuf, String> {
-        let p = &self.resolve(path);
-        let resolved = match p.canonicalize() {
-            Ok(c) => c,
-            Err(e) if !for_write => return Err(self.unresolved(p, path, e)),
-            Err(e) => {
-                let parent = match p.parent() {
-                    Some(d) if !d.as_os_str().is_empty() => d,
-                    _ => Path::new("."),
-                };
-                let Some(name) = p.file_name() else { return Err(self.unresolved(p, path, e)) };
-                let full = match parent.canonicalize() {
-                    Ok(d) => d.join(name),
-                    Err(e) => return Err(self.unresolved(p, path, e)),
-                };
-                if self.inside(&full) && std::fs::symlink_metadata(p).is_ok() {
-                    // A dangling symlink "does not exist" but writing would follow it, possibly outside.
-                    return Err(format!("permission denied: `{path}` is a dangling symbolic link"));
-                }
-                full
-            }
+    /// Opens a guest path inside the granted directories (see [`crate::fs::open`]).
+    fn open(&self, path: &str, access: Access) -> Result<File, String> {
+        let base = match &self.base {
+            Some(b) => b.clone(),
+            None => std::env::current_dir().map_err(|e| format!("{path}: no working directory: {e}"))?,
         };
-        if self.inside(&resolved) {
-            Ok(resolved)
-        } else {
-            Err(Self::denied(path))
-        }
-    }
-
-    /// After opening, re-resolves `resolved` and requires that it is still inside a granted directory
-    /// and is the very file that was opened (guards against links swapped in after `check_path`).
-    pub fn verify_opened(&self, file: &File, resolved: &Path) -> Result<(), String> {
-        let changed = || format!("permission denied: `{}` changed while being opened", resolved.display());
-        let now = resolved.canonicalize().map_err(|_| changed())?;
-        if !self.inside(&now) {
-            return Err(changed());
-        }
-        let (a, b) = (file.metadata().map_err(|_| changed())?, std::fs::metadata(&now).map_err(|_| changed())?);
-        if same_file(&a, &b) {
-            Ok(())
-        } else {
-            Err(changed())
-        }
-    }
-
-    /// Checks, opens without following a final symlink and without blocking, and verifies that the
-    /// opened file is a regular file (a FIFO or device would block the host or never end).
-    fn open(&self, path: &str, for_write: bool) -> Result<File, String> {
-        let full = self.check_path(path, for_write)?;
-        let file = open_nofollow(&full, for_write).map_err(|e| format!("{path}: {e}"))?;
-        self.verify_opened(&file, &full)?;
-        if !file.metadata().map(|m| m.is_file()).unwrap_or(false) {
-            return Err(format!("{path}: not a regular file"));
-        }
-        Ok(file)
+        gfs::open(&self.fs, &base, path, self.no_hidden, access)
     }
 }
 
 /// True if a path below a granted directory has a component starting with `.`.
 fn hidden(rel: &Path) -> bool {
     rel.components().any(|c| c.as_os_str().to_string_lossy().starts_with('.'))
-}
-
-#[cfg(unix)]
-fn same_file(a: &std::fs::Metadata, b: &std::fs::Metadata) -> bool {
-    use std::os::unix::fs::MetadataExt;
-    a.dev() == b.dev() && a.ino() == b.ino()
-}
-
-#[cfg(not(unix))]
-fn same_file(_: &std::fs::Metadata, _: &std::fs::Metadata) -> bool {
-    true
-}
-
-/// `O_NOFOLLOW` where its value is known; `fs` is refused elsewhere (and on non-Unix targets,
-/// where `same_file` cannot verify the opened file) instead of silently opening less safely.
-const O_NOFOLLOW: Option<i32> = if cfg!(all(
-    unix,
-    any(target_os = "macos", target_os = "ios", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd", target_os = "dragonfly")
-)) {
-    Some(0x0100)
-} else if cfg!(all(
-    any(target_os = "linux", target_os = "android"),
-    any(target_arch = "aarch64", target_arch = "arm", target_arch = "powerpc", target_arch = "powerpc64", target_arch = "m68k")
-)) {
-    Some(0o100000)
-} else if cfg!(all(
-    any(target_os = "linux", target_os = "android"),
-    any(
-        target_arch = "x86",
-        target_arch = "x86_64",
-        target_arch = "riscv32",
-        target_arch = "riscv64",
-        target_arch = "loongarch64",
-        target_arch = "s390x",
-        target_arch = "mips",
-        target_arch = "mips64",
-        target_arch = "sparc",
-        target_arch = "sparc64"
-    )
-)) {
-    Some(0o400000)
-} else {
-    None
-};
-
-/// `O_NONBLOCK` where its value is known: opening a FIFO must not wait for a writer or reader.
-const O_NONBLOCK: Option<i32> = if cfg!(all(
-    unix,
-    any(target_os = "macos", target_os = "ios", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd", target_os = "dragonfly")
-)) {
-    Some(0x0004)
-} else if cfg!(all(any(target_os = "linux", target_os = "android"), any(target_arch = "mips", target_arch = "mips64"))) {
-    Some(0o200)
-} else if cfg!(all(any(target_os = "linux", target_os = "android"), any(target_arch = "sparc", target_arch = "sparc64"))) {
-    Some(0x4000)
-} else if cfg!(all(
-    any(target_os = "linux", target_os = "android"),
-    any(
-        target_arch = "aarch64",
-        target_arch = "arm",
-        target_arch = "powerpc",
-        target_arch = "powerpc64",
-        target_arch = "m68k",
-        target_arch = "x86",
-        target_arch = "x86_64",
-        target_arch = "riscv32",
-        target_arch = "riscv64",
-        target_arch = "loongarch64",
-        target_arch = "s390x"
-    )
-)) {
-    Some(0o4000)
-} else {
-    None
-};
-
-fn require_nofollow(flag: Option<i32>) -> Result<i32, String> {
-    flag.ok_or_else(|| "the `fs` effect is not supported on this platform: files cannot be opened without following symbolic links".into())
-}
-
-/// The flags every `fs` open uses (`O_NOFOLLOW | O_NONBLOCK`), or why `fs` is unavailable here.
-fn require_open_flags() -> Result<i32, String> {
-    let nofollow = require_nofollow(O_NOFOLLOW)?;
-    let nonblock = O_NONBLOCK.ok_or("the `fs` effect is not supported on this platform: files cannot be opened without blocking")?;
-    Ok(nofollow | nonblock)
-}
-
-/// Opens for reading, or for writing (created if missing, not truncated: the caller truncates once
-/// verified), never following a final symlink and never blocking (FIFOs, devices).
-///
-/// Known limitation: only the final path component is opened without following links, so a
-/// co-located process that swaps a directory of the path for a symlink between `check_path` and
-/// this call can make a write create an EMPTY file outside the granted directories (`verify_opened`
-/// then refuses to write to it). The proper fix, opening with `openat` relative to a verified
-/// parent directory descriptor, is planned for Phase 3.
-fn open_nofollow(path: &Path, write: bool) -> std::io::Result<File> {
-    let flag = require_open_flags().map_err(std::io::Error::other)?;
-    let mut o = std::fs::OpenOptions::new();
-    if write {
-        o.write(true).create(true);
-    } else {
-        o.read(true);
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        o.custom_flags(flag);
-    }
-    #[cfg(not(unix))]
-    let _ = flag;
-    o.open(path)
 }
 
 fn read_text(file: File, path: &str, limit: usize) -> Result<Result<String, String>, usize> {
@@ -316,6 +172,36 @@ fn read_text(file: File, path: &str, limit: usize) -> Result<Result<String, Stri
         return Err(bytes.len());
     }
     Ok(String::from_utf8(bytes).map_err(|_| format!("{path}: not valid UTF-8")))
+}
+
+/// Per-execution budgets besides fuel, time and memory (Phase 3 spec §2.5, §5.4).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Limits {
+    /// Bytes `write_file` may write in total.
+    pub fs_write_bytes: usize,
+    /// Number of `write_file` calls.
+    pub fs_writes: usize,
+    /// Rows one `db_query` may return (more is `Err(DbTooLarge)`).
+    pub db_max_rows: usize,
+    /// Size limit of a database file in MiB (`max_page_count`; reaching it is `Err(DbFull)`).
+    pub db_max_mib: usize,
+    /// Outgoing `http` calls per execution.
+    pub net_calls: usize,
+}
+
+impl Default for Limits {
+    fn default() -> Limits {
+        Limits { fs_write_bytes: 64 << 20, fs_writes: 256, db_max_rows: 10_000, db_max_mib: 1024, net_calls: 16 }
+    }
+}
+
+/// Which budget an execution used up: reported as `budget_exceeded` (E0522).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BudgetHit {
+    /// `fs_bytes`, `fs_writes` or `net_calls`.
+    pub kind: &'static str,
+    pub budget: usize,
+    pub used: usize,
 }
 
 /// A failure reported by the guest through `qal_host.fail`.
@@ -334,11 +220,56 @@ pub struct HostState {
     pub perms: Permissions,
     pub rng: u64,
     pub limits: StoreLimits,
-    /// Memory limit in bytes; also caps captured stdout and host-side reads.
+    /// Memory limit in bytes; also the budget of everything the host buffers (`host_used`).
     pub limit: usize,
     /// If set, printed output beyond this many bytes is counted in `stdout_bytes` but not kept.
     pub stdout_limit: Option<usize>,
     pub stdout_bytes: usize,
+    /// Bytes the host holds for this execution (kept output, file contents, ...), at most `limit`.
+    pub host_used: usize,
+    /// Set when `host_used` would have exceeded `limit` (the error then says `host: true`).
+    pub host_oom: bool,
+    pub budgets: Limits,
+    pub budget_hit: Option<BudgetHit>,
+    pub fs_bytes: usize,
+    pub fs_writes: usize,
+    /// The execution's database connection (inside its transaction), if `db` is granted and used.
+    pub db: Option<Db>,
+    pub net_calls: usize,
+    /// When the execution's wall-clock limit ends (outgoing requests never wait longer).
+    pub deadline: Option<std::time::Instant>,
+    /// Name resolution for `net` (the system resolver; replaced in tests).
+    pub lookup: Lookup,
+    /// Size of the guest memory when the call ended (for the service log).
+    pub mem_bytes: usize,
+}
+
+impl HostState {
+    /// A fresh state for one execution.
+    pub fn new(perms: Permissions, stdin: Box<dyn BufRead + Send>, limit: usize, budgets: Limits) -> HostState {
+        HostState {
+            failure: None,
+            stdout: Vec::new(),
+            stdin,
+            perms,
+            rng: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos() as u64).unwrap_or(1),
+            limits: wasmtime::StoreLimitsBuilder::new().memory_size(limit).build(),
+            limit,
+            stdout_limit: None,
+            stdout_bytes: 0,
+            host_used: 0,
+            host_oom: false,
+            budgets,
+            budget_hit: None,
+            fs_bytes: 0,
+            fs_writes: 0,
+            db: None,
+            net_calls: 0,
+            deadline: None,
+            lookup: net::system_lookup,
+            mem_bytes: 0,
+        }
+    }
 }
 
 fn memory(c: &mut Caller<'_, HostState>) -> Result<Memory, wasmtime::Error> {
@@ -353,13 +284,226 @@ fn guest_str(c: &mut Caller<'_, HostState>, ptr: i32) -> Result<String, wasmtime
     read_str(mem.data(&c), ptr as u32).ok_or_else(|| wasmtime::Error::msg("invalid string pointer"))
 }
 
-/// Reports a host-side allocation over the memory limit exactly like a guest allocation failure.
-fn host_oom(c: &mut Caller<'_, HostState>, requested: usize) -> wasmtime::Error {
+/// Reports a host-side allocation over the memory limit like a guest allocation failure, marked
+/// as the host's.
+pub fn host_oom(c: &mut Caller<'_, HostState>, requested: usize) -> wasmtime::Error {
     if let Ok(mem) = memory(c) {
         let _ = mem.write(&mut *c, OOM_SCRATCH as usize, &(requested as i64).to_le_bytes());
     }
+    c.data_mut().host_oom = true;
     c.data_mut().failure = Some(Failure { kind: FAIL_OOM, func: 0, site: 0, vals: 0 });
     wasmtime::Error::msg("out of memory")
+}
+
+/// Counts `bytes` against the execution's host budget (= its memory limit).
+pub fn charge(c: &mut Caller<'_, HostState>, bytes: usize) -> Result<(), wasmtime::Error> {
+    let requested = c.data().host_used.saturating_add(bytes);
+    if requested > c.data().limit {
+        return Err(host_oom(c, requested));
+    }
+    c.data_mut().host_used = requested;
+    Ok(())
+}
+
+/// Ends the execution with `budget_exceeded`.
+fn budget_exceeded(c: &mut Caller<'_, HostState>, kind: &'static str, budget: usize, used: usize) -> wasmtime::Error {
+    c.data_mut().budget_hit = Some(BudgetHit { kind, budget, used });
+    c.data_mut().failure = Some(Failure { kind: FAIL_BUDGET, func: 0, site: 0, vals: 0 });
+    wasmtime::Error::msg("budget exceeded")
+}
+
+/// The prelude types: everything host functions read and write is built from them.
+pub fn prelude_program() -> &'static TProgram {
+    static PRELUDE: std::sync::OnceLock<TProgram> = std::sync::OnceLock::new();
+    PRELUDE.get_or_init(|| TProgram { types: qal_core::prelude::types(), ..TProgram::default() })
+}
+
+/// The guest's memory and allocator, from inside a host function.
+fn guest(c: &mut Caller<'_, HostState>) -> Result<Guest, wasmtime::Error> {
+    let mem = memory(c)?;
+    let alloc = c.get_export("qal_alloc").and_then(Extern::into_func).ok_or_else(|| wasmtime::Error::msg("no qal_alloc"))?;
+    Ok(Guest::new(mem, alloc.typed::<i64, i32>(&c)?))
+}
+
+/// Writes a host-built value of a prelude-based type into guest memory; returns the pointer.
+fn write_value(c: &mut Caller<'_, HostState>, ty: &Type, v: &Value) -> Result<i32, wasmtime::Error> {
+    let g = guest(c)?;
+    match g.encode(c, prelude_program(), ty, v) {
+        Ok(slot) => Ok(slot as i32),
+        Err(crate::guest::EncodeError::Trap(e)) => Err(e),
+        Err(crate::guest::EncodeError::Mismatch(m)) => Err(wasmtime::Error::msg(format!("internal error: a host value does not match its type: {m}"))),
+    }
+}
+
+/// Reads a value of a prelude-based type from guest memory, exactly; the host copy counts against
+/// the host budget.
+fn read_value(c: &mut Caller<'_, HostState>, ty: &Type, ptr: i32) -> Result<Value, wasmtime::Error> {
+    let mem = memory(c)?;
+    let room = c.data().limit.saturating_sub(c.data().host_used);
+    match decode_exact_counted(prelude_program(), mem.data(&c), ty, ptr as u32 as i64, room) {
+        Ok((v, bytes)) => {
+            charge(c, bytes)?;
+            Ok(v)
+        }
+        Err(e) if e.starts_with("the value is larger") => {
+            let requested = c.data().host_used.saturating_add(room).saturating_add(1);
+            Err(host_oom(c, requested))
+        }
+        Err(e) => Err(wasmtime::Error::msg(format!("cannot read the argument: {e}"))),
+    }
+}
+
+fn named(n: &str) -> Type {
+    Type::Named(n.to_string())
+}
+
+fn ok(v: Value) -> Value {
+    Value::Variant("Ok".into(), vec![v])
+}
+
+fn err(v: Value) -> Value {
+    Value::Variant("Err".into(), vec![v])
+}
+
+fn variant(name: &str, payload: Vec<Value>) -> Value {
+    Value::Variant(name.into(), payload)
+}
+
+/// SQL parameters from a guest `List[SqlValue]`.
+fn sql_params(v: Value) -> Result<Vec<SqlVal>, wasmtime::Error> {
+    let Value::List(xs) = v else { return Err(wasmtime::Error::msg("internal error: parameters are not a list")) };
+    xs.into_iter()
+        .map(|x| match x {
+            Value::Variant(n, p) => Ok(match (n.as_str(), p.as_slice()) {
+                ("SqlNull", []) => SqlVal::Null,
+                ("SqlInt", [Value::Int(k)]) => SqlVal::Int(*k),
+                ("SqlFloat", [Value::Float(f)]) => SqlVal::Float(*f),
+                ("SqlText", [Value::Str(s)]) => SqlVal::Text(s.clone()),
+                _ => return Err(wasmtime::Error::msg("internal error: malformed SqlValue")),
+            }),
+            _ => Err(wasmtime::Error::msg("internal error: malformed SqlValue")),
+        })
+        .collect()
+}
+
+fn sql_value(v: SqlVal) -> Value {
+    match v {
+        SqlVal::Null => variant("SqlNull", vec![]),
+        SqlVal::Int(n) => variant("SqlInt", vec![Value::Int(n)]),
+        SqlVal::Float(x) => variant("SqlFloat", vec![Value::Float(x)]),
+        SqlVal::Text(s) => variant("SqlText", vec![Value::Str(s)]),
+    }
+}
+
+/// A `DbError` value, or the host OOM trap for results larger than the budget.
+fn db_error(c: &mut Caller<'_, HostState>, e: DbErr) -> Result<Value, wasmtime::Error> {
+    Ok(match e {
+        DbErr::Constraint(m) => variant("DbConstraint", vec![Value::Str(m)]),
+        DbErr::Sql(m) => variant("DbSql", vec![Value::Str(m)]),
+        DbErr::Busy => variant("DbBusy", vec![]),
+        DbErr::Full => variant("DbFull", vec![]),
+        DbErr::TooLarge => variant("DbTooLarge", vec![]),
+        DbErr::HostOom(bytes) => {
+            let requested = c.data().host_used.saturating_add(bytes);
+            return Err(host_oom(c, requested));
+        }
+        DbErr::Interrupted => {
+            c.data_mut().failure = Some(Failure { kind: FAIL_TIMEOUT, func: 0, site: 0, vals: 0 });
+            return Err(wasmtime::Error::msg("wall-clock limit exceeded"));
+        }
+    })
+}
+
+/// Runs `db_exec` / `db_query` for the guest: reads the SQL and parameters, runs the statement on
+/// the execution's connection and writes the `Result` into guest memory.
+fn db_call(c: &mut Caller<'_, HostState>, sql: i32, params: i32, query: bool) -> Result<i32, wasmtime::Error> {
+    let sql = guest_str(c, sql)?;
+    let params = sql_params(read_value(c, &Type::list(named("SqlValue")), params)?)?;
+    let (max_rows, room) = (c.data().budgets.db_max_rows, c.data().limit.saturating_sub(c.data().host_used));
+    let no_db = || DbErr::Sql("no database is open for this execution".into());
+    let (ty, result) = if query {
+        let r = c.data().db.as_ref().ok_or_else(no_db).and_then(|db| db.query(&sql, &params, max_rows, room));
+        let v = match r {
+            Ok(rows) => {
+                charge(c, rows.bytes)?;
+                let cols = Value::List(rows.columns.into_iter().map(Value::Str).collect());
+                let cells = Value::List(rows.rows.into_iter().map(|r| Value::List(r.into_iter().map(sql_value).collect())).collect());
+                ok(Value::Record("DbRows".into(), vec![("columns".into(), cols), ("rows".into(), cells)]))
+            }
+            Err(e) => err(db_error(c, e)?),
+        };
+        (Type::result(named("DbRows"), named("DbError")), v)
+    } else {
+        let r = c.data().db.as_ref().ok_or_else(no_db).and_then(|db| db.exec(&sql, &params));
+        let v = match r {
+            Ok(n) => ok(Value::Int(n)),
+            Err(e) => err(db_error(c, e)?),
+        };
+        (Type::result(Type::Int, named("DbError")), v)
+    };
+    write_value(c, &ty, &result)
+}
+
+fn header_list(headers: Vec<(String, String)>) -> Value {
+    Value::List(headers.into_iter().map(|(n, v)| Value::Record("HttpHeader".into(), vec![("name".into(), Value::Str(n)), ("value".into(), Value::Str(v))])).collect())
+}
+
+/// The fields of a decoded `HttpHeader` list.
+pub fn headers_of(v: &Value) -> Option<Vec<(String, String)>> {
+    let Value::List(xs) = v else { return None };
+    xs.iter()
+        .map(|h| match h {
+            Value::Record(_, f) => match f.as_slice() {
+                [(_, Value::Str(n)), (_, Value::Str(v))] => Some((n.clone(), v.clone())),
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect()
+}
+
+fn field<'v>(fields: &'v [(String, Value)], name: &str) -> Option<&'v Value> {
+    fields.iter().find(|(n, _)| n == name).map(|(_, v)| v)
+}
+
+fn call_of(v: &Value) -> Option<Call> {
+    let Value::Record(_, f) = v else { return None };
+    let s = |n: &str| match field(f, n) {
+        Some(Value::Str(s)) => Some(s.clone()),
+        _ => None,
+    };
+    Some(Call { method: s("method")?, url: s("url")?, headers: headers_of(field(f, "headers")?)?, body: s("body")? })
+}
+
+/// Runs `http` for the guest: budget, grants and SSRF checks, the request, and the `Result`.
+fn net_call(c: &mut Caller<'_, HostState>, ptr: i32) -> Result<i32, wasmtime::Error> {
+    let budget = c.data().budgets.net_calls;
+    let calls = c.data().net_calls + 1;
+    if calls > budget {
+        return Err(budget_exceeded(c, "net_calls", budget, calls));
+    }
+    c.data_mut().net_calls = calls;
+    let v = read_value(c, &named("HttpCall"), ptr)?;
+    let call = call_of(&v).ok_or_else(|| wasmtime::Error::msg("internal error: malformed HttpCall"))?;
+    let deadline = c.data().deadline;
+    let left = || deadline.map_or(net::TOTAL_TIMEOUT, |d| d.saturating_duration_since(std::time::Instant::now()));
+    let lookup = c.data().lookup;
+    // The time left is taken again after the lookup, so the whole call stays within the limit.
+    let result = net::plan(&c.data().perms.net, &call, lookup, left().min(net::CONNECT_TIMEOUT)).and_then(|(url, addrs)| net::send(&call, url, addrs, left()));
+    let v = match result {
+        Ok(reply) => {
+            charge(c, reply.body.len() + reply.headers.iter().map(|(n, v)| n.len() + v.len() + 16).sum::<usize>())?;
+            ok(Value::Record("HttpResponse".into(), vec![("status".into(), Value::Int(reply.status)), ("headers".into(), header_list(reply.headers)), ("body".into(), Value::Str(reply.body))]))
+        }
+        Err(e) => err(match e {
+            NetErr::Denied(m) => variant("NetDenied", vec![Value::Str(m)]),
+            NetErr::Invalid(m) => variant("NetInvalid", vec![Value::Str(m)]),
+            NetErr::Connect(m) => variant("NetConnect", vec![Value::Str(m)]),
+            NetErr::Timeout => variant("NetTimeout", vec![]),
+            NetErr::TooLarge => variant("NetTooLarge", vec![]),
+        }),
+    };
+    write_value(c, &Type::result(named("HttpResponse"), named("NetError")), &v)
 }
 
 /// Allocates a Str in guest memory via the exported allocator (which may fail with out_of_memory).
@@ -388,6 +532,28 @@ fn next_random(state: &mut u64) -> u64 {
     z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
     z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
     z ^ (z >> 31)
+}
+
+/// Keeps `line` of printed output: up to `stdout_limit` (the rest is only counted), or up to the
+/// host budget (then `out_of_memory`).
+fn print_line(c: &mut Caller<'_, HostState>, line: &[u8]) -> Result<(), wasmtime::Error> {
+    if let Some(keep) = c.data().stdout_limit {
+        let data = c.data_mut();
+        data.stdout_bytes = data.stdout_bytes.saturating_add(line.len());
+        let room = keep.saturating_sub(data.stdout.len()).min(line.len());
+        charge(c, room)?;
+        c.data_mut().stdout.extend_from_slice(&line[..room]);
+        return Ok(());
+    }
+    let room = c.data().limit.saturating_sub(c.data().host_used);
+    if line.len() > room {
+        c.data_mut().stdout.extend_from_slice(&line[..room]);
+        let requested = c.data().host_used + line.len();
+        return Err(host_oom(c, requested));
+    }
+    charge(c, line.len())?;
+    c.data_mut().stdout.extend_from_slice(line);
+    Ok(())
 }
 
 /// Defines `fail`, the pure helpers, the functions of every granted effect, and stubs for the
@@ -433,36 +599,18 @@ pub fn link(linker: &mut Linker<HostState>, perms: &Permissions) -> Result<(), w
     })?;
     if perms.io {
         linker.func_wrap(HOST_MODULE, host::PRINT, |mut c: Caller<'_, HostState>, p: i32| {
-            let s = guest_str(&mut c, p)?;
-            let limit = c.data().limit;
-            let mut line = s.into_bytes();
+            let mut line = guest_str(&mut c, p)?.into_bytes();
             line.push(b'\n');
-            if let Some(keep) = c.data().stdout_limit {
-                let data = c.data_mut();
-                data.stdout_bytes = data.stdout_bytes.saturating_add(line.len());
-                let room = keep.saturating_sub(data.stdout.len()).min(line.len());
-                data.stdout.extend_from_slice(&line[..room]);
-                return Ok(());
-            }
-            let out = &mut c.data_mut().stdout;
-            let requested = out.len() + line.len();
-            if requested > limit {
-                out.extend_from_slice(&line[..limit.saturating_sub(out.len())]);
-                return Err(host_oom(&mut c, requested));
-            }
-            out.extend_from_slice(&line);
-            Ok(())
+            print_line(&mut c, &line)
         })?;
         linker.func_wrap(HOST_MODULE, host::READ_LINE, |mut c: Caller<'_, HostState>| {
             let mut buf = Vec::new();
-            let limit = c.data().limit;
-            let n = c.data_mut().stdin.by_ref().take(limit as u64 + 1).read_until(b'\n', &mut buf).map_err(wasmtime::Error::msg)?;
+            let room = c.data().limit.saturating_sub(c.data().host_used);
+            let n = c.data_mut().stdin.by_ref().take(room as u64 + 1).read_until(b'\n', &mut buf).map_err(wasmtime::Error::msg)?;
             if n == 0 {
                 return Ok(-1);
             }
-            if n > limit {
-                return Err(host_oom(&mut c, n));
-            }
+            charge(&mut c, n)?;
             if buf.ends_with(b"\n") {
                 buf.pop();
                 if buf.ends_with(b"\r") {
@@ -473,22 +621,23 @@ pub fn link(linker: &mut Linker<HostState>, perms: &Permissions) -> Result<(), w
         })?;
         linker.func_wrap(HOST_MODULE, host::READ_ALL, |mut c: Caller<'_, HostState>| {
             let mut buf = Vec::new();
-            let limit = c.data().limit;
-            let n = c.data_mut().stdin.by_ref().take(limit as u64 + 1).read_to_end(&mut buf).map_err(wasmtime::Error::msg)?;
-            if n > limit {
-                return Err(host_oom(&mut c, n));
-            }
+            let room = c.data().limit.saturating_sub(c.data().host_used);
+            let n = c.data_mut().stdin.by_ref().take(room as u64 + 1).read_to_end(&mut buf).map_err(wasmtime::Error::msg)?;
+            charge(&mut c, n)?;
             new_str(&mut c, &String::from_utf8_lossy(&buf))
         })?;
     }
     if !perms.fs.is_empty() {
         linker.func_wrap(HOST_MODULE, host::READ_FILE, |mut c: Caller<'_, HostState>, p: i32| {
             let path = guest_str(&mut c, p)?;
-            let limit = c.data().limit;
-            let result = match c.data().perms.open(&path, false) {
-                Ok(file) => match read_text(file, &path, limit) {
+            let room = c.data().limit.saturating_sub(c.data().host_used);
+            let result = match c.data().perms.open(&path, Access::Read) {
+                Ok(file) => match read_text(file, &path, room) {
                     Ok(r) => r,
-                    Err(size) => return Err(host_oom(&mut c, size)),
+                    Err(size) => {
+                        let requested = c.data().host_used.saturating_add(size);
+                        return Err(host_oom(&mut c, requested));
+                    }
                 },
                 Err(e) => Err(e),
             };
@@ -496,19 +645,37 @@ pub fn link(linker: &mut Linker<HostState>, perms: &Permissions) -> Result<(), w
                 Ok(s) => (1, s),
                 Err(e) => (0, e),
             };
+            charge(&mut c, text.len())?;
             Ok((ok, new_str(&mut c, &text)?))
         })?;
         linker.func_wrap(HOST_MODULE, host::WRITE_FILE, |mut c: Caller<'_, HostState>, p: i32, content: i32| {
             let path = guest_str(&mut c, p)?;
             let text = guest_str(&mut c, content)?;
-            let result = c.data().perms.open(&path, true).and_then(|mut file| {
-                file.set_len(0).and_then(|_| file.write_all(text.as_bytes())).map_err(|e| format!("{path}: {e}"))
-            });
+            let b = c.data().budgets;
+            let (writes, bytes) = (c.data().fs_writes + 1, c.data().fs_bytes.saturating_add(text.len()));
+            if writes > b.fs_writes {
+                return Err(budget_exceeded(&mut c, "fs_writes", b.fs_writes, writes));
+            }
+            if bytes > b.fs_write_bytes {
+                return Err(budget_exceeded(&mut c, "fs_bytes", b.fs_write_bytes, bytes));
+            }
+            c.data_mut().fs_writes = writes;
+            let result = c.data().perms.open(&path, Access::Write).and_then(|mut file| file.write_all(text.as_bytes()).map_err(|e| format!("{path}: {e}")));
             match result {
-                Ok(()) => Ok((1, 0)),
+                Ok(()) => {
+                    c.data_mut().fs_bytes = bytes;
+                    Ok((1, 0))
+                }
                 Err(e) => Ok((0, new_str(&mut c, &e)?)),
             }
         })?;
+    }
+    if !perms.net.is_empty() {
+        linker.func_wrap(HOST_MODULE, host::NET_HTTP, |mut c: Caller<'_, HostState>, call: i32| net_call(&mut c, call))?;
+    }
+    if perms.db.is_some() {
+        linker.func_wrap(HOST_MODULE, host::DB_EXEC, |mut c: Caller<'_, HostState>, sql: i32, params: i32| db_call(&mut c, sql, params, false))?;
+        linker.func_wrap(HOST_MODULE, host::DB_QUERY, |mut c: Caller<'_, HostState>, sql: i32, params: i32| db_call(&mut c, sql, params, true))?;
     }
     if perms.time {
         linker.func_wrap(HOST_MODULE, host::NOW_MS, || {
@@ -537,68 +704,11 @@ mod tests {
         let dir = std::env::temp_dir();
         let p = Permissions::parse(&format!("fs:{}", dir.display())).unwrap();
         assert!(p.allows("fs"));
+        assert_eq!(p.fs[0].path, dir.canonicalize().unwrap());
         assert!(Permissions::parse("fs").unwrap_err().contains("needs a directory"));
-        assert!(Permissions::parse("net").unwrap_err().contains("unknown effect `net`"));
+        assert!(Permissions::parse("web").unwrap_err().contains("unknown effect `web`"));
         assert!(Permissions::parse("fs:/definitely/not/here").is_err());
         assert_eq!(Permissions::parse("").unwrap(), Permissions::default());
-    }
-
-    #[test]
-    fn fs_paths_must_stay_inside_granted_directories() {
-        let root = std::env::temp_dir().join(format!("qal-perm-{}", std::process::id()));
-        let inside = root.join("data");
-        std::fs::create_dir_all(&inside).unwrap();
-        std::fs::write(root.join("secret.txt"), "x").unwrap();
-        std::fs::write(inside.join("a.txt"), "a").unwrap();
-        let p = Permissions::parse(&format!("fs:{}", inside.display())).unwrap();
-        assert!(p.check_path(&inside.join("a.txt").to_string_lossy(), false).is_ok());
-        assert!(p.check_path(&inside.join("new.txt").to_string_lossy(), true).is_ok());
-        let escape = inside.join("../secret.txt");
-        assert!(p.check_path(&escape.to_string_lossy(), false).unwrap_err().starts_with("permission denied"));
-        assert!(p.check_path(&root.join("other.txt").to_string_lossy(), true).unwrap_err().starts_with("permission denied"));
-        #[cfg(unix)]
-        {
-            let link = inside.join("link.txt");
-            let _ = std::fs::remove_file(&link);
-            std::os::unix::fs::symlink(root.join("created-outside.txt"), &link).unwrap();
-            assert!(p.check_path(&link.to_string_lossy(), true).unwrap_err().contains("dangling symbolic link"));
-            let back = inside.join("back.txt");
-            let _ = std::fs::remove_file(&back);
-            std::os::unix::fs::symlink(root.join("secret.txt"), &back).unwrap();
-            assert!(p.check_path(&back.to_string_lossy(), false).unwrap_err().starts_with("permission denied"));
-        }
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn opening_refuses_final_symlinks_and_detects_swapped_files() {
-        let root = std::env::temp_dir().join(format!("qal-open-{}", std::process::id()));
-        let inside = root.join("data");
-        std::fs::create_dir_all(&inside).unwrap();
-        std::fs::write(root.join("secret.txt"), "x").unwrap();
-        std::fs::write(inside.join("a.txt"), "a").unwrap();
-        let link = inside.join("swap");
-        let _ = std::fs::remove_file(&link);
-        std::os::unix::fs::symlink(root.join("secret.txt"), &link).unwrap();
-        assert!(open_nofollow(&link, false).is_err());
-        assert!(open_nofollow(&link, true).is_err());
-        assert!(open_nofollow(&inside.join("a.txt"), false).is_ok());
-        let p = Permissions::parse(&format!("fs:{}", inside.display())).unwrap();
-        let a = open_nofollow(&inside.join("a.txt"), false).unwrap();
-        let outside = open_nofollow(&root.join("secret.txt"), false).unwrap();
-        let canon = inside.join("a.txt").canonicalize().unwrap();
-        assert!(p.verify_opened(&a, &canon).is_ok());
-        assert!(p.verify_opened(&outside, &canon).unwrap_err().starts_with("permission denied"));
-        assert!(p.verify_opened(&outside, &root.join("secret.txt").canonicalize().unwrap()).unwrap_err().starts_with("permission denied"));
-    }
-
-    #[test]
-    fn fs_needs_a_known_nofollow_flag() {
-        assert_eq!(require_nofollow(Some(0x100)), Ok(0x100));
-        let e = require_nofollow(None).unwrap_err();
-        assert!(e.starts_with("the `fs` effect is not supported on this platform"), "{e}");
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
-        assert!(O_NOFOLLOW.is_some(), "supported on the development platforms");
     }
 
     #[test]

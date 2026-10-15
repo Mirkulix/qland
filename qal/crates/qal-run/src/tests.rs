@@ -160,8 +160,8 @@ fn main_gets_args_and_prints() {
                  Some(n) => { print(\"hello \" ++ n); print(from_int(len(args))); 0 },\n\
                }";
     let r = main_runner(src, "io");
-    assert_eq!(r.run_main(&["ada".into(), "x".into()]), Outcome { result: Ok(Value::Int(0)), stdout: "hello ada\n2\n".into(), stdout_bytes: 12 });
-    assert_eq!(r.run_main(&[]), Outcome { result: Ok(Value::Int(2)), stdout: "usage: hello <name>\n".into(), stdout_bytes: 20 });
+    assert_eq!(r.run_main(&["ada".into(), "x".into()]), Outcome { result: Ok(Value::Int(0)), stdout: "hello ada\n2\n".into(), stdout_bytes: 12, db: "none" });
+    assert_eq!(r.run_main(&[]), Outcome { result: Ok(Value::Int(2)), stdout: "usage: hello <name>\n".into(), stdout_bytes: 20, db: "none" });
 }
 
 #[test]
@@ -455,7 +455,7 @@ fn confined_permissions_resolve_against_the_root_and_hide_dot_entries() {
     assert!(grant(&["fs"]).unwrap_err().contains("needs a directory"));
     assert!(grant(&["fs:"]).unwrap_err().contains("needs a directory"));
     assert!(grant(&["fs: "]).unwrap_err().contains("needs a directory"));
-    assert!(grant(&["net"]).unwrap_err().contains("unknown effect"));
+    assert!(grant(&["web"]).unwrap_err().contains("unknown effect"));
     let whole = grant(&["io", "fs:."]).unwrap();
     assert!(whole.io && whole.no_hidden && whole.base.is_some());
     let r = main_runner(FILE_PROGRAM, "").with_permissions(whole);
@@ -517,7 +517,399 @@ fn confined_fs_path_is_trimmed() {
     let root = std::env::temp_dir().join(format!("qal-run-trim-{}", std::process::id()));
     std::fs::create_dir_all(root.join("data")).unwrap();
     let p = Permissions::parse_in(&["fs: data".to_string()], &root).unwrap();
-    assert_eq!(p.fs, vec![root.join("data").canonicalize().unwrap()]);
+    assert_eq!(p.fs.iter().map(|r| r.path.clone()).collect::<Vec<_>>(), vec![root.join("data").canonicalize().unwrap()]);
+}
+
+#[test]
+fn records_and_enums_are_passed_as_arguments() {
+    let r = runner(
+        "type P = { x: Int, tags: List[Str] }\ntype E = A | B(P, Option[Int])\n\
+         fn echo(e: E) -> E = e\nfn sum(ps: List[P]) -> Int = fold(ps, 0, add)\nfn add(acc: Int, p: P) -> Int = acc + p.x\n\
+         fn path(rq: HttpRequest) -> Str = rq.method ++ \" \" ++ rq.path ++ \" \" ++ join(map(rq.headers, hname), \",\")\nfn hname(h: HttpHeader) -> Str = h.name\n\
+         fn same(a: Result[Str, Int], b: Result[Str, Int]) -> Bool = a == b",
+    );
+    let p = |x: i64| Value::Record("P".into(), vec![("x".into(), Value::Int(x)), ("tags".into(), Value::List(vec![Value::Str("t".into())]))]);
+    let b = Value::Variant("B".into(), vec![p(1), Value::Variant("Some".into(), vec![Value::Int(7)])]);
+    assert_eq!(r.call("echo", std::slice::from_ref(&b)), Ok(b));
+    assert_eq!(r.call("echo", &[Value::Variant("A".into(), vec![])]), Ok(Value::Variant("A".into(), vec![])));
+    assert_eq!(r.call("sum", &[Value::List(vec![p(2), p(3)])]), Ok(Value::Int(5)));
+    let h = |n: &str| Value::Record("HttpHeader".into(), vec![("name".into(), Value::Str(n.into())), ("value".into(), Value::Str("v".into()))]);
+    let rq = Value::Record("HttpRequest".into(), vec![
+        ("method".into(), Value::Str("GET".into())),
+        ("path".into(), Value::Str("/todos".into())),
+        ("query".into(), Value::Str(String::new())),
+        ("headers".into(), Value::List(vec![h("host"), h("accept")])),
+        ("body".into(), Value::Str(String::new())),
+    ]);
+    assert_eq!(r.call("path", &[rq]), Ok(Value::Str("GET /todos host,accept".into())));
+    let ok = Value::Variant("Ok".into(), vec![Value::Str("a".into())]);
+    assert_eq!(r.call("same", &[ok.clone(), ok]), Ok(Value::Bool(true)));
+    let e = r.call("echo", &[Value::Variant("C".into(), vec![])]).unwrap_err();
+    assert_eq!((e.kind, e.message.as_str()), ("bad_args", "argument 0 (`e`): E has no variant `C`"));
+    let e = r.call("sum", &[Value::List(vec![Value::Record("P".into(), vec![("x".into(), Value::Int(1))])])]).unwrap_err();
+    assert_eq!(e.kind, "bad_args");
+}
+
+#[test]
+fn host_buffers_count_against_the_memory_limit() {
+    let root = std::env::temp_dir().join(format!("qal-run-hostmem-{}", std::process::id()));
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("big.txt"), vec![b'x'; 600 << 10]).unwrap();
+    // 600 KiB of kept output plus a 600 KiB file exceed a 1 MiB limit together, not alone.
+    let src = "fn main(args: List[Str]) -> Int !fs !io = { emit(15, slice(join(map(range(0, 4096), ten), \"\"), 0, 40959)); match read_file(match get(args, 0) { Some(p) => p, None => \"\" }) { Ok(s) => len(s), Err(_) => 0 - 1 } }\n\
+               fn emit(n: Int, line: Str) -> Unit !io = if n == 0 then () else { print(line); emit(n - 1, line) }\n\
+               fn ten(i: Int) -> Str = \"0123456789\"";
+    let path = root.join("big.txt").to_string_lossy().into_owned();
+    let r = main_runner(src, &format!("io,fs:{}", root.display())).with_memory_limit(4 << 20);
+    assert_eq!(r.run_main(std::slice::from_ref(&path)).result, Ok(Value::Int(600 << 10)));
+    let r = main_runner(src, &format!("io,fs:{}", root.display())).with_memory_limit(1 << 20).with_stdout_limit(usize::MAX);
+    let e = r.run_main(&[path]).result.unwrap_err();
+    assert_eq!(e.kind, "out_of_memory");
+    assert_eq!(serde_json::to_value(&e.values).unwrap()["host"], json!(true), "{e:?}");
+    assert!(e.hints.iter().any(|h| h.contains("host's buffers")), "{:?}", e.hints);
+}
+
+#[test]
+fn fs_writes_have_a_budget() {
+    let root = std::env::temp_dir().join(format!("qal-run-wbudget-{}", std::process::id()));
+    std::fs::create_dir_all(&root).unwrap();
+    let src = "fn main(args: List[Str]) -> Int !fs = go(0, match get(args, 0) { Some(d) => d, None => \".\" })\n\
+               fn go(i: Int, d: Str) -> Int !fs = if i == 3 then 0 else match write_file(d ++ \"/f\" ++ from_int(i), \"0123456789\") { Ok(_) => go(i + 1, d), Err(_) => 9 }";
+    let dir = root.to_string_lossy().into_owned();
+    let run = |limits: Limits| main_runner(src, &format!("fs:{dir}")).with_limits(limits).run_main(std::slice::from_ref(&dir)).result;
+    assert_eq!(run(Limits::default()), Ok(Value::Int(0)));
+    let e = run(Limits { fs_writes: 2, ..Limits::default() }).unwrap_err();
+    assert_eq!((e.kind, e.code), ("budget_exceeded", "E0522"));
+    assert_eq!(serde_json::to_value(&e.values).unwrap(), json!({"budget": 2, "used": 3, "kind": "fs_writes"}));
+    let e = run(Limits { fs_write_bytes: 25, ..Limits::default() }).unwrap_err();
+    assert_eq!(serde_json::to_value(&e.values).unwrap(), json!({"budget": 25, "used": 30, "kind": "fs_bytes"}));
+    assert!(e.message.contains("at most 25 bytes"), "{}", e.message);
+}
+
+/// A fresh project directory for database tests.
+fn db_project(name: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("qal-run-db-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+const TASKS_DB: &str = "fn setup() -> Result[Int, DbError] !db = db_exec(\"CREATE TABLE IF NOT EXISTS todos (id INTEGER PRIMARY KEY, title TEXT NOT NULL UNIQUE, done INTEGER NOT NULL DEFAULT 0)\", [])\n\
+    fn add(t: Str) -> Int !db = match db_query(\"INSERT INTO todos (title) VALUES (?) RETURNING id\", [SqlText(t)]) { Ok(r) => match get(r.rows, 0) { Some(row) => match get(row, 0) { Some(SqlInt(id)) => id, _ => 0 - 2 }, None => 0 - 3 }, Err(DbConstraint(_)) => 0 - 1, Err(_) => 0 - 4 }\n\
+    fn count() -> Int !db = match db_query(\"SELECT count(*) AS n, ? AS echo FROM todos\", [SqlText(\"x'); DROP TABLE todos; --\")]) { Ok(r) => match get(r.rows, 0) { Some(row) => match get(row, 0) { Some(SqlInt(n)) => n, _ => 0 - 2 }, None => 0 - 3 }, Err(_) => 0 - 4 }\n\
+    fn cols() -> List[Str] !db = match db_query(\"SELECT id, title AS name FROM todos\", []) { Ok(r) => r.columns, Err(_) => [] }\n\
+    fn main(args: List[Str]) -> Int !db = { let s = setup() in match get(args, 0) { Some(\"add\") => match get(args, 1) { Some(t) => if add(t) > 0 then 0 else 1, None => 2 }, Some(\"fail\") => { let x = add(\"temp\") in 3 }, Some(\"trap\") => { let x = add(\"temp\") in 1 / (x - x) }, _ => count() } }";
+
+#[test]
+fn db_runs_parameterized_statements_with_one_transaction_per_execution() {
+    let project = db_project("tx");
+    let run = |args: &[&str]| {
+        let p = Permissions::parse("db:todo").unwrap().with_db_dir(project.join(".qal/db"));
+        let out = main_runner(TASKS_DB, "").with_permissions(p).run_main(&args.iter().map(|s| s.to_string()).collect::<Vec<_>>());
+        (out.result.map_err(|e| e.kind), out.db)
+    };
+    assert_eq!(run(&["add", "a"]), (Ok(Value::Int(0)), "commit"));
+    assert_eq!(run(&["add", "b"]), (Ok(Value::Int(0)), "commit"));
+    assert_eq!(run(&["add", "a"]), (Ok(Value::Int(1)), "rollback"), "unique constraint: Err(DbConstraint), exit 1");
+    // Exit code != 0 and traps roll the execution's writes back.
+    assert_eq!(run(&["fail"]), (Ok(Value::Int(3)), "rollback"));
+    assert_eq!(run(&["trap"]), (Err("div_by_zero"), "rollback"));
+    assert_eq!(run(&[]), (Ok(Value::Int(2)), "rollback"), "two rows; exit code 2 also rolls back");
+    assert!(project.join(".qal/db/todo.sqlite").is_file());
+    // `call` commits unless there is a runtime error; values written as parameters stay data.
+    let p = Permissions::parse("db:todo").unwrap().with_db_dir(project.join(".qal/db"));
+    let r = Runner::new(compile(TASKS_DB, Entry::All)).unwrap().with_permissions(p);
+    assert_eq!(r.call("count", &[]), Ok(Value::Int(2)));
+    let out = r.invoke("add", &[Value::Str("c".into())]);
+    assert_eq!((out.result, out.db), (Ok(Value::Int(3)), "commit"));
+    assert_eq!(r.call("cols", &[]), Ok(Value::List(vec![Value::Str("id".into()), Value::Str("name".into())])));
+    let out = r.invoke("main", &[Value::List(vec![])]);
+    assert_eq!((out.result, out.db), (Ok(Value::Int(3)), "commit"), "invoke commits on success; only run_entry needs exit code 0");
+    // A function without `db` opens no database.
+    assert_eq!(main_runner("fn main(args: List[Str]) -> Int = 0", "").with_permissions(Permissions::parse("db").unwrap()).run_main(&[]).db, "none");
+}
+
+#[test]
+fn db_mem_is_fresh_per_execution_and_db_needs_a_grant() {
+    let r = main_runner(TASKS_DB, "db:mem");
+    assert_eq!(r.run_main(&["add".into(), "a".into()]).result, Ok(Value::Int(0)));
+    assert_eq!(r.run_main(&[]).result, Ok(Value::Int(0)), "a fresh in-memory database: no rows");
+    let r = Runner::new(compile(TASKS_DB, Entry::All)).unwrap().with_permissions(Permissions::parse("db:mem").unwrap());
+    assert_eq!(r.call("add", &[Value::Str("a".into())]), Ok(Value::Int(-4)), "no table: Err(DbSql(..))");
+    let e = main_runner(TASKS_DB, "io").run_main(&[]).result.unwrap_err();
+    assert_eq!((e.kind, e.hints.clone()), ("permission_denied", vec!["grant them with `--allow db`".to_string()]));
+    assert!(Permissions::parse("db,db:mem").unwrap_err().contains("only one database"));
+    assert!(Permissions::parse("db:Bad").unwrap_err().contains("a database name"));
+    let root = db_project("confined");
+    let p = Permissions::parse_in(&["db".to_string()], &root).unwrap();
+    assert_eq!(p.db_dir(), root.canonicalize().unwrap().join(".qal/db"));
+}
+
+#[test]
+fn db_files_that_are_links_or_not_databases_are_db_open_errors() {
+    let project = db_project("open");
+    std::fs::create_dir_all(project.join(".qal/db")).unwrap();
+    std::fs::write(project.join(".qal/db/main.sqlite"), "not a database file at all, just text").unwrap();
+    let p = Permissions::parse("db").unwrap().with_db_dir(project.join(".qal/db"));
+    let e = main_runner(TASKS_DB, "").with_permissions(p).run_main(&[]).result.unwrap_err();
+    assert_eq!((e.kind, e.code), ("db_open", "E0523"));
+}
+
+#[test]
+fn db_results_count_against_the_memory_limit_and_rows_are_bounded() {
+    let src = "fn big(n: Int) -> Int !db = match db_query(\"WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c WHERE x < ?) SELECT x, printf('%.1000c', 'a') FROM c\", [SqlInt(n)]) { Ok(r) => len(r.rows), Err(DbTooLarge) => 0 - 1, Err(_) => 0 - 2 }";
+    let r = Runner::new(compile(src, Entry::All)).unwrap().with_permissions(Permissions::parse("db:mem").unwrap()).with_memory_limit(4 << 20);
+    assert_eq!(r.call("big", &[Value::Int(100)]), Ok(Value::Int(100)));
+    let e = r.call("big", &[Value::Int(9000)]).unwrap_err();
+    assert_eq!(e.kind, "out_of_memory", "9 MB of results exceed the 4 MiB host budget");
+    assert_eq!(serde_json::to_value(&e.values).unwrap()["host"], json!(true));
+    let r = Runner::new(compile(src, Entry::All)).unwrap().with_permissions(Permissions::parse("db:mem").unwrap()).with_limits(Limits { db_max_rows: 50, ..Limits::default() });
+    assert_eq!(r.call("big", &[Value::Int(51)]), Ok(Value::Int(-1)));
+}
+
+/// A local HTTP server answering `n` connections: `respond(request text)` gives the raw response.
+fn serve_http(n: usize, respond: fn(&str) -> Vec<u8>) -> u16 {
+    let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = l.local_addr().unwrap().port();
+    std::thread::spawn(move || {
+        use std::io::{Read, Write};
+        for s in l.incoming().take(n) {
+            let mut s = s.unwrap();
+            s.set_read_timeout(Some(std::time::Duration::from_secs(5))).unwrap();
+            let mut buf = Vec::new();
+            let mut chunk = [0u8; 4096];
+            // Read the head, then as much body as `content-length` says.
+            loop {
+                let k = s.read(&mut chunk).unwrap_or(0);
+                buf.extend_from_slice(&chunk[..k]);
+                let text = String::from_utf8_lossy(&buf).to_string();
+                if let Some(end) = text.find("\r\n\r\n") {
+                    let len = text.lines().find_map(|l| l.to_ascii_lowercase().strip_prefix("content-length:").map(|v| v.trim().parse::<usize>().unwrap_or(0))).unwrap_or(0);
+                    if buf.len() >= end + 4 + len || k == 0 {
+                        break;
+                    }
+                }
+                if k == 0 {
+                    break;
+                }
+            }
+            let _ = s.write_all(&respond(&String::from_utf8_lossy(&buf)));
+        }
+    });
+    port
+}
+
+const FETCH: &str = "fn fetch(m: Str, u: Str, b: Str) -> Str !net = match http(HttpCall { method: m, url: u, headers: [HttpHeader { name: \"x-test\", value: \"1\" }], body: b }) {\n\
+      Ok(r) => from_int(r.status) ++ \"|\" ++ join(map(r.headers, show), \";\") ++ \"|\" ++ r.body,\n\
+      Err(NetDenied(m)) => \"denied: \" ++ m, Err(NetInvalid(m)) => \"invalid: \" ++ m, Err(NetConnect(m)) => \"connect: \" ++ m, Err(NetTimeout) => \"timeout\", Err(NetTooLarge) => \"too large\" }\n\
+    fn show(h: HttpHeader) -> Str = h.name ++ \"=\" ++ h.value\n\
+    fn twice(u: Str) -> Str !net = fetch(\"GET\", u, \"\") ++ fetch(\"GET\", u, \"\")";
+
+fn net_runner(allow: &str) -> Runner {
+    Runner::new(compile(FETCH, Entry::All)).unwrap().with_permissions(Permissions::parse(allow).unwrap())
+}
+
+fn fetch(r: &Runner, m: &str, u: &str, b: &str) -> String {
+    match r.call("fetch", &[Value::Str(m.into()), Value::Str(u.into()), Value::Str(b.into())]) {
+        Ok(Value::Str(s)) => s,
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn http_calls_reach_granted_hosts_only() {
+    let port = serve_http(2, |req| {
+        let first = req.lines().next().unwrap_or("").to_string();
+        let ua = req.lines().find(|l| l.to_ascii_lowercase().starts_with("user-agent:")).unwrap_or("").to_string();
+        let body = format!("{first}\n{}\n{}", ua.to_ascii_lowercase(), req.split("\r\n\r\n").nth(1).unwrap_or(""));
+        format!("HTTP/1.1 201 Created\r\nX-Reply: Yes\r\nContent-Length: {}\r\n\r\n{body}", body.len()).into_bytes()
+    });
+    let r = net_runner(&format!("net:127.0.0.1:{port}"));
+    let out = fetch(&r, "POST", &format!("http://127.0.0.1:{port}/todos?x=1"), "{\"a\":1}");
+    let (status, rest) = out.split_once('|').unwrap();
+    assert_eq!(status, "201");
+    assert!(rest.contains("x-reply=Yes"), "header names are lowercase: {rest}");
+    assert!(rest.contains("POST /todos?x=1 HTTP/1.1"), "{rest}");
+    assert!(rest.contains(&format!("user-agent: qal/{}", env!("CARGO_PKG_VERSION"))), "{rest}");
+    assert!(rest.ends_with("{\"a\":1}"), "{rest}");
+    // Another port, another host, an IP spelled as a name: not granted, and no connection is made.
+    assert!(fetch(&r, "GET", &format!("http://127.0.0.1:{}/", port + 1), "").starts_with(&format!("denied: `127.0.0.1:{}` is not granted", port + 1)));
+    assert!(fetch(&r, "GET", "https://example.com/", "").contains("it needs `net:example.com`"));
+    assert!(fetch(&r, "GET", &format!("ftp://127.0.0.1:{port}/"), "").starts_with("invalid: unsupported URL scheme"));
+    // Without the `net` grant the function cannot run at all.
+    let e = net_runner("io").call("fetch", &[Value::Str("GET".into()), Value::Str("http://x/".into()), Value::Str(String::new())]).unwrap_err();
+    assert_eq!((e.kind, e.hints.clone()), ("permission_denied", vec!["grant them with `--allow net:<host>`".to_string()]));
+    assert!(Permissions::parse("net").unwrap_err().contains("needs a host"));
+}
+
+#[test]
+fn redirects_are_returned_not_followed() {
+    let target = serve_http(1, |_| b"HTTP/1.1 200 OK\r\nContent-Length: 6\r\n\r\nSECRET".to_vec());
+    let port = serve_http(1, |_| b"HTTP/1.1 302 Found\r\nLocation: http://169.254.169.254/latest/meta-data/\r\nContent-Length: 0\r\n\r\n".to_vec());
+    let r = net_runner(&format!("net:127.0.0.1:{port},net:127.0.0.1:{target}"));
+    let out = fetch(&r, "GET", &format!("http://127.0.0.1:{port}/"), "");
+    assert!(out.starts_with("302|") && out.contains("location=http://169.254.169.254/latest/meta-data/"), "{out}");
+    assert!(!out.contains("SECRET"));
+}
+
+#[test]
+fn responses_must_be_utf8_and_bounded() {
+    let big = serve_http(1, |_| {
+        let n = 5 << 20;
+        let mut v = format!("HTTP/1.1 200 OK\r\nContent-Length: {n}\r\n\r\n").into_bytes();
+        v.extend(std::iter::repeat_n(b'x', n));
+        v
+    });
+    assert_eq!(fetch(&net_runner(&format!("net:127.0.0.1:{big}")), "GET", &format!("http://127.0.0.1:{big}/"), ""), "too large");
+    let bad = serve_http(1, |_| b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n\xff\xfe".to_vec());
+    assert_eq!(fetch(&net_runner(&format!("net:127.0.0.1:{bad}")), "GET", &format!("http://127.0.0.1:{bad}/"), ""), "invalid: response body is not UTF-8");
+    let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+    assert!(fetch(&net_runner(&format!("net:127.0.0.1:{closed}")), "GET", &format!("http://127.0.0.1:{closed}/"), "").starts_with("connect: "));
+    // Response bodies count against the memory limit.
+    let mid = serve_http(1, |_| {
+        let n = 3 << 20;
+        let mut v = format!("HTTP/1.1 200 OK\r\nContent-Length: {n}\r\n\r\n").into_bytes();
+        v.extend(std::iter::repeat_n(b'y', n));
+        v
+    });
+    let r = net_runner(&format!("net:127.0.0.1:{mid}")).with_memory_limit(2 << 20);
+    let e = r.call("fetch", &[Value::Str("GET".into()), Value::Str(format!("http://127.0.0.1:{mid}/")), Value::Str(String::new())]).unwrap_err();
+    assert_eq!((e.kind, serde_json::to_value(&e.values).unwrap()["host"].clone()), ("out_of_memory", json!(true)));
+}
+
+#[test]
+fn outgoing_calls_have_a_budget() {
+    let port = serve_http(1, |_| b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok".to_vec());
+    let r = net_runner(&format!("net:127.0.0.1:{port}")).with_limits(Limits { net_calls: 1, ..Limits::default() });
+    let e = r.call("twice", &[Value::Str(format!("http://127.0.0.1:{port}/"))]).unwrap_err();
+    assert_eq!((e.kind, serde_json::to_value(&e.values).unwrap()), ("budget_exceeded", json!({"budget": 1, "used": 2, "kind": "net_calls"})));
+}
+
+/// Runs `f` on a thread with a guest-sized stack (like a server worker).
+fn on_guest_thread<T: Send>(f: impl FnOnce() -> T + Send) -> T {
+    std::thread::scope(|s| std::thread::Builder::new().stack_size(GUEST_THREAD_STACK).spawn_scoped(s, f).unwrap().join().unwrap())
+}
+
+const PREPARED: &str = "fn hog(mib: Int) -> Int = len(grow(\"0123456789abcdef\", mib * 1048576))\n\
+    fn grow(s: Str, n: Int) -> Str = if len(s) >= n then s else grow(s ++ s, n)\n\
+    fn spin(n: Int) -> Int = spin(n + 1)\n\
+    fn quick(n: Int) -> Int = n + 1\n\
+    fn text(n: Int) -> Str = slice(grow(\"ab\", n), 0, n)\n\
+    fn rows() -> Int !db = match db_query(\"SELECT 1\", []) { Ok(r) => len(r.rows), Err(_) => 0 }";
+
+fn prepared(perms: Permissions, memory: usize) -> Runner {
+    Runner::prepared(compile(PREPARED, Entry::All), perms, memory, 4).unwrap()
+}
+
+#[test]
+fn prepared_runners_instantiate_per_execution_and_free_memory() {
+    let r = prepared(Permissions::default(), 24 << 20);
+    assert!(r.pooled(), "the pooling allocator is available on the development platforms");
+    on_guest_thread(|| {
+        for _ in 0..20 {
+            // ~16 MiB per execution (the doubling string's copies): only possible 20 times within
+            // 24 MiB if every execution starts with fresh memory.
+            let out = r.execute("hog", &[Value::Int(8)], ExecIn::default(), &commit_if_ok);
+            assert_eq!(out.outcome.result, Ok(Value::Int(8 << 20)));
+            assert!(out.mem_bytes >= 16 << 20 && out.fuel > 0, "{} {}", out.mem_bytes, out.fuel);
+        }
+        let e = r.execute("hog", &[Value::Int(16)], ExecIn::default(), &commit_if_ok).outcome.result.unwrap_err();
+        assert_eq!(e.kind, "out_of_memory");
+        assert_eq!(r.execute("quick", &[Value::Int(1)], ExecIn::default(), &commit_if_ok).outcome.result, Ok(Value::Int(2)), "usable after a trap");
+        r.instantiate_only().unwrap();
+    });
+}
+
+#[test]
+fn concurrent_executions_keep_their_own_deadlines() {
+    let r = prepared(Permissions::default(), 16 << 20).with_fuel(u64::MAX / 4).with_timeout(Duration::from_millis(400));
+    std::thread::scope(|s| {
+        let slow = std::thread::Builder::new().stack_size(GUEST_THREAD_STACK).spawn_scoped(s, || {
+            let t = std::time::Instant::now();
+            let e = r.execute("spin", &[Value::Int(0)], ExecIn::default(), &commit_if_ok).outcome.result.unwrap_err();
+            (e.kind, t.elapsed())
+        });
+        let fast = std::thread::Builder::new().stack_size(GUEST_THREAD_STACK).spawn_scoped(s, || {
+            let t = std::time::Instant::now();
+            let mut n = 0;
+            while t.elapsed() < Duration::from_millis(900) {
+                assert_eq!(r.execute("quick", &[Value::Int(n)], ExecIn::default(), &commit_if_ok).outcome.result, Ok(Value::Int(n + 1)));
+                n += 1;
+            }
+            n
+        });
+        let (kind, took) = slow.unwrap().join().unwrap();
+        assert_eq!(kind, "timeout");
+        assert!(took >= Duration::from_millis(400) && took < Duration::from_secs(3), "{took:?}");
+        assert!(fast.unwrap().join().unwrap() > 10, "short executions are not interrupted by the long one's deadline");
+    });
+}
+
+#[test]
+fn prepared_executions_use_the_callers_database_and_exact_results() {
+    let r = prepared(Permissions::parse("db:mem").unwrap(), 16 << 20).with_exact_results(1000);
+    on_guest_thread(|| {
+        let db = Db::open(&DbGrant::Memory, std::path::Path::new("."), 16).unwrap();
+        let out = r.execute("rows", &[], ExecIn { db: Some(db), host_used: 0 }, &commit_if_ok);
+        assert_eq!((out.outcome.result, out.outcome.db, out.db.is_some()), (Ok(Value::Int(1)), "commit", true));
+        let out = r.execute("quick", &[Value::Int(1)], ExecIn { db: out.db, host_used: 0 }, &commit_if_ok);
+        assert!(out.db.is_some(), "an unused connection is handed back");
+        assert_eq!(r.execute("text", &[Value::Int(900)], ExecIn::default(), &commit_if_ok).outcome.result, Ok(Value::Str("ab".repeat(450))));
+        let e = r.execute("text", &[Value::Int(5000)], ExecIn::default(), &commit_if_ok).outcome.result.unwrap_err();
+        assert_eq!((e.kind, e.code), ("bad_response", "E0521"));
+        // Bytes the caller already holds count against the memory limit.
+        let e = r.execute("text", &[Value::Int(10)], ExecIn { db: None, host_used: 17 << 20 }, &commit_if_ok);
+        assert!(e.outcome.result.is_ok(), "host_used is only checked when the host buffers more");
+    });
+}
+
+// Findings of the independent review (Phase 3a), pinned.
+
+#[test]
+fn sql_statements_stop_at_the_wall_clock_limit() {
+    let src = "fn slow(n: Int) -> Int !db = match db_query(\"WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c WHERE x < ?) SELECT count(*) FROM c\", [SqlInt(n)]) { Ok(_) => 1, Err(_) => 2 }";
+    let r = Runner::prepared(compile(src, Entry::All), Permissions::parse("db:mem").unwrap(), 16 << 20, 2).unwrap().with_timeout(Duration::from_millis(300));
+    let (res, took) = on_guest_thread(|| {
+        let t = std::time::Instant::now();
+        let out = r.execute("slow", &[Value::Int(30_000_000)], ExecIn::default(), &commit_if_ok);
+        (out.outcome.result.map_err(|e| e.kind), t.elapsed())
+    });
+    assert_eq!(res, Err("timeout"));
+    assert!(took < Duration::from_millis(1500), "{took:?}");
+    // The same database keeps working afterwards (the host's own COMMIT is never interrupted).
+    let out = r.invoke("slow", &[Value::Int(10)]);
+    assert_eq!(out.result, Ok(Value::Int(1)));
+}
+
+#[test]
+fn values_sqlite_builds_are_bounded_by_the_memory_limit() {
+    let src = "fn big(n: Int) -> Int !db = match db_query(\"SELECT length(randomblob(?))\", [SqlInt(n)]) { Ok(r) => match get(r.rows, 0) { Some(row) => match get(row, 0) { Some(SqlInt(k)) => k, _ => 0 - 2 }, None => 0 - 3 }, Err(DbSql(_)) => 0 - 1, Err(_) => 0 - 4 }";
+    let r = Runner::new(compile(src, Entry::All)).unwrap().with_permissions(Permissions::parse("db:mem").unwrap()).with_memory_limit(16 << 20);
+    assert_eq!(r.call("big", &[Value::Int(1000)]), Ok(Value::Int(1000)));
+    assert_eq!(r.call("big", &[Value::Int(600_000_000)]), Ok(Value::Int(-1)), "string or blob too big");
+}
+
+#[test]
+fn temp_objects_are_refused() {
+    let src = "fn put() -> Int !db = match db_exec(\"CREATE TEMP TABLE IF NOT EXISTS leak AS SELECT 'secret' AS s\", []) { Ok(_) => 1, Err(DbSql(_)) => 0, Err(_) => 2 }";
+    let dir = db_project("temp");
+    let perms = Permissions::parse("db:t").unwrap().with_db_dir(dir.join(".qal/db"));
+    let r = Runner::prepared(compile(src, Entry::All), perms, 16 << 20, 2).unwrap();
+    on_guest_thread(|| {
+        let db = Db::open(&DbGrant::Named("t".into()), &dir.join(".qal/db"), 16).unwrap();
+        let out = r.execute("put", &[], ExecIn { db: Some(db), host_used: 0 }, &commit_if_ok);
+        assert_eq!(out.outcome.result, Ok(Value::Int(0)), "TEMP state would outlive the execution on a worker's connection");
+    });
+}
+
+#[test]
+fn decoded_arguments_count_against_the_host_budget() {
+    let src = "fn mk(i: Int) -> SqlValue = SqlNull\n\
+               fn p(n: Int) -> Int !db = match db_exec(\"SELECT 1\", map(range(0, n), mk)) { Ok(_) => 0, Err(_) => 1 }";
+    let r = Runner::new(compile(src, Entry::All)).unwrap().with_permissions(Permissions::parse("db:mem").unwrap()).with_memory_limit(32 << 20);
+    assert_eq!(r.call("p", &[Value::Int(10)]), Ok(Value::Int(1)), "10 parameters for none: DbSql");
+    let e = r.call("p", &[Value::Int(1_000_000)]).unwrap_err();
+    assert_eq!((e.kind, serde_json::to_value(&e.values).unwrap()["host"].clone()), ("out_of_memory", json!(true)));
 }
 
 // ---------------------------------------------------------------------------------------------

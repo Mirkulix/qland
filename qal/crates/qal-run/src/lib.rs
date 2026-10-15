@@ -1,13 +1,21 @@
 //! QAL runtime: executes compiled modules in wasmtime with capability-gated host functions and
 //! reports every failure as data in the diagnostic format (code, kind, def, path, message, values, hints).
 
+mod db;
+mod fs;
+mod guest;
 mod host;
+mod net;
 mod value;
 
-pub use host::Permissions;
+pub use db::{Db, DbGrant};
+pub use fs::FsRoot;
+pub use host::{Limits, Permissions};
+pub use net::NetGrant;
 pub use value::{compare as compare_values, from_json, Value, Values};
 
-use host::{Failure, HostState, FAIL_DENIED};
+use guest::{EncodeError, Guest};
+use host::{Failure, HostState, FAIL_BUDGET, FAIL_DENIED, FAIL_TIMEOUT};
 use qal_core::ast::Type;
 use qal_core::tast::TProgram;
 use qal_text::print_expr;
@@ -16,7 +24,8 @@ use serde::Serialize;
 use std::io::Cursor;
 use std::sync::mpsc;
 use std::time::Duration;
-use wasmtime::{Config, Engine, Instance, Linker, Memory, Module, Store, StoreLimitsBuilder, Trap, Val};
+use std::sync::Arc;
+use wasmtime::{Config, Engine, Instance, InstanceAllocationStrategy, InstancePre, Linker, Memory, Module, PoolingAllocationConfig, Store, Trap, Val};
 
 /// Instruction budget per call; exhausting it reports `timeout` instead of hanging.
 pub const DEFAULT_FUEL: u64 = 2_000_000_000;
@@ -27,7 +36,9 @@ pub const DEFAULT_MEMORY_LIMIT: usize = 256 << 20;
 pub struct RunError {
     pub code: &'static str,
     /// contract_violation | int_overflow | div_by_zero | out_of_memory | index | stack_overflow | timeout
-    /// | permission_denied | bad_args | unknown_function | compile_error | trap
+    /// | permission_denied | bad_args | unknown_function | compile_error | bad_entry | bad_response
+    /// | budget_exceeded | db_open | init_failed | trap; services also log request_rejected | overloaded
+    /// | listen_failed | internal
     pub kind: &'static str,
     /// Name of the definition where the failure happened (never an export name like `test:x`).
     pub def: String,
@@ -56,6 +67,15 @@ impl RunError {
             "bad_args" => "E0509",
             "unknown_function" => "E0510",
             "compile_error" => "E0511",
+            "bad_entry" => "E0520",
+            "bad_response" => "E0521",
+            "budget_exceeded" => "E0522",
+            "db_open" => "E0523",
+            "init_failed" => "E0524",
+            "request_rejected" => "E0800",
+            "overloaded" => "E0801",
+            "listen_failed" => "E0802",
+            "internal" => "E0819",
             _ => "E0599",
         };
         RunError {
@@ -75,7 +95,7 @@ impl RunError {
         self
     }
 
-    fn hint(mut self, h: impl Into<String>) -> RunError {
+    pub fn hint(mut self, h: impl Into<String>) -> RunError {
         self.hints.push(h.into());
         self
     }
@@ -96,10 +116,85 @@ pub struct Outcome {
     pub stdout: String,
     /// Bytes the program printed; more than `stdout.len()` if output beyond `with_stdout_limit` was dropped.
     pub stdout_bytes: usize,
+    /// What happened to the execution's database transaction: `commit`, `rollback` or `none`.
+    pub db: &'static str,
+}
+
+impl Outcome {
+    fn failed(export: &str, message: String) -> Outcome {
+        Outcome { result: Err(RunError::new("trap", export, message)), stdout: String::new(), stdout_bytes: 0, db: "none" }
+    }
+}
+
+/// When an execution's database transaction is committed (spec Phase 3 §3.2): a function call
+/// without a runtime error ...
+pub fn commit_if_ok(r: &Result<Value, RunError>) -> bool {
+    r.is_ok()
+}
+
+/// ... and an entry point `fn(List[Str]) -> Int` only with exit code 0.
+pub fn commit_if_exit_zero(r: &Result<Value, RunError>) -> bool {
+    matches!(r, Ok(Value::Int(0)))
 }
 
 /// Wasm call stack limit; every invocation runs on a thread with a larger native stack.
 pub const WASM_STACK_BYTES: usize = 64 << 20;
+/// Native stack of a thread that runs guest code (the wasm stack plus room for the host).
+pub const GUEST_THREAD_STACK: usize = WASM_STACK_BYTES + (64 << 20);
+/// Interval of the epoch ticker of a prepared runner; deadlines are whole ticks.
+pub const EPOCH_TICK: Duration = Duration::from_millis(10);
+
+/// What a caller hands one execution of a prepared runner ([`Runner::execute`]).
+#[derive(Default)]
+pub struct ExecIn {
+    /// The connection to run on (a server worker's); the execution's transaction is begun and
+    /// ended on it if the function uses `db`. None: opened per execution if needed.
+    pub db: Option<Db>,
+    /// Host bytes already held for this execution (a request's head and body).
+    pub host_used: usize,
+}
+
+/// The result of [`Runner::execute`] plus what the caller needs back.
+pub struct ExecOut {
+    pub outcome: Outcome,
+    /// The connection given in [`ExecIn::db`] (or opened), after the transaction ended.
+    pub db: Option<Db>,
+    /// Fuel the execution used.
+    pub fuel: u64,
+    /// Size of the guest's linear memory at the end.
+    pub mem_bytes: usize,
+}
+
+/// Increments an engine's epoch every [`EPOCH_TICK`] until dropped: concurrent executions on one
+/// engine each have their own deadline in ticks (a one-shot watchdog would stop them all).
+struct Ticker {
+    stop: Option<mpsc::Sender<()>>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl Ticker {
+    fn start(engine: Engine) -> Result<Ticker, String> {
+        let (stop, wait) = mpsc::channel::<()>();
+        let thread = std::thread::Builder::new()
+            .name("qal-epoch".into())
+            .spawn(move || {
+                while let Err(mpsc::RecvTimeoutError::Timeout) = wait.recv_timeout(EPOCH_TICK) {
+                    engine.increment_epoch();
+                }
+            })
+            .map_err(|e| format!("cannot start the epoch ticker: {e}"))?;
+        Ok(Ticker { stop: Some(stop), thread: Some(thread) })
+    }
+}
+
+impl Drop for Ticker {
+    fn drop(&mut self) {
+        drop(self.stop.take());
+        if let Some(t) = self.thread.take() {
+            let _ = t.join();
+        }
+    }
+}
 
 pub struct Runner {
     engine: Engine,
@@ -112,28 +207,123 @@ pub struct Runner {
     stdin: Option<Vec<u8>>,
     timeout: Option<Duration>,
     stdout_limit: Option<usize>,
+    budgets: Limits,
+    /// Prepared runners: the module linked once (per-execution stores instantiate it).
+    pre: Option<InstancePre<HostState>>,
+    ticker: Option<Arc<Ticker>>,
+    pooled: bool,
+    /// Results are decoded exactly up to this many bytes (else with display limits).
+    exact_results: Option<usize>,
+}
+
+/// The engine settings every runner uses.
+fn base_config() -> Config {
+    let mut config = Config::new();
+    config.wasm_tail_call(true);
+    config.consume_fuel(true);
+    // Interrupts a call that runs longer than its wall-clock timeout (see `with_timeout`).
+    config.epoch_interruption(true);
+    // Compile time must stay linear in the module size (a 150 000-element list literal took
+    // minutes with the optimizing defaults): no optimization passes, single-pass register
+    // allocation. Programs are bounded by fuel, not by speed.
+    config.cranelift_opt_level(wasmtime::OptLevel::None);
+    config.cranelift_regalloc_algorithm(wasmtime::RegallocAlgorithm::SinglePass);
+    // The unoptimized frames are large: allow ~20 000+ nested non-tail calls; deeper recursion
+    // reports `stack_overflow` (guest code runs on a thread with a larger native stack).
+    config.max_wasm_stack(WASM_STACK_BYTES);
+    config.async_stack_size(WASM_STACK_BYTES); // only validated against the limit; calls are synchronous
+    config
 }
 
 impl Runner {
     pub fn new(meta: CompiledModule) -> Result<Runner, String> {
-        let mut config = Config::new();
-        config.wasm_tail_call(true);
-        config.consume_fuel(true);
-        // Interrupts a call that runs longer than its wall-clock timeout (see `with_timeout`).
-        config.epoch_interruption(true);
-        // Compile time must stay linear in the module size (a 150 000-element list literal took
-        // minutes with the optimizing defaults): no optimization passes, single-pass register
-        // allocation. Phase 1 programs are bounded by fuel, not by speed.
-        config.cranelift_opt_level(wasmtime::OptLevel::None);
-        config.cranelift_regalloc_algorithm(wasmtime::RegallocAlgorithm::SinglePass);
-        // The unoptimized frames are large: allow ~20 000+ nested non-tail calls; deeper recursion
-        // reports `stack_overflow` (`invoke` runs guest code on a thread with a larger native stack).
-        config.max_wasm_stack(WASM_STACK_BYTES);
-        config.async_stack_size(WASM_STACK_BYTES); // only validated against the limit; calls are synchronous
-        let engine = Engine::new(&config).map_err(|e| e.to_string())?;
+        let engine = Engine::new(&base_config()).map_err(|e| e.to_string())?;
         let module = Module::new(&engine, &meta.wasm).map_err(|e| e.to_string())?;
         let types = TProgram { types: meta.types.clone(), ..TProgram::default() };
-        Ok(Runner { engine, module, meta, types, fuel: DEFAULT_FUEL, memory_limit: DEFAULT_MEMORY_LIMIT, perms: Permissions::default(), stdin: None, timeout: None, stdout_limit: None })
+        Ok(Runner { engine, module, meta, types, fuel: DEFAULT_FUEL, memory_limit: DEFAULT_MEMORY_LIMIT, perms: Permissions::default(), stdin: None, timeout: None, stdout_limit: None, budgets: Limits::default(), pre: None, ticker: None, pooled: false, exact_results: None })
+    }
+
+    /// A runner for a server (spec Phase 3 §2.2-§2.4): the module is compiled and linked once with
+    /// `perms`; every [`Runner::execute`] instantiates it in a fresh store (from wasmtime's pooling
+    /// allocator with `slots` instance slots of at most `memory_limit` bytes, falling back to the
+    /// on-demand allocator if the pool cannot be set up) and discards it afterwards, so nothing of
+    /// one execution survives into the next. Wall-clock limits use an epoch ticker, so concurrent
+    /// executions do not affect each other's deadlines.
+    pub fn prepared(meta: CompiledModule, perms: Permissions, memory_limit: usize, slots: usize) -> Result<Runner, String> {
+        let table = meta.funcs.iter().filter(|f| !f.is_test).count().max(1);
+        let mut pool = PoolingAllocationConfig::default();
+        let slots = slots.clamp(1, 1024) as u32;
+        pool.total_memories(slots).total_core_instances(slots).total_tables(slots);
+        pool.max_memories_per_module(1).max_tables_per_module(1).table_elements(table).max_memory_size(memory_limit);
+        let mut config = base_config();
+        config.allocation_strategy(InstanceAllocationStrategy::Pooling(pool));
+        let (engine, pooled) = match Engine::new(&config).and_then(|e| Module::new(&e, &meta.wasm).map(|m| (e, m))) {
+            Ok((e, m)) => ((e, m), true),
+            Err(_) => {
+                let e = Engine::new(&base_config()).map_err(|e| e.to_string())?;
+                let m = Module::new(&e, &meta.wasm).map_err(|e| e.to_string())?;
+                ((e, m), false)
+            }
+        };
+        let (engine, module) = engine;
+        let mut linker = Linker::new(&engine);
+        host::link(&mut linker, &perms).map_err(|e| e.to_string())?;
+        let pre = linker.instantiate_pre(&module).map_err(|e| e.to_string())?;
+        let ticker = Ticker::start(engine.clone())?;
+        let types = TProgram { types: meta.types.clone(), ..TProgram::default() };
+        Ok(Runner {
+            engine,
+            module,
+            meta,
+            types,
+            fuel: DEFAULT_FUEL,
+            memory_limit,
+            perms,
+            stdin: Some(Vec::new()),
+            timeout: None,
+            stdout_limit: None,
+            budgets: Limits::default(),
+            pre: Some(pre),
+            ticker: Some(Arc::new(ticker)),
+            pooled,
+            exact_results: None,
+        })
+    }
+
+    /// True if executions use wasmtime's pooling allocator (see [`Runner::prepared`]).
+    pub fn pooled(&self) -> bool {
+        self.pooled
+    }
+
+    /// Decodes results exactly (no shortened strings) up to `bytes`; larger results are `bad_response`.
+    pub fn with_exact_results(mut self, bytes: usize) -> Runner {
+        self.exact_results = Some(bytes);
+        self
+    }
+
+    pub fn permissions(&self) -> &Permissions {
+        &self.perms
+    }
+
+    pub fn memory_limit(&self) -> usize {
+        self.memory_limit
+    }
+
+    pub fn limits(&self) -> Limits {
+        self.budgets
+    }
+
+    /// Instantiates the module in a fresh store and discards it (the per-request overhead of a
+    /// prepared runner, measured by the performance gate).
+    pub fn instantiate_only(&self) -> Result<(), String> {
+        let mut store = Store::new(&self.engine, HostState::new(self.perms.clone(), Box::new(Cursor::new(Vec::new())), self.memory_limit, self.budgets));
+        store.limiter(|s| &mut s.limits);
+        store.set_fuel(self.fuel).map_err(|e| e.to_string())?;
+        store.set_epoch_deadline(u64::MAX / 2);
+        match &self.pre {
+            Some(pre) => pre.instantiate(&mut store).map(|_| ()).map_err(|e| e.to_string()),
+            None => Err("not a prepared runner".into()),
+        }
     }
 
     pub fn with_fuel(mut self, fuel: u64) -> Runner {
@@ -143,6 +333,12 @@ impl Runner {
 
     pub fn with_memory_limit(mut self, bytes: usize) -> Runner {
         self.memory_limit = bytes;
+        self
+    }
+
+    /// Per-execution budgets besides fuel, time and memory (`fs` writes, ...).
+    pub fn with_limits(mut self, budgets: Limits) -> Runner {
+        self.budgets = budgets;
         self
     }
 
@@ -183,8 +379,13 @@ impl Runner {
 
     /// Runs the entry point `main(args: List[Str]) -> Int`; the result is the exit code.
     pub fn run_main(&self, args: &[String]) -> Outcome {
+        self.run_entry("main", args)
+    }
+
+    /// Runs an entry point `fn(List[Str]) -> Int`; its database work is committed only on exit code 0.
+    pub fn run_entry(&self, export: &str, args: &[String]) -> Outcome {
         let list = Value::List(args.iter().map(|a| Value::Str(a.clone())).collect());
-        self.invoke("main", &[list])
+        self.invoke_with(export, &[list], &commit_if_exit_zero)
     }
 
     /// Runs every test definition in program order.
@@ -213,45 +414,91 @@ impl Runner {
     /// Runs one invocation on a dedicated thread whose native stack exceeds the wasm stack limit,
     /// so deep guest recursion reports `stack_overflow` whatever thread the caller is on.
     pub fn invoke(&self, export: &str, args: &[Value]) -> Outcome {
-        let failed = |m: String| Outcome { result: Err(RunError::new("trap", export, m)), stdout: String::new(), stdout_bytes: 0 };
+        self.invoke_with(export, args, &commit_if_ok)
+    }
+
+    /// Like [`Runner::invoke`]; `commit` decides from the result whether the database transaction
+    /// (one per execution, only if the function uses `db`) is committed.
+    pub fn invoke_with(&self, export: &str, args: &[Value], commit: &(dyn Fn(&Result<Value, RunError>) -> bool + Sync)) -> Outcome {
         std::thread::scope(|scope| {
-            let spawned = std::thread::Builder::new().name("qal-guest".into()).stack_size(WASM_STACK_BYTES + (64 << 20)).spawn_scoped(scope, || self.invoke_here(export, args));
+            let spawned = std::thread::Builder::new().name("qal-guest".into()).stack_size(GUEST_THREAD_STACK).spawn_scoped(scope, || self.invoke_here(export, args, commit, ExecIn::default()).outcome);
             match spawned {
-                Ok(h) => h.join().unwrap_or_else(|_| failed("the runtime panicked while running the program".into())),
-                Err(e) => failed(format!("cannot start the execution thread: {e}")),
+                Ok(h) => h.join().unwrap_or_else(|_| Outcome::failed(export, "the runtime panicked while running the program".into())),
+                Err(e) => Outcome::failed(export, format!("cannot start the execution thread: {e}")),
             }
         })
     }
 
-    fn invoke_here(&self, export: &str, args: &[Value]) -> Outcome {
+    /// Runs one execution of a prepared runner on the calling thread, which must have a stack of
+    /// at least [`GUEST_THREAD_STACK`] bytes (server workers do).
+    pub fn execute(&self, export: &str, args: &[Value], input: ExecIn, commit: &dyn Fn(&Result<Value, RunError>) -> bool) -> ExecOut {
+        self.invoke_here(export, args, commit, input)
+    }
+
+    fn invoke_here(&self, export: &str, args: &[Value], commit: &dyn Fn(&Result<Value, RunError>) -> bool, input: ExecIn) -> ExecOut {
         let stdin: Box<dyn std::io::BufRead + Send> = match &self.stdin {
             Some(bytes) => Box::new(Cursor::new(bytes.clone())),
             None => Box::new(std::io::BufReader::new(std::io::stdin())),
         };
-        let state = HostState {
-            failure: None,
-            stdout: Vec::new(),
-            stdin,
-            perms: self.perms.clone(),
-            rng: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos() as u64).unwrap_or(1),
-            limits: StoreLimitsBuilder::new().memory_size(self.memory_limit).build(),
-            limit: self.memory_limit,
-            stdout_limit: self.stdout_limit,
-            stdout_bytes: 0,
-        };
+        let mut state = HostState::new(self.perms.clone(), stdin, self.memory_limit, self.budgets);
+        state.stdout_limit = self.stdout_limit;
+        state.deadline = self.timeout.map(|t| std::time::Instant::now() + t);
+        state.host_used = input.host_used;
+        let early = |outcome: Outcome, db: Option<Db>| ExecOut { outcome, db, fuel: 0, mem_bytes: 0 };
+        let uses_db = self.meta.func(export).is_some_and(|m| m.effects.iter().any(|e| e == "db"));
+        let mut given = input.db;
+        if let (true, Some(grant)) = (uses_db, &self.perms.db) {
+            let opened = match given.take() {
+                Some(mut db) => match db.begin() {
+                    Ok(()) => Ok(db),
+                    Err(e) => {
+                        let m = format!("cannot start the transaction: {}", db::describe(&e));
+                        return early(Outcome { result: Err(RunError::new("timeout", export, m)), stdout: String::new(), stdout_bytes: 0, db: "none" }, Some(db));
+                    }
+                },
+                None => open_db(grant, &self.perms, self.budgets, export),
+            };
+            match opened {
+                Ok(db) => {
+                    db.limit(state.deadline, self.memory_limit);
+                    state.db = Some(db);
+                }
+                Err(e) => return early(Outcome { result: Err(e), stdout: String::new(), stdout_bytes: 0, db: "none" }, None),
+            }
+        }
         let mut store = Store::new(&self.engine, state);
         store.limiter(|s| &mut s.limits);
-        // Relative to the engine's current epoch, so ticks of earlier watchdogs do not count.
-        store.set_epoch_deadline(1);
-        let watchdog = match self.timeout.map(|t| Watchdog::start(self.engine.clone(), t)).transpose() {
-            Ok(w) => w,
-            Err(m) => return Outcome { result: Err(RunError::new("trap", export, m)), stdout: String::new(), stdout_bytes: 0 },
+        let watchdog = match (&self.ticker, self.timeout) {
+            (Some(_), Some(t)) => {
+                // Whole ticks, rounded up, plus one: the current tick may be about to end.
+                let ticks = t.as_nanos().div_ceil(EPOCH_TICK.as_nanos()) as u64 + 1;
+                store.set_epoch_deadline(ticks);
+                None
+            }
+            (Some(_), None) => {
+                store.epoch_deadline_trap();
+                store.set_epoch_deadline(u64::MAX / 2);
+                None
+            }
+            (None, t) => {
+                // Relative to the engine's current epoch, so ticks of earlier watchdogs do not count.
+                store.set_epoch_deadline(1);
+                match t.map(|t| Watchdog::start(self.engine.clone(), t)).transpose() {
+                    Ok(w) => w,
+                    Err(m) => return early(Outcome::failed(export, m), store.data_mut().db.take()),
+                }
+            }
         };
-        let result = self.invoke_in(&mut store, export, args);
+        let mut result = self.invoke_in(&mut store, export, args);
         drop(watchdog);
+        let fuel = self.fuel.saturating_sub(store.get_fuel().unwrap_or(0));
+        let mut db = store.data_mut().db.take();
+        let label = finish_db_ref(db.as_mut(), &mut result, commit, export);
         let stdout_bytes = store.data().stdout_bytes.max(store.data().stdout.len());
         let stdout = String::from_utf8_lossy(&store.data().stdout).into_owned();
-        Outcome { result, stdout, stdout_bytes }
+        let mem_bytes = store.data().mem_bytes;
+        // A connection the caller gave but this function did not need goes back unchanged.
+        ExecOut { outcome: Outcome { result, stdout, stdout_bytes, db: label }, db: db.or(given), fuel, mem_bytes }
     }
 
     fn invoke_in(&self, store: &mut Store<HostState>, export: &str, args: &[Value]) -> Result<Value, RunError> {
@@ -262,7 +509,7 @@ impl Runner {
         let missing: Vec<&String> = meta.effects.iter().filter(|e| !self.perms.allows(e)).collect();
         if !missing.is_empty() {
             let list: Vec<&str> = missing.iter().map(|s| s.as_str()).collect();
-            let flag = list.iter().map(|e| if *e == "fs" { "fs:<dir>" } else { e }).collect::<Vec<_>>().join(",");
+            let flag = list.iter().map(|e| grant_flag(e)).collect::<Vec<_>>().join(",");
             return Err(RunError::new("permission_denied", &meta.name, format!("`{}` needs effect(s) {} which were not granted", meta.name, list.join(", ")))
                 .hint(format!("grant them with `--allow {flag}`")));
         }
@@ -270,18 +517,25 @@ impl Runner {
             return Err(RunError::new("bad_args", &meta.name, format!("`{}` takes {} argument(s), {} given", meta.name, meta.params.len(), args.len())));
         }
         store.set_fuel(self.fuel).map_err(|e| RunError::new("trap", &meta.name, e.to_string()))?;
-        let mut linker = Linker::new(&self.engine);
-        host::link(&mut linker, &self.perms).map_err(|e| RunError::new("trap", &meta.name, e.to_string()))?;
-        let instance = linker.instantiate(&mut *store, &self.module).map_err(|e| RunError::new("trap", &meta.name, e.to_string()))?;
+        let instance = match &self.pre {
+            Some(pre) => pre.instantiate(&mut *store),
+            None => {
+                let mut linker = Linker::new(&self.engine);
+                host::link(&mut linker, &self.perms).map_err(|e| RunError::new("trap", &meta.name, e.to_string()))?;
+                linker.instantiate(&mut *store, &self.module)
+            }
+        }
+        .map_err(|e| RunError::new("trap", &meta.name, format!("cannot instantiate the module: {e}")))?;
         let mem = memory_of(store, &instance).map_err(|m| RunError::new("trap", &meta.name, m))?;
         let mut params = Vec::new();
         for (i, (a, (pname, t))) in args.iter().zip(&meta.params).enumerate() {
             let slot = match self.encode(store, &instance, t, a) {
                 Ok(slot) => slot,
-                Err(m) => {
-                    return Err(match store.data().failure {
-                        Some(f) => self.describe(store, mem, &meta.name, f),
-                        None => RunError::new("bad_args", &meta.name, format!("argument {i} (`{pname}`): {m}")),
+                Err(e) => {
+                    return Err(match (store.data().failure, e) {
+                        (Some(f), _) => self.describe(store, mem, &meta.name, f),
+                        (None, EncodeError::Mismatch(m)) => RunError::new("bad_args", &meta.name, format!("argument {i} (`{pname}`): {m}")),
+                        (None, EncodeError::Trap(e)) => RunError::new("trap", &meta.name, e.to_string()),
                     })
                 }
             };
@@ -301,9 +555,15 @@ impl Runner {
                     Val::I32(v) => v as u32 as i64,
                     ref other => return Err(RunError::new("trap", &meta.name, format!("unexpected result {other:?}"))),
                 };
-                Ok(value::decode(&self.types, mem.data(&*store), &meta.ret, slot))
+                store.data_mut().mem_bytes = mem.data_size(&*store);
+                match self.exact_results {
+                    Some(max) => value::decode_exact(&self.types, mem.data(&*store), &meta.ret, slot, max).map_err(|m| RunError::new("bad_response", &meta.name, format!("the result cannot be used: {m}"))),
+                    None => Ok(value::decode(&self.types, mem.data(&*store), &meta.ret, slot)),
+                }
             }
-            Err(e) => Err(match store.data().failure {
+            Err(e) => Err({
+                store.data_mut().mem_bytes = mem.data_size(&*store);
+                match store.data().failure {
                 Some(f) => self.describe(store, mem, &meta.name, f),
                 None => match e.downcast_ref::<Trap>() {
                     Some(Trap::StackOverflow) => RunError::new("stack_overflow", &meta.name, "call stack exhausted")
@@ -316,113 +576,16 @@ impl Runner {
                     }
                     _ => RunError::new("trap", &meta.name, e.to_string()),
                 },
+            }
             }),
         }
     }
 
-    /// Writes an argument into guest memory (heap values are allocated) and returns its slot.
-    fn encode(&self, store: &mut Store<HostState>, instance: &Instance, t: &Type, v: &Value) -> Result<i64, String> {
-        Ok(match (t, v) {
-            (Type::Int, Value::Int(n)) => *n,
-            (Type::Float, Value::Float(x)) => x.to_bits() as i64,
-            (Type::Bool, Value::Bool(b)) => *b as i64,
-            (Type::Unit, Value::Unit) => 0,
-            (Type::Str, Value::Str(s)) => self.bytes_block(store, instance, s.as_bytes())?,
-            (Type::Bytes, Value::Bytes(b, 0)) => self.bytes_block(store, instance, b)?,
-            (Type::List(elem), Value::List(xs)) => {
-                let mut slots = vec![xs.len() as i64];
-                for x in xs {
-                    slots.push(self.encode(store, instance, elem, x)?);
-                }
-                self.slots_block(store, instance, &slots)?
-            }
-            (Type::Map(kt, vt), Value::Map(entries)) => {
-                let mut sorted: Vec<&(Value, Value)> = entries.iter().collect();
-                sorted.sort_by(|a, b| value::compare(&self.types, kt, &a.0, &b.0));
-                if sorted.windows(2).any(|w| value::compare(&self.types, kt, &w[0].0, &w[1].0).is_eq()) {
-                    return Err(format!("a {t} has a key twice"));
-                }
-                let mut slots = Vec::new();
-                for (k, v) in sorted {
-                    slots.push((self.encode(store, instance, kt, k)?, self.encode(store, instance, vt, v)?));
-                }
-                self.map_tree(store, instance, &slots)?.0 as i64
-            }
-            (_, Value::Record(_, fields)) if self.types.is_record(t) => {
-                let decl = self.types.record_fields(t);
-                if fields.len() != decl.len() {
-                    return Err(format!("a {t} has {} fields, got {}", decl.len(), fields.len()));
-                }
-                let mut slots = Vec::new();
-                for (f, ft) in &decl {
-                    let x = fields.iter().find(|(g, _)| g == f).map(|(_, x)| x).ok_or_else(|| format!("{t} without field `{f}`"))?;
-                    slots.push(self.encode(store, instance, ft, x)?);
-                }
-                self.slots_block(store, instance, &slots)?
-            }
-            (_, Value::Variant(name, payload)) if !self.types.variant_names(t).is_empty() => {
-                let tag = self.types.variant_names(t).iter().position(|n| n == name).ok_or_else(|| format!("{t} has no variant `{name}`"))? as u32;
-                let fields = self.types.variant_fields(t, tag);
-                if fields.len() != payload.len() {
-                    return Err(format!("`{name}` takes {} value(s), got {}", fields.len(), payload.len()));
-                }
-                let mut slots = vec![tag as i64];
-                for (ft, x) in fields.iter().zip(payload) {
-                    slots.push(self.encode(store, instance, ft, x)?);
-                }
-                self.slots_block(store, instance, &slots)?
-            }
-            (t, v) => return Err(format!("expected {t}, got {}", serde_json::to_string(v).unwrap_or_default())),
-        })
-    }
-
-    /// Allocates `[len: i32][bytes]` (Str, Bytes).
-    fn bytes_block(&self, store: &mut Store<HostState>, instance: &Instance, b: &[u8]) -> Result<i64, String> {
-        let len = u32::try_from(b.len()).map_err(|_| "value too large".to_string())?;
-        let p = self.alloc(store, instance, 4 + b.len() as i64)?;
-        let mem = memory_of(store, instance)?;
-        mem.write(&mut *store, p as u32 as usize, &len.to_le_bytes()).map_err(|e| e.to_string())?;
-        mem.write(&mut *store, p as u32 as usize + 4, b).map_err(|e| e.to_string())?;
-        Ok(p as u32 as i64)
-    }
-
-    /// Allocates a block of 8-byte slots (a list `[len][pad][slots]` passes its length as the first
-    /// slot, a variant its tag: both are the i32 at offset 0).
-    fn slots_block(&self, store: &mut Store<HostState>, instance: &Instance, slots: &[i64]) -> Result<i64, String> {
-        let p = self.alloc(store, instance, 8 * slots.len().max(1) as i64)? as u32 as usize;
-        let mem = memory_of(store, instance)?;
-        for (k, s) in slots.iter().enumerate() {
-            mem.write(&mut *store, p + 8 * k, &s.to_le_bytes()).map_err(|e| e.to_string())?;
-        }
-        Ok(p as i64)
-    }
-
-    /// Builds a perfectly balanced map tree (a valid AVL tree) over sorted entry slots; returns
-    /// (node pointer or 0, height).
-    fn map_tree(&self, store: &mut Store<HostState>, instance: &Instance, entries: &[(i64, i64)]) -> Result<(u32, u32), String> {
-        if entries.is_empty() {
-            return Ok((0, 0));
-        }
-        let mid = entries.len() / 2;
-        let (l, hl) = self.map_tree(store, instance, &entries[..mid])?;
-        let (r, hr) = self.map_tree(store, instance, &entries[mid + 1..])?;
-        let height = hl.max(hr) + 1;
-        let p = self.alloc(store, instance, 32)? as u32;
-        let mut node = Vec::with_capacity(32);
-        node.extend((entries.len() as u32).to_le_bytes());
-        node.extend(height.to_le_bytes());
-        node.extend(entries[mid].0.to_le_bytes());
-        node.extend(entries[mid].1.to_le_bytes());
-        node.extend(l.to_le_bytes());
-        node.extend(r.to_le_bytes());
-        let mem = memory_of(store, instance)?;
-        mem.write(&mut *store, p as usize, &node).map_err(|e| e.to_string())?;
-        Ok((p, height))
-    }
-
-    fn alloc(&self, store: &mut Store<HostState>, instance: &Instance, size: i64) -> Result<i32, String> {
-        let f = instance.get_typed_func::<i64, i32>(&mut *store, "qal_alloc").map_err(|e| e.to_string())?;
-        f.call(&mut *store, size).map_err(|e| e.to_string())
+    /// Writes an argument into guest memory (any type; heap values are allocated) and returns its slot.
+    fn encode(&self, store: &mut Store<HostState>, instance: &Instance, t: &Type, v: &Value) -> Result<i64, EncodeError> {
+        let alloc = instance.get_typed_func::<i64, i32>(&mut *store, "qal_alloc").map_err(EncodeError::Trap)?;
+        let mem = memory_of(store, instance).map_err(|m| EncodeError::Trap(wasmtime::Error::msg(m)))?;
+        Guest::new(mem, alloc).encode(store, &self.types, t, v)
     }
 
     fn values(&self, store: &Store<HostState>, mem: Memory, names: &[(String, Type)], ptr: i32) -> Values {
@@ -443,17 +606,41 @@ impl Runner {
     fn describe(&self, store: &Store<HostState>, mem: Memory, entry: &str, f: Failure) -> RunError {
         if f.kind == FAIL_OOM {
             let requested = value::slot_at(mem.data(store), OOM_SCRATCH as usize);
+            let host = store.data().host_oom;
             let mut e = RunError::new("out_of_memory", entry, format!("out of memory: the limit is {} bytes per execution", self.memory_limit))
-                .hint("memory is never freed in Phase 1; avoid building large intermediate lists or strings in loops (`push` and `++` copy)");
+                .hint("memory is never freed during one execution; avoid building large intermediate lists or strings in loops (`push` and `++` copy)");
+            if host {
+                e = e.hint("the host's buffers for this execution (output, file contents, request and response bodies, database results) count against the same limit");
+            }
             if let Some(r) = requested {
                 e.values = Values(vec![("requested_bytes".into(), Value::Int(r)), ("limit_bytes".into(), Value::Int(self.memory_limit as i64))]);
+                if host {
+                    e.values.0.push(("host".into(), Value::Bool(true)));
+                }
             }
+            return e;
+        }
+        if f.kind == FAIL_TIMEOUT {
+            let ms = self.timeout.map_or(0, |t| t.as_millis());
+            return RunError::new("timeout", entry, format!("wall-clock limit of {ms} ms exceeded")).hint("a database statement ran past the limit; look for unbounded recursive queries or missing indexes");
+        }
+        if f.kind == FAIL_BUDGET {
+            let Some(b) = store.data().budget_hit else {
+                return RunError::new("trap", entry, "a budget was exceeded, but none is recorded");
+            };
+            let what = match b.kind {
+                "fs_bytes" => format!("`write_file` may write at most {} bytes per execution", b.budget),
+                "fs_writes" => format!("`write_file` may be called at most {} times per execution", b.budget),
+                other => format!("the `{other}` budget of {} is used up", b.budget),
+            };
+            let mut e = RunError::new("budget_exceeded", entry, format!("budget exceeded: {what}"));
+            e.values = Values(vec![("budget".into(), Value::Int(b.budget as i64)), ("used".into(), Value::Int(b.used as i64)), ("kind".into(), Value::Str(b.kind.into()))]);
             return e;
         }
         if f.kind == FAIL_DENIED {
             let name = qal_wasm::host::EFFECT_FNS.get(f.func as usize).copied().unwrap_or("?");
             let effect = qal_wasm::host::effect(name).unwrap_or("?");
-            let flag = if effect == "fs" { "fs:<dir>" } else { effect };
+            let flag = grant_flag(effect);
             return RunError::new("permission_denied", entry, format!("`{name}` needs effect {effect} which was not granted"))
                 .hint(format!("grant it with `--allow {flag}`"));
         }
@@ -495,6 +682,37 @@ impl Runner {
         };
         e.values = values;
         e.at(&site.path)
+    }
+}
+
+/// Opens the database of an execution and starts its transaction.
+pub fn open_db(grant: &DbGrant, perms: &Permissions, budgets: Limits, def: &str) -> Result<Db, RunError> {
+    let mut db = Db::open(grant, &perms.db_dir(), budgets.db_max_mib).map_err(|m| RunError::new("db_open", def, m).hint("the database file is chosen by the host: `db` is .qal/db/main.sqlite, `db:<name>` is .qal/db/<name>.sqlite, `db:mem` is in memory"))?;
+    db.begin().map_err(|e| RunError::new("timeout", def, format!("cannot start the transaction: {}", db::describe(&e))))?;
+    Ok(db)
+}
+
+/// Ends the transaction of an execution by `commit(result)`; a failed commit turns the result into
+/// an error. Returns `commit`, `rollback` or `none`.
+pub fn finish_db_ref(db: Option<&mut Db>, result: &mut Result<Value, RunError>, commit: &dyn Fn(&Result<Value, RunError>) -> bool, def: &str) -> &'static str {
+    let Some(db) = db else { return "none" };
+    match db.finish(commit(result)) {
+        Ok(what) => what,
+        Err(m) => {
+            if result.is_ok() {
+                *result = Err(RunError::new("trap", def, m));
+            }
+            "rollback"
+        }
+    }
+}
+
+/// How an effect is granted on the command line (`--allow <flag>`).
+fn grant_flag(effect: &str) -> &str {
+    match effect {
+        "fs" => "fs:<dir>",
+        "net" => "net:<host>",
+        other => other,
     }
 }
 

@@ -6,6 +6,7 @@ members = [
     "crates/qal-wasm",
     "crates/qal-run",
     "crates/qal-store",
+    "crates/qal-serve",
     "crates/qal-cli",
     "crates/qal-prove",
 ]
@@ -24,13 +25,19 @@ qal-wasm = { path = "crates/qal-wasm" }
 qal-run = { path = "crates/qal-run" }
 qal-store = { path = "crates/qal-store" }
 qal-prove = { path = "crates/qal-prove" }
+qal-serve = { path = "crates/qal-serve" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "=0.11.0"
 rusqlite = { version = "=0.40.2", features = ["bundled"] }
 wasm-encoder = "=0.259.0"
 wasmparser = "=0.259.0"
-wasmtime = { version = "=49.0.1", default-features = false, features = ["cranelift", "runtime", "std"] }
+wasmtime = { version = "=49.0.1", default-features = false, features = ["cranelift", "runtime", "std", "pooling-allocator"] }
+rustix = { version = "=1.1.5", default-features = false, features = ["std", "fs"] }
+ureq = { version = "=2.12.1", default-features = false, features = ["tls"] }
+url = "=2.5.8"
+httparse = "=1.10.1"
+signal-hook = "=0.4.4"
 z3 = { version = "=0.21.1", features = ["vendored"] }
 
 # Z3 is compiled from source (C++, several minutes, once) and linked statically. Build it optimized

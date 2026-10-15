@@ -43,6 +43,9 @@ pub struct Output {
     /// Total size in bytes of a captured stdout that was cut to `Ctx::max_stdout`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stdout_truncated: Option<usize>,
+    /// What happened to the database transaction of a run that used `db`: `commit` or `rollback`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub db: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub diagnostics: Option<Vec<Diagnostic>>,
     /// Contract proofs: one report per obligation (`define`: of the definitions it changed; `prove`).
@@ -79,6 +82,106 @@ pub struct Output {
     /// Tests not run because the time budget (`Ctx::test_budget`) was used up.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub skipped: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exported: Option<Exported>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub imported: Option<qal_store::Imported>,
+    /// The results of `request`, one per request, in order.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub responses: Option<Vec<RequestResult>>,
+}
+
+/// One request of `request` / `qal_request` (spec Phase 3 §7.2).
+#[derive(Debug, Clone, PartialEq)]
+pub struct RequestSpec {
+    pub request: qal_serve::Request,
+}
+
+/// Most requests per `request` call.
+pub const MAX_REQUESTS: usize = 50;
+
+impl RequestSpec {
+    /// Parses `{method?, path, query?, headers?, body? | json?}`. Header names are lowercased and
+    /// hop-by-hop headers dropped, as the HTTP layer of `qal serve` does.
+    pub fn from_json(v: &serde_json::Value) -> Result<RequestSpec, String> {
+        use serde_json::Value as J;
+        let J::Object(m) = v else { return Err("a request must be an object `{method, path, query, headers, body | json}`".into()) };
+        if let Some(k) = m.keys().find(|k| !["method", "path", "query", "headers", "body", "json"].contains(&k.as_str())) {
+            return Err(format!("unknown request field `{k}` (fields: method, path, query, headers, body, json)"));
+        }
+        let text = |k: &str, default: &str| -> Result<String, String> {
+            match m.get(k) {
+                None | Some(J::Null) => Ok(default.to_string()),
+                Some(J::String(s)) => Ok(s.clone()),
+                Some(_) => Err(format!("request field `{k}` must be a string")),
+            }
+        };
+        let method = text("method", "GET")?;
+        if method.is_empty() || !method.bytes().all(|b| b.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&b)) {
+            return Err(format!("`{method}` is not an HTTP method"));
+        }
+        let path = text("path", "")?;
+        if !path.starts_with('/') || path.contains('?') || path.contains(char::is_whitespace) {
+            return Err(format!("`path` must start with `/` and contain no `?` or whitespace (the query goes in `query`), got `{path}`"));
+        }
+        let query = text("query", "")?;
+        let mut headers = Vec::new();
+        match m.get("headers") {
+            None | Some(J::Null) => {}
+            Some(J::Array(hs)) => {
+                for h in hs {
+                    let (Some(J::String(n)), Some(J::String(val))) = (h.get("name"), h.get("value")) else { return Err("each header must be `{\"name\": \"...\", \"value\": \"...\"}`".into()) };
+                    if n.is_empty() || !n.bytes().all(|b| b.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&b)) {
+                        return Err(format!("`{n}` is not a header name"));
+                    }
+                    if val.bytes().any(|b| b == b'\r' || b == b'\n' || b == 0) {
+                        return Err(format!("the value of header `{n}` contains CR, LF or NUL"));
+                    }
+                    let n = n.to_ascii_lowercase();
+                    if !["connection", "keep-alive", "transfer-encoding", "upgrade", "te", "trailer"].contains(&n.as_str()) {
+                        headers.push((n, val.trim().to_string()));
+                    }
+                }
+            }
+            Some(_) => return Err("`headers` must be an array".into()),
+        }
+        // `json: null` is no JSON body (as in a GET).
+        let body = match (m.get("body").filter(|b| !b.is_null()), m.get("json").filter(|j| !j.is_null())) {
+            (Some(_), Some(_)) => return Err("give either `body` or `json`, not both".into()),
+            (None, Some(j)) => {
+                if !headers.iter().any(|(n, _)| n == "content-type") {
+                    headers.push(("content-type".into(), "application/json".into()));
+                }
+                j.to_string()
+            }
+            _ => text("body", "")?,
+        };
+        match headers.iter().find(|(n, _)| n == "content-length") {
+            Some((_, v)) if v.parse::<usize>().ok() != Some(body.len()) => return Err(format!("the `content-length` header says `{v}`, but the body has {} bytes", body.len())),
+            Some(_) => {}
+            None if !body.is_empty() => headers.push(("content-length".into(), body.len().to_string())),
+            None => {}
+        }
+        Ok(RequestSpec { request: qal_serve::Request { method, path, query, headers, body } })
+    }
+}
+
+/// The result of one request (spec Phase 3 §7.2).
+#[derive(Debug, Clone, Serialize)]
+pub struct RequestResult {
+    pub status: u16,
+    pub headers: Vec<qal_run::Value>,
+    pub body: String,
+    /// The body parsed, when the response is JSON.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub json: Option<serde_json::Value>,
+    /// `commit`, `rollback` or `none`.
+    pub db: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stdout: Option<String>,
+    /// The full runtime error of a failed request.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<RunError>,
 }
 
 /// The result of `build`: where the module and its manifest were written.
@@ -214,7 +317,13 @@ impl Ctx {
         }
     }
 
-    fn runner(&self, loaded: &Loaded, entry: &Entry, perms: Permissions) -> Result<qal_run::Runner, RunError> {
+    fn runner(&self, loaded: &Loaded, entry: &Entry, mut perms: Permissions) -> Result<qal_run::Runner, RunError> {
+        // Database files belong to the project whose store the CLI works in.
+        if let (Some(_), None, StoreAt::Discover(dir)) = (&perms.db, &perms.db_dir, &self.store) {
+            if let Some(project) = qal_store::project_of(dir) {
+                perms = perms.with_db_dir(project.join(qal_store::STORE_DIR).join("db"));
+            }
+        }
         let mut r = loaded.runner(entry, perms)?;
         if let Some(t) = self.timeout {
             r = r.with_timeout(t);
@@ -279,6 +388,22 @@ pub fn check(src: &str) -> Reply {
 /// with a refuted contract (its `ens`, or the `req` of a function it calls) is not stored; refuted
 /// call sites in tests are reported (the test fails when run) but do not stop the definition.
 pub fn define(ctx: &Ctx, src: &str, agent: &str) -> Reply {
+    let (result, reports) = proving(|verify| ctx.open_store(true).and_then(|mut s| s.define_verified(src, agent, verify)));
+    match result {
+        Ok(d) => {
+            let reports = current_reports(&d, reports);
+            let mut out = Output { defined: Some(d), ..Output::default() };
+            out.set_proofs(reports);
+            Reply::new(out, 0)
+        }
+        Err(d) => Reply::diagnostics(d),
+    }
+}
+
+/// Runs a store write with the verification step of `define` (the contracts of what it defines
+/// are proven; a refuted one rejects the write) and returns its result with the proof reports.
+/// Each report comes with the hash it was proven for (see [`current_reports`]).
+fn proving<T>(write: impl FnOnce(&mut Verify) -> Result<T, Vec<Diagnostic>>) -> (Result<T, Vec<Diagnostic>>, Vec<(String, Report)>) {
     let opts = qal_prove::Options::default();
     // Reports with the hash they were proven for: a retried `define` may have verified an older
     // version first (review finding N4).
@@ -306,18 +431,16 @@ pub fn define(ctx: &Ctx, src: &str, agent: &str) -> Reply {
             Ok(rows)
         };
         let mut verify = Verify { key: opts.key(), run: &mut run };
-        ctx.open_store(true).and_then(|mut s| s.define_verified(src, agent, &mut verify))
+        write(&mut verify)
     };
-    match result {
-        Ok(d) => {
-            let current: std::collections::HashSet<(&str, &str)> = d.iter().map(|x| (x.name.as_str(), x.hash.as_str())).collect();
-            let reports: Vec<Report> = reports.into_iter().filter(|(h, r)| current.contains(&(r.def.as_str(), h.as_str()))).map(|(_, r)| r).collect();
-            let mut out = Output { defined: Some(d), ..Output::default() };
-            out.set_proofs(reports);
-            Reply::new(out, 0)
-        }
-        Err(d) => Reply::diagnostics(d),
-    }
+    (result, reports)
+}
+
+/// The reports of the definitions as they were stored: a retried write may have verified an older
+/// version first (review finding N4).
+fn current_reports(defined: &[Defined], reports: Vec<(String, Report)>) -> Vec<Report> {
+    let current: std::collections::HashSet<(&str, &str)> = defined.iter().map(|x| (x.name.as_str(), x.hash.as_str())).collect();
+    reports.into_iter().filter(|(h, r)| current.contains(&(r.def.as_str(), h.as_str()))).map(|(_, r)| r).collect()
 }
 
 /// Bytes of JSON that `proofs` and `warnings` may each take in one result; the rest is counted in
@@ -633,7 +756,7 @@ pub fn call(ctx: &Ctx, source: &Source, perms: Permissions, name: &str, args: Ca
         Err(e) => return Reply::error(e),
     };
     let outcome = runner.invoke(name, &vals);
-    let mut out = Output::default();
+    let mut out = Output { db: db_label(outcome.db), ..Output::default() };
     ctx.stdout(&mut out, outcome.stdout, outcome.stdout_bytes);
     match outcome.result {
         Ok(v) => {
@@ -668,9 +791,8 @@ pub fn run(ctx: &Ctx, source: &Source, perms: Permissions, name: &str, args: &[S
         Ok(r) => r,
         Err(e) => return Reply::error(e),
     };
-    let list = Value::List(args.iter().map(|a| Value::Str(a.clone())).collect());
-    let outcome = runner.invoke(name, &[list]);
-    let mut out = Output::default();
+    let outcome = runner.run_entry(name, args);
+    let mut out = Output { db: db_label(outcome.db), ..Output::default() };
     ctx.stdout(&mut out, outcome.stdout, outcome.stdout_bytes);
     match outcome.result {
         Ok(Value::Int(code)) => {
@@ -746,6 +868,115 @@ pub fn build(ctx: &Ctx, name: &str) -> Reply {
     }
     let built = Built { name: name.to_string(), hash: entry.hash, wasm: wasm_rel, manifest: manifest_rel, effects: meta.effects.clone(), bytes: module.wasm.len() };
     Reply::new(Output { built: Some(built), ..Output::default() }, 0)
+}
+
+/// The `db` field of a result: absent when no database was used.
+fn db_label(db: &'static str) -> Option<&'static str> {
+    (db != "none").then_some(db)
+}
+
+/// What `export` wrote.
+#[derive(Debug, Clone, Serialize)]
+pub struct Exported {
+    pub package: String,
+    pub hash: String,
+    pub defs: usize,
+    pub file: String,
+}
+
+/// Exports the names starting with `prefix` (and their dependencies) to the package file `out`;
+/// the package is named `name`, by default after the file (`std/std.qalpkg` -> `std`).
+pub fn export(ctx: &Ctx, prefix: &str, out: &Path, name: Option<&str>) -> Reply {
+    let stem = out.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+    let package = name.unwrap_or(stem);
+    let exported = match ctx.open().and_then(|mut s| s.export(prefix, package)) {
+        Ok(e) => e,
+        Err(d) => return Reply::diagnostics(d),
+    };
+    if let Err(e) = out.parent().filter(|p| !p.as_os_str().is_empty()).map_or(Ok(()), std::fs::create_dir_all).and_then(|_| write_atomic(out, exported.file.as_bytes())) {
+        return Reply::diagnostics(vec![Diagnostic::store_error(format!("cannot write {}: {e}", out.display()))]);
+    }
+    let e = Exported { package: exported.package, hash: exported.hash, defs: exported.defs, file: out.display().to_string() };
+    Reply::new(Output { exported: Some(e), ..Output::default() }, 0)
+}
+
+/// Imports a package file into the store (atomically; every hash is checked and the contracts are
+/// proven as by `define`: a refuted one rejects the import).
+pub fn import(ctx: &Ctx, file: &str) -> Reply {
+    let (result, reports) = proving(|verify| ctx.open_store(true).and_then(|mut s| s.import_verified(file, verify)));
+    match result {
+        Ok(i) => {
+            let reports = current_reports(&i.defined, reports);
+            let mut out = Output { imported: Some(i), ..Output::default() };
+            out.set_proofs(reports);
+            Reply::new(out, 0)
+        }
+        Err(d) => Reply::diagnostics(d),
+    }
+}
+
+/// Runs requests through the service pipeline of `qal serve` without TCP: same limits, same
+/// transaction rule, same response checks. `init` runs first; all requests share one database
+/// (`db:mem`: a fresh one for this call).
+pub fn request(ctx: &Ctx, source: &Source, mut perms: Permissions, handler: &str, init: Option<&str>, requests: &[RequestSpec]) -> Reply {
+    if requests.len() > MAX_REQUESTS {
+        let d = Diagnostic::new("E0701", "bad_arguments", "", "", format!("{} requests; at most {MAX_REQUESTS} per call", requests.len()));
+        return Reply::diagnostics(vec![d]);
+    }
+    let loaded = match ctx.load(source) {
+        Ok(l) => l,
+        Err(d) => return Reply::diagnostics(d),
+    };
+    if let (Some(_), None, StoreAt::Discover(dir)) = (&perms.db, &perms.db_dir, &ctx.store) {
+        if let Some(project) = qal_store::project_of(dir) {
+            perms = perms.with_db_dir(project.join(qal_store::STORE_DIR).join("db"));
+        }
+    }
+    let cfg = qal_serve::ServiceConfig { entry: handler.to_string(), init: init.map(str::to_string), slots: 2, max_out: ctx.max_stdout.unwrap_or(64 << 10), ..qal_serve::ServiceConfig::default() };
+    let limits = qal_serve::HttpLimits::default();
+    // Guest code needs a large native stack (the CLI's main thread has a small one).
+    let run = || -> Result<Vec<RequestResult>, RunError> {
+        let service = qal_serve::Service::new(&loaded.typed, perms, cfg)?;
+        let mut worker = service.worker()?;
+        service.init(&mut worker)?;
+        Ok(requests
+            .iter()
+            .map(|spec| {
+                let id = service.next_id();
+                let req = &spec.request;
+                if req.body.len() > limits.max_body {
+                    let e = RunError::new("request_rejected", handler, format!("413 payload_too_large: the body has {} bytes, more than the limit of {}", req.body.len(), limits.max_body));
+                    let resp = qal_serve::http::Rejection { status: 413, kind: "payload_too_large", message: e.message.clone() }.response(id);
+                    return result_of(resp, "none", None, Some(e));
+                }
+                let mut handler_req = req.clone();
+                if req.method == "HEAD" {
+                    handler_req.method = "GET".into();
+                }
+                let h = service.handle(&mut worker, &handler_req, id, 0);
+                let mut resp = h.response;
+                if req.method == "HEAD" {
+                    resp.body = String::new();
+                }
+                result_of(resp, h.log.db, h.log.out, h.log.error)
+            })
+            .collect())
+    };
+    let outcome = std::thread::scope(|s| match std::thread::Builder::new().name("qal-request".into()).stack_size(qal_run::GUEST_THREAD_STACK).spawn_scoped(s, run) {
+        Ok(t) => t.join().unwrap_or_else(|_| Err(RunError::new("internal", handler, "the runtime panicked while running the requests"))),
+        Err(e) => Err(RunError::new("trap", handler, format!("cannot start the execution thread: {e}"))),
+    });
+    match outcome {
+        Ok(responses) => Reply::new(Output { responses: Some(responses), ..Output::default() }, 0),
+        Err(e) => Reply::error(e),
+    }
+}
+
+fn result_of(resp: qal_serve::Response, db: &'static str, stdout: Option<String>, error: Option<RunError>) -> RequestResult {
+    let is_json = resp.header("content-type").is_some_and(|t| t.trim_start().to_ascii_lowercase().starts_with("application/json"));
+    let json = if is_json { serde_json::from_str(&resp.body).ok() } else { None };
+    let headers = resp.headers.iter().map(|(n, v)| Value::Record("HttpHeader".into(), vec![("name".into(), Value::Str(n.clone())), ("value".into(), Value::Str(v.clone()))])).collect();
+    RequestResult { status: resp.status, headers, body: resp.body, json, db, stdout, error: error.map(capped) }
 }
 
 /// Largest JSON of the values of one runtime error; larger values are dropped (with a hint), so a

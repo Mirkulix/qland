@@ -475,3 +475,131 @@ fn prove_and_property_tests_from_files_and_the_store() {
     assert_eq!(v["properties"][0]["seed"].as_u64(), Some(3));
     assert_eq!(qal_in(&dir, &["prove", "nope"]).1["diagnostics"][0]["kind"], "unknown_name");
 }
+
+#[test]
+fn databases_live_in_the_project_of_the_store() {
+    let project = temp_dir().join("dbproject");
+    let _ = std::fs::remove_dir_all(&project);
+    std::fs::create_dir_all(project.join("sub")).unwrap();
+    let file = project.join("count.qal");
+    std::fs::write(&file, "fn main(args: List[Str]) -> Int !db !io = match db_exec(\"CREATE TABLE IF NOT EXISTS hits (n INTEGER)\", []) { Err(_) => 9, Ok(_) => match db_exec(\"INSERT INTO hits VALUES (1)\", []) { Err(_) => 8, Ok(_) => match db_query(\"SELECT count(*) FROM hits\", []) { Ok(r) => { print(join(map(r.columns, same), \",\")); match get(r.rows, 0) { Some(row) => match get(row, 0) { Some(SqlInt(n)) => if n == 2 then 3 else 0, _ => 7 }, None => 6 } }, Err(_) => 5 } } }\nfn same(s: Str) -> Str = s").unwrap();
+    let run = |dir: &std::path::Path| {
+        let out = Command::new(env!("CARGO_BIN_EXE_qal")).current_dir(dir).args(["run", file.to_str().unwrap(), "--allow", "db,io"]).stdin(Stdio::null()).output().unwrap();
+        (out.status.code().unwrap(), serde_json::from_slice::<Value>(&out.stdout).unwrap())
+    };
+    assert_eq!(qal_json_in(&project, &["init"]).0, 0);
+    assert_eq!(run(&project.join("sub")), (0, json!({"exit_code": 0, "stdout": "count(*)\n", "db": "commit"})));
+    assert!(project.join(".qal/db/main.sqlite").is_file(), "next to the store, found from a subdirectory");
+    // The second run sees 2 rows and exits 3: its insert is rolled back.
+    assert_eq!(run(&project), (3, json!({"exit_code": 3, "stdout": "count(*)\n", "db": "rollback"})));
+    assert_eq!(run(&project).0, 3, "still 2 rows: the rolled back insert is gone");
+}
+
+fn qal_json_in(dir: &std::path::Path, args: &[&str]) -> (i32, Value) {
+    let out = Command::new(env!("CARGO_BIN_EXE_qal")).current_dir(dir).args(args).stdin(Stdio::null()).output().unwrap();
+    (out.status.code().unwrap(), serde_json::from_slice(&out.stdout).unwrap())
+}
+
+/// A project with the fixture service of qal-serve stored in it.
+fn service_project(name: &str) -> PathBuf {
+    let project = temp_dir().join(name);
+    let _ = std::fs::remove_dir_all(&project);
+    std::fs::create_dir_all(&project).unwrap();
+    let app = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../qal-serve/tests/fixtures/app.qal");
+    assert_eq!(qal_json_in(&project, &["init"]).0, 0);
+    let (code, v) = qal_json_in(&project, &["define", app.to_str().unwrap()]);
+    assert_eq!(code, 0, "{v}");
+    project
+}
+
+#[test]
+fn qal_request_runs_a_json_file_of_requests() {
+    let project = service_project("request");
+    std::fs::write(project.join("r.json"), r#"{"requests": [{"method": "POST", "path": "/todos", "body": "a"}, {"path": "/todos"}]}"#).unwrap();
+    let (code, v) = qal_json_in(&project, &["request", "--allow", "db,io", "--init", "setup", "r.json"]);
+    assert_eq!(code, 0, "{v}");
+    assert_eq!(v["responses"][1]["json"], json!([{"id": 1, "title": "a"}]));
+    assert!(project.join(".qal/db/main.sqlite").is_file());
+    let (code, v) = qal_json_in(&project, &["request", "handle", "--allow", "db,io", "r.json"]);
+    assert_eq!((code, v["responses"][1]["json"].as_array().map(|a| a.len())), (0, Some(2)), "the project's database persists");
+    std::fs::write(project.join("bad.json"), r#"[{"path": 5}]"#).unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_qal")).current_dir(&project).args(["request", "--allow", "db", "bad.json"]).output().unwrap();
+    assert_eq!(out.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("request 0: request field `path` must be a string"));
+}
+
+#[test]
+fn qal_serve_answers_http_and_stops_on_sigterm() {
+    use std::io::{BufRead, BufReader, Read, Write};
+    let project = service_project("serve");
+    let mut child = Command::new(env!("CARGO_BIN_EXE_qal"))
+        .current_dir(&project)
+        .args(["serve", "--listen", "127.0.0.1:0", "--allow", "db,io", "--init", "setup", "--workers", "2", "--request-timeout", "800"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut log = BufReader::new(child.stderr.take().unwrap());
+    let mut line = String::new();
+    log.read_line(&mut line).unwrap();
+    let listening: Value = serde_json::from_str(&line).unwrap_or_else(|e| panic!("{e}: {line}"));
+    assert_eq!((listening["event"].as_str(), listening["entry"].as_str(), listening["workers"].as_u64()), (Some("listening"), Some("handle"), Some(2)));
+    assert_eq!(listening["hash"].as_str().map(str::len), Some(64));
+    let addr: std::net::SocketAddr = listening["addr"].as_str().unwrap().parse().unwrap();
+    let send = |raw: &str| {
+        let mut s = std::net::TcpStream::connect(addr).unwrap();
+        s.write_all(raw.as_bytes()).unwrap();
+        let mut out = String::new();
+        s.read_to_string(&mut out).unwrap();
+        out
+    };
+    let created = send("POST /todos HTTP/1.1\r\nHost: x\r\nContent-Length: 3\r\nConnection: close\r\n\r\negg");
+    assert!(created.starts_with("HTTP/1.1 201 Created\r\n") && created.ends_with(r#"{"id":1,"title":"egg"}"#), "{created}");
+    let spin = send("GET /spin HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+    assert!(spin.starts_with("HTTP/1.1 503 "), "{spin}");
+    let mut request = String::new();
+    log.read_line(&mut request).unwrap();
+    let request: Value = serde_json::from_str(&request).unwrap();
+    assert_eq!((request["event"].as_str(), request["status"].as_u64(), request["db"].as_str()), (Some("request"), Some(201), Some("commit")));
+    assert!(Command::new("kill").args(["-TERM", &child.id().to_string()]).status().unwrap().success());
+    let status = child.wait().unwrap();
+    assert_eq!(status.code(), Some(0));
+    let rest: Vec<Value> = log.lines().map(|l| serde_json::from_str(&l.unwrap()).unwrap()).collect();
+    assert_eq!(rest.last().unwrap(), &json!({"event": "stopped", "served": 2}));
+    // Start failures: a bad handler is exit 1 with the error as JSON; `db:mem` is a usage error.
+    let out = Command::new(env!("CARGO_BIN_EXE_qal")).current_dir(&project).args(["serve", "text", "--listen", "127.0.0.1:0", "--allow", "db,io"]).output().unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    let failed: Value = serde_json::from_str(String::from_utf8_lossy(&out.stderr).lines().next().unwrap()).unwrap();
+    assert_eq!((failed["event"].as_str(), failed["error"]["code"].as_str()), (Some("start_failed"), Some("E0520")));
+    let out = Command::new(env!("CARGO_BIN_EXE_qal")).current_dir(&project).args(["serve", "--allow", "db:mem,io"]).output().unwrap();
+    assert_eq!(out.status.code(), Some(2));
+    let out = Command::new(env!("CARGO_BIN_EXE_qal")).current_dir(&project).args(["serve", "--workers", "0", "--allow", "db,io"]).output().unwrap();
+    assert_eq!(out.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("`--workers` must be a number in 1..=64"));
+}
+
+#[test]
+fn packages_round_trip_between_projects() {
+    let a = temp_dir().join("pkg-a");
+    let b = temp_dir().join("pkg-b");
+    for d in [&a, &b] {
+        let _ = std::fs::remove_dir_all(d);
+        std::fs::create_dir_all(d).unwrap();
+        assert_eq!(qal_json_in(d, &["init"]).0, 0);
+    }
+    assert_eq!(qal_json_in(&a, &["define", &example("math.qal")]).0, 0);
+    let (code, v) = qal_json_in(&a, &["export", "", "--out", "out/math.qalpkg"]);
+    assert_eq!((code, v["exported"]["package"].as_str(), v["exported"]["defs"].as_u64()), (0, Some("math"), Some(8)));
+    let file = a.join("out/math.qalpkg");
+    let (code, v) = qal_json_in(&b, &["import", file.to_str().unwrap()]);
+    assert_eq!((code, v["imported"]["defined"].as_array().map(|d| d.len())), (0, Some(8)), "{v}");
+    let (_, qa) = qal_json_in(&a, &["query"]);
+    let (_, qb) = qal_json_in(&b, &["query"]);
+    assert_eq!(qa, qb, "identical names and hashes");
+    std::fs::write(&file, std::fs::read_to_string(&file).unwrap().replace("gcd", "gcf")).unwrap();
+    let (code, v) = qal_json_in(&b, &["import", file.to_str().unwrap()]);
+    assert_eq!((code, v["diagnostics"][0]["code"].as_str()), (1, Some("E0243")));
+    let out = Command::new(env!("CARGO_BIN_EXE_qal")).current_dir(&a).args(["export", "x"]).output().unwrap();
+    assert_eq!(out.status.code(), Some(2), "--out is required");
+}

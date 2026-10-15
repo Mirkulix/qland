@@ -424,6 +424,20 @@ impl Server {
             "qal_build" => ops::build(&ctx, &a.required("entry")?),
             "qal_rename" => ops::rename(&ctx, &a.required("old")?, &a.required("new")?, &agent(&a)?),
             "qal_history" => ops::history(&ctx, &a.required("name")?),
+            "qal_request" => {
+                let handler = a.string("handler")?.unwrap_or_else(|| "handle".into());
+                let perms = perms(&a)?;
+                let list = match a.get("requests") {
+                    Some(J::Array(xs)) => xs,
+                    Some(_) => return Err("`requests` must be an array of requests".into()),
+                    None => return Err("`requests` is required".into()),
+                };
+                if list.len() > ops::MAX_REQUESTS {
+                    return Err(format!("`requests` lists {} requests; at most {} per call", list.len(), ops::MAX_REQUESTS));
+                }
+                let specs = list.iter().enumerate().map(|(i, r)| ops::RequestSpec::from_json(r).map_err(|e| format!("request {i}: {e}"))).collect::<Result<Vec<_>, _>>()?;
+                ops::request(&ctx, &Source::Store, perms, &handler, a.string("init")?.as_deref(), &specs)
+            }
             other => return Err(format!("unknown tool `{other}`")),
         })
     }
@@ -479,8 +493,9 @@ fn allow_hint(hint: &str) -> String {
     for prefix in ["grant them with `--allow ", "grant it with `--allow "] {
         if let Some(rest) = hint.strip_prefix(prefix) {
             let spec = rest.trim_end_matches('`');
-            let items: Vec<String> = spec.split(',').map(|e| format!("\"{e}\"")).collect();
-            return format!("pass `\"allow\": [{}]` to qal_run or qal_call", items.join(", "));
+            // Agents test with a fresh in-memory database; the project's file needs an explicit "db".
+            let items: Vec<String> = spec.split(',').map(|e| if e == "db" { "\"db:mem\"".to_string() } else { format!("\"{e}\"") }).collect();
+            return format!("pass `\"allow\": [{}]` to qal_run, qal_call or qal_request", items.join(", "));
         }
     }
     hint.to_string()
@@ -534,7 +549,7 @@ impl<'a> Args<'a> {
     }
 }
 
-const TOOL_NAMES: [&str; 10] = ["qal_define", "qal_test", "qal_prove", "qal_run", "qal_call", "qal_view", "qal_query", "qal_rename", "qal_history", "qal_build"];
+const TOOL_NAMES: [&str; 11] = ["qal_define", "qal_test", "qal_prove", "qal_run", "qal_call", "qal_request", "qal_view", "qal_query", "qal_rename", "qal_history", "qal_build"];
 
 fn tool_params(tool: &str) -> &'static [&'static str] {
     match tool {
@@ -548,6 +563,7 @@ fn tool_params(tool: &str) -> &'static [&'static str] {
         "qal_build" => &["entry"],
         "qal_rename" => &["old", "new", "agent"],
         "qal_history" => &["name"],
+        "qal_request" => &["handler", "init", "allow", "requests"],
         _ => &[],
     }
 }
@@ -556,7 +572,8 @@ fn tool_params(tool: &str) -> &'static [&'static str] {
 pub fn tools() -> J {
     let s = |d: &str| json!({"type": "string", "description": d});
     let list = |d: &str| json!({"type": "array", "items": {"type": "string"}, "description": d});
-    let allow = list("Effects to grant: \"io\", \"time\", \"rand\", \"fs:<dir>\" (a directory inside the project, relative to its root; hidden entries like .git are never reachable). Default: none.");
+    let allow = list("Effects to grant: \"io\", \"time\", \"rand\", \"fs:<dir>\" (a directory inside the project, relative to its root; hidden entries like .git are never reachable), \"db:mem\" (a fresh in-memory SQLite database), \"db\" or \"db:<name>\" (the project's .qal/db/main.sqlite or <name>.sqlite), \"net:<host>[:port]\" (outgoing HTTP to that host; names must resolve to public addresses, IP literals like \"net:127.0.0.1:9000\" reach exactly that address). Default: none.");
+    let allow_request = allow.clone();
     let stdin = s("Text that read_line() and read_all() read (default: empty).");
     let agent = s("Who makes the change, recorded in the history (default: the MCP client's name).");
     let read_only = json!({"readOnlyHint": true, "openWorldHint": false});
@@ -573,12 +590,21 @@ pub fn tools() -> J {
         {"name": "qal_prove", "title": "Prove QAL contracts", "annotations": read_only,
          "description": "Prove the `req`/`ens` contracts of stored functions and tests with Z3 (all, or the named ones): every `ens`, and the `req` of every called function at its call site. Status per obligation: proven, refuted (with a counterexample that really violates it), or unknown (with the reason: Int and Bool facts are modelled exactly, other values only approximately; the contract stays checked at runtime). Results are stored per definition hash.",
          "inputSchema": {"type": "object", "properties": {"names": list("Function or test names (default: all).")}, "additionalProperties": false}},
-        {"name": "qal_run", "title": "Run a QAL program", "annotations": {"readOnlyHint": false, "destructiveHint": false, "openWorldHint": false},
+        {"name": "qal_run", "title": "Run a QAL program", "annotations": {"readOnlyHint": false, "destructiveHint": false, "openWorldHint": true},
          "description": "Run a stored entry point `fn(List[Str]) -> Int` (default `main`) with string arguments. Result: exit_code and stdout, or a runtime `error` (contract violation, overflow, timeout after 10 s, ...). Effects the program declares must be granted with `allow`.",
          "inputSchema": {"type": "object", "properties": {"entry": s("Entry point name (default main)."), "args": list("Program arguments."), "stdin": stdin.clone(), "allow": allow.clone()}, "additionalProperties": false}},
-        {"name": "qal_call", "title": "Call a QAL function", "annotations": {"readOnlyHint": false, "destructiveHint": false, "openWorldHint": false},
+        {"name": "qal_call", "title": "Call a QAL function", "annotations": {"readOnlyHint": false, "destructiveHint": false, "openWorldHint": true},
          "description": "Call any stored function with JSON arguments and get its result as JSON, both in the same form: numbers, strings, true/false, null for Unit, arrays for List and Bytes, [[key, value], ...] for Map, objects for records, `None` is \"None\", `Some(3)` is {\"Some\":[3]}. Function values cannot be passed.",
          "inputSchema": {"type": "object", "properties": {"fn": s("Function name."), "args": {"type": "array", "description": "Arguments in parameter order."}, "stdin": stdin, "allow": allow}, "required": ["fn"], "additionalProperties": false}},
+        {"name": "qal_request", "title": "Send HTTP requests to a QAL service", "annotations": {"readOnlyHint": false, "destructiveHint": false, "openWorldHint": true},
+         "description": "Run HTTP requests against a stored handler `fn(HttpRequest) -> HttpResponse` exactly as `qal serve` would (same limits, same checks, one database transaction per request: committed for status 100-399, else rolled back), without a server. `init` (a `fn() -> Result[Unit, Str]`, e.g. creating tables) runs first; all requests share one database (\"db:mem\": a fresh one per call). Result: `responses`, one per request: status, headers, body, json (if the response is JSON), db (commit/rollback/none), stdout, and the full runtime `error` of a failed request (500/503).",
+         "inputSchema": {"type": "object", "properties": {
+             "handler": s("Handler function (default handle)."),
+             "init": s("Function run once before the requests."),
+             "allow": allow_request,
+             "requests": {"type": "array", "maxItems": 50, "description": "Requests in order: {method (default GET), path (starting with /, without ?), query (the part after ?), headers [{name, value}], body (text) or json (any JSON value: serialized as the body with content-type application/json)}.",
+                          "items": {"type": "object"}}},
+           "required": ["requests"], "additionalProperties": false}},
         {"name": "qal_view", "title": "View QAL definitions", "annotations": read_only,
          "description": "Show stored definitions as text with their hash, signature, effects and the signatures of their direct dependencies. Names, or `#<hash>` for old versions from the history.",
          "inputSchema": {"type": "object", "properties": {"names": list("Names or #<hash>.")}, "required": ["names"], "additionalProperties": false}},

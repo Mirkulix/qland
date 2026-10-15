@@ -16,5 +16,6 @@ qal-wasm = { workspace = true }
 qal-run = { workspace = true }
 qal-store = { workspace = true }
 qal-prove = { workspace = true }
+qal-serve = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

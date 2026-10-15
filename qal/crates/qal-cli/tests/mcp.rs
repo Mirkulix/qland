@@ -114,7 +114,7 @@ fn handshake_lists_the_tools_with_the_language_reference() {
     assert_eq!(c.request("ping", json!({}))["result"], json!({}));
     let tools = c.request("tools/list", json!({}))["result"]["tools"].clone();
     let names: Vec<&str> = tools.as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap()).collect();
-    assert_eq!(names, ["qal_define", "qal_test", "qal_prove", "qal_run", "qal_call", "qal_view", "qal_query", "qal_rename", "qal_history", "qal_build"]);
+    assert_eq!(names, ["qal_define", "qal_test", "qal_prove", "qal_run", "qal_call", "qal_request", "qal_view", "qal_query", "qal_rename", "qal_history", "qal_build"]);
     for t in tools.as_array().unwrap() {
         assert_eq!(t["inputSchema"]["type"], "object", "{t}");
         assert!(!t["description"].as_str().unwrap().is_empty());
@@ -122,7 +122,8 @@ fn handshake_lists_the_tools_with_the_language_reference() {
     let reference = tools[0]["description"].as_str().unwrap();
     assert!(reference.contains("QAL language reference") && reference.contains("alias_reference") && reference.contains("signature_change"));
     // "At most one page": a bounded size.
-    assert!(qal_cli::mcp::REFERENCE.lines().count() <= 60 && qal_cli::mcp::REFERENCE.len() <= 7500, "{} lines, {} bytes", qal_cli::mcp::REFERENCE.lines().count(), qal_cli::mcp::REFERENCE.len());
+    // Phase 2 (generics, closures, maps, bytes, proofs) and Phase 3a (a "Services" section of 12 lines) add to it.
+    assert!(qal_cli::mcp::REFERENCE.lines().count() <= 72 && qal_cli::mcp::REFERENCE.len() <= 9500, "{} lines, {} bytes", qal_cli::mcp::REFERENCE.lines().count(), qal_cli::mcp::REFERENCE.len());
     // An unknown version gets the newest legacy one.
     let r = c.request("initialize", json!({"protocolVersion": "1999-01-01", "capabilities": {}, "clientInfo": {"name": "x", "version": "1"}}));
     assert_eq!(r["result"]["protocolVersion"], "2025-11-25");
@@ -142,7 +143,7 @@ fn an_agent_defines_tests_runs_and_inspects_code() {
     // Effects must be granted explicitly.
     let (err, v) = c.call("qal_run", json!({"args": [" 42"]}));
     assert_eq!((err, v["error"]["kind"].as_str()), (true, Some("permission_denied")));
-    assert_eq!(v["error"]["hints"], json!(["pass `\"allow\": [\"io\"]` to qal_run or qal_call"]));
+    assert_eq!(v["error"]["hints"], json!(["pass `\"allow\": [\"io\"]` to qal_run, qal_call or qal_request"]));
     let (err, v) = c.call("qal_run", json!({"args": [" 42"], "allow": ["io"]}));
     assert_eq!((err, v), (false, json!({"exit_code": 0, "stdout": "ok 42\n"})));
     // A non-zero exit code is a result, not a tool failure.
@@ -512,5 +513,91 @@ fn agents_get_proofs_counterexamples_and_property_tests() {
     assert_eq!((err, &v["ok"]), (false, &json!(18)), "{v}");
     let (err, v) = c.call("qal_call", json!({"fn": "total", "args": [[], [300], "None"]}));
     assert_eq!((err, v["error"]["message"].as_str()), (true, Some("`b`: expected a byte (0..=255), got 300")));
+    assert_eq!(c.finish(), Some(0));
+}
+
+#[test]
+fn agents_use_an_in_memory_database_or_the_projects_file() {
+    let mut c = Client::start();
+    c.initialize();
+    let src = "fn setup() -> Result[Int, DbError] !db = db_exec(\"CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY, body TEXT NOT NULL)\", [])\n\
+               fn note(b: Str) -> Int !db = match setup() { Ok(_) => match db_exec(\"INSERT INTO notes (body) VALUES (?)\", [SqlText(b)]) { Ok(n) => n, Err(_) => 0 - 1 }, Err(_) => 0 - 2 }\n\
+               fn notes() -> Int !db = match db_query(\"SELECT count(*) FROM notes\", []) { Ok(r) => len(r.rows), Err(DbSql(m)) => 0 - len(m), Err(_) => 0 - 1 }";
+    let (err, v) = c.call("qal_define", json!({"source": src}));
+    assert!(!err, "{v}");
+    let (err, v) = c.call("qal_call", json!({"fn": "note", "args": ["x"]}));
+    assert_eq!((err, v["error"]["hints"].clone()), (true, json!(["pass `\"allow\": [\"db:mem\"]` to qal_run, qal_call or qal_request"])));
+    let (err, v) = c.call("qal_call", json!({"fn": "note", "args": ["x"], "allow": ["db:mem"]}));
+    assert_eq!((err, v), (false, json!({"ok": 1, "stdout": "", "db": "commit"})));
+    assert!(!c.root.join(".qal/db").exists(), "db:mem leaves no file");
+    let (err, v) = c.call("qal_call", json!({"fn": "note", "args": ["y"], "allow": ["db"]}));
+    assert_eq!((err, v["ok"].clone()), (false, json!(1)));
+    assert!(c.root.join(".qal/db/main.sqlite").is_file(), "`db` is the project's .qal/db/main.sqlite");
+    let (_, v) = c.call("qal_call", json!({"fn": "notes", "allow": ["db"]}));
+    assert_eq!(v["ok"], json!(1));
+    let (err, v) = c.call("qal_call", json!({"fn": "notes", "allow": ["db", "db:mem"]}));
+    assert!(err && v["diagnostics"][0]["message"].as_str().unwrap().contains("only one database"), "{v}");
+    let (err, v) = c.call("qal_define", json!({"source": "fn bad(t: Str) -> Result[Int, DbError] !db = db_exec(\"DELETE FROM notes WHERE body = '\" ++ t ++ \"'\", [])"}));
+    assert_eq!((err, v["diagnostics"][0]["code"].as_str()), (true, Some("E0241")));
+}
+
+fn fixture_app() -> String {
+    std::fs::read_to_string(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../qal-serve/tests/fixtures/app.qal")).unwrap()
+}
+
+#[test]
+fn agents_test_services_with_qal_request() {
+    let mut c = Client::start();
+    c.initialize();
+    let (err, v) = c.call("qal_define", json!({"source": fixture_app()}));
+    assert!(!err, "{v}");
+    let requests = json!([
+        {"method": "POST", "path": "/todos", "body": "milk"},
+        {"method": "POST", "path": "/fail"},
+        {"path": "/todos", "json": null},
+        {"path": "/todos/1"},
+        {"method": "HEAD", "path": "/todos"},
+        {"path": "/trap"},
+        {"path": "/print"},
+        {"method": "PUT", "path": "/echo", "query": "a=1", "headers": [{"name": "X-Test", "value": " v "}, {"name": "Connection", "value": "close"}], "json": {"k": [1, 2]}},
+    ]);
+    let (err, v) = c.call("qal_request", json!({"init": "setup", "allow": ["db:mem", "io"], "requests": requests}));
+    assert!(!err, "{v}");
+    let r = v["responses"].as_array().unwrap();
+    assert_eq!(r.len(), 8);
+    assert_eq!((r[0]["status"].as_u64(), r[0]["db"].as_str(), r[0]["json"].clone()), (Some(201), Some("commit"), json!({"id": 1, "title": "milk"})));
+    assert!(r[0]["headers"].as_array().unwrap().contains(&json!({"name": "location", "value": "/todos/1"})), "{}", r[0]);
+    assert_eq!((r[1]["status"].as_u64(), r[1]["db"].as_str()), (Some(422), Some("rollback")));
+    assert_eq!(r[2]["json"], json!([{"id": 1, "title": "milk"}]), "the 422 rolled its insert back; requests share the database");
+    assert_eq!(r[3]["body"], r#"{"id":1,"title":"milk"}"#);
+    assert_eq!((r[4]["status"].as_u64(), r[4]["body"].as_str()), (Some(200), Some("")));
+    assert_eq!((r[5]["status"].as_u64(), r[5]["error"]["kind"].as_str(), r[5]["db"].as_str()), (Some(500), Some("int_overflow"), Some("rollback")));
+    assert_eq!(r[6]["stdout"], "hello from the handler\n");
+    assert_eq!(r[7]["body"], "PUT /echo?a=1 x-test,content-type,content-length {\"k\":[1,2]}", "lowercase names, no hop-by-hop headers");
+    // A fresh in-memory database per call; the project's file only with "db".
+    let (_, v) = c.call("qal_request", json!({"init": "setup", "allow": ["db:mem", "io"], "requests": [{"path": "/todos"}]}));
+    assert_eq!(v["responses"][0]["json"], json!([]), "{v}");
+    assert!(!c.root.join(".qal/db").exists());
+    // Errors before anything runs.
+    let (err, v) = c.call("qal_request", json!({"requests": [{"path": "/health"}]}));
+    assert_eq!((err, v["error"]["kind"].as_str()), (true, Some("permission_denied")));
+    assert_eq!(v["error"]["hints"], json!(["pass `\"allow\": [\"db:mem\", \"io\"]` to qal_run, qal_call or qal_request"]));
+    let (err, v) = c.call("qal_request", json!({"handler": "text", "allow": ["db:mem", "io"], "requests": []}));
+    assert_eq!((err, v["error"]["code"].as_str()), (true, Some("E0520")));
+    let (err, v) = c.call("qal_request", json!({"init": "nope", "allow": ["db:mem", "io"], "requests": []}));
+    assert_eq!((err, v["error"]["kind"].as_str()), (true, Some("bad_entry")));
+    let (err, v) = c.call("qal_request", json!({"allow": ["db:mem", "io"], "requests": [{"path": "todos"}]}));
+    assert!(err && v["diagnostics"][0]["message"].as_str().unwrap().contains("must start with `/`"), "{v}");
+    let (err, v) = c.call("qal_request", json!({"allow": ["db:mem", "io"], "requests": [{"path": "/", "verb": "GET"}]}));
+    assert!(err && v["diagnostics"][0]["message"].as_str().unwrap().contains("unknown request field `verb`"), "{v}");
+    let many: Vec<Value> = (0..51).map(|_| json!({"path": "/health"})).collect();
+    let (err, v) = c.call("qal_request", json!({"allow": ["db:mem", "io"], "requests": many}));
+    assert!(err && v["diagnostics"][0]["message"].as_str().unwrap().contains("at most 50"), "{v}");
+    let (err, v) = c.call("qal_request", json!({"allow": ["db:mem", "io"], "requests": [{"method": "POST", "path": "/todos", "body": "x".repeat((1 << 20) + 1)}]}));
+    assert_eq!((err, v["responses"][0]["status"].as_u64(), v["responses"][0]["error"]["code"].as_str()), (false, Some(413), Some("E0800")));
+    let reference = qal_cli::mcp::REFERENCE;
+    for needle in ["fn handle(rq: HttpRequest) -> HttpResponse", "string literal with `?` placeholders", "committed only for status 100-399", "\"db:mem\"", "qal_query name \"std.\""] {
+        assert!(reference.contains(needle), "{needle}");
+    }
     assert_eq!(c.finish(), Some(0));
 }
