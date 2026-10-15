@@ -10,11 +10,13 @@
 
 mod define;
 mod ops;
+pub mod package;
 mod pattern;
 mod schema;
 mod snapshot;
 
 pub use ops::{DepView, Entry, HistoryEntry, Query, Renamed, View};
+pub use package::{Exported, Imported};
 pub use pattern::matches as signature_matches;
 
 use qal_core::ast::Program;
@@ -41,6 +43,12 @@ pub struct Defined {
     pub status: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub old_hash: Option<String>,
+}
+
+/// The project directory around `start`: the nearest directory (`start` or an ancestor) that
+/// contains `.qal/store.db`.
+pub fn project_of(start: &Path) -> Option<PathBuf> {
+    start.ancestors().find(|d| d.join(STORE_DIR).join(STORE_FILE).is_file()).map(Path::to_path_buf)
 }
 
 pub struct Store {
@@ -88,8 +96,9 @@ impl Store {
         if !path.is_file() {
             return Err(vec![Diagnostic::store_error(format!("no QAL store at {}", path.display())).hint("create one with `qal init`")]);
         }
-        let conn = Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE).map_err(sql)?;
+        let mut conn = Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE).map_err(sql)?;
         schema::configure(&conn).map_err(sql)?;
+        schema::migrate(&mut conn)?;
         Store::checked(conn, path.to_path_buf())
     }
 
@@ -194,6 +203,27 @@ impl Store {
             )
             .map(|_| ())
             .map_err(sql)
+    }
+
+    /// Exports the names starting with `prefix` and their dependencies as package `package`
+    /// (the file text is in [`Exported::file`]).
+    pub fn export(&mut self, prefix: &str, package: &str) -> Result<Exported, Vec<Diagnostic>> {
+        package::export(&mut self.conn, prefix, package)
+    }
+
+    /// Imports a package file atomically, verifying its checksum and every hash.
+    pub fn import(&mut self, file: &str) -> Result<Imported, Vec<Diagnostic>> {
+        package::import(&mut self.conn, file, None)
+    }
+
+    /// [`Store::import`] with the verification step of [`Store::define_verified`].
+    pub fn import_verified(&mut self, file: &str, verify: &mut Verify) -> Result<Imported, Vec<Diagnostic>> {
+        package::import(&mut self.conn, file, Some(verify))
+    }
+
+    /// A value of the store's `meta` table.
+    pub fn meta(&self, key: &str) -> Result<Option<String>, Vec<Diagnostic>> {
+        package::meta(&self.conn, key)
     }
 
     /// Every recorded change of `name`, oldest first.

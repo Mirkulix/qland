@@ -37,10 +37,20 @@ pub(crate) fn hash(p: &Program) -> Result<Hashed, Vec<Diagnostic>> {
 const ATTEMPTS: usize = 3;
 
 pub fn define(conn: &mut Connection, src: &str, agent: &str, verify: Option<&mut Verify>) -> Result<Vec<Defined>, Vec<Diagnostic>> {
+    define_checked(conn, src, agent, verify, &|_, _| Ok(()))
+}
+
+/// A check of a `define` before it is committed, inside the write transaction that would commit it
+/// (it can also write more in the same transaction; used by package imports).
+pub type Check<'c> = dyn Fn(&[Defined], &Transaction) -> Result<(), Vec<Diagnostic>> + 'c;
+
+/// `define`, committed only if `check` accepts the written result (after the verification).
+pub fn define_checked(conn: &mut Connection, src: &str, agent: &str, verify: Option<&mut Verify>, check: &Check) -> Result<Vec<Defined>, Vec<Diagnostic>> {
     let input = qal_text::parse_program(src).map_err(|d| vec![d])?;
     let Some(v) = verify else {
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(sql)?;
         let out = prepare(&tx, &input)?.write(&tx, &input, agent, false)?;
+        check(&out, &tx)?;
         tx.commit().map_err(sql)?;
         return Ok(out);
     };
@@ -67,6 +77,7 @@ pub fn define(conn: &mut Connection, src: &str, agent: &str, verify: Option<&mut
         if now.iter().all(|d| todo.contains(d)) {
             let hashes: HashSet<&str> = now.iter().map(|(_, h)| h.as_str()).collect();
             store_results(&tx, &v.key, rows.into_iter().filter(|(h, _)| hashes.contains(h.as_str())))?;
+            check(&out, &tx)?;
             tx.commit().map_err(sql)?;
             return Ok(out);
         }
@@ -79,6 +90,7 @@ pub fn define(conn: &mut Connection, src: &str, agent: &str, verify: Option<&mut
     if !todo.is_empty() {
         store_results(&tx, &v.key, (v.run)(&state.typed, &todo)?.into_iter())?;
     }
+    check(&out, &tx)?;
     tx.commit().map_err(sql)?;
     Ok(out)
 }

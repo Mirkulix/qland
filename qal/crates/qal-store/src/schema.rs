@@ -6,9 +6,10 @@ use rusqlite::Connection;
 use std::path::Path;
 use std::time::Duration;
 
-/// `PRAGMA user_version` of stores this code reads and writes. Version 3 (Phase 2) adds the
-/// `proofs` table; a version 2 store is upgraded in place when it is opened.
-pub const SCHEMA_VERSION: i64 = 3;
+/// `PRAGMA user_version` of stores this code reads and writes. Version 2 is Phase 1; version 3
+/// (Phase 2b) adds the `proofs` table; version 4 (Phase 3a) adds `meta`. Older stores are upgraded
+/// in place when they are opened ([`migrate`]: 2 -> 3 -> 4, one transaction).
+pub const SCHEMA_VERSION: i64 = 4;
 
 /// Proof results by definition hash and prover key (prover version, Z3 version, resource limit):
 /// a definition's hash fixes everything a proof depends on (its callees' contracts are referenced
@@ -22,6 +23,13 @@ CREATE TABLE proofs (
     PRIMARY KEY (hash, prover)
 );
 ";
+
+/// Key-value facts about the store (`package:<name>` = hash of the last imported package; later
+/// phases add `role` and `std_package`).
+pub const META: &str = "CREATE TABLE meta (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);";
 
 /// How long a writer waits for another process's `define`/`rename` to finish.
 pub const BUSY_TIMEOUT: Duration = Duration::from_secs(10);
@@ -75,21 +83,6 @@ CREATE TABLE history (
 CREATE INDEX history_by_name ON history(name);
 ";
 
-/// Upgrades a version 2 store (Phase 1) to version 3 in one transaction; other versions are left alone.
-pub fn migrate(conn: &mut Connection) -> Result<(), Vec<Diagnostic>> {
-    let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0)).map_err(sql)?;
-    if version != 2 {
-        return Ok(());
-    }
-    let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate).map_err(sql)?;
-    let version: i64 = tx.query_row("PRAGMA user_version", [], |r| r.get(0)).map_err(sql)?;
-    if version == 2 {
-        tx.execute_batch(PROOFS).map_err(sql)?;
-        tx.pragma_update(None, "user_version", SCHEMA_VERSION).map_err(sql)?;
-    }
-    tx.commit().map_err(sql)
-}
-
 /// Per-connection settings: wait for other writers, enforce references.
 pub fn configure(conn: &Connection) -> rusqlite::Result<()> {
     conn.busy_timeout(BUSY_TIMEOUT)?;
@@ -107,10 +100,10 @@ pub fn create(conn: &mut Connection, path: &Path) -> Result<(), Vec<Diagnostic>>
     if version == 0 && objects == 0 {
         tx.execute_batch(SCHEMA).map_err(sql)?;
         tx.execute_batch(PROOFS).map_err(sql)?;
+        tx.execute_batch(META).map_err(sql)?;
         tx.pragma_update(None, "user_version", SCHEMA_VERSION).map_err(sql)?;
-    } else if version == 2 {
-        tx.execute_batch(PROOFS).map_err(sql)?;
-        tx.pragma_update(None, "user_version", SCHEMA_VERSION).map_err(sql)?;
+    } else if (2..SCHEMA_VERSION).contains(&version) {
+        upgrade(&tx, version)?;
     } else if version != SCHEMA_VERSION {
         let what = if version == 0 { "not a QAL store".to_string() } else { format!("not a QAL store of version {SCHEMA_VERSION} (found version {version})") };
         return Err(vec![Diagnostic::store_error(format!("{} is {what}", path.display()))]);
@@ -118,4 +111,35 @@ pub fn create(conn: &mut Connection, path: &Path) -> Result<(), Vec<Diagnostic>>
     tx.commit().map_err(sql)?;
     conn.pragma_update(None, "journal_mode", "WAL").map_err(sql)?;
     Ok(())
+}
+
+/// Upgrades a store of version `from` (2 or 3) to [`SCHEMA_VERSION`] inside `tx`, step by step:
+/// 2 -> 3 creates `proofs`, 3 -> 4 creates `meta`.
+fn upgrade(tx: &rusqlite::Transaction, from: i64) -> Result<(), Vec<Diagnostic>> {
+    if from <= 2 {
+        tx.execute_batch(PROOFS).map_err(sql)?;
+        tx.pragma_update(None, "user_version", 3).map_err(sql)?;
+    }
+    if from <= 3 {
+        tx.execute_batch(META).map_err(sql)?;
+        tx.pragma_update(None, "user_version", 4).map_err(sql)?;
+    }
+    Ok(())
+}
+
+/// Brings a store of an older version (2 or 3) to [`SCHEMA_VERSION`] in one transaction; it only
+/// creates tables (2 -> 3 `proofs`, 3 -> 4 `meta`). Other versions are left alone (the caller
+/// reports them).
+pub fn migrate(conn: &mut Connection) -> Result<(), Vec<Diagnostic>> {
+    let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0)).map_err(sql)?;
+    if !(2..SCHEMA_VERSION).contains(&version) {
+        return Ok(());
+    }
+    let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate).map_err(sql)?;
+    // Another process may have migrated it meanwhile.
+    let version: i64 = tx.query_row("PRAGMA user_version", [], |r| r.get(0)).map_err(sql)?;
+    if (2..SCHEMA_VERSION).contains(&version) {
+        upgrade(&tx, version)?;
+    }
+    tx.commit().map_err(sql)
 }

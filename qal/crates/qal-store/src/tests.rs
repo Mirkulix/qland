@@ -818,12 +818,14 @@ fn version_2_stores_are_upgraded_and_keep_proof_results() {
     ok(&mut s, "fn f(x: Int) -> Int = x");
     // Downgrade to the Phase 1 layout, then open again.
     let c = raw(&s);
-    c.execute_batch("DROP TABLE proofs; PRAGMA user_version = 2;").unwrap();
+    c.execute_batch("DROP TABLE proofs; DROP TABLE meta; PRAGMA user_version = 2;").unwrap();
     drop(c);
     let path = s.path().to_path_buf();
     drop(s);
+    // 2 -> 3 (proofs) -> 4 (meta) in one migration.
     let mut s = Store::open(&path).unwrap();
-    assert_eq!(raw(&s).query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), 3);
+    assert_eq!(raw(&s).query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), 4);
+    assert_eq!(s.meta("x").unwrap(), None);
     let h = hash(&mut s, "f");
     assert_eq!(s.proofs(&h, "p1").unwrap(), None);
     s.save_proofs(&h, "p1", "[1]").unwrap();
@@ -933,4 +935,133 @@ fn the_program_and_its_hashes_come_from_one_read() {
         assert_eq!(hashes.get(&c.name), Some(&c.hash.to_hex()), "{}", c.name);
     }
     assert_eq!(hashes.len(), 2);
+}
+
+#[test]
+fn definitions_using_prelude_types_store_and_view() {
+    let mut s = store();
+    let src = "fn handle(rq: HttpRequest) -> HttpResponse = HttpResponse { status: 200, headers: [HttpHeader { name: \"x\", value: rq.path }], body: \"\" }\n\
+               fn cell(v: SqlValue) -> Int = match v { SqlInt(n) => n, _ => 0 }";
+    let d = ok(&mut s, src);
+    assert_eq!(statuses(&d), vec![("handle", "added"), ("cell", "added")]);
+    assert_eq!(count(&s, "deps"), 0, "prelude types are not stored dependencies");
+    assert_eq!(text(&mut s, "handle"), "fn handle(rq: HttpRequest) -> HttpResponse\n= HttpResponse { status: 200, headers: [HttpHeader { name: \"x\", value: rq.path }], body: \"\" }");
+    assert_eq!(statuses(&ok(&mut s, src)), vec![("handle", "unchanged"), ("cell", "unchanged")]);
+    let e = err(&mut s, "type DbRows = { n: Int }");
+    assert_eq!(e[0].code, "E0240");
+    // A stored type cannot be renamed to a prelude name either.
+    ok(&mut s, "type Row = { n: Int }");
+    assert_eq!(s.rename("Row", "DbRows", "test").unwrap_err()[0].code, "E0240");
+}
+
+#[test]
+fn packages_export_and_import_with_identical_hashes() {
+    let mut s = store();
+    ok(&mut s, "type P = { x: Int }\nfn lib_x(p: P) -> Int = p.x\nfn lib_two() -> Int = lib_x(P { x: 2 }) + helper()\nfn helper() -> Int = 0\nfn other() -> Int = 9\ntest lib_t = lib_two() == 2");
+    let e = s.export("lib_", "lib").unwrap();
+    assert_eq!((e.package.as_str(), e.defs), ("lib", 5), "the prefix plus dependencies P and helper");
+    let lines: Vec<&str> = e.file.lines().collect();
+    assert_eq!(lines[0], "# qal-pkg 1");
+    assert_eq!(lines[1], format!("# package lib {}", e.hash));
+    assert!(lines[2].starts_with("# def P ") && lines[2].ends_with(" test"), "{}", lines[2]);
+    assert!(!e.file.contains("fn other"));
+    let text = e.file.split("\n\n").skip(1).collect::<Vec<_>>().join("\n\n");
+    assert!(text.find("type P").unwrap() < text.find("fn lib_x").unwrap() && text.find("fn helper").unwrap() < text.find("fn lib_two").unwrap(), "dependencies first");
+    assert_eq!(s.export("lib_", "lib").unwrap().file, e.file, "deterministic");
+    // Into a fresh store: same hashes, recorded origin, package hash in meta.
+    let mut t = store();
+    let i = t.import(&e.file).unwrap();
+    assert_eq!((i.package.as_str(), i.hash.as_str(), i.defined.len()), ("lib", e.hash.as_str(), 5));
+    for n in ["P", "lib_x", "lib_two", "helper", "lib_t"] {
+        assert_eq!(hash(&mut t, n), hash(&mut s, n), "{n}");
+    }
+    assert_eq!(t.history("lib_x").unwrap()[0].agent, format!("qal-lib@{}", &e.hash[..12]));
+    assert_eq!(t.meta("package:lib").unwrap(), Some(e.hash.clone()));
+    assert_eq!(statuses(&t.import(&e.file).unwrap().defined)[0].1, "unchanged", "importing again changes nothing");
+    // A changed file: wrong checksum, or right checksum but other hashes -> nothing is written.
+    let tampered = e.file.replace("p.x", "p.x + 1");
+    let d = t.import(&tampered).unwrap_err();
+    assert_eq!((d[0].code, d[0].kind), ("E0243", "package_mismatch"));
+    let body = tampered.split_once('\n').unwrap().1.split_once('\n').unwrap().1;
+    let resealed = format!("# qal-pkg 1\n# package lib {}\n{body}", Hash::of(body.as_bytes()).to_hex());
+    let mut u = store();
+    let d = u.import(&resealed).unwrap_err();
+    assert!(d[0].code == "E0243" && d[0].message.contains("was recorded with hash"), "{d:?}");
+    assert_eq!(count(&u, "names"), 0, "rolled back");
+    assert_eq!(u.import("not a package").unwrap_err()[0].code, "E0243");
+    assert!(s.export("x", "Bad Name").is_err());
+}
+
+#[test]
+fn an_empty_package_is_valid_and_old_stores_are_migrated() {
+    let mut s = store();
+    let e = s.export("std.", "std").unwrap();
+    assert_eq!(e.file, format!("# qal-pkg 1\n# package std {}\n", Hash::of(b"").to_hex()));
+    assert_eq!(s.import(&e.file).unwrap().defined.len(), 0);
+    assert_eq!(s.meta("package:std").unwrap(), Some(Hash::of(b"").to_hex()));
+    // A version-3 store (Phase 2b: `proofs`, no `meta`) is upgraded when opened.
+    let mut old = store();
+    ok(&mut old, "fn f() -> Int = 1");
+    let h = hash(&mut old, "f");
+    old.save_proofs(&h, "p", "[1]").unwrap();
+    let c = raw(&old);
+    c.execute_batch("DROP TABLE meta; PRAGMA user_version = 3;").unwrap();
+    drop(c);
+    let path = old.path().to_path_buf();
+    drop(old);
+    let mut again = Store::open(&path).unwrap();
+    assert_eq!(again.meta("x").unwrap(), None);
+    assert_eq!(hashes(&mut again).len(), 1);
+    assert_eq!(again.proofs(&h, "p").unwrap().as_deref(), Some("[1]"));
+    let v: i64 = raw(&again).query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
+    assert_eq!(v, 4);
+}
+
+#[test]
+fn imports_are_verified_like_define() {
+    let mut src = store();
+    ok(&mut src, "fn lib_one() -> Int = 1\nfn lib_two(x: Int) -> Int = x + lib_one()");
+    let pkg = src.export("lib_", "lib").unwrap();
+    // A rejecting verifier rejects the whole import: nothing is written, `meta` stays empty.
+    let mut s = store();
+    let mut reject = |_: &qal_core::tast::TProgram, _: &[(String, String)]| Err(vec![Diagnostic::store_error("refuted")]);
+    let mut v = Verify { key: "k".into(), run: &mut reject };
+    assert_eq!(s.import_verified(&pkg.file, &mut v).unwrap_err()[0].message, "refuted");
+    assert!(hashes(&mut s).is_empty());
+    assert_eq!(s.meta("package:lib").unwrap(), None);
+    // An accepting one stores its results with the import.
+    let mut seen = Vec::new();
+    let mut accept = |_: &qal_core::tast::TProgram, todo: &[(String, String)]| {
+        seen.extend(todo.iter().map(|(n, _)| n.clone()));
+        Ok(todo.iter().map(|(_, h)| (h.clone(), "[]".to_string())).collect())
+    };
+    let mut v = Verify { key: "k".into(), run: &mut accept };
+    assert_eq!(s.import_verified(&pkg.file, &mut v).unwrap().defined.len(), 2);
+    seen.sort();
+    assert_eq!(seen, ["lib_one", "lib_two"]);
+    let h = hash(&mut s, "lib_two");
+    assert_eq!(s.proofs(&h, "k").unwrap().as_deref(), Some("[]"));
+    assert_eq!(s.meta("package:lib").unwrap(), Some(pkg.hash));
+}
+
+#[test]
+fn packages_never_replace_the_projects_own_definitions() {
+    let mut evil = store();
+    ok(&mut evil, "fn lib_hello() -> Int = check_password(\"x\")\nfn check_password(p: Str) -> Int = 1");
+    let pkg = evil.export("lib_", "lib").unwrap();
+    let mut victim = store();
+    ok(&mut victim, "fn check_password(p: Str) -> Int = if p == \"s3cret\" then 1 else 0");
+    let before = hash(&mut victim, "check_password");
+    let d = victim.import(&pkg.file).unwrap_err();
+    assert!(d[0].code == "E0243" && d[0].message.contains("would replace the project's own `check_password`"), "{d:?}");
+    assert_eq!(hash(&mut victim, "check_password"), before);
+    // A newer version of the same package may replace what the older one defined.
+    let mut lib = store();
+    ok(&mut lib, "fn lib_one() -> Int = 1");
+    let v1 = lib.export("lib_", "lib").unwrap();
+    ok(&mut lib, "fn lib_one() -> Int = 2");
+    let v2 = lib.export("lib_", "lib").unwrap();
+    let mut user = store();
+    user.import(&v1.file).unwrap();
+    assert_eq!(statuses(&user.import(&v2.file).unwrap().defined), vec![("lib_one", "replaced")]);
 }
