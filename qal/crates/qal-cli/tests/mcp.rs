@@ -620,22 +620,22 @@ fn the_std_project_is_its_own_mcp_root() {
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stdout));
     let mut c = Client::start_at(root);
     c.initialize();
-    let src = "type std.json.Json = std.json.Null | std.json.Int(Int)\n\
-               fn std.json.int(n: Int) -> std.json.Json = std.json.Int(n)\n\
-               test std.json.t_int = match std.json.int(1) { std.json.Int(n) => n == 1, std.json.Null => false }";
+    let src = "type std.zz.Json = std.zz.Null | std.zz.Int(Int)\n\
+               fn std.zz.int(n: Int) -> std.zz.Json = std.zz.Int(n)\n\
+               test std.zz.t_int = match std.zz.int(1) { std.zz.Int(n) => n == 1, std.zz.Null => false }";
     let (err, v) = c.call("qal_define", json!({"source": src, "agent": "std-json-1"}));
     assert!(!err && v.get("std_imported").is_none(), "{v}");
     let (err, v) = c.call("qal_define", json!({"source": "fn helper() -> Int = 1"}));
     assert!(err && v["diagnostics"][0]["code"] == "E0240", "{v}");
-    let (_, v) = c.call("qal_query", json!({"name": "std.json."}));
+    let (_, v) = c.call("qal_query", json!({"name": "std.zz."}));
     let names: Vec<&str> = v["results"].as_array().unwrap().iter().map(|e| e["name"].as_str().unwrap()).collect();
-    assert_eq!(names, ["std.json.Json", "std.json.int", "std.json.t_int"]);
-    let (_, v) = c.call("qal_history", json!({"name": "std.json.int"}));
+    assert_eq!(names, ["std.zz.Json", "std.zz.int", "std.zz.t_int"]);
+    let (_, v) = c.call("qal_history", json!({"name": "std.zz.int"}));
     assert_eq!(v["history"][0]["agent"], "std-json-1");
-    let (err, v) = c.call("qal_test", json!({"names": ["std.json.t_int"]}));
+    let (err, v) = c.call("qal_test", json!({"names": ["std.zz.t_int"]}));
     assert!(!err && v["passed"] == 1, "{v}");
-    let (_, v) = c.call("qal_view", json!({"names": ["std.json.int"]}));
-    assert_eq!(v["views"][0]["text"], "fn std.json.int(n: Int) -> std.json.Json\n= std.json.Int(n)");
+    let (_, v) = c.call("qal_view", json!({"names": ["std.zz.int"]}));
+    assert_eq!(v["views"][0]["text"], "fn std.zz.int(n: Int) -> std.zz.Json\n= std.zz.Int(n)");
     assert_eq!(c.finish(), Some(0));
 }
 
@@ -670,6 +670,6 @@ fn agents_delete_names_nothing_refers_to() {
     let (_, v) = c.call("qal_history", json!({"name": "h"}));
     assert_eq!((v["history"][1]["action"].as_str(), v["history"][1]["agent"].as_str()), (Some("deleted"), Some("cleaner")));
     let (err, v) = c.call("qal_delete", json!({"name": "std.json.parse"}));
-    assert!(err && v["diagnostics"][0]["kind"] == "unknown_name", "{v}");
+    assert!(err && v["diagnostics"][0]["code"] == "E0240", "{v}");
     assert_eq!(c.finish(), Some(0));
 }

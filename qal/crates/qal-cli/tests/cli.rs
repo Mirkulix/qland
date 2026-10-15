@@ -309,8 +309,7 @@ fn concurrent_define_processes_both_succeed() {
         let out = c.wait_with_output().unwrap();
         assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stdout));
     }
-    let (_, v) = qal_in(&dir, &["query"]);
-    assert_eq!(v["results"].as_array().unwrap().len(), 5);
+    assert_eq!(own_names(&dir).len(), 5);
     let (_, v) = qal_in(&dir, &["history", "shared"]);
     assert_eq!(v["history"].as_array().unwrap().len(), 4);
 }
@@ -608,6 +607,17 @@ fn packages_round_trip_between_projects() {
 // ---------------------------------------------------------------------------------------------
 // Phase 3b: the standard library namespace and package.
 
+/// Number of definitions of the embedded std package.
+fn std_defs() -> u64 {
+    qal_store::package::parse(qal_cli::STD_PACKAGE).unwrap().defs.len() as u64
+}
+
+/// The stored names of the project around `dir` that are not `std.` names.
+fn own_names(dir: &PathBuf) -> Vec<String> {
+    let (_, v) = qal_in(dir, &["query"]);
+    v["results"].as_array().unwrap().iter().filter_map(|e| e["name"].as_str()).filter(|n| !n.starts_with("std.")).map(str::to_string).collect()
+}
+
 fn std_hash() -> String {
     qal_store::package::parse(qal_cli::STD_PACKAGE).unwrap().hash
 }
@@ -704,9 +714,15 @@ fn the_std_project_store_defines_only_std_names_and_exports_the_package() {
     let (code, v) = qal_in(&dir, &["call", "std.a.inc", "2"]);
     assert_eq!((code, &v["ok"]), (0, &json!(3)), "{v}");
     let (code, v) = qal_in(&dir, &["export", "std.", "--out", "std.qalpkg"]);
-    assert_eq!((code, v["exported"]["package"].as_str(), v["exported"]["defs"].as_u64()), (0, Some("std"), Some(4)), "{v}");
+    assert_eq!((code, v["exported"]["package"].as_str(), v["exported"]["defs"].as_u64()), (0, Some("std"), Some(4 + std_defs())), "{v}");
     let file = std::fs::read_to_string(dir.join("std.qalpkg")).unwrap();
-    assert!(file.lines().filter(|l| l.starts_with("# def ")).all(|l| l.ends_with(" std-a-1")), "{file}");
+    // The new names carry their agent; the embedded std keeps its recorded agents.
+    let defs: Vec<&str> = file.lines().filter(|l| l.starts_with("# def ")).collect();
+    assert!(defs.iter().filter(|l| l.starts_with("# def std.a.")).all(|l| l.ends_with(" std-a-1")), "{file}");
+    let embedded = qal_store::package::parse(qal_cli::STD_PACKAGE).unwrap().defs;
+    for d in &embedded {
+        assert!(defs.contains(&format!("# def {} {} {}", d.name, d.hash, d.agent).as_str()), "{}", d.name);
+    }
     // A project importing that package gets the same hashes and cannot change them.
     let user = project("std-user");
     qal_in(&user, &["init"]);
@@ -749,7 +765,7 @@ fn delete_removes_unused_names() {
     assert_eq!((v["history"][1]["action"].as_str(), v["history"][1]["agent"].as_str()), (Some("deleted"), Some("cleaner")));
     let (code, v) = qal_in(&dir, &["delete", "top", "base"]);
     assert_eq!((code, v["deleted"].as_array().map(Vec::len)), (0, Some(2)), "{v}");
-    assert_eq!(qal_in(&dir, &["query"]).1["results"], json!([]));
+    assert_eq!(own_names(&dir), Vec::<String>::new());
     let out = Command::new(env!("CARGO_BIN_EXE_qal")).current_dir(&dir).arg("delete").output().unwrap();
     assert_eq!(out.status.code(), Some(2), "a name is required");
 }
@@ -777,4 +793,26 @@ fn project_tests_skip_std_tests_unless_named() {
     // In the std store, all means all.
     let (_, v) = qal_in(&std_dir, &["test"]);
     assert_eq!((names(&v, "tests", "name"), names(&v, "properties", "def")), (vec!["std.a.t".to_string()], vec!["std.a.abs".to_string()]), "{v}");
+}
+
+#[test]
+fn concurrent_first_writes_both_import_the_std_package() {
+    // A store without std (made by an older qal): every writer imports the embedded std first;
+    // concurrent ones serialize on the write lock and all succeed (the later imports change nothing).
+    let dir = project("concurrent-std");
+    drop(qal_store::Store::init(&dir).unwrap());
+    let files: Vec<String> = (0..4).map(|i| write(&dir, &format!("f{i}.qal"), &format!("fn f{i}() -> Int = std_free({i})\nfn std_free(x: Int) -> Int = x"))).collect();
+    let children: Vec<_> = files.iter().map(|f| Command::new(env!("CARGO_BIN_EXE_qal")).args(["define", f]).current_dir(&dir).stdout(Stdio::piped()).spawn().unwrap()).collect();
+    let mut imported = 0;
+    for c in children {
+        let out = c.wait_with_output().unwrap();
+        let v: Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert!(out.status.success(), "{v}");
+        imported += usize::from(v.get("std_imported").is_some());
+    }
+    assert!(imported >= 1, "at least the first writer imported std");
+    assert_eq!(meta(&dir, "std_package"), Some(std_hash()));
+    assert_eq!(own_names(&dir).len(), 5);
+    let (_, v) = qal_in(&dir, &["query", "--name", "std."]);
+    assert_eq!(v["results"].as_array().unwrap().len() as u64, std_defs());
 }

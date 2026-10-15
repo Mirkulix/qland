@@ -181,10 +181,7 @@ pub fn delete(conn: &mut Connection, names: &[String], agent: &str) -> Result<Ve
     let mut diags = Vec::new();
     let mut out = Vec::new();
     for &name in &wanted {
-        let Some(entry) = snap.names.get(name) else {
-            diags.push(unknown(&tx, &|n| snap.names.contains_key(n), name));
-            continue;
-        };
+        // The namespace rule first: a `std.` name is read-only in a project, stored or not.
         if std_store && !is_std_name(name) {
             diags.push(Diagnostic::std_only(name, "", name, None));
             continue;
@@ -193,6 +190,10 @@ pub fn delete(conn: &mut Connection, names: &[String], agent: &str) -> Result<Ve
             diags.push(Diagnostic::std_reserved(name, "", name));
             continue;
         }
+        let Some(entry) = snap.names.get(name) else {
+            diags.push(unknown(&tx, &|n| snap.names.contains_key(n), name));
+            continue;
+        };
         let users: Vec<String> = snap.dependents(name).into_iter().filter(|u| !wanted.contains(u.as_str())).collect();
         if !users.is_empty() {
             diags.push(Diagnostic::has_dependents(name, &users));

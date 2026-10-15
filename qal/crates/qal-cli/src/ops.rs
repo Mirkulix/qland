@@ -575,7 +575,24 @@ pub fn prove(ctx: &Ctx, source: &Source, names: &[String]) -> Reply {
         return Reply::diagnostics(unknown);
     }
     let opts = qal_prove::Options::default();
-    let only = (!names.is_empty()).then_some(names);
+    // In a project, "all" means the project's own definitions: std's are proven when named (or in
+    // the std store), like `test`.
+    let own_only = names.is_empty()
+        && match source {
+            Source::Store => match ctx.open().and_then(|s| s.is_std()) {
+                Ok(is_std) => !is_std,
+                Err(d) => return Reply::diagnostics(d),
+            },
+            Source::Text(_) => false,
+        };
+    let mut own: Vec<String> = Vec::new();
+    if own_only {
+        let fns = tp.fns.iter().filter(|f| f.instance.is_none()).map(|f| f.def.name.clone());
+        own = fns.chain(tp.generics.iter().map(|f| f.def.name.clone())).chain(tp.tests.iter().map(|t| t.name.clone())).filter(|n| !is_std_name(n)).collect();
+        own.sort();
+        own.dedup();
+    }
+    let only = if own_only { Some(own.as_slice()) } else { (!names.is_empty()).then_some(names) };
     let reports = match source {
         Source::Text(_) => qal_prove::prove(tp, only, &opts),
         Source::Store => match stored_proofs(ctx, tp, &hashes, only, &opts) {

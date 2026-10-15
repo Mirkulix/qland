@@ -260,8 +260,14 @@ mod tests {
 
     #[test]
     fn the_embedded_standard_library_is_a_valid_package() {
+        // Checksum and `# def` lines verified by `parse`; only `std.` names, text iff definitions.
         let p = qal_store::package::parse(STD_PACKAGE).unwrap();
-        assert_eq!((p.name.as_str(), p.defs.len(), p.text.as_str()), ("std", 0, ""));
+        assert_eq!(p.name, "std");
+        assert!(p.defs.iter().all(|d| qal_text::lexer::is_std_name(&d.name)));
+        assert_eq!(p.text.trim().is_empty(), p.defs.is_empty());
+        assert_eq!(p.std, None, "the std package does not refer to another std");
+        let program = qal_text::parse_program(&p.text).unwrap();
+        assert_eq!(program.defs.len(), p.defs.len(), "one definition per `# def` line");
     }
 
     #[test]
