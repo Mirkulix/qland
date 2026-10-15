@@ -54,7 +54,9 @@ pub type VerifyFn<'a> = dyn FnMut(&TProgram, &[(String, String)]) -> Result<Vec<
 /// A verification step of `define` (the contract prover): `run` gets the checked codebase including
 /// the new definitions and the functions and tests that are new, got a new hash (given or relinked),
 /// or have no result for `key` yet; it returns their results as (hash, JSON) for the `proofs` table,
-/// or diagnostics that reject the whole `define`.
+/// or diagnostics that reject the whole `define`. It runs on a snapshot of the store without holding
+/// the write lock, so it may be called again (rarely) when another writer changed what has to be
+/// verified in the meantime.
 pub struct Verify<'a> {
     /// Identifies the verifier and its settings; results are stored per key.
     pub key: String,

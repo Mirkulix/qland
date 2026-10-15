@@ -33,19 +33,80 @@ pub(crate) fn hash(p: &Program) -> Result<Hashed, Vec<Diagnostic>> {
     })
 }
 
+/// How often `define` verifies on a snapshot, outside the write lock, before it verifies inside it.
+const ATTEMPTS: usize = 3;
+
 pub fn define(conn: &mut Connection, src: &str, agent: &str, verify: Option<&mut Verify>) -> Result<Vec<Defined>, Vec<Diagnostic>> {
     let input = qal_text::parse_program(src).map_err(|d| vec![d])?;
-    // IMMEDIATE takes the write lock before reading, so two concurrent `define`s serialize instead of
-    // both deciding on the same old state.
+    let Some(v) = verify else {
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(sql)?;
+        let out = prepare(&tx, &input)?.write(&tx, &input, agent, false)?;
+        tx.commit().map_err(sql)?;
+        return Ok(out);
+    };
+    // The verifier (the prover) may take its whole time budget, longer than another writer waits
+    // for the lock (review finding): it runs on a snapshot without the lock, and the results are
+    // written by a short IMMEDIATE transaction if the definitions to verify are still the same
+    // (results depend only on a definition's hash). A rejection rejects the `define` as it would
+    // have been on that snapshot.
+    for _ in 0..ATTEMPTS {
+        let (typed, todo) = {
+            // A deferred transaction that only reads: a consistent snapshot, no write lock.
+            let tx = conn.transaction().map_err(sql)?;
+            let state = prepare(&tx, &input)?;
+            let out = state.write(&tx, &input, agent, true)?;
+            let todo = to_verify(&tx, &out, &v.key)?;
+            (state.typed, todo)
+        };
+        let rows = if todo.is_empty() { Vec::new() } else { (v.run)(&typed, &todo)? };
+        // IMMEDIATE takes the write lock before reading, so two concurrent `define`s serialize
+        // instead of both deciding on the same old state.
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(sql)?;
+        let out = prepare(&tx, &input)?.write(&tx, &input, agent, false)?;
+        let now = to_verify(&tx, &out, &v.key)?;
+        if now.iter().all(|d| todo.contains(d)) {
+            let hashes: HashSet<&str> = now.iter().map(|(_, h)| h.as_str()).collect();
+            store_results(&tx, &v.key, rows.into_iter().filter(|(h, _)| hashes.contains(h.as_str())))?;
+            tx.commit().map_err(sql)?;
+            return Ok(out);
+        }
+        // Another writer changed what has to be verified: drop this transaction and start over.
+    }
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(sql)?;
-    let snap = Snapshot::load(&tx)?;
+    let state = prepare(&tx, &input)?;
+    let out = state.write(&tx, &input, agent, false)?;
+    let todo = to_verify(&tx, &out, &v.key)?;
+    if !todo.is_empty() {
+        store_results(&tx, &v.key, (v.run)(&state.typed, &todo)?.into_iter())?;
+    }
+    tx.commit().map_err(sql)?;
+    Ok(out)
+}
+
+/// The checked and hashed codebase that `define` would write.
+struct Prepared {
+    snap: Snapshot,
+    typed: TProgram,
+    hashed: Hashed,
+}
+
+impl Prepared {
+    /// Writes the definitions (`dry`: only computes the results).
+    fn write(&self, tx: &Transaction, input: &Program, agent: &str, dry: bool) -> Result<Vec<Defined>, Vec<Diagnostic>> {
+        write(tx, &self.snap, input, &self.hashed, agent, dry)
+    }
+}
+
+/// Assembles the input with the stored codebase, enforces the replacement rule, checks and hashes.
+fn prepare(tx: &Transaction, input: &Program) -> Result<Prepared, Vec<Diagnostic>> {
+    let snap = Snapshot::load(tx)?;
 
     let input_names: HashSet<&str> = input.defs.iter().map(|d| d.name()).collect();
-    replacement_rule(&tx, &snap, &input, &input_names)?;
+    replacement_rule(tx, &snap, input, &input_names)?;
 
     // Stored definitions keep the names they were written against; the ones that refer to a
     // redefined name get new hashes when the combined program is hashed.
-    let stored = snap.program(&tx, &|n| input_names.contains(n))?;
+    let stored = snap.program(tx, &|n| input_names.contains(n))?;
     let mut combined = stored;
     combined.defs.extend(input.defs.iter().cloned());
     let typed = qal_check::check(&combined)?;
@@ -55,34 +116,30 @@ pub fn define(conn: &mut Connection, src: &str, agent: &str, verify: Option<&mut
     group_aliases(&hashed.defs)?;
     alias_references(&hashed.defs, &input_names)?;
     canonical_check(&snap, &input_names, &hashed.defs)?;
-
-    let out = write(&tx, &snap, &input, &hashed, agent)?;
-    if let Some(v) = verify {
-        verified(&tx, &typed, &out, v)?;
-    }
-    tx.commit().map_err(sql)?;
-    Ok(out)
+    Ok(Prepared { snap, typed, hashed })
 }
 
-/// Runs the verifier on the definitions that are new, got a new hash, or have no stored result for
-/// its key, and stores its results — inside the `define` transaction, so diagnostics reject everything.
-fn verified(tx: &Transaction, typed: &TProgram, out: &[Defined], v: &mut Verify) -> Result<(), Vec<Diagnostic>> {
+/// The (name, hash) of the definitions to verify: the functions and tests that are new, got a new
+/// hash, or have no stored result for `key`.
+fn to_verify(tx: &Transaction, out: &[Defined], key: &str) -> Result<Vec<(String, String)>, Vec<Diagnostic>> {
     let mut todo = Vec::new();
     for d in out.iter().filter(|d| d.kind != "type") {
-        let stored: Option<i64> = tx.query_row("SELECT 1 FROM proofs WHERE hash = ?1 AND prover = ?2", params![d.hash, v.key], |r| r.get(0)).optional().map_err(sql)?;
+        let stored: Option<i64> = tx.query_row("SELECT 1 FROM proofs WHERE hash = ?1 AND prover = ?2", params![d.hash, key], |r| r.get(0)).optional().map_err(sql)?;
         if d.status != "unchanged" || stored.is_none() {
             todo.push((d.name.clone(), d.hash.clone()));
         }
     }
-    if todo.is_empty() {
-        return Ok(());
-    }
+    Ok(todo)
+}
+
+/// Stores verification results (hash, JSON) for `key`.
+fn store_results(tx: &Transaction, key: &str, rows: impl Iterator<Item = (String, String)>) -> Result<(), Vec<Diagnostic>> {
     let now = now_ms();
-    for (hash, results) in (v.run)(typed, &todo)? {
+    for (hash, results) in rows {
         tx.execute(
             "INSERT INTO proofs (hash, prover, results, at) VALUES (?1, ?2, ?3, ?4) \
              ON CONFLICT(hash, prover) DO UPDATE SET results = excluded.results, at = excluded.at",
-            params![hash, v.key, results, now],
+            params![hash, key, results, now],
         )
         .map_err(sql)?;
     }
@@ -234,25 +291,13 @@ fn ref_names(c: &Canon, hash_of: &HashMap<&str, Hash>) -> Vec<String> {
 }
 
 /// Writes new definitions, dependencies, names and history; returns the per-name results:
-/// the input definitions in input order, then relinked dependents by name.
-fn write(tx: &Transaction, snap: &Snapshot, input: &Program, hashed: &Hashed, agent: &str) -> Result<Vec<Defined>, Vec<Diagnostic>> {
+/// the input definitions in input order, then relinked dependents by name. `dry`: writes nothing.
+fn write(tx: &Transaction, snap: &Snapshot, input: &Program, hashed: &Hashed, agent: &str, dry: bool) -> Result<Vec<Defined>, Vec<Diagnostic>> {
     let now = now_ms();
     let canons = &hashed.defs;
-    for (h, form) in &hashed.groups {
-        tx.execute("INSERT OR IGNORE INTO groups (hash, form) VALUES (?1, ?2)", params![h.to_hex(), form]).map_err(sql)?;
-    }
     let input_names: HashSet<&str> = input.defs.iter().map(|d| d.name()).collect();
-    for c in canons {
-        tx.execute(
-            "INSERT OR IGNORE INTO defs (hash, kind, canonical, signature, effects, local_names, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            params![c.hash.to_hex(), c.kind.as_str(), c.canonical, c.signature, json(&c.effects), json(&c.local_names), now],
-        )
-        .map_err(sql)?;
-    }
-    for c in canons {
-        for d in &c.deps {
-            tx.execute("INSERT OR IGNORE INTO deps (hash, dep_hash) VALUES (?1, ?2)", params![c.hash.to_hex(), d.to_hex()]).map_err(sql)?;
-        }
+    if !dry {
+        store_defs(tx, hashed)?;
     }
     let hash_of: HashMap<&str, Hash> = canons.iter().map(|c| (c.name.as_str(), c.hash)).collect();
     let mut results: HashMap<&str, Defined> = HashMap::new();
@@ -269,21 +314,23 @@ fn write(tx: &Transaction, snap: &Snapshot, input: &Program, hashed: &Hashed, ag
         if status == "unchanged" && !is_input {
             continue;
         }
-        if status != "unchanged" || old.is_some_and(|e| e.locals != c.local_names || e.refs != refs) {
-            tx.execute(
-                "INSERT INTO names (name, hash, local_names, refs, updated_at) VALUES (?1, ?2, ?3, ?4, ?5) \
-                 ON CONFLICT(name) DO UPDATE SET hash = excluded.hash, local_names = excluded.local_names, refs = excluded.refs, updated_at = excluded.updated_at",
-                params![c.name, c.hash.to_hex(), json(&c.local_names), json(&refs), now],
-            )
-            .map_err(sql)?;
-        }
         let old_hash = old.map(|e| e.hash.to_hex());
-        if status != "unchanged" {
-            tx.execute(
-                "INSERT INTO history (name, action, old_hash, new_hash, agent, at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                params![c.name, status, old_hash, c.hash.to_hex(), agent, now],
-            )
-            .map_err(sql)?;
+        if !dry {
+            if status != "unchanged" || old.is_some_and(|e| e.locals != c.local_names || e.refs != refs) {
+                tx.execute(
+                    "INSERT INTO names (name, hash, local_names, refs, updated_at) VALUES (?1, ?2, ?3, ?4, ?5) \
+                     ON CONFLICT(name) DO UPDATE SET hash = excluded.hash, local_names = excluded.local_names, refs = excluded.refs, updated_at = excluded.updated_at",
+                    params![c.name, c.hash.to_hex(), json(&c.local_names), json(&refs), now],
+                )
+                .map_err(sql)?;
+            }
+            if status != "unchanged" {
+                tx.execute(
+                    "INSERT INTO history (name, action, old_hash, new_hash, agent, at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                    params![c.name, status, old_hash, c.hash.to_hex(), agent, now],
+                )
+                .map_err(sql)?;
+            }
         }
         results.insert(&c.name, Defined { name: c.name.clone(), kind: c.kind.as_str(), hash: c.hash.to_hex(), status, old_hash: if matches!(status, "replaced" | "relinked") { old_hash } else { None } });
     }
@@ -297,4 +344,26 @@ fn write(tx: &Transaction, snap: &Snapshot, input: &Program, hashed: &Hashed, ag
     relinked.sort_by(|a, b| a.name.cmp(&b.name));
     out.extend(relinked);
     Ok(out)
+}
+
+/// Stores the groups, definitions and dependencies of a hashed program (those already stored stay).
+fn store_defs(tx: &Transaction, hashed: &Hashed) -> Result<(), Vec<Diagnostic>> {
+    let now = now_ms();
+    let canons = &hashed.defs;
+    for (h, form) in &hashed.groups {
+        tx.execute("INSERT OR IGNORE INTO groups (hash, form) VALUES (?1, ?2)", params![h.to_hex(), form]).map_err(sql)?;
+    }
+    for c in canons {
+        tx.execute(
+            "INSERT OR IGNORE INTO defs (hash, kind, canonical, signature, effects, local_names, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![c.hash.to_hex(), c.kind.as_str(), c.canonical, c.signature, json(&c.effects), json(&c.local_names), now],
+        )
+        .map_err(sql)?;
+    }
+    for c in canons {
+        for d in &c.deps {
+            tx.execute("INSERT OR IGNORE INTO deps (hash, dep_hash) VALUES (?1, ?2)", params![c.hash.to_hex(), d.to_hex()]).map_err(sql)?;
+        }
+    }
+    Ok(())
 }

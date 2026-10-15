@@ -875,3 +875,48 @@ fn verification_runs_inside_define_and_can_reject_it() {
     assert_eq!(s.proofs(&g, "k2").unwrap().as_deref(), Some("[]"));
     assert_eq!(s.proofs(&f, "k2").unwrap(), None);
 }
+
+#[test]
+fn verification_runs_without_the_write_lock() {
+    // Review finding I4: the prover ran inside the IMMEDIATE transaction for up to its whole budget,
+    // longer than other writers wait (10 s), so concurrent `define`s failed with "database is locked".
+    let mut s = store();
+    let path = s.path().to_path_buf();
+    let mut calls = 0;
+    let mut run = |_: &qal_core::tast::TProgram, todo: &[(String, String)]| {
+        calls += 1;
+        let other = rusqlite::Connection::open(&path).unwrap();
+        other.busy_timeout(std::time::Duration::from_millis(100)).unwrap();
+        other.execute_batch("BEGIN IMMEDIATE; ROLLBACK;").map_err(|e| vec![Diagnostic::store_error(format!("{e}"))])?;
+        Ok(todo.iter().map(|(_, h)| (h.clone(), "[]".to_string())).collect())
+    };
+    let mut v = Verify { key: "k".into(), run: &mut run };
+    let out = s.define_verified("fn f(x: Int) -> Int = x", "test", &mut v).unwrap_or_else(|d| panic!("{d:#?}"));
+    assert_eq!((calls, out[0].status), (1, "added"));
+    let f = hash(&mut s, "f");
+    assert_eq!(s.proofs(&f, "k").unwrap().as_deref(), Some("[]"));
+}
+
+#[test]
+fn verification_starts_over_when_another_writer_changes_its_input() {
+    // While `g` is verified on a snapshot, another agent replaces `f`, which `g` uses: `g` gets a
+    // new hash, so the results for the old one are not stored and `g` is verified again.
+    let mut s = store();
+    ok(&mut s, "fn f(x: Int) -> Int = x");
+    let path = s.path().to_path_buf();
+    let mut seen: Vec<Vec<String>> = Vec::new();
+    let mut run = |_: &qal_core::tast::TProgram, todo: &[(String, String)]| {
+        if seen.is_empty() {
+            Store::open(&path).unwrap().define("fn f(x: Int) -> Int = x + 1", "other").unwrap();
+        }
+        seen.push(todo.iter().map(|(n, h)| format!("{n}:{h}")).collect());
+        Ok(todo.iter().map(|(n, h)| (h.clone(), format!("[\"{n}\"]"))).collect())
+    };
+    let mut v = Verify { key: "k".into(), run: &mut run };
+    let out = s.define_verified("fn g(x: Int) -> Int = f(x)", "test", &mut v).unwrap_or_else(|d| panic!("{d:#?}"));
+    assert_eq!(seen.len(), 2, "{seen:?}");
+    assert_ne!(seen[0], seen[1]);
+    let g = hash(&mut s, "g");
+    assert_eq!(seen[1], [format!("g:{g}")]);
+    assert_eq!((out[0].hash.as_str(), s.proofs(&g, "k").unwrap().as_deref()), (g.as_str(), Some("[\"g\"]")));
+}
