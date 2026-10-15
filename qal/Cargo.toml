@@ -3,6 +3,7 @@ members = [
     "crates/qal-core",
     "crates/qal-text",
     "crates/qal-check",
+    "crates/qal-wasm",
 ]
 resolver = "2"
 

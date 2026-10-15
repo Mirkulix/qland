@@ -1,0 +1,15 @@
+[package]
+name = "qal-wasm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+qal-core = { workspace = true }
+wasm-encoder = { workspace = true }
+
+[dev-dependencies]
+qal-text = { workspace = true }
+qal-check = { workspace = true }
+wasmparser = { workspace = true }
+wasmtime = { workspace = true }
