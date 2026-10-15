@@ -2,6 +2,7 @@
 members = [
     "crates/qal-core",
     "crates/qal-text",
+    "crates/qal-check",
 ]
 resolver = "2"
 
