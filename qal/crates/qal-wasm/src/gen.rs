@@ -14,18 +14,73 @@ pub struct FnGen<'g, 'p> {
     meta: i32,
     /// Wasm function index of each `TProgram::fns` entry (None if not emitted).
     fn_index: &'g [Option<u32>],
+    /// Types of the definition's locals by id (closure bodies use the same ids).
+    locals: &'g [Type],
+    /// Wasm local of each definition local (`NONE`: not allocated yet; only inside closures).
+    map: Vec<u32>,
     a: Asm,
     pub sites: Vec<Site>,
 }
 
+const NONE: u32 = u32::MAX;
+
 impl<'g, 'p> FnGen<'g, 'p> {
     /// `locals`: types of all locals by id; the first `n_params` are the parameters.
-    pub fn new(m: &'g mut Mb<'p>, meta: u32, fn_index: &'g [Option<u32>], locals: &[Type], n_params: usize) -> Self {
+    pub fn new(m: &'g mut Mb<'p>, meta: u32, fn_index: &'g [Option<u32>], locals: &'g [Type], n_params: usize) -> Self {
         let mut a = Asm::new(n_params);
         for t in &locals[n_params..] {
             a.local(val(t));
         }
-        FnGen { m, meta: meta as i32, fn_index, a, sites: Vec::new() }
+        let map = (0..locals.len() as u32).collect();
+        FnGen { m, meta: meta as i32, fn_index, locals, map, a, sites: Vec::new() }
+    }
+
+    /// The wasm local of definition local `id` (allocated on first use inside a closure body).
+    fn l(&mut self, id: u32) -> u32 {
+        if self.map[id as usize] == NONE {
+            self.map[id as usize] = self.a.local(val(&self.locals[id as usize]));
+        }
+        self.map[id as usize]
+    }
+
+    /// Emits the closure `fn(params) => body` as its own function `(env, params) -> ret` and leaves a
+    /// pointer to a fresh closure block `[slot: i32][pad][captured values as slots]` on the stack.
+    fn lambda(&mut self, l: &TLambda, ty: &Type) {
+        let Type::Fn(ps, r, _) = ty else {
+            self.m.bug(format!("closure of type {ty}"));
+            self.a.i(I::Unreachable);
+            return;
+        };
+        let mut wparams = vec![ValType::I32];
+        wparams.extend(ps.iter().map(val));
+        let index = self.m.declare(&wparams, &[val(r)]);
+        let slot = self.m.table_slot(index);
+        let mut map = vec![NONE; self.locals.len()];
+        for (k, p) in l.params.iter().enumerate() {
+            map[*p as usize] = 1 + k as u32;
+        }
+        let sites = std::mem::take(&mut self.sites);
+        let mut g = FnGen { m: &mut *self.m, meta: self.meta, fn_index: self.fn_index, locals: self.locals, map, a: Asm::new(wparams.len()), sites };
+        for (k, c) in l.captures.iter().enumerate() {
+            let local = g.l(*c);
+            g.a.all([I::LocalGet(0), I::I64Load(m64(8 + 8 * k as u64))]);
+            g.a.opt(from_slot(Repr::of(&g.locals[*c as usize])));
+            g.a.i(I::LocalSet(local));
+        }
+        g.expr(&l.body, true);
+        let FnGen { a, sites, .. } = g;
+        self.sites = sites;
+        self.m.define(index, a.finish());
+        let p = self.temp(Repr::I32);
+        self.alloc(8 + 8 * l.captures.len() as i64, p);
+        self.a.all([I::LocalGet(p), I::I32Const(slot as i32), I::I32Store(m32(0))]);
+        for (k, c) in l.captures.iter().enumerate() {
+            let local = self.l(*c);
+            self.a.all([I::LocalGet(p), I::LocalGet(local)]);
+            self.a.opt(to_slot(Repr::of(&self.locals[*c as usize])));
+            self.a.i(I::I64Store(m64(8 + 8 * k as u64)));
+        }
+        self.a.i(I::LocalGet(p));
     }
 
     fn site(&mut self, path: &str, label: &str, values: &[(&str, Type)], contract: Option<usize>) -> i32 {
@@ -101,14 +156,23 @@ impl<'g, 'p> FnGen<'g, 'p> {
                 let addr = self.m.str_addr(s);
                 self.a.i(I::I32Const(addr as i32));
             }
-            TKind::Local(id) => self.a.i(I::LocalGet(*id)),
-            TKind::FnRef(i) => {
-                let table = self.table_index(*i);
-                self.a.i(I::I32Const(table as i32));
+            TKind::Local(id) => {
+                let l = self.l(*id);
+                self.a.i(I::LocalGet(l));
             }
-            // Closures and generic nodes are compiled from Task 2 on (checked programs contain no generic nodes).
-            TKind::Lambda(_) | TKind::CallG(..) | TKind::FnRefG(..) => {
-                self.m.bug("closures are not compiled yet");
+            TKind::FnRef(i) => {
+                let (Some(f), Type::Fn(ps, r, _)) = (self.fn_index.get(*i).copied().flatten(), &e.ty) else {
+                    self.m.bug(format!("function value {i} of type {} is not reachable", e.ty));
+                    self.a.i(I::Unreachable);
+                    return;
+                };
+                let params: Vec<ValType> = ps.iter().map(val).collect();
+                let addr = self.m.fn_value(f, &params, val(r));
+                self.a.i(I::I32Const(addr));
+            }
+            TKind::Lambda(l) => self.lambda(l, &e.ty),
+            TKind::CallG(..) | TKind::FnRefG(..) => {
+                self.m.bug("generic function reached code generation");
                 self.a.i(I::Unreachable);
             }
             TKind::Un(UnOp::Not, x, _) => {
@@ -138,7 +202,8 @@ impl<'g, 'p> FnGen<'g, 'p> {
             }
             TKind::Let(id, v, body) => {
                 self.expr(v, false);
-                self.a.i(I::LocalSet(*id));
+                let l = self.l(*id);
+                self.a.i(I::LocalSet(l));
                 self.expr(body, tail);
             }
             TKind::Seq(items) => match items.split_last() {
@@ -165,16 +230,22 @@ impl<'g, 'p> FnGen<'g, 'p> {
                 }
             }
             TKind::CallIndirect(f, args) => {
+                // Closure convention: the closure pointer is the first argument (`env`), its first
+                // word is the table slot.
+                let c = self.temp(Repr::I32);
+                self.expr(f, false);
+                self.a.all([I::LocalTee(c)]);
                 for x in args {
                     self.expr(x, false);
                 }
-                self.expr(f, false);
+                self.a.all([I::LocalGet(c), I::I32Load(m32(0))]);
                 let Type::Fn(ps, r, _) = &f.ty else {
                     self.m.bug(format!("indirect callee of type {} is not a function", f.ty));
                     self.a.i(I::Unreachable);
                     return;
                 };
-                let params: Vec<ValType> = ps.iter().map(val).collect();
+                let mut params: Vec<ValType> = vec![ValType::I32];
+                params.extend(ps.iter().map(val));
                 let type_index = self.m.ty(&params, &[val(r)]);
                 self.a.i(if tail { I::ReturnCallIndirect { type_index, table_index: 0 } } else { I::CallIndirect { type_index, table_index: 0 } });
             }
@@ -217,15 +288,6 @@ impl<'g, 'p> FnGen<'g, 'p> {
             TKind::Match(s, arms) => self.match_expr(s, arms, &e.ty, tail),
             TKind::Builtin(b, args, path) => self.builtin(*b, args, path, &e.ty),
         }
-    }
-
-    fn table_index(&self, fn_idx: usize) -> u32 {
-        // Emitted fns occupy table slots in the same order as their wasm indices.
-        let Some(wasm) = self.fn_index.get(fn_idx).copied().flatten() else {
-            self.m.bug(format!("referenced function {fn_idx} is not reachable"));
-            return 0;
-        };
-        self.fn_index.iter().flatten().filter(|w| **w < wasm).count() as u32
     }
 
     /// Element representation of a list type.
@@ -312,13 +374,60 @@ impl<'g, 'p> FnGen<'g, 'p> {
                     self.a.i(I::I32Eqz);
                 }
             }
-            BinOp::Concat => self.call_rt(if l.ty == Type::Str { Rt::StrConcat } else { Rt::ListConcat }),
+            BinOp::Concat => self.call_rt(if matches!(l.ty, Type::Str | Type::Bytes) { Rt::StrConcat } else { Rt::ListConcat }),
             BinOp::And | BinOp::Or => self.m.bug("`&&`/`||` reached the strict operators"),
         }
     }
 
+    /// Map lookups and updates: the key (and value) are passed as slots.
+    fn map_builtin(&mut self, b: Builtin, args: &[TExpr]) -> bool {
+        use Builtin as B;
+        if !matches!(b, B::MapGet | B::MapPut | B::MapDel | B::MapHas) {
+            return false;
+        }
+        let Some(Type::Map(k, _)) = args.first().map(|a| &a.ty) else {
+            self.m.bug("map built-in without a map argument");
+            self.a.i(I::Unreachable);
+            return true;
+        };
+        let cmp = self.m.cmp_fn(k);
+        self.expr(&args[0], false);
+        for x in &args[1..] {
+            self.expr(x, false);
+            self.a.opt(to_slot(Repr::of(&x.ty)));
+        }
+        match b {
+            B::MapGet => self.call_rt(Rt::MapGet(cmp)),
+            B::MapPut => self.call_rt(Rt::MapPut(cmp)),
+            B::MapDel => self.call_rt(Rt::MapDel(cmp)),
+            _ => {
+                self.call_rt(Rt::MapFind(cmp));
+                self.a.all([I::I32Const(0), I::I32Ne]);
+            }
+        }
+        true
+    }
+
     fn builtin(&mut self, b: Builtin, args: &[TExpr], path: &str, ret: &Type) {
         use Builtin as B;
+        if self.map_builtin(b, args) {
+            return;
+        }
+        if b == B::Compare {
+            // The total order of map keys, on slots: -1, 0 or 1.
+            let Some(t) = args.first().map(|a| a.ty.clone()) else {
+                self.m.bug("`compare` without arguments");
+                self.a.i(I::Unreachable);
+                return;
+            };
+            let cmp = self.m.cmp_fn(&t);
+            for x in args {
+                self.expr(x, false);
+                self.a.opt(to_slot(Repr::of(&x.ty)));
+            }
+            self.a.all([I::Call(cmp), I::I64ExtendI32S]);
+            return;
+        }
         for x in args {
             self.expr(x, false);
         }
@@ -399,15 +508,38 @@ impl<'g, 'p> FnGen<'g, 'p> {
                 self.call_rt(Rt::ResultUnitFrom);
             }
             B::NowMs => self.a.i(I::Call(self.m.import(host::NOW_MS))),
+            B::MapGet | B::MapPut | B::MapDel | B::MapHas | B::Compare => self.m.bug("built-in not handled before its arguments"),
+            // The empty map is the null tree.
+            B::MapNew => self.a.i(I::I32Const(0)),
+            B::MapSize => self.call_rt(Rt::MapSize),
+            B::BytesLen => self.a.all([I::I32Load(m32(0)), I::I64ExtendI32U]),
+            B::MapKeys => self.call_rt(Rt::MapKeys),
+            B::MapValues => self.call_rt(Rt::MapValues),
+            // Bytes and Str share the layout; a Str is valid Bytes as it is.
+            B::ToBytes => {}
+            B::BytesGet => self.call_rt(Rt::BytesGet),
+            B::BytesSlice => {
+                let site = self.site(path, "bytes_slice", &[("start", Type::Int), ("end", Type::Int), ("len", Type::Int)], None);
+                self.site_args(site);
+                self.call_rt(Rt::BytesSlice);
+            }
+            B::BytesFrom => {
+                let site = self.site(path, "bytes_from: req 0 <= x <= 255", &[("x", Type::Int)], None);
+                self.site_args(site);
+                self.call_rt(Rt::BytesFrom);
+            }
+            B::BytesToList => self.call_rt(Rt::BytesToList),
+            B::BytesToStr => {
+                let p = self.temp(Repr::I32);
+                self.a.all([I::LocalTee(p), I::Call(self.m.import(host::UTF8_VALID))]);
+                self.a.all([I::If(BlockType::Result(ValType::I32)), I::I32Const(TAG_SOME as i32), I::LocalGet(p), I::I64ExtendI32U]);
+                self.call_rt(Rt::Variant1);
+                self.a.all([I::Else, I::I32Const(self.m.tag_addr(TAG_NONE)), I::End]);
+            }
             B::RandInt => {
                 let site = self.site(path, "rand_int: req lo <= hi", &[("lo", Type::Int), ("hi", Type::Int)], None);
                 self.site_args(site);
                 self.call_rt(Rt::RandChecked);
-            }
-            // Compiled from Task 2 on.
-            B::MapNew | B::MapGet | B::MapPut | B::MapDel | B::MapHas | B::MapSize | B::MapKeys | B::MapValues | B::ToBytes | B::BytesLen | B::BytesGet | B::BytesSlice | B::BytesFrom | B::BytesToList | B::BytesToStr | B::Compare => {
-                self.m.bug(format!("built-in `{}` is not compiled yet", b.name()));
-                self.a.i(I::Unreachable);
             }
         }
     }
@@ -438,7 +570,10 @@ impl<'g, 'p> FnGen<'g, 'p> {
     fn pattern(&mut self, p: &TPat, v: u32, t: &Type, depth: u32) {
         match p {
             TPat::Wild => {}
-            TPat::Bind(id) => self.a.all([I::LocalGet(v), I::LocalSet(*id)]),
+            TPat::Bind(id) => {
+                let l = self.l(*id);
+                self.a.all([I::LocalGet(v), I::LocalSet(l)]);
+            }
             TPat::Int(n) => self.a.all([I::LocalGet(v), I::I64Const(*n), I::I64Ne, I::BrIf(depth)]),
             TPat::Bool(b) => self.a.all([I::LocalGet(v), I::I32Const(*b as i32), I::I32Ne, I::BrIf(depth)]),
             TPat::Unit => {}

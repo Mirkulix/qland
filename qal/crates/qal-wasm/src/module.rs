@@ -40,16 +40,34 @@ pub struct Mb<'p> {
     funcs: Vec<(u32, Option<Function>)>,
     rt: HashMap<Rt, u32>,
     eqs: HashMap<Type, u32>,
+    cmps: HashMap<Type, u32>,
     strs: HashMap<String, u32>,
     data: Vec<u8>,
     /// The first broken invariant met while generating code (an internal compiler error).
     bug: RefCell<Option<String>>,
+    /// Function indices callable through fn values (`call_indirect` slots).
+    table: Vec<u32>,
+    /// Static closure (address) of each top-level function used as a value, by its function index.
+    fn_values: HashMap<u32, i32>,
 }
 
 impl<'p> Mb<'p> {
     /// `imports`: host functions (names from `crate::host`) this module needs; `fail` must be among them.
     pub fn new(p: &'p TProgram, imports: &[&'static str]) -> Mb<'p> {
-        let mut mb = Mb { p, types: Vec::new(), imports: Vec::new(), funcs: Vec::new(), rt: HashMap::new(), eqs: HashMap::new(), strs: HashMap::new(), data: Vec::new(), bug: RefCell::new(None) };
+        let mut mb = Mb {
+            p,
+            types: Vec::new(),
+            imports: Vec::new(),
+            funcs: Vec::new(),
+            rt: HashMap::new(),
+            eqs: HashMap::new(),
+            cmps: HashMap::new(),
+            strs: HashMap::new(),
+            data: Vec::new(),
+            bug: RefCell::new(None),
+            table: Vec::new(),
+            fn_values: HashMap::new(),
+        };
         for name in imports {
             let Some((params, results)) = host::signature(name) else {
                 mb.bug(format!("unknown host function `{name}`"));
@@ -149,6 +167,45 @@ impl<'p> Mb<'p> {
         addr
     }
 
+    /// A new `call_indirect` slot for function `f`.
+    pub fn table_slot(&mut self, f: u32) -> u32 {
+        self.table.push(f);
+        self.table.len() as u32 - 1
+    }
+
+    /// The closure value of top-level function `f` (wasm signature `params -> ret`): a static block
+    /// `[slot: i32][pad]` whose slot holds a wrapper `(env, params) -> ret` that ignores `env`.
+    pub fn fn_value(&mut self, f: u32, params: &[ValType], ret: ValType) -> i32 {
+        if let Some(a) = self.fn_values.get(&f) {
+            return *a;
+        }
+        let mut wparams = vec![ValType::I32];
+        wparams.extend_from_slice(params);
+        let w = self.declare(&wparams, &[ret]);
+        let mut a = Asm::new(wparams.len());
+        for k in 0..params.len() {
+            a.i(I::LocalGet(1 + k as u32));
+        }
+        a.i(I::ReturnCall(f));
+        self.define(w, a.finish());
+        let slot = self.table_slot(w);
+        let addr = self.static_block(&[slot, 0]);
+        self.fn_values.insert(f, addr);
+        addr
+    }
+
+    /// Address of 8-aligned static data holding `words` (little endian).
+    fn static_block(&mut self, words: &[u32]) -> i32 {
+        while !self.data.len().is_multiple_of(8) {
+            self.data.push(0);
+        }
+        let addr = self.data.len() as i32;
+        for w in words {
+            self.data.extend(w.to_le_bytes());
+        }
+        addr
+    }
+
     /// Address of the shared value of a variant without payload.
     pub fn tag_addr(&self, tag: u32) -> i32 {
         (TAG_TABLE + 8 * tag) as i32
@@ -182,6 +239,10 @@ impl<'p> Mb<'p> {
             Repr::F64 => a.i(I::F64Eq),
             Repr::I32 => match t {
                 Type::Bool | Type::Unit | Type::Fn(..) => a.i(I::I32Eq),
+                Type::Bytes => {
+                    let f = self.rt(Rt::StrEq);
+                    a.i(I::Call(f));
+                }
                 _ => {
                     let f = self.eq_fn(t);
                     a.i(I::Call(f));
@@ -201,6 +262,11 @@ impl<'p> Mb<'p> {
         let index = self.declare(&[ValType::I32, ValType::I32], &[ValType::I32]);
         self.eqs.insert(t.clone(), index);
         let mut a = Asm::new(2);
+        if let Type::Map(..) = t {
+            // Maps compare as their entries in key order (trees of equal maps can differ in shape).
+            let entries = self.rt(Rt::MapEntries);
+            a.all([I::LocalGet(0), I::Call(entries), I::LocalSet(0), I::LocalGet(1), I::Call(entries), I::LocalSet(1)]);
+        }
         // Identical pointers are equal (also covers shared payload-free variants) — unless a Float
         // inside could be NaN, which is never equal to itself.
         if !self.has_float(t, &mut Vec::new()) {
@@ -215,6 +281,22 @@ impl<'p> Mb<'p> {
             a.all([I::I32Eqz, I::If(BlockType::Empty), I::I32Const(0), I::Return, I::End]);
         };
         match t {
+            Type::Map(kt, vt) => {
+                let (n, k) = (a.local(ValType::I32), a.local(ValType::I32));
+                a.all([I::LocalGet(0), I::I32Load(m32(0)), I::LocalTee(n), I::LocalGet(1), I::I32Load(m32(0)), I::I32Ne]);
+                a.all([I::If(BlockType::Empty), I::I32Const(0), I::Return, I::End]);
+                a.all([I::Block(BlockType::Empty), I::Loop(BlockType::Empty)]);
+                a.all([I::LocalGet(k), I::LocalGet(n), I::I32GeU, I::BrIf(1)]);
+                for (off, et) in [(8u64, &**kt), (16, &**vt)] {
+                    for side in [0, 1] {
+                        a.all([I::LocalGet(side), I::LocalGet(k), I::I32Const(4), I::I32Shl, I::I32Add, I::I64Load(m64(off))]);
+                        a.opt(from_slot(Repr::of(et)));
+                    }
+                    self.emit_eq(&mut a, et);
+                    a.all([I::I32Eqz, I::If(BlockType::Empty), I::I32Const(0), I::Return, I::End]);
+                }
+                a.all([I::LocalGet(k), I::I32Const(1), I::I32Add, I::LocalSet(k), I::Br(0), I::End, I::End]);
+            }
             Type::List(elem) => {
                 let (n, k) = (a.local(ValType::I32), a.local(ValType::I32));
                 a.all([I::LocalGet(0), I::I32Load(m32(0)), I::LocalTee(n), I::LocalGet(1), I::I32Load(m32(0)), I::I32Ne]);
@@ -258,13 +340,21 @@ impl<'p> Mb<'p> {
 
     /// True if a value of type `t` can contain a Float (`seen` guards recursive types).
     fn has_float(&self, t: &Type, seen: &mut Vec<String>) -> bool {
+        // Checked programs have no irregular types; stay finite (and conservative) regardless.
+        if seen.len() >= 256 {
+            return true;
+        }
         match t {
             Type::Float => true,
             Type::List(x) | Type::Option(x) => self.has_float(x, seen),
-            Type::Result(a, b) => self.has_float(a, seen) || self.has_float(b, seen),
-            Type::Named(n) if !seen.contains(n) => {
-                seen.push(n.clone());
-                match self.p.type_def(n).map(|d| &d.body) {
+            Type::Result(a, b) | Type::Map(a, b) => self.has_float(a, seen) || self.has_float(b, seen),
+            Type::Named(_) | Type::App(..) => {
+                let key = t.to_string();
+                if seen.contains(&key) {
+                    return false;
+                }
+                seen.push(key);
+                match self.p.decl(t) {
                     Some(TypeBody::Record(fs)) => fs.iter().any(|(_, f)| self.has_float(f, seen)),
                     Some(TypeBody::Enum(vs)) => vs.iter().any(|v| v.fields.iter().any(|f| self.has_float(f, seen))),
                     None => false,
@@ -274,8 +364,109 @@ impl<'p> Mb<'p> {
         }
     }
 
-    /// Assembles the module. `exports`: (name, function index); `table`: function indices for `call_indirect`.
-    pub fn finish(mut self, exports: &[(String, u32)], table: &[u32]) -> Result<Vec<u8>, String> {
+    /// Total order on map keys: `(a: i64 slot, b: i64 slot) -> i32` (-1, 0 or 1), structural
+    /// (Int and Bool numerically, Float by IEEE total order, Str/Bytes bytewise then by length,
+    /// lists and maps lexicographically, variants by tag then payload, records by fields in
+    /// declaration order). Function types are never keys (the checker rejects them).
+    pub fn cmp_fn(&mut self, t: &Type) -> u32 {
+        if let Some(i) = self.cmps.get(t) {
+            return *i;
+        }
+        let index = self.declare(&[ValType::I64, ValType::I64], &[ValType::I32]);
+        self.cmps.insert(t.clone(), index);
+        let mut a = Asm::new(2);
+        let c = a.local(ValType::I32);
+        // Leaves -1/0/1 for two i64 values on the stack (signed).
+        let signed3 = |a: &mut Asm, x: u32, y: u32| {
+            a.all([I::LocalGet(x), I::LocalGet(y), I::I64GtS, I::LocalGet(x), I::LocalGet(y), I::I64LtS, I::I32Sub]);
+        };
+        // Compares slots at `pa + off`, `pb + off` of type `ft`; returns early unless equal.
+        let field = |mb: &mut Self, a: &mut Asm, pa: u32, pb: u32, off: u64, ft: &Type| {
+            let f = mb.cmp_fn(ft);
+            a.all([I::LocalGet(pa), I::I64Load(m64(off)), I::LocalGet(pb), I::I64Load(m64(off)), I::Call(f), I::LocalTee(c)]);
+            a.all([I::If(BlockType::Empty), I::LocalGet(c), I::Return, I::End]);
+        };
+        match t {
+            Type::Float => {
+                // IEEE total order: flip all bits but the sign of negative numbers, then compare signed.
+                for x in [0, 1] {
+                    a.all([I::LocalGet(x), I::LocalGet(x), I::I64Const(63), I::I64ShrS, I::I64Const(1), I::I64ShrU, I::I64Xor, I::LocalSet(x)]);
+                }
+                signed3(&mut a, 0, 1);
+            }
+            Type::Str | Type::Bytes => {
+                a.all([I::LocalGet(0), I::I32WrapI64, I::LocalGet(1), I::I32WrapI64]);
+                let f = self.rt(Rt::StrCmp);
+                a.i(I::Call(f));
+            }
+            Type::List(_) | Type::Map(..) => {
+                // Lexicographic over the slots (map entries in key order: key, value), then by length.
+                if let Type::Map(..) = t {
+                    let entries = self.rt(Rt::MapEntries);
+                    for x in [0, 1] {
+                        a.all([I::LocalGet(x), I::I32WrapI64, I::Call(entries), I::I64ExtendI32U, I::LocalSet(x)]);
+                    }
+                }
+                let (pa, pb, n, m, k) = (a.local(ValType::I32), a.local(ValType::I32), a.local(ValType::I32), a.local(ValType::I32), a.local(ValType::I32));
+                let (width, parts): (u32, Vec<(u64, Type)>) = match t {
+                    Type::List(x) => (8, vec![(8, (**x).clone())]),
+                    Type::Map(kt, vt) => (16, vec![(8, (**kt).clone()), (16, (**vt).clone())]),
+                    _ => {
+                        self.bug(format!("comparison of {t} as a sequence"));
+                        (8, vec![])
+                    }
+                };
+                a.all([I::LocalGet(0), I::I32WrapI64, I::LocalTee(pa), I::I32Load(m32(0)), I::LocalSet(n)]);
+                a.all([I::LocalGet(1), I::I32WrapI64, I::LocalTee(pb), I::I32Load(m32(0)), I::LocalSet(m)]);
+                a.all([I::Block(BlockType::Empty), I::Loop(BlockType::Empty)]);
+                a.all([I::LocalGet(k), I::LocalGet(n), I::I32GeU, I::LocalGet(k), I::LocalGet(m), I::I32GeU, I::I32Or, I::BrIf(1)]);
+                let (ea, eb) = (a.local(ValType::I32), a.local(ValType::I32));
+                a.all([I::LocalGet(pa), I::LocalGet(k), I::I32Const(width as i32), I::I32Mul, I::I32Add, I::LocalSet(ea)]);
+                a.all([I::LocalGet(pb), I::LocalGet(k), I::I32Const(width as i32), I::I32Mul, I::I32Add, I::LocalSet(eb)]);
+                for (off, ft) in &parts {
+                    field(self, &mut a, ea, eb, *off, ft);
+                }
+                a.all([I::LocalGet(k), I::I32Const(1), I::I32Add, I::LocalSet(k), I::Br(0), I::End, I::End]);
+                a.all([I::LocalGet(n), I::LocalGet(m), I::I32GtU, I::LocalGet(n), I::LocalGet(m), I::I32LtU, I::I32Sub]);
+            }
+            _ if self.p.is_record(t) => {
+                let (pa, pb) = (a.local(ValType::I32), a.local(ValType::I32));
+                a.all([I::LocalGet(0), I::I32WrapI64, I::LocalSet(pa), I::LocalGet(1), I::I32WrapI64, I::LocalSet(pb)]);
+                for (j, (_, ft)) in self.p.record_fields(t).iter().enumerate() {
+                    field(self, &mut a, pa, pb, 8 * j as u64, ft);
+                }
+                a.i(I::I32Const(0));
+            }
+            Type::Option(_) | Type::Result(..) | Type::Named(_) | Type::App(..) => {
+                let (pa, pb, ta, tb) = (a.local(ValType::I32), a.local(ValType::I32), a.local(ValType::I64), a.local(ValType::I64));
+                a.all([I::LocalGet(0), I::I32WrapI64, I::LocalTee(pa), I::I32Load(m32(0)), I::I64ExtendI32U, I::LocalSet(ta)]);
+                a.all([I::LocalGet(1), I::I32WrapI64, I::LocalTee(pb), I::I32Load(m32(0)), I::I64ExtendI32U, I::LocalSet(tb)]);
+                signed3(&mut a, ta, tb);
+                a.all([I::LocalTee(c), I::If(BlockType::Empty), I::LocalGet(c), I::Return, I::End]);
+                for v in 0..self.p.variant_names(t).len() as u32 {
+                    let fields = self.p.variant_fields(t, v);
+                    if fields.is_empty() {
+                        continue;
+                    }
+                    a.all([I::LocalGet(ta), I::I64Const(v as i64), I::I64Eq, I::If(BlockType::Empty)]);
+                    for (j, ft) in fields.iter().enumerate() {
+                        field(self, &mut a, pa, pb, 8 + 8 * j as u64, ft);
+                    }
+                    a.i(I::End);
+                }
+                a.i(I::I32Const(0));
+            }
+            // Int, Bool, Unit: the slot is the number.
+            _ => signed3(&mut a, 0, 1),
+        }
+        self.define(index, a.finish());
+        index
+    }
+
+    /// Assembles the module. `exports`: (name, function index).
+    pub fn finish(mut self, exports: &[(String, u32)]) -> Result<Vec<u8>, String> {
+        let table = std::mem::take(&mut self.table);
+        let table = &table[..];
         let alloc = self.rt(Rt::Alloc);
         let mut types = TypeSection::new();
         for (p, r) in &self.types {

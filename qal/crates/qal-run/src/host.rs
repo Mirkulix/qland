@@ -412,6 +412,19 @@ pub fn link(linker: &mut Linker<HostState>, perms: &Permissions) -> Result<(), w
         Err::<(), _>(wasmtime::Error::msg("qal failure"))
     })?;
     linker.func_wrap(HOST_MODULE, host::FLOAT_TO_STR, |mut c: Caller<'_, HostState>, x: f64| new_str(&mut c, &format!("{x:?}")))?;
+    linker.func_wrap(HOST_MODULE, host::UTF8_VALID, |mut c: Caller<'_, HostState>, p: i32| -> Result<i32, wasmtime::Error> {
+        // Bytes have the layout of Str: [len: i32][bytes].
+        let mem = memory(&mut c)?;
+        let data = mem.data(&c);
+        let at = p as u32 as usize;
+        let bytes = data
+            .get(at..at + 4)
+            .and_then(|l| <[u8; 4]>::try_from(l).ok())
+            .map(|l| u32::from_le_bytes(l) as usize)
+            .and_then(|len| data.get(at + 4..at + 4 + len))
+            .ok_or_else(|| wasmtime::Error::msg("invalid bytes pointer"))?;
+        Ok(std::str::from_utf8(bytes).is_ok() as i32)
+    })?;
     linker.func_wrap(HOST_MODULE, host::STR_TO_FLOAT, |mut c: Caller<'_, HostState>, p: i32| {
         Ok(match guest_str(&mut c, p)?.parse::<f64>() {
             Ok(x) => (1, x),

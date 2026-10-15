@@ -2,7 +2,7 @@
 
 use qal_core::ast::Type;
 use qal_core::tast::TProgram;
-use serde::ser::{SerializeMap, Serializer};
+use serde::ser::{SerializeMap, SerializeSeq, Serializer};
 use serde::Serialize;
 
 /// Values deeper than this are shown as `"..."` (guards the host stack against huge recursive values).
@@ -25,6 +25,11 @@ pub enum Value {
     Record(String, Vec<(String, Value)>),
     /// Variant name and payload; JSON `"Name"` without payload, else `{"Name": [payload...]}`.
     Variant(String, Vec<Value>),
+    /// The kept bytes and the number of bytes cut off by the string-byte budget; JSON array of numbers
+    /// 0..=255, followed by the string `"...(+N bytes)"` if bytes were cut off.
+    Bytes(Vec<u8>, usize),
+    /// Entries in key order; JSON array of `[key, value]` pairs.
+    Map(Vec<(Value, Value)>),
 }
 
 impl Serialize for Value {
@@ -50,6 +55,16 @@ impl Serialize for Value {
                 m.serialize_entry(name, xs)?;
                 m.end()
             }
+            Value::Bytes(b, 0) => b.serialize(s),
+            Value::Bytes(b, cut) => {
+                let mut seq = s.serialize_seq(Some(b.len() + 1))?;
+                for x in b {
+                    seq.serialize_element(x)?;
+                }
+                seq.serialize_element(&format!("...(+{cut} bytes)"))?;
+                seq.end()
+            }
+            Value::Map(es) => es.iter().map(|(k, v)| [k, v]).collect::<Vec<_>>().serialize(s),
         }
     }
 }
@@ -121,6 +136,40 @@ fn budget_str(mem: &[u8], ptr: u32, budget: &mut Budget) -> Option<Value> {
     Some(Value::Str(format!("{kept}...(+{} bytes)", len - end)))
 }
 
+/// The bytes at `ptr`, cut to what is left of the string-byte budget (bytes count like string bytes).
+fn budget_bytes(mem: &[u8], ptr: u32, budget: &mut Budget) -> Option<Value> {
+    let len = u32_at(mem, ptr as usize)? as usize;
+    let start = (ptr as usize).checked_add(4)?;
+    let bytes = mem.get(start..start.checked_add(len)?)?;
+    let keep = len.min(MAX_STR_BYTES.saturating_sub(budget.bytes));
+    budget.bytes += keep;
+    Some(Value::Bytes(bytes[..keep].to_vec(), len - keep))
+}
+
+/// Height bound of a map tree in guest memory (an AVL tree of 2^32 entries is lower than 64).
+const MAX_MAP_HEIGHT: usize = 64;
+
+/// Collects the (key slot, value slot) pairs of the map tree at `ptr` in key order (at most
+/// `MAX_NODES`); false if the memory does not hold a well-formed tree.
+fn map_slots(mem: &[u8], ptr: u32, height: usize, out: &mut Vec<(i64, i64)>) -> bool {
+    if ptr == 0 {
+        return true;
+    }
+    if height > MAX_MAP_HEIGHT {
+        return false;
+    }
+    if out.len() >= MAX_NODES {
+        return true;
+    }
+    let at = ptr as usize;
+    let (Some(k), Some(v), Some(l), Some(r)) = (slot_at(mem, at + 8), slot_at(mem, at + 16), u32_at(mem, at + 24), u32_at(mem, at + 28)) else { return false };
+    if !map_slots(mem, l, height + 1, out) {
+        return false;
+    }
+    out.push((k, v));
+    map_slots(mem, r, height + 1, out)
+}
+
 fn decode_at(tp: &TProgram, mem: &[u8], ty: &Type, slot: i64, depth: usize, budget: &mut Budget) -> Value {
     budget.nodes += 1;
     if depth > MAX_DEPTH || budget.nodes > MAX_NODES {
@@ -132,9 +181,25 @@ fn decode_at(tp: &TProgram, mem: &[u8], ty: &Type, slot: i64, depth: usize, budg
         Type::Int => Value::Int(slot),
         Type::Float => Value::Float(f64::from_bits(slot as u64)),
         Type::Bool => Value::Bool(slot != 0),
-        Type::Unit | Type::Var(_) => Value::Unit,
+        Type::Unit | Type::Var(_) | Type::Param(_) => Value::Unit,
         Type::Fn(..) => Value::Str(format!("<fn #{ptr}>")),
         Type::Str => budget_str(mem, ptr, budget).unwrap_or_else(bad),
+        Type::Bytes => budget_bytes(mem, ptr, budget).unwrap_or_else(bad),
+        Type::Map(kt, vt) => {
+            let mut slots = Vec::new();
+            if !map_slots(mem, ptr, 0, &mut slots) {
+                return bad();
+            }
+            let mut out = Vec::new();
+            for (ks, vs) in slots {
+                let key = decode_at(tp, mem, kt, ks, depth + 1, budget);
+                out.push((key, decode_at(tp, mem, vt, vs, depth + 1, budget)));
+                if budget.nodes > MAX_NODES {
+                    break;
+                }
+            }
+            Value::Map(out)
+        }
         Type::List(elem) => {
             let Some(len) = u32_at(mem, ptr as usize) else { return bad() };
             let mut out = Vec::new();
@@ -145,13 +210,13 @@ fn decode_at(tp: &TProgram, mem: &[u8], ty: &Type, slot: i64, depth: usize, budg
             Value::List(out)
         }
         _ if tp.is_record(ty) => {
-            let Type::Named(name) = ty else { return bad() };
+            let name = ty.to_string();
             let mut fields = Vec::new();
             for (k, (f, ft)) in tp.record_fields(ty).iter().enumerate() {
                 let Some(s) = slot_at(mem, ptr as usize + 8 * k) else { return bad() };
                 fields.push((f.clone(), decode_at(tp, mem, ft, s, depth + 1, budget)));
             }
-            Value::Record(name.clone(), fields)
+            Value::Record(name, fields)
         }
         _ => {
             let Some(tag) = u32_at(mem, ptr as usize) else { return bad() };
@@ -164,6 +229,155 @@ fn decode_at(tp: &TProgram, mem: &[u8], ty: &Type, slot: i64, depth: usize, budg
             }
             Value::Variant(name.clone(), payload)
         }
+    }
+}
+
+/// Converts a JSON value to a value of type `ty`, in the JSON form values are reported in: Int and
+/// Float numbers, Bool, Unit `null`, Str strings, List and Bytes arrays (Bytes of numbers 0..=255),
+/// Map an array of `[key, value]` pairs, a record an object with every field, a variant `"Name"`
+/// without payload or `{"Name": [payload...]}`. Function values cannot be passed.
+pub fn from_json(tp: &TProgram, ty: &Type, v: &serde_json::Value) -> Result<Value, String> {
+    use serde_json::Value as J;
+    let shown = |v: &J| -> String { v.to_string().chars().take(40).collect() };
+    let mismatch = |v: &J| Err(format!("expected {ty}, got {}", shown(v)));
+    Ok(match (ty, v) {
+        (Type::Int, J::Number(n)) => match n.as_i64() {
+            Some(i) => Value::Int(i),
+            None => return mismatch(v),
+        },
+        (Type::Float, J::Number(n)) => match n.as_f64() {
+            Some(x) => Value::Float(x),
+            None => return mismatch(v),
+        },
+        // The forms non-finite results are reported in.
+        (Type::Float, J::String(s)) if matches!(s.as_str(), "NaN" | "inf" | "-inf") => Value::Float(match s.as_str() {
+            "NaN" => f64::NAN,
+            "inf" => f64::INFINITY,
+            _ => f64::NEG_INFINITY,
+        }),
+        (Type::Bool, J::Bool(b)) => Value::Bool(*b),
+        (Type::Unit, J::Null) => Value::Unit,
+        (Type::Str, J::String(s)) => Value::Str(s.clone()),
+        (Type::List(elem), J::Array(xs)) => Value::List(xs.iter().map(|x| from_json(tp, elem, x)).collect::<Result<_, _>>()?),
+        (Type::Bytes, J::Array(xs)) => {
+            let bytes = xs.iter().map(|x| x.as_u64().and_then(|b| u8::try_from(b).ok()).ok_or_else(|| format!("expected a byte (0..=255), got {}", shown(x)))).collect::<Result<_, _>>()?;
+            Value::Bytes(bytes, 0)
+        }
+        (Type::Map(kt, vt), J::Array(xs)) => {
+            let mut entries = Vec::new();
+            for x in xs {
+                match x.as_array().map(Vec::as_slice) {
+                    Some([k, v]) => entries.push((from_json(tp, kt, k)?, from_json(tp, vt, v)?)),
+                    _ => return Err(format!("expected a [key, value] pair of {ty}, got {}", shown(x))),
+                }
+            }
+            Value::Map(entries)
+        }
+        (Type::Fn(..), _) => return Err(format!("has type {ty}; functions cannot be passed as arguments")),
+        (_, J::Object(fields)) if tp.is_record(ty) => {
+            let decl = tp.record_fields(ty);
+            if let Some(extra) = fields.keys().find(|k| !decl.iter().any(|(f, _)| f == *k)) {
+                return Err(format!("{ty} has no field `{extra}`"));
+            }
+            let mut out = Vec::new();
+            for (f, ft) in &decl {
+                let x = fields.get(f).ok_or_else(|| format!("{ty} needs the field `{f}`"))?;
+                out.push((f.clone(), from_json(tp, ft, x).map_err(|m| format!("field `{f}`: {m}"))?));
+            }
+            Value::Record(ty.to_string(), out)
+        }
+        (_, J::String(_) | J::Object(_)) if !tp.variant_names(ty).is_empty() => {
+            let (name, payload): (&str, &[J]) = match v {
+                J::String(n) => (n, &[]),
+                J::Object(o) if o.len() == 1 => match o.iter().next() {
+                    Some((n, J::Array(xs))) => (n, xs),
+                    _ => return mismatch(v),
+                },
+                _ => return mismatch(v),
+            };
+            let names = tp.variant_names(ty);
+            let Some(tag) = names.iter().position(|n| n == name) else {
+                return Err(format!("{ty} has no variant `{name}` (variants: {})", names.join(", ")));
+            };
+            let fields = tp.variant_fields(ty, tag as u32);
+            if fields.len() != payload.len() {
+                return Err(format!("`{name}` takes {} value(s), got {}", fields.len(), payload.len()));
+            }
+            Value::Variant(name.to_string(), fields.iter().zip(payload).map(|(ft, x)| from_json(tp, ft, x)).collect::<Result<_, _>>()?)
+        }
+        _ => return mismatch(v),
+    })
+}
+
+/// The total order of map keys, as the generated code's compare functions define it: Int and Bool
+/// numerically, Float by IEEE total order, Str and Bytes bytewise (a prefix first), lists and maps
+/// lexicographically (maps by their entries in key order), variants by tag then payload, records
+/// by their fields in declaration order. Values that do not fit `ty` compare equal.
+pub fn compare(tp: &TProgram, ty: &Type, a: &Value, b: &Value) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+    let total = |x: f64| {
+        let bits = x.to_bits() as i64;
+        bits ^ (((bits >> 63) as u64) >> 1) as i64
+    };
+    match (ty, a, b) {
+        (_, Value::Int(x), Value::Int(y)) => x.cmp(y),
+        (_, Value::Bool(x), Value::Bool(y)) => x.cmp(y),
+        (_, Value::Float(x), Value::Float(y)) => total(*x).cmp(&total(*y)),
+        (_, Value::Str(x), Value::Str(y)) => x.as_bytes().cmp(y.as_bytes()),
+        (_, Value::Bytes(x, _), Value::Bytes(y, _)) => x.cmp(y),
+        (Type::List(t), Value::List(xs), Value::List(ys)) => {
+            for (x, y) in xs.iter().zip(ys) {
+                let c = compare(tp, t, x, y);
+                if c != Ordering::Equal {
+                    return c;
+                }
+            }
+            xs.len().cmp(&ys.len())
+        }
+        (Type::Map(kt, vt), Value::Map(xs), Value::Map(ys)) => {
+            let sorted = |es: &[(Value, Value)]| {
+                let mut es: Vec<(Value, Value)> = es.to_vec();
+                es.sort_by(|a, b| compare(tp, kt, &a.0, &b.0));
+                es
+            };
+            let (xs, ys) = (sorted(xs), sorted(ys));
+            for ((xk, xv), (yk, yv)) in xs.iter().zip(&ys) {
+                let c = compare(tp, kt, xk, yk).then_with(|| compare(tp, vt, xv, yv));
+                if c != Ordering::Equal {
+                    return c;
+                }
+            }
+            xs.len().cmp(&ys.len())
+        }
+        (_, Value::Record(_, xs), Value::Record(_, ys)) => {
+            for (f, ft) in tp.record_fields(ty) {
+                let field = |fs: &[(String, Value)]| fs.iter().find(|(g, _)| *g == f).map(|(_, v)| v.clone());
+                let c = match (field(xs), field(ys)) {
+                    (Some(x), Some(y)) => compare(tp, &ft, &x, &y),
+                    _ => Ordering::Equal,
+                };
+                if c != Ordering::Equal {
+                    return c;
+                }
+            }
+            Ordering::Equal
+        }
+        (_, Value::Variant(x, xs), Value::Variant(y, ys)) => {
+            let names = tp.variant_names(ty);
+            let tag = |n: &str| names.iter().position(|m| m == n).unwrap_or(usize::MAX);
+            let (tx, ty_) = (tag(x), tag(y));
+            if tx != ty_ {
+                return tx.cmp(&ty_);
+            }
+            for ((x, y), ft) in xs.iter().zip(ys).zip(tp.variant_fields(ty, tx as u32)) {
+                let c = compare(tp, &ft, x, y);
+                if c != Ordering::Equal {
+                    return c;
+                }
+            }
+            Ordering::Equal
+        }
+        _ => Ordering::Equal,
     }
 }
 
@@ -186,8 +400,22 @@ mod tests {
             Value::Record("P".into(), vec![("y".into(), Value::Int(1)), ("x".into(), Value::Int(2))]),
         ];
         assert_eq!(serde_json::to_string(&v).unwrap(), r#"[-3,true,null,1.5,"NaN","a",[1],"None",{"Some":[2]},{"y":1,"x":2}]"#);
+        let m = Value::Map(vec![(Value::Str("a".into()), Value::Bytes(vec![1, 255], 0))]);
+        assert_eq!(serde_json::to_string(&m).unwrap(), r#"[["a",[1,255]]]"#);
+        assert_eq!(serde_json::to_string(&Value::Bytes(vec![7], 3)).unwrap(), r#"[7,"...(+3 bytes)"]"#);
         let vals = Values(vec![("n".into(), Value::Int(3))]);
         assert_eq!(serde_json::to_string(&vals).unwrap(), r#"{"n":3}"#);
+    }
+
+    #[test]
+    fn non_finite_floats_round_trip_through_json() {
+        let tp = TProgram::default();
+        for x in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, -0.5] {
+            let json = serde_json::to_value(Value::Float(x)).unwrap();
+            let Value::Float(y) = from_json(&tp, &Type::Float, &json).unwrap() else { panic!("not a Float") };
+            assert_eq!(x.to_bits(), y.to_bits(), "{json}");
+        }
+        assert!(from_json(&tp, &Type::Float, &serde_json::json!("nan")).is_err());
     }
 
     #[test]

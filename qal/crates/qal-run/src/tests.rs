@@ -519,3 +519,190 @@ fn confined_fs_path_is_trimmed() {
     let p = Permissions::parse_in(&["fs: data".to_string()], &root).unwrap();
     assert_eq!(p.fs, vec![root.join("data").canonicalize().unwrap()]);
 }
+
+// ---------------------------------------------------------------------------------------------
+// Phase 2a: closures, generics, maps, bytes (end to end)
+
+fn all_pass(src: &str) {
+    let r = runner(src);
+    let results = r.run_tests();
+    assert!(!results.is_empty());
+    for t in results {
+        assert!(t.passed, "test {} failed: {:?}", t.name, t.error);
+    }
+}
+
+#[test]
+fn closures_capture_values_and_compose() {
+    all_pass(
+        "fn adder(n: Int) -> fn(Int) -> Int = fn(x) => x + n\n\
+         fn compose(f: fn(Int) -> Int, g: fn(Int) -> Int) -> fn(Int) -> Int = fn(x) => g(f(x))\n\
+         fn twice(f: fn(Int) -> Int, x: Int) -> Int = f(f(x))\n\
+         fn inc(x: Int) -> Int = x + 1\n\
+         type Op = { name: Str, run: fn(Float) -> Float }\n\
+         fn scale(k: Float) -> Op = Op { name: \"scale\", run: fn(x) => x * k }\n\
+         test adds = let a = adder(10) in a(5) == 15 && twice(a, 1) == 21\n\
+         test composes = let h = compose(adder(1), fn(x) => x * 3) in h(2) == 9 && twice(inc, 0) == 2\n\
+         test nested = let k = 7 in let outer = fn(a: Int) => fn(b: Int) => a + b + k in let f = outer(1) in f(2) == 10\n\
+         test in_records = let op = scale(2.5) in let f = op.run in f(2.0) == 5.0 && op.name == \"scale\"\n\
+         test with_builtins = let k = 3 in map([1, 2], fn(x) => x * k) == [3, 6] && filter([1, 2, 3, 4], fn(x) => x % 2 == 0) == [2, 4] && fold([\"a\", \"b\"], \"\", fn(acc, s) => acc ++ s ++ from_int(k)) == \"a3b3\"\n\
+         test fn_refs_still_work = map([1, 2], inc) == [2, 3]\n\
+         test captures_strings_and_lists = let xs = [\"x\", \"y\"] in let s = \"!\" in let f = fn(i: Int) => match get(xs, i) { Some(v) => v ++ s, None => s } in f(1) == \"y!\" && f(5) == \"!\"",
+    );
+}
+
+#[test]
+fn effectful_closures_run_with_their_effects() {
+    let r = main_runner(
+        "fn logger(prefix: Str) -> fn(Str) -> Unit !io = fn(s) => print(prefix ++ s)\n\
+         fn main(args: List[Str]) -> Int !io = { let log = logger(\"> \") in { log(\"a\"); log(\"b\") }; fold(args, (), fn(u, a) => print(a)); 0 }",
+        "io",
+    );
+    let out = r.run_main(&["x".into()]);
+    assert_eq!(out.result, Ok(Value::Int(0)));
+    assert_eq!(out.stdout, "> a\n> b\nx\n");
+}
+
+#[test]
+fn generic_functions_and_types_run() {
+    all_pass(
+        "type Pair[A, B] = { fst: A, snd: B }\n\
+         type Tree[T] = Leaf | Node(Tree[T], T, Tree[T])\n\
+         fn swap[A, B](p: Pair[A, B]) -> Pair[B, A] = Pair { fst: p.snd, snd: p.fst }\n\
+         fn insert[T](t: Tree[T], x: T, less: fn(T, T) -> Bool) -> Tree[T] = match t { Leaf => Node(Leaf, x, Leaf), Node(l, v, r) => if less(x, v) then Node(insert(l, x, less), v, r) else Node(l, v, insert(r, x, less)) }\n\
+         fn to_list[T](t: Tree[T]) -> List[T] = match t { Leaf => [], Node(l, v, r) => to_list(l) ++ [v] ++ to_list(r) }\n\
+         fn sort[T](xs: List[T], less: fn(T, T) -> Bool) -> List[T] = to_list(fold(xs, Leaf, fn(t, x) => insert(t, x, less)))\n\
+         fn my_map[A, B](xs: List[A], f: fn(A) -> B) -> List[B] = fold(xs, [], fn(acc, x) => push(acc, f(x)))\n\
+         fn position[T](xs: List[T], x: T) -> Option[Int] = fold(range(0, len(xs)), None, fn(found, i) => match found { Some(_) => found, None => if get(xs, i) == Some(x) then Some(i) else None })\n\
+         test swaps = swap(Pair { fst: 1, snd: \"a\" }) == Pair { fst: \"a\", snd: 1 }\n\
+         test sorts_ints = sort([3, 1, 2], fn(a, b) => a < b) == [1, 2, 3]\n\
+         test sorts_strs = sort([\"b\", \"c\", \"a\"], fn(a, b) => len(a) < len(b) || starts_with(a, \"a\")) == [\"a\", \"b\", \"c\"]\n\
+         test maps = my_map([1, 2], fn(x) => from_int(x)) == [\"1\", \"2\"] && my_map([\"a\"], fn(s) => Pair { fst: s, snd: 0.5 }) == [Pair { fst: \"a\", snd: 0.5 }]\n\
+         test finds = position([\"x\", \"y\"], \"y\") == Some(1) && position([1.5], 2.5) == None\n\
+         fn id[T](x: T) -> T = x\n\
+         test generic_values = map([1, 2], id) == [1, 2] && map([\"a\"], id) == [\"a\"] && my_map([Some(1)], id) == [Some(1)]",
+    );
+}
+
+#[test]
+fn maps_are_ordered_and_persistent() {
+    all_pass(
+        "fn count(words: List[Str]) -> Map[Str, Int] = fold(words, map_new(), fn(m, w) => map_put(m, w, match map_get(m, w) { Some(n) => n + 1, None => 1 }))\n\
+         type K = { a: Int, b: Str }\n\
+         test counts = let m = count([\"b\", \"a\", \"b\", \"c\"]) in map_keys(m) == [\"a\", \"b\", \"c\"] && map_values(m) == [1, 2, 1] && map_get(m, \"b\") == Some(2) && map_get(m, \"z\") == None\n\
+         test persistent = let m1 = map_put(map_new(), 1, \"one\") in let m2 = map_put(m1, 2, \"two\") in map_size(m1) == 1 && map_size(m2) == 2 && map_has(m2, 2) && !map_has(m1, 2)\n\
+         test delete = let m = map_put(map_put(map_put(map_new(), 3, 0), 1, 0), 2, 0) in map_keys(map_del(m, 2)) == [1, 3] && map_del(m, 9) == m && map_size(map_del(map_del(map_del(m, 1), 2), 3)) == 0\n\
+         test replaces = let m = map_put(map_put(map_new(), \"k\", 1), \"k\", 2) in map_size(m) == 1 && map_get(m, \"k\") == Some(2)\n\
+         test equality_is_structural = map_put(map_put(map_new(), 1, true), 2, false) == map_put(map_put(map_new(), 2, false), 1, true)\n\
+         test negative_and_large_keys = map_keys(map_put(map_put(map_put(map_new(), 5, 0), -9223372036854775807 - 1, 0), -1, 0)) == [-9223372036854775807 - 1, -1, 5]\n\
+         test record_and_list_keys = map_keys(map_put(map_put(map_new(), K { a: 1, b: \"z\" }, 0), K { a: 1, b: \"a\" }, 0)) == [K { a: 1, b: \"a\" }, K { a: 1, b: \"z\" }] && map_keys(map_put(map_put(map_new(), [2], 0), [1, 5], 0)) == [[1, 5], [2]]\n\
+         test float_and_option_keys = map_keys(map_put(map_put(map_put(map_new(), 1.5, 0), -0.5, 0), 0.0, 0)) == [-0.5, 0.0, 1.5] && map_keys(map_put(map_put(map_new(), Some(1), 0), None, 0)) == [None, Some(1)]\n\
+         test str_order_is_bytewise = map_keys(map_put(map_put(map_put(map_new(), \"ab\", 0), \"a\", 0), \"B\", 0)) == [\"B\", \"a\", \"ab\"]",
+    );
+    let r = runner("fn big(n: Int) -> Int = map_size(fold(range(0, n), map_new(), fn(m, i) => map_put(m, (i * 7919) % n, i)))");
+    assert_eq!(r.call("big", &[Value::Int(2000)]), Ok(Value::Int(2000)));
+    let r = runner("fn m() -> Map[Str, List[Int]] = map_put(map_new(), \"k\", [1])");
+    assert_eq!(serde_json::to_value(r.call("m", &[]).unwrap()).unwrap(), json!([["k", [1]]]));
+}
+
+#[test]
+fn bytes_hold_any_bytes() {
+    all_pass(
+        "test conv = bytes_len(to_bytes(\"hé\")) == 3 && bytes_to_list(to_bytes(\"hé\")) == [104, 195, 169] && bytes_to_str(to_bytes(\"hé\")) == Some(\"hé\")\n\
+         test invalid_utf8 = bytes_to_str(bytes_from([255, 0])) == None && bytes_to_str(bytes_from([])) == Some(\"\")\n\
+         test get_slice_concat = let b = bytes_from([1, 2, 3]) in bytes_get(b, 0) == Some(1) && bytes_get(b, 3) == None && bytes_get(b, -1) == None && bytes_to_list(bytes_slice(b, 1, 3) ++ b) == [2, 3, 1, 2, 3]\n\
+         test equality = bytes_from([104, 105]) == to_bytes(\"hi\") && bytes_from([1]) != bytes_from([1, 0])",
+    );
+    let r = runner("fn bad(x: Int) -> Bytes = bytes_from([1, x])\nfn cut(n: Int) -> Bytes = bytes_slice(to_bytes(\"ab\"), 0, n)\nfn raw() -> Bytes = bytes_from([0, 255])");
+    let e = r.call("bad", &[Value::Int(256)]).unwrap_err();
+    assert_eq!((e.kind, e.contract.as_deref()), ("contract_violation", Some("bytes_from: req 0 <= x <= 255")));
+    assert_eq!(serde_json::to_value(&e.values).unwrap(), json!({"x": 256}));
+    assert_eq!(r.call("cut", &[Value::Int(3)]).unwrap_err().kind, "index");
+    assert_eq!(r.call("raw", &[]), Ok(Value::Bytes(vec![0, 255], 0)));
+}
+
+#[test]
+fn maps_stay_balanced_under_ordered_inserts_and_deletes() {
+    // An unbalanced tree would recurse 50 000 levels deep in `map_put` (stack overflow) and take
+    // quadratic time; the AVL tree stays below 24 levels.
+    let r = runner(
+        "fn up(n: Int) -> Map[Int, Int] = fold(range(0, n), map_new(), fn(m, i) => map_put(m, i, i * 2))\n\
+         fn down(m: Map[Int, Int], n: Int) -> Map[Int, Int] = fold(range(0, n), m, fn(acc, i) => map_del(acc, i * 2))\n\
+         fn check(n: Int) -> Bool = let m = up(n) in let d = down(m, n / 2) in map_size(m) == n && map_get(m, n - 1) == Some(2 * n - 2) && map_size(d) == n / 2 && map_keys(d) == filter(range(0, n), fn(k) => k % 2 == 1)",
+    );
+    let t = std::time::Instant::now();
+    assert_eq!(r.call("check", &[Value::Int(50_000)]), Ok(Value::Bool(true)));
+    assert!(t.elapsed() < std::time::Duration::from_secs(20), "{:?}", t.elapsed());
+}
+
+#[test]
+fn maps_agree_with_a_reference_map() {
+    use std::collections::BTreeMap;
+    let r = runner(
+        "fn put(m: Map[Int, Str], k: Int, v: Str) -> Map[Int, Str] = map_put(m, k, v)\n\
+         fn del(m: Map[Int, Str], k: Int) -> Map[Int, Str] = map_del(m, k)\n\
+         fn lookup(m: Map[Int, Str], k: Int) -> Option[Str] = map_get(m, k)\n\
+         fn same(a: Map[Int, Str], b: Map[Int, Str]) -> Bool = a == b",
+    );
+    let to_value = |m: &BTreeMap<i64, String>| Value::Map(m.iter().map(|(k, v)| (Value::Int(*k), Value::Str(v.clone()))).collect());
+    let mut reference = BTreeMap::new();
+    let mut m = to_value(&reference);
+    let mut seed: u64 = 7;
+    for step in 0..400 {
+        seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        let k = ((seed >> 33) % 40) as i64 - 20;
+        if (seed >> 20) % 3 == 0 {
+            reference.remove(&k);
+            m = r.call("del", &[m, Value::Int(k)]).unwrap();
+        } else {
+            reference.insert(k, format!("v{step}"));
+            m = r.call("put", &[m, Value::Int(k), Value::Str(format!("v{step}"))]).unwrap();
+        }
+        assert_eq!(m, to_value(&reference), "after step {step}");
+        let want = reference.get(&(k + 1)).map_or(Value::Variant("None".into(), vec![]), |v| Value::Variant("Some".into(), vec![Value::Str(v.clone())]));
+        assert_eq!(r.call("lookup", &[m.clone(), Value::Int(k + 1)]), Ok(want));
+    }
+    // A map built by the host (balanced) equals the same entries built by the guest (other shape),
+    // and entries given out of order are sorted.
+    let unsorted = Value::Map(vec![(Value::Int(3), Value::Str("c".into())), (Value::Int(1), Value::Str("a".into()))]);
+    let built = r.call("put", &[r.call("put", &[Value::Map(vec![]), Value::Int(1), Value::Str("a".into())]).unwrap(), Value::Int(3), Value::Str("c".into())]).unwrap();
+    assert_eq!(r.call("same", &[unsorted.clone(), built]), Ok(Value::Bool(true)));
+    let dup = Value::Map(vec![(Value::Int(1), Value::Str("a".into())), (Value::Int(1), Value::Str("b".into()))]);
+    assert_eq!(r.call("same", &[dup, unsorted]).unwrap_err().kind, "bad_args");
+}
+
+#[test]
+fn maps_of_maps_and_structured_arguments() {
+    let r = runner(
+        "type P = { x: Int, name: Str }\ntype Shape = Dot | Box(P, Option[Bytes])\n\
+         fn nest() -> Map[Map[Int, Int], Str] = map_put(map_put(map_new(), map_put(map_new(), 2, 0), \"b\"), map_put(map_new(), 1, 9), \"a\")\n\
+         fn first(m: Map[Map[Int, Int], Str]) -> List[Str] = map_values(m)\n\
+         fn echo(s: Shape, p: P, r: Result[Int, Str]) -> List[Shape] = [s, Box(p, None), match r { Ok(_) => Dot, Err(e) => Box(P { x: 0, name: e }, Some(to_bytes(e))) }]",
+    );
+    let nested = r.call("nest", &[]).unwrap();
+    assert_eq!(serde_json::to_value(&nested).unwrap(), json!([[[[1, 9]], "a"], [[[2, 0]], "b"]]));
+    assert_eq!(r.call("first", &[nested]), Ok(Value::List(vec![Value::Str("a".into()), Value::Str("b".into())])));
+    let p = Value::Record("P".into(), vec![("name".into(), Value::Str("n".into())), ("x".into(), Value::Int(4))]);
+    let s = Value::Variant("Box".into(), vec![p.clone(), Value::Variant("Some".into(), vec![Value::Bytes(vec![1, 2], 0)])]);
+    let out = r.call("echo", &[s, p, Value::Variant("Err".into(), vec![Value::Str("e".into())])]).unwrap();
+    assert_eq!(
+        serde_json::to_value(&out).unwrap(),
+        json!([{"Box": [{"x": 4, "name": "n"}, {"Some": [[1, 2]]}]}, {"Box": [{"x": 4, "name": "n"}, "None"]}, {"Box": [{"x": 0, "name": "e"}, {"Some": [[101]]}]}])
+    );
+    let bad = r.call("echo", &[Value::Variant("Circle".into(), vec![]), Value::Unit, Value::Unit]).unwrap_err();
+    assert_eq!((bad.kind, bad.message.as_str()), ("bad_args", "argument 0 (`s`): Shape has no variant `Circle`"));
+}
+
+#[test]
+fn compare_orders_every_comparable_type() {
+    all_pass(
+        "type P = { a: Int, b: Str }\n\
+         fn insert_sorted[T](xs: List[T], x: T) -> List[T] = concat(push(filter(xs, fn(y) => compare(y, x) <= 0), x), filter(xs, fn(y) => compare(y, x) > 0))\n\
+         fn sort[T](xs: List[T]) -> List[T] = fold(xs, [], fn(acc, x) => insert_sorted(acc, x))\n\
+         test ints = compare(1, 2) == -1 && compare(2, 2) == 0 && compare(-9223372036854775807 - 1, 0) == -1\n\
+         test strs = sort([\"b\", \"ab\", \"a\", \"B\"]) == [\"B\", \"a\", \"ab\", \"b\"]\n\
+         test structured = compare(P { a: 1, b: \"z\" }, P { a: 1, b: \"a\" }) == 1 && compare(None, Some(0)) == -1 && compare([1, 2], [1]) == 1 && compare(true, false) == 1\n\
+         test floats = compare(-0.0, 0.0) == -1 && compare(1.5, 1.5) == 0\n\
+         test maps = compare(map_put(map_new(), 1, \"a\"), map_put(map_new(), 1, \"b\")) == -1",
+    );
+}

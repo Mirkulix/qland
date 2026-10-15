@@ -5,13 +5,18 @@
 //!             from the entry uses them (so a pure program has no system access at all)
 //!   functions user fns reachable from the entry, then tests, then runtime/equality helpers
 //!             (all indices computed by the module builder)
-//!   table     the emitted user fns, for `call_indirect` through fn values
+//!   table     closure bodies and wrappers of fns used as values, for `call_indirect`
 //!   memory    exported as `memory`, at most 4096 pages (256 MiB); bump allocator exported as `qal_alloc(size: i64) -> i32`
 //!   data      0..8 OOM scratch slot, 8.. one block per variant tag (shared payload-free variants), then string literals
 //!
-//! Values: Int = i64, Float = f64, Bool/Unit = i32, everything else = i32 pointer (fn values: table index).
+//! Values: Int = i64, Float = f64, Bool/Unit = i32, everything else = i32 pointer.
+//! Fn values are closures: a pointer to `[table slot: i32][pad][captured slots]`; a call passes the
+//! closure pointer as an extra first argument (`env`). A top-level fn used as a value gets a static
+//! closure whose slot holds a wrapper that ignores `env`.
 //! Heap blocks: Str = [len: i32][bytes], List = [len: i32][pad][8-byte slots], variant = [tag: i32][pad][slots],
 //! record = [slots]. Payload-free variants (`None`, `Empty`) point into the static tag table.
+//! Bytes = like Str; Map = [len: i32][pad][(key slot, value slot)…] sorted by the key order
+//! (`Mb::cmp_fn`), so equal maps have equal layouts.
 
 mod asm;
 mod gen;
@@ -59,6 +64,8 @@ pub mod host {
     pub const FLOAT_TO_STR: &str = "float_to_str";
     /// `(s: Str) -> (ok: i32, value: f64)` (pure)
     pub const STR_TO_FLOAT: &str = "str_to_float";
+    /// `(b: Bytes) -> 1 if valid UTF-8, else 0` (pure)
+    pub const UTF8_VALID: &str = "utf8_valid";
     pub const PRINT: &str = "io.print";
     /// `() -> Str ptr, or -1 at end of input`
     pub const READ_LINE: &str = "io.read_line";
@@ -80,6 +87,7 @@ pub mod host {
             FAIL => (&[I32, I32, I32, I32], &[]),
             FLOAT_TO_STR => (&[F64], &[I32]),
             STR_TO_FLOAT => (&[I32], &[I32, F64]),
+            UTF8_VALID => (&[I32], &[I32]),
             PRINT => (&[I32], &[]),
             READ_LINE | READ_ALL => (&[], &[I32]),
             READ_FILE => (&[I32], &[I32, I32]),
@@ -185,6 +193,7 @@ pub fn compile(p: &TProgram, entry: &Entry) -> Result<CompiledModule, String> {
         let name = match b {
             Builtin::FromFloat => host::FLOAT_TO_STR,
             Builtin::ToFloat => host::STR_TO_FLOAT,
+            Builtin::BytesToStr => host::UTF8_VALID,
             Builtin::Print => host::PRINT,
             Builtin::ReadLine => host::READ_LINE,
             Builtin::ReadAll => host::READ_ALL,
@@ -219,7 +228,6 @@ pub fn compile(p: &TProgram, entry: &Entry) -> Result<CompiledModule, String> {
             sites: vec![],
         });
     }
-    let table: Vec<u32> = fn_index.iter().flatten().copied().collect();
     let mut test_index = Vec::new();
     for &t in &tests {
         let name = &p.tests[t].name;
@@ -258,7 +266,7 @@ pub fn compile(p: &TProgram, entry: &Entry) -> Result<CompiledModule, String> {
         meta += 1;
     }
 
-    let wasm = mb.finish(&exports, &table)?;
+    let wasm = mb.finish(&exports)?;
     Ok(CompiledModule { wasm, funcs: metas, types: p.types.clone(), imports })
 }
 

@@ -5,7 +5,7 @@ mod host;
 mod value;
 
 pub use host::Permissions;
-pub use value::{Value, Values};
+pub use value::{compare as compare_values, from_json, Value, Values};
 
 use host::{Failure, HostState, FAIL_DENIED};
 use qal_core::ast::Type;
@@ -320,35 +320,104 @@ impl Runner {
         }
     }
 
-    /// Writes an argument into guest memory (Str and List[...] are allocated) and returns its slot.
+    /// Writes an argument into guest memory (heap values are allocated) and returns its slot.
     fn encode(&self, store: &mut Store<HostState>, instance: &Instance, t: &Type, v: &Value) -> Result<i64, String> {
         Ok(match (t, v) {
             (Type::Int, Value::Int(n)) => *n,
             (Type::Float, Value::Float(x)) => x.to_bits() as i64,
             (Type::Bool, Value::Bool(b)) => *b as i64,
             (Type::Unit, Value::Unit) => 0,
-            (Type::Str, Value::Str(s)) => {
-                let p = self.alloc(store, instance, 4 + s.len() as i64)?;
-                let mem = memory_of(store, instance)?;
-                mem.write(&mut *store, p as usize, &(s.len() as u32).to_le_bytes()).map_err(|e| e.to_string())?;
-                mem.write(&mut *store, p as usize + 4, s.as_bytes()).map_err(|e| e.to_string())?;
-                p as i64
-            }
+            (Type::Str, Value::Str(s)) => self.bytes_block(store, instance, s.as_bytes())?,
+            (Type::Bytes, Value::Bytes(b, 0)) => self.bytes_block(store, instance, b)?,
             (Type::List(elem), Value::List(xs)) => {
-                let mut slots = Vec::new();
+                let mut slots = vec![xs.len() as i64];
                 for x in xs {
                     slots.push(self.encode(store, instance, elem, x)?);
                 }
-                let p = self.alloc(store, instance, 8 + 8 * xs.len() as i64)?;
-                let mem = memory_of(store, instance)?;
-                mem.write(&mut *store, p as usize, &(xs.len() as u32).to_le_bytes()).map_err(|e| e.to_string())?;
-                for (k, s) in slots.iter().enumerate() {
-                    mem.write(&mut *store, p as usize + 8 + 8 * k, &s.to_le_bytes()).map_err(|e| e.to_string())?;
+                self.slots_block(store, instance, &slots)?
+            }
+            (Type::Map(kt, vt), Value::Map(entries)) => {
+                let mut sorted: Vec<&(Value, Value)> = entries.iter().collect();
+                sorted.sort_by(|a, b| value::compare(&self.types, kt, &a.0, &b.0));
+                if sorted.windows(2).any(|w| value::compare(&self.types, kt, &w[0].0, &w[1].0).is_eq()) {
+                    return Err(format!("a {t} has a key twice"));
                 }
-                p as i64
+                let mut slots = Vec::new();
+                for (k, v) in sorted {
+                    slots.push((self.encode(store, instance, kt, k)?, self.encode(store, instance, vt, v)?));
+                }
+                self.map_tree(store, instance, &slots)?.0 as i64
+            }
+            (_, Value::Record(_, fields)) if self.types.is_record(t) => {
+                let decl = self.types.record_fields(t);
+                if fields.len() != decl.len() {
+                    return Err(format!("a {t} has {} fields, got {}", decl.len(), fields.len()));
+                }
+                let mut slots = Vec::new();
+                for (f, ft) in &decl {
+                    let x = fields.iter().find(|(g, _)| g == f).map(|(_, x)| x).ok_or_else(|| format!("{t} without field `{f}`"))?;
+                    slots.push(self.encode(store, instance, ft, x)?);
+                }
+                self.slots_block(store, instance, &slots)?
+            }
+            (_, Value::Variant(name, payload)) if !self.types.variant_names(t).is_empty() => {
+                let tag = self.types.variant_names(t).iter().position(|n| n == name).ok_or_else(|| format!("{t} has no variant `{name}`"))? as u32;
+                let fields = self.types.variant_fields(t, tag);
+                if fields.len() != payload.len() {
+                    return Err(format!("`{name}` takes {} value(s), got {}", fields.len(), payload.len()));
+                }
+                let mut slots = vec![tag as i64];
+                for (ft, x) in fields.iter().zip(payload) {
+                    slots.push(self.encode(store, instance, ft, x)?);
+                }
+                self.slots_block(store, instance, &slots)?
             }
             (t, v) => return Err(format!("expected {t}, got {}", serde_json::to_string(v).unwrap_or_default())),
         })
+    }
+
+    /// Allocates `[len: i32][bytes]` (Str, Bytes).
+    fn bytes_block(&self, store: &mut Store<HostState>, instance: &Instance, b: &[u8]) -> Result<i64, String> {
+        let len = u32::try_from(b.len()).map_err(|_| "value too large".to_string())?;
+        let p = self.alloc(store, instance, 4 + b.len() as i64)?;
+        let mem = memory_of(store, instance)?;
+        mem.write(&mut *store, p as u32 as usize, &len.to_le_bytes()).map_err(|e| e.to_string())?;
+        mem.write(&mut *store, p as u32 as usize + 4, b).map_err(|e| e.to_string())?;
+        Ok(p as u32 as i64)
+    }
+
+    /// Allocates a block of 8-byte slots (a list `[len][pad][slots]` passes its length as the first
+    /// slot, a variant its tag: both are the i32 at offset 0).
+    fn slots_block(&self, store: &mut Store<HostState>, instance: &Instance, slots: &[i64]) -> Result<i64, String> {
+        let p = self.alloc(store, instance, 8 * slots.len().max(1) as i64)? as u32 as usize;
+        let mem = memory_of(store, instance)?;
+        for (k, s) in slots.iter().enumerate() {
+            mem.write(&mut *store, p + 8 * k, &s.to_le_bytes()).map_err(|e| e.to_string())?;
+        }
+        Ok(p as i64)
+    }
+
+    /// Builds a perfectly balanced map tree (a valid AVL tree) over sorted entry slots; returns
+    /// (node pointer or 0, height).
+    fn map_tree(&self, store: &mut Store<HostState>, instance: &Instance, entries: &[(i64, i64)]) -> Result<(u32, u32), String> {
+        if entries.is_empty() {
+            return Ok((0, 0));
+        }
+        let mid = entries.len() / 2;
+        let (l, hl) = self.map_tree(store, instance, &entries[..mid])?;
+        let (r, hr) = self.map_tree(store, instance, &entries[mid + 1..])?;
+        let height = hl.max(hr) + 1;
+        let p = self.alloc(store, instance, 32)? as u32;
+        let mut node = Vec::with_capacity(32);
+        node.extend((entries.len() as u32).to_le_bytes());
+        node.extend(height.to_le_bytes());
+        node.extend(entries[mid].0.to_le_bytes());
+        node.extend(entries[mid].1.to_le_bytes());
+        node.extend(l.to_le_bytes());
+        node.extend(r.to_le_bytes());
+        let mem = memory_of(store, instance)?;
+        mem.write(&mut *store, p as usize, &node).map_err(|e| e.to_string())?;
+        Ok((p, height))
     }
 
     fn alloc(&self, store: &mut Store<HostState>, instance: &Instance, size: i64) -> Result<i32, String> {

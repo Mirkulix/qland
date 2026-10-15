@@ -4,6 +4,10 @@
 //! Memory layout (all blocks 8-byte aligned, see `crate` docs):
 //!   Str  = [len: i32][UTF-8 bytes]          List = [len: i32][pad][slot; len]
 //!   variant = [tag: i32][pad][slot; fields]  record = [slot; fields]
+//!   Bytes = like Str (any bytes)
+//!   Map = 0 (empty) or a node [size: i32][height: i32][key slot][value slot][left: i32][right: i32]
+//!         of a persistent AVL tree ordered by the key's total order (`Mb::cmp_fn`)
+//!   closure = [table slot: i32][pad][captured slot; n]
 //! A slot is 8 bytes: i64 as is, f64 bit pattern, i32 zero-extended.
 
 use crate::asm::{from_slot, m32, m64, m8, to_slot, Asm, Repr};
@@ -86,12 +90,43 @@ pub enum Rt {
     FloatToInt,
     /// (lo: i64, hi: i64, func, site) -> i64
     RandChecked,
-    /// (xs, f) -> List; f: (in) -> out
+    /// (xs, f) -> List; f: closure (in) -> out
     Map(Repr, Repr),
-    /// (xs, f) -> List; f: (in) -> Bool
+    /// (xs, f) -> List; f: closure (in) -> Bool
     Filter(Repr),
-    /// (xs, init: acc, f) -> acc; f: (acc, elem) -> acc
+    /// (xs, init: acc, f) -> acc; f: closure (acc, elem) -> acc
     Fold(Repr, Repr),
+    /// (l, key: slot, value: slot, r) -> a new map node over the subtrees `l` and `r`
+    MapNode,
+    /// (l, key, value, r) -> like `MapNode`, rebalanced (AVL) when the heights differ by 2
+    MapBal,
+    /// (m, key: slot) -> the node holding `key`, or 0; the u32 is the key's compare function
+    MapFind(u32),
+    /// (m, key: slot) -> Option[value]
+    MapGet(u32),
+    /// (m, key: slot, value: slot) -> Map
+    MapPut(u32),
+    /// (m, key: slot) -> Map
+    MapDel(u32),
+    /// (m) -> m without its smallest entry (m is not empty)
+    MapDelMin,
+    /// (m) -> number of entries (i64)
+    MapSize,
+    /// (m, entries, index) -> index after the entries of `m`, written in key order
+    MapFill,
+    /// (m) -> the entries in key order: [len: i32][pad][(key slot, value slot); len]
+    MapEntries,
+    /// (m) -> List of the keys / values in key order
+    MapKeys,
+    MapValues,
+    /// (b, i: i64) -> Option[Int]
+    BytesGet,
+    /// (b, start: i64, end: i64, func, site) -> Bytes; fails with `index`
+    BytesSlice,
+    /// (xs: List[Int], func, site) -> Bytes; fails unless every element is in 0..=255
+    BytesFrom,
+    /// (b) -> List[Int]
+    BytesToList,
 }
 
 /// Pushes the address of slot `k` of list `xs` (use with offset 8).
@@ -137,6 +172,14 @@ impl Rt {
             Rt::RandChecked => (&[I64, I64, I32, I32], &[I64]),
             Rt::Map(..) | Rt::Filter(_) => (&[I32, I32], &[I32]),
             Rt::Fold(acc, _) => return (vec![I32, acc.val(), I32], vec![acc.val()]),
+            Rt::MapFind(_) | Rt::MapGet(_) | Rt::MapDel(_) | Rt::BytesGet => (&[I32, I64], &[I32]),
+            Rt::MapPut(_) => (&[I32, I64, I64], &[I32]),
+            Rt::MapNode | Rt::MapBal => (&[I32, I64, I64, I32], &[I32]),
+            Rt::MapDelMin | Rt::MapEntries | Rt::MapKeys | Rt::MapValues | Rt::BytesToList => (&[I32], &[I32]),
+            Rt::MapSize => (&[I32], &[I64]),
+            Rt::MapFill => (&[I32, I32, I32], &[I32]),
+            Rt::BytesSlice => (&[I32, I64, I64, I32, I32], &[I32]),
+            Rt::BytesFrom => (&[I32, I32, I32], &[I32]),
         };
         (p.to_vec(), r.to_vec())
     }
@@ -378,14 +421,15 @@ impl Rt {
             }
             Rt::Map(from, to) => {
                 let (n, p, k) = (a.local(I32), a.local(I32), a.local(I32));
-                let ty = m.ty(&[from.val()], &[to.val()]);
+                let ty = m.ty(&[I32, from.val()], &[to.val()]);
                 a.all([I::LocalGet(0), I::I32Load(m32(0)), I::LocalTee(n), I::Call(m.rt(Rt::ListNew)), I::LocalSet(p)]);
                 loop_until(&mut a, k, n);
                 slot_addr(&mut a, p, k);
+                a.i(I::LocalGet(1));
                 slot_addr(&mut a, 0, k);
                 a.i(I::I64Load(m64(8)));
                 a.opt(from_slot(from));
-                a.all([I::LocalGet(1), I::CallIndirect { type_index: ty, table_index: 0 }]);
+                a.all([I::LocalGet(1), I::I32Load(m32(0)), I::CallIndirect { type_index: ty, table_index: 0 }]);
                 a.opt(to_slot(to));
                 a.i(I::I64Store(m64(8)));
                 loop_next(&mut a, k);
@@ -393,13 +437,14 @@ impl Rt {
             }
             Rt::Filter(elem) => {
                 let (n, p, k, kept, v) = (a.local(I32), a.local(I32), a.local(I32), a.local(I32), a.local(I64));
-                let ty = m.ty(&[elem.val()], &[I32]);
+                let ty = m.ty(&[I32, elem.val()], &[I32]);
                 a.all([I::LocalGet(0), I::I32Load(m32(0)), I::LocalTee(n), I::Call(m.rt(Rt::ListNew)), I::LocalSet(p)]);
                 loop_until(&mut a, k, n);
+                a.i(I::LocalGet(1));
                 slot_addr(&mut a, 0, k);
                 a.all([I::I64Load(m64(8)), I::LocalTee(v)]);
                 a.opt(from_slot(elem));
-                a.all([I::LocalGet(1), I::CallIndirect { type_index: ty, table_index: 0 }, I::If(BlockType::Empty)]);
+                a.all([I::LocalGet(1), I::I32Load(m32(0)), I::CallIndirect { type_index: ty, table_index: 0 }, I::If(BlockType::Empty)]);
                 slot_addr(&mut a, p, kept);
                 a.all([I::LocalGet(v), I::I64Store(m64(8))]);
                 incr(&mut a, kept);
@@ -410,20 +455,201 @@ impl Rt {
             }
             Rt::Fold(acc, elem) => {
                 let (n, k) = (a.local(I32), a.local(I32));
-                let ty = m.ty(&[acc.val(), elem.val()], &[acc.val()]);
+                let ty = m.ty(&[I32, acc.val(), elem.val()], &[acc.val()]);
                 a.all([I::LocalGet(0), I::I32Load(m32(0)), I::LocalSet(n)]);
                 loop_until(&mut a, k, n);
-                a.i(I::LocalGet(1));
+                a.all([I::LocalGet(2), I::LocalGet(1)]);
                 slot_addr(&mut a, 0, k);
                 a.i(I::I64Load(m64(8)));
                 a.opt(from_slot(elem));
-                a.all([I::LocalGet(2), I::CallIndirect { type_index: ty, table_index: 0 }, I::LocalSet(1)]);
+                a.all([I::LocalGet(2), I::I32Load(m32(0)), I::CallIndirect { type_index: ty, table_index: 0 }, I::LocalSet(1)]);
                 loop_next(&mut a, k);
                 a.i(I::LocalGet(1));
+            }
+            Rt::MapNode => {
+                let (p, hl, hr) = (a.local(I32), a.local(I32), a.local(I32));
+                a.all([I::I64Const(32), I::Call(m.rt(Rt::Alloc)), I::LocalSet(p)]);
+                a.i(I::LocalGet(p));
+                node_field(&mut a, 0, 0);
+                node_field(&mut a, 3, 0);
+                a.all([I::I32Add, I::I32Const(1), I::I32Add, I::I32Store(m32(0))]);
+                node_field(&mut a, 0, 4);
+                a.i(I::LocalSet(hl));
+                node_field(&mut a, 3, 4);
+                a.i(I::LocalSet(hr));
+                a.all([I::LocalGet(p), I::LocalGet(hl), I::LocalGet(hr), I::LocalGet(hl), I::LocalGet(hr), I::I32GtS, I::Select, I::I32Const(1), I::I32Add, I::I32Store(m32(4))]);
+                a.all([I::LocalGet(p), I::LocalGet(1), I::I64Store(m64(8)), I::LocalGet(p), I::LocalGet(2), I::I64Store(m64(16))]);
+                a.all([I::LocalGet(p), I::LocalGet(0), I::I32Store(m32(24)), I::LocalGet(p), I::LocalGet(3), I::I32Store(m32(28)), I::LocalGet(p)]);
+            }
+            Rt::MapBal => {
+                // (l, k, v, r) with |height(l) - height(r)| <= 2 -> a balanced node (AVL rotations).
+                let node = m.rt(Rt::MapNode);
+                let (x, y, z) = (a.local(I32), a.local(I32), a.local(I32));
+                let height = |a: &mut Asm, local: u32| node_field(a, local, 4);
+                // Left too high: x = l.left, y = l.right.
+                height(&mut a, 0);
+                height(&mut a, 3);
+                a.all([I::I32Const(1), I::I32Add, I::I32GtS, I::If(BlockType::Empty)]);
+                a.all([I::LocalGet(0), I::I32Load(m32(24)), I::LocalSet(x), I::LocalGet(0), I::I32Load(m32(28)), I::LocalSet(y)]);
+                height(&mut a, x);
+                height(&mut a, y);
+                a.all([I::I32GeS, I::If(BlockType::Empty)]);
+                // single right rotation: node(x, l.k, l.v, node(y, k, v, r))
+                a.all([I::LocalGet(x), I::LocalGet(0), I::I64Load(m64(8)), I::LocalGet(0), I::I64Load(m64(16))]);
+                a.all([I::LocalGet(y), I::LocalGet(1), I::LocalGet(2), I::LocalGet(3), I::Call(node), I::Call(node), I::Return, I::End]);
+                // double rotation: node(node(x, l.k, l.v, y.left), y.k, y.v, node(y.right, k, v, r))
+                a.all([I::LocalGet(x), I::LocalGet(0), I::I64Load(m64(8)), I::LocalGet(0), I::I64Load(m64(16)), I::LocalGet(y), I::I32Load(m32(24)), I::Call(node)]);
+                a.all([I::LocalGet(y), I::I64Load(m64(8)), I::LocalGet(y), I::I64Load(m64(16))]);
+                a.all([I::LocalGet(y), I::I32Load(m32(28)), I::LocalGet(1), I::LocalGet(2), I::LocalGet(3), I::Call(node), I::Call(node), I::Return, I::End]);
+                // Right too high: y = r.left, z = r.right.
+                height(&mut a, 3);
+                height(&mut a, 0);
+                a.all([I::I32Const(1), I::I32Add, I::I32GtS, I::If(BlockType::Empty)]);
+                a.all([I::LocalGet(3), I::I32Load(m32(24)), I::LocalSet(y), I::LocalGet(3), I::I32Load(m32(28)), I::LocalSet(z)]);
+                height(&mut a, z);
+                height(&mut a, y);
+                a.all([I::I32GeS, I::If(BlockType::Empty)]);
+                // single left rotation: node(node(l, k, v, y), r.k, r.v, z)
+                a.all([I::LocalGet(0), I::LocalGet(1), I::LocalGet(2), I::LocalGet(y), I::Call(node)]);
+                a.all([I::LocalGet(3), I::I64Load(m64(8)), I::LocalGet(3), I::I64Load(m64(16)), I::LocalGet(z), I::Call(node), I::Return, I::End]);
+                // double rotation: node(node(l, k, v, y.left), y.k, y.v, node(y.right, r.k, r.v, z))
+                a.all([I::LocalGet(0), I::LocalGet(1), I::LocalGet(2), I::LocalGet(y), I::I32Load(m32(24)), I::Call(node)]);
+                a.all([I::LocalGet(y), I::I64Load(m64(8)), I::LocalGet(y), I::I64Load(m64(16))]);
+                a.all([I::LocalGet(y), I::I32Load(m32(28)), I::LocalGet(3), I::I64Load(m64(8)), I::LocalGet(3), I::I64Load(m64(16)), I::LocalGet(z), I::Call(node), I::Call(node), I::Return, I::End]);
+                a.all([I::LocalGet(0), I::LocalGet(1), I::LocalGet(2), I::LocalGet(3), I::Call(node)]);
+            }
+            Rt::MapFind(cmp) => {
+                // (m, key) -> the node holding `key`, or 0.
+                let c = a.local(I32);
+                a.all([I::Block(BlockType::Empty), I::Loop(BlockType::Empty), I::LocalGet(0), I::I32Eqz, I::BrIf(1)]);
+                a.all([I::LocalGet(1), I::LocalGet(0), I::I64Load(m64(8)), I::Call(cmp), I::LocalTee(c), I::I32Eqz, I::If(BlockType::Empty), I::LocalGet(0), I::Return, I::End]);
+                a.all([I::LocalGet(0), I::I32Load(m32(24)), I::LocalGet(0), I::I32Load(m32(28)), I::LocalGet(c), I::I32Const(0), I::I32LtS, I::Select, I::LocalSet(0)]);
+                a.all([I::Br(0), I::End, I::End, I::I32Const(0)]);
+            }
+            Rt::MapGet(cmp) => {
+                let n = a.local(I32);
+                a.all([I::LocalGet(0), I::LocalGet(1), I::Call(m.rt(Rt::MapFind(cmp))), I::LocalTee(n), I::I32Eqz]);
+                a.all([I::If(BlockType::Result(I32)), I::I32Const(m.tag_addr(TAG_NONE)), I::Else]);
+                a.all([I::I32Const(TAG_SOME as i32), I::LocalGet(n), I::I64Load(m64(16)), I::Call(m.rt(Rt::Variant1)), I::End]);
+            }
+            Rt::MapPut(cmp) => {
+                let (node, bal) = (m.rt(Rt::MapNode), m.rt(Rt::MapBal));
+                let put = m.rt(Rt::MapPut(cmp));
+                let c = a.local(I32);
+                a.all([I::LocalGet(0), I::I32Eqz, I::If(BlockType::Empty), I::I32Const(0), I::LocalGet(1), I::LocalGet(2), I::I32Const(0), I::Call(node), I::Return, I::End]);
+                a.all([I::LocalGet(1), I::LocalGet(0), I::I64Load(m64(8)), I::Call(cmp), I::LocalTee(c), I::I32Eqz, I::If(BlockType::Empty)]);
+                a.all([I::LocalGet(0), I::I32Load(m32(24)), I::LocalGet(1), I::LocalGet(2), I::LocalGet(0), I::I32Load(m32(28)), I::Call(node), I::Return, I::End]);
+                a.all([I::LocalGet(c), I::I32Const(0), I::I32LtS, I::If(BlockType::Empty)]);
+                a.all([I::LocalGet(0), I::I32Load(m32(24)), I::LocalGet(1), I::LocalGet(2), I::Call(put)]);
+                a.all([I::LocalGet(0), I::I64Load(m64(8)), I::LocalGet(0), I::I64Load(m64(16)), I::LocalGet(0), I::I32Load(m32(28)), I::Call(bal), I::Return, I::End]);
+                a.all([I::LocalGet(0), I::I32Load(m32(24)), I::LocalGet(0), I::I64Load(m64(8)), I::LocalGet(0), I::I64Load(m64(16))]);
+                a.all([I::LocalGet(0), I::I32Load(m32(28)), I::LocalGet(1), I::LocalGet(2), I::Call(put), I::Call(bal)]);
+            }
+            Rt::MapDelMin => {
+                // (m != 0) -> m without its smallest entry
+                let bal = m.rt(Rt::MapBal);
+                let del_min = m.rt(Rt::MapDelMin);
+                a.all([I::LocalGet(0), I::I32Load(m32(24)), I::I32Eqz, I::If(BlockType::Empty), I::LocalGet(0), I::I32Load(m32(28)), I::Return, I::End]);
+                a.all([I::LocalGet(0), I::I32Load(m32(24)), I::Call(del_min), I::LocalGet(0), I::I64Load(m64(8)), I::LocalGet(0), I::I64Load(m64(16))]);
+                a.all([I::LocalGet(0), I::I32Load(m32(28)), I::Call(bal)]);
+            }
+            Rt::MapDel(cmp) => {
+                let bal = m.rt(Rt::MapBal);
+                let del = m.rt(Rt::MapDel(cmp));
+                let del_min = m.rt(Rt::MapDelMin);
+                let (c, mn) = (a.local(I32), a.local(I32));
+                a.all([I::LocalGet(0), I::I32Eqz, I::If(BlockType::Empty), I::I32Const(0), I::Return, I::End]);
+                a.all([I::LocalGet(1), I::LocalGet(0), I::I64Load(m64(8)), I::Call(cmp), I::LocalTee(c), I::I32Const(0), I::I32LtS, I::If(BlockType::Empty)]);
+                a.all([I::LocalGet(0), I::I32Load(m32(24)), I::LocalGet(1), I::Call(del), I::LocalGet(0), I::I64Load(m64(8)), I::LocalGet(0), I::I64Load(m64(16))]);
+                a.all([I::LocalGet(0), I::I32Load(m32(28)), I::Call(bal), I::Return, I::End]);
+                a.all([I::LocalGet(c), I::I32Const(0), I::I32GtS, I::If(BlockType::Empty)]);
+                a.all([I::LocalGet(0), I::I32Load(m32(24)), I::LocalGet(0), I::I64Load(m64(8)), I::LocalGet(0), I::I64Load(m64(16))]);
+                a.all([I::LocalGet(0), I::I32Load(m32(28)), I::LocalGet(1), I::Call(del), I::Call(bal), I::Return, I::End]);
+                // Found: join the subtrees.
+                a.all([I::LocalGet(0), I::I32Load(m32(24)), I::I32Eqz, I::If(BlockType::Empty), I::LocalGet(0), I::I32Load(m32(28)), I::Return, I::End]);
+                a.all([I::LocalGet(0), I::I32Load(m32(28)), I::I32Eqz, I::If(BlockType::Empty), I::LocalGet(0), I::I32Load(m32(24)), I::Return, I::End]);
+                // mn = the smallest node of the right subtree
+                a.all([I::LocalGet(0), I::I32Load(m32(28)), I::LocalSet(mn), I::Block(BlockType::Empty), I::Loop(BlockType::Empty)]);
+                a.all([I::LocalGet(mn), I::I32Load(m32(24)), I::I32Eqz, I::BrIf(1), I::LocalGet(mn), I::I32Load(m32(24)), I::LocalSet(mn), I::Br(0), I::End, I::End]);
+                a.all([I::LocalGet(0), I::I32Load(m32(24)), I::LocalGet(mn), I::I64Load(m64(8)), I::LocalGet(mn), I::I64Load(m64(16))]);
+                a.all([I::LocalGet(0), I::I32Load(m32(28)), I::Call(del_min), I::Call(bal)]);
+            }
+            Rt::MapSize => {
+                node_field(&mut a, 0, 0);
+                a.i(I::I64ExtendI32U);
+            }
+            Rt::MapFill => {
+                // (m, entries, index) -> next index: writes the entries of `m` in key order.
+                let fill = m.rt(Rt::MapFill);
+                let i = a.local(I32);
+                a.all([I::LocalGet(0), I::I32Eqz, I::If(BlockType::Empty), I::LocalGet(2), I::Return, I::End]);
+                a.all([I::LocalGet(0), I::I32Load(m32(24)), I::LocalGet(1), I::LocalGet(2), I::Call(fill), I::LocalSet(i)]);
+                for off in [8, 16] {
+                    a.all([I::LocalGet(1), I::LocalGet(i), I::I32Const(4), I::I32Shl, I::I32Add, I::LocalGet(0), I::I64Load(m64(off)), I::I64Store(m64(off))]);
+                }
+                a.all([I::LocalGet(0), I::I32Load(m32(28)), I::LocalGet(1), I::LocalGet(i), I::I32Const(1), I::I32Add, I::Call(fill)]);
+            }
+            Rt::MapEntries => {
+                // (m) -> [len: i32][pad][(key slot, value slot); len] in key order
+                let (n, p) = (a.local(I32), a.local(I32));
+                node_field(&mut a, 0, 0);
+                a.all([I::LocalTee(n), I::I64ExtendI32U, I::I64Const(4), I::I64Shl, I::I64Const(8), I::I64Add, I::Call(m.rt(Rt::Alloc)), I::LocalTee(p)]);
+                a.all([I::LocalGet(n), I::I32Store(m32(0)), I::LocalGet(0), I::LocalGet(p), I::I32Const(0), I::Call(m.rt(Rt::MapFill)), I::Drop, I::LocalGet(p)]);
+            }
+            Rt::MapKeys | Rt::MapValues => {
+                let (n, xs, k) = (a.local(I32), a.local(I32), a.local(I32));
+                let off = if self == Rt::MapKeys { 8 } else { 16 };
+                a.all([I::LocalGet(0), I::Call(m.rt(Rt::MapEntries)), I::LocalSet(0)]);
+                a.all([I::LocalGet(0), I::I32Load(m32(0)), I::LocalTee(n), I::Call(m.rt(Rt::ListNew)), I::LocalSet(xs)]);
+                loop_until(&mut a, k, n);
+                slot_addr(&mut a, xs, k);
+                a.all([I::LocalGet(0), I::LocalGet(k), I::I32Const(4), I::I32Shl, I::I32Add, I::I64Load(m64(off)), I::I64Store(m64(8))]);
+                loop_next(&mut a, k);
+                a.i(I::LocalGet(xs));
+            }
+            Rt::BytesGet => {
+                a.all([I::LocalGet(1), I::I64Const(0), I::I64LtS, I::LocalGet(1), I::LocalGet(0), I::I32Load(m32(0)), I::I64ExtendI32U, I::I64GeS, I::I32Or]);
+                a.all([I::If(BlockType::Result(I32)), I::I32Const(m.tag_addr(TAG_NONE)), I::Else]);
+                a.all([I::I32Const(TAG_SOME as i32), I::LocalGet(0), I::LocalGet(1), I::I32WrapI64, I::I32Add, I::I32Load8U(m8(4)), I::I64ExtendI32U]);
+                a.all([I::Call(m.rt(Rt::Variant1)), I::End]);
+            }
+            Rt::BytesSlice => {
+                let n = a.local(I64);
+                a.all([I::LocalGet(0), I::I32Load(m32(0)), I::I64ExtendI32U, I::LocalSet(n)]);
+                a.all([I::LocalGet(1), I::I64Const(0), I::I64LtS, I::LocalGet(2), I::LocalGet(1), I::I64LtS, I::I32Or, I::LocalGet(2), I::LocalGet(n), I::I64GtS, I::I32Or]);
+                a.i(I::If(BlockType::Empty));
+                m.emit_fail(&mut a, FAIL_INDEX, Arg::Local(3), Arg::Local(4), &[(1, Repr::I64), (2, Repr::I64), (n, Repr::I64)]);
+                a.i(I::End);
+                a.all([I::LocalGet(0), I::LocalGet(1), I::I32WrapI64, I::LocalGet(2), I::I32WrapI64, I::Call(m.rt(Rt::StrSub))]);
+            }
+            Rt::BytesFrom => {
+                let (n, p, k, x) = (a.local(I32), a.local(I32), a.local(I32), a.local(I64));
+                a.all([I::LocalGet(0), I::I32Load(m32(0)), I::LocalTee(n), I::Call(m.rt(Rt::StrNew)), I::LocalSet(p)]);
+                loop_until(&mut a, k, n);
+                slot_addr(&mut a, 0, k);
+                a.all([I::I64Load(m64(8)), I::LocalTee(x), I::I64Const(0), I::I64LtS, I::LocalGet(x), I::I64Const(255), I::I64GtS, I::I32Or, I::If(BlockType::Empty)]);
+                m.emit_fail(&mut a, FAIL_BUILTIN, Arg::Local(1), Arg::Local(2), &[(x, Repr::I64)]);
+                a.all([I::End, I::LocalGet(p), I::LocalGet(k), I::I32Add, I::LocalGet(x), I::I64Store8(m8(4))]);
+                loop_next(&mut a, k);
+                a.i(I::LocalGet(p));
+            }
+            Rt::BytesToList => {
+                let (n, xs, k) = (a.local(I32), a.local(I32), a.local(I32));
+                a.all([I::LocalGet(0), I::I32Load(m32(0)), I::LocalTee(n), I::Call(m.rt(Rt::ListNew)), I::LocalSet(xs)]);
+                loop_until(&mut a, k, n);
+                slot_addr(&mut a, xs, k);
+                a.all([I::LocalGet(0), I::LocalGet(k), I::I32Add, I::I32Load8U(m8(4)), I::I64ExtendI32U, I::I64Store(m64(8))]);
+                loop_next(&mut a, k);
+                a.i(I::LocalGet(xs));
             }
         }
         a.finish()
     }
+}
+
+/// Pushes the size (`off` 0) or height (`off` 4) of the map node in local `x`; 0 for the empty map.
+fn node_field(a: &mut Asm, x: u32, off: u64) {
+    a.all([I::LocalGet(x), I::If(BlockType::Result(I32)), I::LocalGet(x), I::I32Load(m32(off)), I::Else, I::I32Const(0), I::End]);
 }
 
 fn copy() -> I<'static> {
