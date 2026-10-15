@@ -5,7 +5,8 @@ use qal_core::diag::Diagnostic;
 #[derive(Debug, Clone, PartialEq)]
 pub enum Tok {
     Ident(String),
-    Int(i64),
+    /// Integer literal magnitude; the parser checks that it fits (`-9223372036854775808` is a valid pattern).
+    Int(u64),
     Float(f64),
     /// String literal with escapes already resolved.
     Str(String),
@@ -93,7 +94,7 @@ pub fn lex(src: &str) -> Result<Vec<Token>, Diagnostic> {
                     _ => return Err(Diagnostic::parse(start_line, start_col, format!("float literal `{text}` is out of range"))),
                 }
             } else {
-                Tok::Int(text.parse::<i64>().map_err(|_| {
+                Tok::Int(text.parse::<u64>().map_err(|_| {
                     Diagnostic::parse(start_line, start_col, format!("integer literal `{text}` does not fit in Int (64-bit)"))
                 })?)
             };
@@ -251,6 +252,7 @@ mod tests {
         let e = lex("99999999999999999999").unwrap_err();
         assert_eq!(e.kind, "parse");
         assert_eq!(e.path, "1:1");
+        assert_eq!(toks("9223372036854775808"), vec![Tok::Int(1 << 63), Tok::Eof]);
         let e = lex("x @ y").unwrap_err();
         assert_eq!(e.path, "1:3");
         let e = lex("größe").unwrap_err();

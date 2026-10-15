@@ -1,4 +1,6 @@
-//! Canonical printer: Program -> text. `parse_program(print_program(p)) == p`.
+//! Canonical printer: Program -> text. `parse_program(print_program(p)) == p` for every program the
+//! parser produces. The printer is total: ASTs the parser cannot produce (negative or non-finite
+//! literals, an empty sequence) print as parseable text with the same meaning.
 
 use qal_core::ast::*;
 
@@ -17,8 +19,9 @@ fn print_def(d: &Def) -> String {
         Def::Type(t) => match &t.body {
             TypeBody::Record(fields) => {
                 let fs: Vec<String> = fields.iter().map(|(n, ty)| format!("{n}: {ty}")).collect();
-                format!("type {} = {{ {} }}", t.name, fs.join(", "))
+                format!("type {} = {}", t.name, braces(&fs))
             }
+            TypeBody::Enum(variants) if variants.is_empty() => format!("type {} = |", t.name),
             TypeBody::Enum(variants) => {
                 let vs: Vec<String> = variants
                     .iter()
@@ -91,6 +94,37 @@ fn has_bare_record(e: &Expr) -> bool {
     }
 }
 
+/// `{ a, b }`, or `{}` when empty.
+fn braces(items: &[String]) -> String {
+    if items.is_empty() {
+        "{}".to_string()
+    } else {
+        format!("{{ {} }}", items.join(", "))
+    }
+}
+
+/// An Int literal; negative values (which the parser builds as `-n`) are parenthesized negations.
+fn print_int(n: i64) -> String {
+    match n {
+        i64::MIN => "(-9223372036854775807 - 1)".to_string(),
+        n if n < 0 => format!("(-{})", n.unsigned_abs()),
+        n => n.to_string(),
+    }
+}
+
+/// A Float literal; negative and non-finite values print as expressions with that value.
+fn print_float(x: f64) -> String {
+    if x.is_nan() {
+        "(0.0 / 0.0)".to_string()
+    } else if x.is_infinite() {
+        if x > 0.0 { "(1.0 / 0.0)" } else { "(-1.0 / 0.0)" }.to_string()
+    } else if x.is_sign_negative() {
+        format!("(-{:?})", -x)
+    } else {
+        format!("{x:?}")
+    }
+}
+
 pub fn print_str(s: &str) -> String {
     let mut out = String::from("\"");
     for c in s.chars() {
@@ -130,7 +164,7 @@ pub fn print_pat(p: &Pat) -> String {
                     _ => format!("{f}: {}", print_pat(p)),
                 })
                 .collect();
-            format!("{n} {{ {} }}", fs.join(", "))
+            format!("{n} {}", braces(&fs))
         }
     }
 }
@@ -141,18 +175,20 @@ fn comma(items: &[Expr]) -> String {
 
 pub fn print_expr(e: &Expr) -> String {
     match e {
-        Expr::Int(n) => n.to_string(),
-        Expr::Float(x) => format!("{x:?}"),
+        Expr::Int(n) => print_int(*n),
+        Expr::Float(x) => print_float(*x),
         Expr::Bool(b) => b.to_string(),
         Expr::Str(s) => print_str(s),
         Expr::Unit => "()".to_string(),
         Expr::Var(v) => v.clone(),
         Expr::Call(f, args) => format!("{f}({})", comma(args)),
         Expr::List(items) => format!("[{}]", comma(items)),
+        // An empty sequence (never parsed) evaluates to `()`.
+        Expr::Seq(items) if items.is_empty() => "()".to_string(),
         Expr::Seq(items) => format!("{{ {} }}", items.iter().map(print_expr).collect::<Vec<_>>().join("; ")),
         Expr::Record(n, fs) => {
             let fs: Vec<String> = fs.iter().map(|(f, v)| format!("{f}: {}", print_expr(v))).collect();
-            format!("{n} {{ {} }}", fs.join(", "))
+            format!("{n} {}", braces(&fs))
         }
         Expr::Field(t, f) => format!("{}.{f}", wrap(t, prec(t) < 8)),
         Expr::Un(op, x) => {
@@ -183,7 +219,7 @@ pub fn print_expr(e: &Expr) -> String {
                     None => format!("{} => {}", print_pat(&a.pat), print_expr(&a.body)),
                 })
                 .collect();
-            format!("match {} {{ {} }}", wrap(s, has_bare_record(s)), arms.join(", "))
+            format!("match {} {}", wrap(s, has_bare_record(s)), braces(&arms))
         }
     }
 }
@@ -241,5 +277,37 @@ mod tests {
         roundtrip("test t = match (P { x: 1 }) { P { x: 1, y } => y, P { x: n } if n < -1 => -1, _ => match y { -3 => 1, () => 2 } }");
         roundtrip("test t = match (P { x: 1 }.x + 1) { _ => (match a { _ => 1 }) + 1 }");
         roundtrip("test t = match f(P { x: 1 }) { \"s\" => true, _ => false }");
+        roundtrip("type Never = |\ntype R = {}\nfn f(n: Never) -> Int = match n {}\ntest t = (match (R {}) { R {} => 1 }) == 1");
+        roundtrip("test t = match x { -9223372036854775808 => 1, -1 => 2, _ => 3 }");
+    }
+
+    fn body(src: &str) -> Expr {
+        let Def::Test(t) = &parse_program(&format!("test t = {src}")).unwrap().defs[0] else { panic!() };
+        t.body.clone()
+    }
+
+    #[test]
+    fn printer_is_total_for_asts_the_parser_does_not_build() {
+        let cases: Vec<(Expr, &str, Expr)> = vec![
+            (Expr::Int(-5), "(-5)", body("-5")),
+            (Expr::Int(i64::MIN), "(-9223372036854775807 - 1)", body("-9223372036854775807 - 1")),
+            (Expr::Float(-2.5), "(-2.5)", body("-2.5")),
+            (Expr::Float(-0.0), "(-0.0)", body("-0.0")),
+            (Expr::Float(f64::NAN), "(0.0 / 0.0)", body("0.0 / 0.0")),
+            (Expr::Float(f64::INFINITY), "(1.0 / 0.0)", body("1.0 / 0.0")),
+            (Expr::Float(f64::NEG_INFINITY), "(-1.0 / 0.0)", body("-1.0 / 0.0")),
+            (Expr::Seq(vec![]), "()", Expr::Unit),
+            (Expr::Bin(BinOp::Sub, Box::new(Expr::Int(1)), Box::new(Expr::Int(-2))), "1 - (-2)", body("1 - -2")),
+            (Expr::Field(Box::new(Expr::Int(-1)), "x".into()), "(-1).x", body("(-1).x")),
+        ];
+        for (e, text, reparsed) in cases {
+            assert_eq!(print_expr(&e), text);
+            assert_eq!(body(text), reparsed, "{text}");
+        }
+        let empty = Program { defs: vec![Def::Type(TypeDef { name: "E".into(), body: TypeBody::Enum(vec![]) })] };
+        assert_eq!(print_program(&empty), "type E = |\n");
+        assert_eq!(parse_program(&print_program(&empty)).unwrap(), empty);
+        assert_eq!(print_pat(&Pat::Int(i64::MIN)), "-9223372036854775808");
+        assert_eq!(print_pat(&Pat::Record("P".into(), vec![])), "P {}");
     }
 }

@@ -4,21 +4,22 @@
 //!   program  := def*
 //!   def      := "fn" LOWER "(" params ")" "->" type effect* contract* "=" expr
 //!             | "test" LOWER "=" expr
-//!             | "type" UPPER "=" ( "{" fields "}" | "|"? variant ("|" variant)* )
+//!             | "type" UPPER "=" ( "{" fields "}" | "|"? variant ("|" variant)* | "|" )   (a lone `|`: enum without variants)
 //!   params   := (LOWER ":" type ("," LOWER ":" type)* ","?)?
 //!   fields   := (LOWER ":" type ("," LOWER ":" type)* ","?)?
 //!   variant  := UPPER ("(" type ("," type)* ","? ")")?
 //!   type     := "Int" | "Float" | "Bool" | "Unit" | "Str" | "List" "[" type "]" | "Option" "[" type "]"
 //!             | "Result" "[" type "," type "]" | UPPER | "fn" "(" (type ("," type)*)? ")" "->" type effect*
 //!             | "(" type ")"
-//!   effect   := "!" LOWER
+//!   effect   := "!" LOWER                                    (effects are kept as a sorted set without duplicates)
 //!   contract := ("req" | "ens") expr
 //!   expr     := "let" LOWER (":" type)? "=" expr "in" expr
 //!             | "if" expr "then" expr "else" expr
-//!             | "match" expr "{" arm ("," arm)* ","? "}"      (no `Name {` record literal directly in the scrutinee)
+//!             | "match" expr "{" (arm ("," arm)* ","?)? "}"   (no `Name {` record literal directly in the scrutinee;
+//!                                                             no arms only type-checks for an enum without variants)
 //!             | binary
 //!   arm      := pattern ("if" expr)? "=>" expr
-//!   pattern  := "_" | LOWER | "-"? INT | STR | "true" | "false" | "(" ")"
+//!   pattern  := "_" | LOWER | "-"? INT | STR | "true" | "false" | "(" ")"     (`-9223372036854775808` is allowed here)
 //!             | UPPER ("(" pattern ("," pattern)* ","? ")")? | UPPER "{" (LOWER (":" pattern)?),* "}"
 //!   binary   := precedence climbing over BinOp::precedence (comparisons non-associative)
 //!   unary    := ("-" | "!") unary | postfix
@@ -236,12 +237,15 @@ impl Parser {
         })
     }
 
+    /// `!e` annotations as a sorted set: `!io !fs !io` is `["fs", "io"]`.
     fn effects(&mut self) -> Result<Vec<String>, Diagnostic> {
         let mut effects = Vec::new();
         while self.is_sym("!") {
             self.next();
             effects.push(self.lower("effect")?);
         }
+        effects.sort_unstable();
+        effects.dedup();
         Ok(effects)
     }
 
@@ -277,6 +281,10 @@ impl Parser {
         }
         if self.is_sym("|") {
             self.next();
+            // A lone `|` (followed by the next definition or the end) is an enum without variants.
+            if self.peek() == &Tok::Eof || self.is_kw("fn") || self.is_kw("type") || self.is_kw("test") {
+                return Ok(TypeDef { name, body: TypeBody::Enum(Vec::new()) });
+            }
         }
         let mut variants = Vec::new();
         loop {
@@ -399,9 +407,6 @@ impl Parser {
             h = h.max(p.height);
             Ok(Arm { pat, guard, body })
         })?;
-        if arms.is_empty() {
-            return Err(self.err_here("a match needs at least one arm"));
-        }
         self.node(h)?;
         Ok(Expr::Match(Box::new(scrutinee), arms))
     }
@@ -416,14 +421,15 @@ impl Parser {
     fn pattern_inner(&mut self) -> Result<Pat, Diagnostic> {
         self.height = 1;
         match self.peek().clone() {
-            Tok::Int(n) => {
+            Tok::Int(n) if n <= i64::MAX as u64 => {
                 self.next();
-                Ok(Pat::Int(n))
+                Ok(Pat::Int(n as i64))
             }
-            Tok::Sym("-") if matches!(self.peek_at(1), Tok::Int(_)) => {
+            Tok::Sym("-") if matches!(self.peek_at(1), Tok::Int(n) if *n <= 1 << 63) => {
                 self.next();
-                let Tok::Int(n) = self.next().tok else { unreachable!() };
-                Ok(Pat::Int(-n))
+                let Tok::Int(n) = self.next().tok else { unreachable!("checked by the guard") };
+                // `n <= 2^63`, so the negation fits; `-2^63` is i64::MIN.
+                Ok(Pat::Int(0i64.wrapping_sub(n as i64)))
             }
             Tok::Str(s) => {
                 self.next();
@@ -475,7 +481,7 @@ impl Parser {
                 }
             }
             Tok::Ident(_) => Ok(Pat::Bind(self.lower("variable")?)),
-            other => Err(self.err_here(format!("expected a pattern, found {}", Self::describe(&other)))),
+            other => Err(self.expected_pattern(&other)),
         }
     }
 
@@ -551,12 +557,30 @@ impl Parser {
         Ok(e)
     }
 
+    #[cold]
+    fn expected_pattern(&self, found: &Tok) -> Diagnostic {
+        match found {
+            Tok::Int(n) => self.int_too_big(*n),
+            other => self.err_here(format!("expected a pattern, found {}", Self::describe(other))),
+        }
+    }
+
+    /// An integer literal token above `i64::MAX` (only `-9223372036854775808` as a pattern may use one).
+    #[cold]
+    fn int_too_big(&self, n: u64) -> Diagnostic {
+        if n == 1 << 63 {
+            self.err_here(format!("integer literal `{n}` does not fit in Int (64-bit); write `-9223372036854775807 - 1` for the minimum"))
+        } else {
+            self.err_here(format!("integer literal `{n}` does not fit in Int (64-bit)"))
+        }
+    }
+
     fn atom(&mut self) -> Result<Expr, Diagnostic> {
         self.height = 1;
         match self.peek().clone() {
-            Tok::Int(n) => {
+            Tok::Int(n) if n <= i64::MAX as u64 => {
                 self.next();
-                Ok(Expr::Int(n))
+                Ok(Expr::Int(n as i64))
             }
             Tok::Float(x) => {
                 self.next();
@@ -590,6 +614,9 @@ impl Parser {
 
     #[cold]
     fn expected_expr(&self, found: &Tok) -> Diagnostic {
+        if let Tok::Int(n) = found {
+            return self.int_too_big(*n);
+        }
         let mut msg = format!("expected an expression, found {}", Self::describe(found));
         if let Tok::Ident(k) = found {
             if k == "if" || k == "let" || k == "match" {
@@ -815,7 +842,36 @@ mod tests {
         assert!(parse_program("type U = a | B").unwrap_err().message.contains("variant names start with an uppercase letter"));
         assert!(parse_program("test t = let X = 1 in X").unwrap_err().message.contains("variable names"));
         assert!(parse_program("test t = {}").unwrap_err().message.contains("expected an expression, found `}`"));
-        assert!(parse_program("test t = match x { }").unwrap_err().message.contains("at least one arm"));
+    }
+
+    #[test]
+    fn effects_are_a_sorted_set() {
+        let p = parse_program("fn f(k: fn() -> Int !rand !io !rand) -> Unit !io !fs !io = ()").unwrap();
+        let Def::Fn(f) = &p.defs[0] else { panic!() };
+        assert_eq!(f.effects, vec!["fs".to_string(), "io".to_string()]);
+        assert_eq!(f.params[0].ty, Type::Fn(vec![], Box::new(Type::Int), vec!["io".into(), "rand".into()]));
+    }
+
+    #[test]
+    fn empty_enums_and_matches() {
+        let p = parse_program("type Never = |\nfn absurd(n: Never) -> Int = match n { }\ntype Last = |").unwrap();
+        assert_eq!(p.defs[0], Def::Type(TypeDef { name: "Never".into(), body: TypeBody::Enum(vec![]) }));
+        let Def::Fn(f) = &p.defs[1] else { panic!() };
+        assert_eq!(f.body, Expr::Match(var("n"), vec![]));
+        assert_eq!(p.defs[2], Def::Type(TypeDef { name: "Last".into(), body: TypeBody::Enum(vec![]) }));
+        // A leading `|` before variants still works, and a lowercase variant is still reported.
+        assert!(parse_program("type U = | a").unwrap_err().message.contains("variant names start with an uppercase letter"));
+    }
+
+    #[test]
+    fn integer_literal_bounds() {
+        let Expr::Match(_, arms) = body("match x { -9223372036854775808 => 1, 9223372036854775807 => 2, _ => 3 }") else { panic!() };
+        assert_eq!((arms[0].pat.clone(), arms[1].pat.clone()), (Pat::Int(i64::MIN), Pat::Int(i64::MAX)));
+        let e = parse_program("test t = 9223372036854775808 == 1").unwrap_err();
+        assert_eq!(e.path, "1:10");
+        assert!(e.message.contains("does not fit in Int") && e.message.contains("-9223372036854775807 - 1"), "{}", e.message);
+        assert!(parse_program("test t = match x { 9223372036854775808 => 1, _ => 2 }").unwrap_err().message.contains("does not fit"));
+        assert!(parse_program("test t = match x { -9223372036854775809 => 1, _ => 2 }").is_err());
     }
 
     /// Debug-build parser frames are large; give deep-but-legal inputs more room than a 2 MiB test thread.
