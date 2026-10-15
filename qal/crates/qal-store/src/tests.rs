@@ -1503,3 +1503,48 @@ fn released_std_names_keep_their_signatures_in_the_std_store() {
     lib.define("fn std.a.f(x: Int, y: Int) -> Int = x\ntest std.a.t = std.a.f(1, 2) == 1", "std-a-3").unwrap();
     lib.delete(&["std.a.lone".into()], "std-a-3").unwrap();
 }
+
+#[test]
+fn renaming_released_std_names_needs_breaking() {
+    // Re-review N1: a rename removes the released name from projects just like a delete.
+    let mut lib = std_store();
+    lib.define("type std.a.P = { x: Int }\nfn std.a.f(x: Int) -> Int = x\nfn std.a.g(x: Str) -> Str = x", "std-a-1").unwrap();
+    let release = lib.export("std.", "std").unwrap();
+    lib.set_release(&release.file).unwrap();
+    let d = lib.rename("std.a.P", "std.a.P2", "std-a-2").unwrap_err();
+    assert_eq!((d[0].code, d[0].def.as_str()), ("E0244", "std.a.P"), "{d:?}");
+    assert!(d[0].hints.iter().any(|h| h.contains("--breaking")));
+    // Onto a released name (deleted with --breaking): only with the released signature.
+    lib.set_breaking(true);
+    lib.delete(&["std.a.f".into()], "std-a-2").unwrap();
+    lib.set_breaking(false);
+    lib.define("fn std.a.h(x: Str) -> Str = x\nfn std.a.k(x: Int) -> Int = x + 1", "std-a-2").unwrap();
+    let d = lib.rename("std.a.h", "std.a.f", "std-a-2").unwrap_err();
+    assert_eq!((d[0].code, d[0].found.as_deref()), ("E0244", Some("fn(Str) -> Str")), "{d:?}");
+    lib.rename("std.a.k", "std.a.f", "std-a-2").unwrap();
+    // New names rename freely; with --breaking released ones too.
+    lib.rename("std.a.h", "std.a.h2", "std-a-2").unwrap();
+    lib.set_breaking(true);
+    lib.rename("std.a.P", "std.a.P2", "std-a-3").unwrap();
+}
+
+#[test]
+fn project_groups_identical_to_std_groups_coexist() {
+    // Re-review N3: a project that copies a recursive std group verbatim.
+    let even_odd = |p: &str| format!("fn {p}ev(n: Int) -> Bool = if n == 0 then true else {p}od(n - 1)\nfn {p}od(n: Int) -> Bool = if n == 0 then false else {p}ev(n - 1)");
+    let mut lib = std_store();
+    lib.define(&even_odd("std.a."), "std-a-1").unwrap();
+    let pkg = lib.export("std.", "std").unwrap();
+    let mut s = store();
+    ok(&mut s, &even_odd(""));
+    s.ensure_std(&pkg.file, None).unwrap();
+    assert_eq!(hash(&mut s, "ev"), hash(&mut s, "std.a.ev"));
+    assert!(text(&mut s, "ev").contains("else od(n - 1)") && text(&mut s, "std.a.ev").contains("else std.a.od(n - 1)"));
+    let h = hash(&mut s, "std.a.od");
+    ok(&mut s, "fn ev(n: Int) -> Bool = if n <= 0 then true else od(n - 1)");
+    assert_eq!(hash(&mut s, "std.a.od"), h, "std is not relinked by the project");
+    assert_ne!(hash(&mut s, "od"), h);
+    // `view #hash` shows the definition as one of its own names wrote it (re-review N2).
+    let v = s.view(&[format!("#{h}")]).unwrap();
+    assert!(v[0].text.contains("std.a.ev(n - 1)"), "{}", v[0].text);
+}

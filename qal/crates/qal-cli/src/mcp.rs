@@ -422,7 +422,7 @@ impl Server {
                 ops::call(&ctx, &Source::Store, perms, &f, CallArgs::Json(&values))
             }
             "qal_build" => ops::build(&ctx, &a.required("entry")?),
-            "qal_rename" => ops::rename(&ctx, &a.required("old")?, &a.required("new")?, &agent(&a)?),
+            "qal_rename" => ops::rename(&ctx, &a.required("old")?, &a.required("new")?, &agent(&a)?, false),
             "qal_history" => ops::history(&ctx, &a.required("name")?),
             "qal_delete" => {
                 let mut names = vec![a.required("name")?];

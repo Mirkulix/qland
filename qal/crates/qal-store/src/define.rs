@@ -66,7 +66,7 @@ fn released_signatures(rules: &Rules, input: &Program) -> Result<(), Vec<Diagnos
             let after = signature(d);
             (*before != after).then(|| {
                 Diagnostic::std_signature_change(d.name(), &show(before), &show(&after))
-                    .hint(format!("`{}` is in the released standard library (std {}); a deliberate break needs `qal define --breaking` on the command line", d.name(), &release.hash[..release.hash.len().min(12)]))
+                    .hint(format!("`{}` is in the released standard library (std {}); a deliberate break needs `qal define --breaking` on the command line (and again on every later define of it until qal is rebuilt with the new package)", d.name(), &release.hash[..release.hash.len().min(12)]))
             })
         })
         .collect();
@@ -153,7 +153,7 @@ fn std_unchanged(snap: &Snapshot, input: &Program, canons: &[Canon]) -> Result<(
         .iter()
         .map(|d| d.name())
         .filter(|n| is_std_name(n) && snap.names.get(*n).map(|e| e.hash) != hash_of.get(n).copied())
-        .map(|n| Diagnostic::std_reserved(n, "", n).hint("the package was exported with another version of the standard library: update this project's std (any write imports the std of this `qal`), or export the package again"))
+        .map(|n| Diagnostic::std_reserved(n, "", n).hint("the package was exported with another version of the standard library: export it again from a project with this project's std (if this write reported `std_warnings`, this project could not import the std of this `qal`: fix that first)"))
         .collect();
     if diags.is_empty() {
         Ok(())
@@ -164,11 +164,11 @@ fn std_unchanged(snap: &Snapshot, input: &Program, canons: &[Canon]) -> Result<(
 
 /// A definition's signature as the replacement rule compares it: kind plus the signature text
 /// with current names (so a replaced type keeps its name in the signatures that use it).
-fn signature(d: &Def) -> (Kind, String) {
+pub(crate) fn signature(d: &Def) -> (Kind, String) {
     (Kind::of(d), canon::signature_text(d, &|n| n.to_string()))
 }
 
-fn show(sig: &(Kind, String)) -> String {
+pub(crate) fn show(sig: &(Kind, String)) -> String {
     match sig.0 {
         Kind::Fn => sig.1.clone(),
         Kind::Type => format!("type = {}", sig.1),
@@ -370,10 +370,12 @@ fn alias_references(canons: &[Canon], input_names: &HashSet<&str>) -> Result<(),
 
 /// A member of a recursive group can have only one name: a second name would decode its sibling
 /// references through another name and leave the group.
+/// As for types, a std group and a project group of the same structure may coexist (review N3):
+/// their members' references are names in their own namespace (`names.refs`).
 fn group_aliases(canons: &[Canon]) -> Result<(), Vec<Diagnostic>> {
-    let mut by_hash: BTreeMap<Hash, Vec<&str>> = BTreeMap::new();
+    let mut by_hash: BTreeMap<(Hash, bool), Vec<&str>> = BTreeMap::new();
     for c in canons.iter().filter(|c| c.group.is_some()) {
-        by_hash.entry(c.hash).or_default().push(&c.name);
+        by_hash.entry((c.hash, is_std_name(&c.name))).or_default().push(&c.name);
     }
     let mut diags = Vec::new();
     for names in by_hash.values_mut().filter(|ns| ns.len() > 1) {

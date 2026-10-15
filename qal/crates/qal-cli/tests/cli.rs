@@ -914,3 +914,16 @@ fn the_std_project_rebuilds_to_the_identical_package() {
     assert_eq!(code, 0, "{v}");
     assert_eq!(std::fs::read_to_string(dir.join("std.qalpkg")).unwrap(), qal_cli::STD_PACKAGE);
 }
+
+#[test]
+fn released_std_names_are_renamed_only_with_breaking() {
+    // Re-review N1.
+    let dir = project("std-rename");
+    assert_eq!(qal_in(&dir, &["init", "--std"]).0, 0);
+    let (code, v) = qal_in(&dir, &["rename", "std.url.Param", "std.url.Param2"]);
+    assert_eq!((code, v["diagnostics"][0]["code"].as_str(), v["diagnostics"][0]["def"].as_str()), (1, Some("E0244"), Some("std.url.Param")), "{v}");
+    let (code, v) = qal_in(&dir, &["rename", "std.db.test_first", "std.db.test_first2"]);
+    assert_eq!((code, v["diagnostics"][0]["code"].as_str()), (1, Some("E0244")), "{v}");
+    let (code, v) = qal_in(&dir, &["rename", "--breaking", "std.db.test_first", "std.db.test_first2"]);
+    assert_eq!((code, v["renamed"]["name"].as_str()), (0, Some("std.db.test_first2")), "{v}");
+}

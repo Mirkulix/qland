@@ -726,11 +726,13 @@ pub fn query(ctx: &Ctx, q: &Query) -> Reply {
     }
 }
 
-pub fn rename(ctx: &Ctx, old: &str, new: &str, agent: &str) -> Reply {
+/// `breaking` (CLI `--breaking`, std store only): released std names may be renamed.
+pub fn rename(ctx: &Ctx, old: &str, new: &str, agent: &str, breaking: bool) -> Reply {
     let (mut store, std) = match open_for_write(ctx, false) {
         Ok(s) => s,
         Err(d) => return Reply::diagnostics(d),
     };
+    store.set_breaking(breaking);
     match store.rename(old, new, agent) {
         Ok(r) => {
             let mut out = Output { renamed: Some(r), ..Output::default() };

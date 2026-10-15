@@ -276,6 +276,12 @@ impl Diagnostic {
             .hint("std is additive: keep it (it may be replaced with the same signature); a deliberate break needs `qal delete --breaking` on the command line")
     }
 
+    /// Renaming a name of the released standard library in the std project (std is additive).
+    pub fn std_released_rename(def: &str, new: &str, release: &str) -> Self {
+        Diagnostic::new("E0244", "std_signature_change", def, "", format!("`{def}` is in the released standard library (std {}); renaming it to `{new}` removes it from the projects that use it", release.chars().take(12).collect::<String>()))
+            .hint("std is additive: keep the name; a deliberate break needs `qal rename --breaking` on the command line")
+    }
+
     /// The `sql` argument of `db_exec` / `db_query` is not a string literal.
     pub fn sql_not_literal(def: &str, path: &str, callee: &str) -> Self {
         Diagnostic::new("E0241", "sql_not_literal", def, path, format!("the SQL text of `{callee}` must be a string literal"))

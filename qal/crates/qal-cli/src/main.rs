@@ -9,7 +9,9 @@
 //!                                                       (imports the embedded std package; `--std`: the std project's
 //!                                                       store, which defines only `std.` names and imports nothing later)
 //! `--breaking` (std project only): a name of the released std (the package embedded in this qal) may change its
-//! signature (define) or be deleted (delete); without it both are E0244 std_signature_change. Not offered over MCP.
+//! signature (define), be deleted (delete) or renamed (rename); without it that is E0244 std_signature_change. Not offered
+//! over MCP. The released std is the package embedded in this qal: until qal is rebuilt with the new package, every
+//! later define of a name changed that way needs `--breaking` again.
 //! Opening a store of an older schema upgrades it (any command; schema 5 since Phase 3b), after which older qal
 //! binaries refuse it.
 //! Every write (define, rename, delete, import) first imports the embedded std package if the project lacks this
@@ -20,7 +22,7 @@
 //!   qal view <name|#hash>...                         -> {"views":[{name,kind,hash,signature,effects,text,deps}]}
 //!   qal query [--name <prefix>] [--type <pattern>] [--uses <name|#hash>]
 //!                                                    -> {"results":[{name,kind,hash,signature,effects}]}
-//!   qal rename <old> <new> [--agent <name>]          -> {"renamed":{name,kind,hash}}
+//!   qal rename <old> <new> [--agent <name>] [--breaking] -> {"renamed":{name,kind,hash}}
 //!   qal delete <name>... [--agent <name>] [--breaking] -> {"deleted":[{name,kind,hash}]} | {"diagnostics":[...]} (E0406 has_dependents:
 //!                                                       names other stored definitions refer to; all or nothing)
 //!   qal history <name>                               -> {"history":[{action,name,from_name?,to_name?,old_hash?,new_hash,agent,at}]}
@@ -64,7 +66,7 @@ use std::process::ExitCode;
 use std::sync::Arc;
 
 const USAGE: &str = "usage: qal <check|fmt> <file>\n       \
-                     qal init [--std] | define <file> [--agent <name>] [--breaking] | view <name>... | rename <old> <new> [--agent <name>] | delete <name>... [--agent <name>] [--breaking] | history <name> | build <name>\n       \
+                     qal init [--std] | define <file> [--agent <name>] [--breaking] | view <name>... | rename <old> <new> [--agent <name>] [--breaking] | delete <name>... [--agent <name>] [--breaking] | history <name> | build <name>\n       \
                      qal export <prefix> --out <file> [--name <pkg>] | import <file>\n       \
                      qal query [--name <prefix>] [--type <pattern>] [--uses <name>]\n       \
                      qal call <file> [--allow <spec>] <fn> [args...] | call <fn> [--allow <spec>] [args...]\n       \
@@ -168,7 +170,7 @@ fn store_command(cmd: &str, args: &[String]) -> ExitCode {
             _ => bad_usage("usage: qal init [--std]"),
         };
     }
-    let breaking = matches!(cmd, "define" | "delete") && args.iter().any(|a| a == "--breaking");
+    let breaking = matches!(cmd, "define" | "delete" | "rename") && args.iter().any(|a| a == "--breaking");
     let without: Vec<String> = args.iter().filter(|a| !(breaking && *a == "--breaking")).cloned().collect();
     let args = without.as_slice();
     let options: &[&str] = match cmd {
@@ -200,7 +202,7 @@ fn store_command(cmd: &str, args: &[String]) -> ExitCode {
             let q = Query { name: s.one("name").map(str::to_string), type_pattern: s.one("type").map(str::to_string), uses: s.one("uses").map(str::to_string) };
             with_ctx(|c| ops::query(c, &q))
         }
-        ("rename", [old, new]) => with_ctx(|c| ops::rename(c, old, new, agent)),
+        ("rename", [old, new]) => with_ctx(|c| ops::rename(c, old, new, agent, breaking)),
         ("history", [name]) => with_ctx(|c| ops::history(c, name)),
         ("delete", names) if !names.is_empty() => with_ctx(|c| ops::delete(c, names, agent, breaking)),
         ("build", [name]) => with_ctx(|c| ops::build(c, name)),

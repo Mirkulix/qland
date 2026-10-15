@@ -240,6 +240,11 @@ impl Snapshot {
     /// Decodes any stored definition by hash for display (old versions included): definitions
     /// without a current name are shown with the name they last had.
     pub fn decode_hash(&self, conn: &Connection, h: &Hash) -> Result<Option<Def>, Vec<Diagnostic>> {
+        // A current definition is shown as one of its names wrote it (its own references), so a
+        // std definition never shows a project type of the same structure (review N2).
+        if let Some(name) = self.primary(h) {
+            return self.decode_name(conn, name).map(Some);
+        }
         let Some(row) = self.row(conn, h)? else { return Ok(None) };
         let own = self.display_name(conn, h)?;
         let mut names: HashMap<Hash, String> = HashMap::new();

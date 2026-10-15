@@ -673,3 +673,24 @@ fn agents_delete_names_nothing_refers_to() {
     assert!(err && v["diagnostics"][0]["code"] == "E0240", "{v}");
     assert_eq!(c.finish(), Some(0));
 }
+
+#[test]
+fn std_agents_cannot_rename_released_names() {
+    // Re-review N1: over MCP there is no way to break the released std.
+    let root = Client::fresh_root();
+    let out = Command::new(env!("CARGO_BIN_EXE_qal")).arg("init").arg("--std").current_dir(&root).output().unwrap();
+    assert!(out.status.success());
+    let mut c = Client::start_at(root);
+    c.initialize();
+    let (err, v) = c.call("qal_rename", json!({"old": "std.url.Param", "new": "std.url.Param2"}));
+    assert!(err && v["diagnostics"][0]["code"] == "E0244", "{v}");
+    let (err, v) = c.call("qal_rename", json!({"old": "std.url.Param", "new": "std.url.Param2", "breaking": true}));
+    assert!(err && v["diagnostics"][0]["kind"] == "bad_arguments", "{v}");
+    let (err, v) = c.call("qal_delete", json!({"name": "std.db.test_first"}));
+    assert!(err && v["diagnostics"][0]["code"] == "E0244", "{v}");
+    // New names stay free.
+    assert!(!c.call("qal_define", json!({"source": "fn std.zz.a() -> Int = 1", "agent": "std-zz-1"})).0);
+    let (err, v) = c.call("qal_rename", json!({"old": "std.zz.a", "new": "std.zz.b"}));
+    assert!(!err, "{v}");
+    assert_eq!(c.finish(), Some(0));
+}

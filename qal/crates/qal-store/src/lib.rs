@@ -167,7 +167,8 @@ impl Store {
 
     /// Renames a definition. No hash changes; the history of `old` moves to `new`.
     pub fn rename(&mut self, old: &str, new: &str, agent: &str) -> Result<Renamed, Vec<Diagnostic>> {
-        ops::rename(&mut self.conn, old, new, agent)
+        let rules = define::Rules { std: StdNames::Refuse, release: self.release.as_ref(), breaking: self.breaking };
+        ops::rename(&mut self.conn, old, new, agent, &rules)
     }
 
     /// Removes names nothing else refers to (see [`ops::delete`]); their history stays.

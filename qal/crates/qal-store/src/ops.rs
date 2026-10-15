@@ -232,7 +232,7 @@ pub fn delete(conn: &mut Connection, names: &[String], agent: &str, rules: &crat
     Ok(out)
 }
 
-pub fn rename(conn: &mut Connection, old: &str, new: &str, agent: &str) -> Result<Renamed, Vec<Diagnostic>> {
+pub fn rename(conn: &mut Connection, old: &str, new: &str, agent: &str, rules: &crate::define::Rules) -> Result<Renamed, Vec<Diagnostic>> {
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(sql)?;
     let snap = Snapshot::load(&tx)?;
     let Some(hash) = snap.names.get(old).map(|e| e.hash) else {
@@ -247,6 +247,20 @@ pub fn rename(conn: &mut Connection, old: &str, new: &str, agent: &str) -> Resul
     if crate::define::is_std_store(&tx)? {
         if !is_std_name(new) {
             return Err(vec![Diagnostic::std_only(old, "", new, None)]);
+        }
+        // Released names stay (std is additive); a name renamed onto a released one must keep
+        // its signature (review N1).
+        if let (Some(release), false) = (rules.release, rules.breaking) {
+            if release.signatures.contains_key(old) {
+                return Err(vec![Diagnostic::std_released_rename(old, new, &release.hash)]);
+            }
+            if let Some(before) = release.signatures.get(new) {
+                let after = crate::define::signature(&snap.decode_name(&tx, old)?);
+                if *before != after {
+                    return Err(vec![Diagnostic::std_signature_change(new, &crate::define::show(before), &crate::define::show(&after))
+                        .hint("a deliberate break needs `qal rename --breaking` on the command line")]);
+                }
+            }
         }
     } else if let Some(n) = [old, new].into_iter().find(|n| is_std_name(n)) {
         return Err(vec![Diagnostic::std_reserved(old, "", n)]);
