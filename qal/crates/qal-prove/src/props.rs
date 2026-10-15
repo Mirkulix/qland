@@ -241,7 +241,7 @@ pub fn check_properties(tp: &TProgram, only: Option<&[String]>, opts: &PropOptio
 }
 
 /// The direct subexpressions of `e` (closure bodies included).
-fn children(e: &TExpr) -> Vec<&TExpr> {
+pub(crate) fn children(e: &TExpr) -> Vec<&TExpr> {
     match &e.kind {
         TKind::Int(_) | TKind::Float(_) | TKind::Bool(_) | TKind::Str(_) | TKind::Unit | TKind::Local(_) | TKind::FnRef(_) | TKind::FnRefG(..) => vec![],
         TKind::Lambda(l) => vec![&l.body],

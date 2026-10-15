@@ -25,6 +25,7 @@
 use qal_core::ast::{BinOp, Type, UnOp};
 use qal_core::tast::{Builtin, TArm, TExpr, TFn, TKind, TPat, TProgram, TTest};
 use std::collections::BTreeSet;
+use std::time::Instant;
 use z3::ast::{Bool, Int};
 
 /// Callee contracts are encoded this many calls deep (contracts calling functions with contracts);
@@ -93,14 +94,25 @@ pub struct Vc {
     pub approx: BTreeSet<String>,
     /// The encoding hit `MAX_VC_NODES`; the obligations are incomplete and must not be used.
     pub truncated: bool,
+    /// The encoding passed its deadline; the obligations are incomplete and must not be used.
+    pub out_of_time: bool,
 }
 
+/// The conjunction of `xs`, leaving out literal `true`s (most `ok` conditions are `true`, and a
+/// conjunction that grows by one condition per item must stay linear in the number of items).
 pub fn and(xs: &[Bool]) -> Bool {
-    match xs {
+    let kept: Vec<&Bool> = xs.iter().filter(|x| x.as_bool() != Some(true)).collect();
+    match kept.as_slice() {
         [] => Bool::from_bool(true),
-        [x] => x.clone(),
-        _ => Bool::and(xs),
+        [x] => (*x).clone(),
+        _ => Bool::and(&kept),
     }
+}
+
+/// `acc && x` as one new node (a running conjunction: linear, where collecting a growing prefix
+/// into one `and` per item would be quadratic).
+fn conj(acc: &Bool, x: &Bool) -> Bool {
+    and(&[acc.clone(), x.clone()])
 }
 
 pub fn in_range(x: &Int) -> Bool {
@@ -140,11 +152,17 @@ struct Enc<'p> {
     obligations: Vec<Obligation>,
     approx: BTreeSet<String>,
     nodes: usize,
+    /// The encoding stops (`Vc::out_of_time`) once this has passed.
+    deadline: Option<Instant>,
+    out_of_time: bool,
 }
 
+/// The clock is read once per this many encoded expressions.
+const CLOCK_EVERY: usize = 256;
+
 /// The verification conditions of a function (monomorphic or generic).
-pub fn function<'p>(tp: &'p TProgram, f: &'p TFn) -> Vc {
-    let mut enc = Enc { tp, record: false, depth: 0, locals: vec![&f.locals], obligations: Vec::new(), approx: BTreeSet::new(), nodes: 0 };
+pub fn function<'p>(tp: &'p TProgram, f: &'p TFn, deadline: Option<Instant>) -> Vc {
+    let mut enc = Enc { tp, record: false, depth: 0, locals: vec![&f.locals], obligations: Vec::new(), approx: BTreeSet::new(), nodes: 0, deadline, out_of_time: false };
     let mut env: Vec<Option<Term>> = vec![None; f.locals.len()];
     let mut facts = Vec::new();
     let mut params = Vec::new();
@@ -165,12 +183,12 @@ pub fn function<'p>(tp: &'p TProgram, f: &'p TFn) -> Vc {
         }
     }
     // The `req` are checked in order: req[k] is evaluated only if the earlier ones held.
+    let mut pre = and(&facts);
     for (k, c) in f.req.iter().enumerate() {
-        let (v, ok) = enc.enc(c, &mut env, &and(&facts), &format!("req[{k}]"));
-        facts.push(ok);
-        facts.push(enc.as_bool(v, "a contract over values the prover does not model"));
+        let (v, ok) = enc.enc(c, &mut env, &pre, &format!("req[{k}]"));
+        let v = enc.as_bool(v, "a contract over values the prover does not model");
+        pre = and(&[pre, ok, v]);
     }
-    let pre = and(&facts);
     enc.record = true;
     let (body, body_ok) = enc.enc(&f.body, &mut env, &truth(), "body");
     enc.record = false;
@@ -179,26 +197,26 @@ pub fn function<'p>(tp: &'p TProgram, f: &'p TFn) -> Vc {
             *slot = body;
         }
         // Checked in order after the body returned: ens[k] may assume the earlier ones.
-        let mut hyp = vec![body_ok];
+        let mut hyp = body_ok;
         for (k, c) in f.ens.iter().enumerate() {
-            let (v, ok) = enc.enc(c, &mut env, &and(&hyp), &format!("ens[{k}]"));
+            let (v, ok) = enc.enc(c, &mut env, &hyp, &format!("ens[{k}]"));
             let holds = and(&[ok, enc.as_bool(v, "a contract over values the prover does not model")]);
             let contract = f.def.ens.get(k).map(|e| format!("ens {}", qal_text::print_expr(e))).unwrap_or_default();
-            enc.obligations.push(Obligation { goal: Goal::Ens(k), label: format!("ens[{k}]"), path: format!("ens[{k}]"), contract, hyp: and(&hyp), holds: holds.clone(), args: Vec::new() });
-            hyp.push(holds);
+            enc.obligations.push(Obligation { goal: Goal::Ens(k), label: format!("ens[{k}]"), path: format!("ens[{k}]"), contract, hyp: hyp.clone(), holds: holds.clone(), args: Vec::new() });
+            hyp = conj(&hyp, &holds);
         }
     }
     let truncated = enc.nodes > MAX_VC_NODES;
-    Vc { pre, params, obligations: enc.obligations, approx: enc.approx, truncated }
+    Vc { pre, params, obligations: enc.obligations, approx: enc.approx, truncated, out_of_time: enc.out_of_time }
 }
 
 /// The verification conditions of a test: the `req` of every function it calls.
-pub fn test<'p>(tp: &'p TProgram, t: &'p TTest) -> Vc {
-    let mut enc = Enc { tp, record: true, depth: 0, locals: vec![&t.locals], obligations: Vec::new(), approx: BTreeSet::new(), nodes: 0 };
+pub fn test<'p>(tp: &'p TProgram, t: &'p TTest, deadline: Option<Instant>) -> Vc {
+    let mut enc = Enc { tp, record: true, depth: 0, locals: vec![&t.locals], obligations: Vec::new(), approx: BTreeSet::new(), nodes: 0, deadline, out_of_time: false };
     let mut env: Vec<Option<Term>> = vec![None; t.locals.len()];
     enc.enc(&t.body, &mut env, &truth(), "body");
     let truncated = enc.nodes > MAX_VC_NODES;
-    Vc { pre: truth(), params: Vec::new(), obligations: enc.obligations, approx: enc.approx, truncated }
+    Vc { pre: truth(), params: Vec::new(), obligations: enc.obligations, approx: enc.approx, truncated, out_of_time: enc.out_of_time }
 }
 
 impl<'p> Enc<'p> {
@@ -216,8 +234,12 @@ impl<'p> Enc<'p> {
     /// Encodes `e` under path condition `pc`: (value, ok). A modelled type always has a value.
     fn enc(&mut self, e: &TExpr, env: &mut Vec<Option<Term>>, pc: &Bool, path: &str) -> (Option<Term>, Bool) {
         self.nodes += 1;
-        if self.nodes > MAX_VC_NODES {
-            // Too large: the result is discarded (`Vc::truncated`); stop encoding.
+        if self.nodes % CLOCK_EVERY == 0 && self.deadline.is_some_and(|d| Instant::now() > d) {
+            self.out_of_time = true;
+        }
+        if self.nodes > MAX_VC_NODES || self.out_of_time {
+            // Too large or too slow: the result is discarded (`Vc::truncated`, `Vc::out_of_time`);
+            // stop encoding.
             return havoc(&e.ty);
         }
         let (v, ok) = self.enc_inner(e, env, pc, path);
@@ -242,10 +264,11 @@ impl<'p> Enc<'p> {
     fn seq(&mut self, xs: &[TExpr], env: &mut Vec<Option<Term>>, pc: &Bool, path: &str, item: &str) -> (Vec<Option<Term>>, Bool) {
         let mut oks = Vec::new();
         let mut vals = Vec::new();
+        // Item i is reached under pc and the oks of the items before it (a running conjunction).
+        let mut here = pc.clone();
         for (i, x) in xs.iter().enumerate() {
-            let mut here = vec![pc.clone()];
-            here.extend(oks.iter().cloned());
-            let (v, ok) = self.enc(x, env, &and(&here), &format!("{path}.{item}[{i}]"));
+            let (v, ok) = self.enc(x, env, &here, &format!("{path}.{item}[{i}]"));
+            here = conj(&here, &ok);
             vals.push(v);
             oks.push(ok);
         }
@@ -323,11 +346,12 @@ impl<'p> Enc<'p> {
             TKind::Record(fs) => {
                 let names = self.tp.record_fields(&e.ty);
                 let mut oks = Vec::new();
+                let mut here = pc.clone();
                 for (i, x) in fs {
-                    let mut here = vec![pc.clone()];
-                    here.extend(oks.iter().cloned());
                     let name = names.get(*i as usize).map(|(n, _)| n.clone()).unwrap_or_default();
-                    oks.push(self.enc(x, env, &and(&here), &format!("{path}.fields.{name}")).1);
+                    let ok = self.enc(x, env, &here, &format!("{path}.fields.{name}")).1;
+                    here = conj(&here, &ok);
+                    oks.push(ok);
                 }
                 (None, and(&oks))
             }
@@ -486,41 +510,41 @@ impl<'p> Enc<'p> {
             }
         }
         // The callee checks its `req` in order: req[k] is evaluated only if the earlier ones held.
-        let mut held = Vec::new();
+        let mut held = truth();
+        let reached = and(&[pc.clone(), args_ok.clone()]);
         for (k, c) in callee.req.iter().enumerate() {
-            let (cv, cok) = self.enc(c, &mut cenv, &and(&held), &format!("req[{k}]"));
+            let (cv, cok) = self.enc(c, &mut cenv, &held, &format!("req[{k}]"));
             let holds = and(&[cok, self.as_bool(cv, "a contract over values the prover does not model")]);
             if record {
-                let mut hyp = vec![pc.clone(), args_ok.clone()];
-                hyp.extend(held.iter().cloned());
                 let contract = callee.def.req.get(k).map(|e| format!("req {}", qal_text::print_expr(e))).unwrap_or_default();
                 self.obligations.push(Obligation {
                     goal: Goal::Req(callee.def.name.clone(), k),
                     label: format!("req[{k}] of {}", callee.def.name),
                     path: path.to_string(),
                     contract,
-                    hyp: and(&hyp),
+                    hyp: conj(&reached, &held),
                     holds: holds.clone(),
                     args: named.clone(),
                 });
             }
-            held.push(holds);
+            held = conj(&held, &holds);
         }
-        facts.extend(held);
+        facts.push(held);
+        let mut facts = and(&facts);
         if let Some(r) = callee.result_local {
             if let Some(slot) = cenv.get_mut(r as usize) {
                 *slot = v.clone();
             }
             for (k, c) in callee.ens.iter().enumerate() {
-                let (cv, cok) = self.enc(c, &mut cenv, &and(&facts), &format!("ens[{k}]"));
-                facts.push(cok);
-                facts.push(self.as_bool(cv, "a contract over values the prover does not model"));
+                let (cv, cok) = self.enc(c, &mut cenv, &facts, &format!("ens[{k}]"));
+                let cv = self.as_bool(cv, "a contract over values the prover does not model");
+                facts = and(&[facts, cok, cv]);
             }
         }
         self.locals.pop();
         self.depth = saved;
         self.record = record;
-        (v, and(&facts))
+        (v, facts)
     }
 
     fn match_expr(&mut self, s: &TExpr, arms: &[TArm], env: &mut Vec<Option<Term>>, pc: &Bool, path: &str) -> (Option<Term>, Bool) {

@@ -191,7 +191,7 @@ fn results_are_deterministic_and_limited() {
     assert!(!slow[0].is_stable());
     let only = prove(&typed(src), Some(&["bad".to_string()]), &Options::default());
     assert_eq!(only.iter().map(|r| r.def.as_str()).collect::<Vec<_>>(), vec!["bad"]);
-    assert!(Options::default().key().starts_with("qal-prove/1 z3-"));
+    assert!(Options::default().key().starts_with("qal-prove/2 z3-"));
 }
 
 #[test]
@@ -361,4 +361,72 @@ fn huge_inputs_are_not_generated() {
     let ps = check_properties(&typed(&huge_record_source()), None, &PropOptions::default()).unwrap();
     assert!(start.elapsed() < Duration::from_secs(10), "{:?}", start.elapsed());
     assert_eq!(ps[0].status, PropStatus::GaveUp);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Review findings of Phase 2b (final review)
+
+#[test]
+fn long_lists_are_encoded_in_linear_time() {
+    // C1: each item's path condition was a fresh `and` of all earlier items, quadratic in the
+    // length (40 000 items: 178 s); the encoding was not under any time limit either.
+    let items = |n: usize| vec!["1"; n].join(",");
+    let start = std::time::Instant::now();
+    let r = one(&format!("fn big(x: Int) -> Int ens r >= 0 = {{ let xs = [{}] in len(xs) }}", items(40_000)), "big");
+    assert_eq!(r.status, Status::Proven, "{r:#?}");
+    let rec = format!("type P = {{ {} }}\nfn mk(x: Int) -> P = P {{ {} }}", (0..2000).map(|i| format!("f{i}: Int")).collect::<Vec<_>>().join(", "), (0..2000).map(|i| format!("f{i}: x + {i}")).collect::<Vec<_>>().join(", "));
+    assert!(reports(&rec).is_empty());
+    let r = one(&format!("fn big(x: Int) -> Int ens r >= 0 = {{ let xs = [{}] in len(xs) }}", items(60_000)), "big");
+    assert_eq!((r.status, r.obligation.as_str()), (Status::Unknown, "all"));
+    assert!(start.elapsed() < Duration::from_secs(10), "{:?}", start.elapsed());
+}
+
+#[test]
+fn the_encoding_stops_at_the_budget() {
+    // C1: a deadline is checked while encoding, not only between obligations.
+    let src = format!("fn big(x: Int) -> Int ens r >= 0 = {{ let xs = [{}] in len(xs) }}", vec!["x + 1"; 40_000].join(","));
+    let start = std::time::Instant::now();
+    let rs = prove(&typed(&src), None, &Options { budget: Duration::from_millis(1), ..Options::default() });
+    assert!(start.elapsed() < Duration::from_secs(2), "{:?}", start.elapsed());
+    assert_eq!(rs.len(), 1, "{rs:#?}");
+    assert!(rs[0].reason.as_deref().unwrap().starts_with("not attempted"), "{rs:#?}");
+}
+
+#[test]
+fn a_violation_in_another_function_is_not_blamed_on_this_call() {
+    // I1: `g("x")` inside `h` violates g's `req`; f's own call `g(t)` is correct for t = "".
+    let src = "fn g(t: Str) -> Int req len(t) == 0 = 0\n\
+               fn h[T](x: T) -> Int = if 1 == 1 then g(\"x\") else 0\n\
+               fn f(t: Str) -> Int req len(t) == 0 = h(1) + g(t)\n\
+               fn k(t: Str) -> Int = h(1) + g(t)";
+    for def in ["f", "k"] {
+        let rs: Vec<Report> = reports(src).into_iter().filter(|r| r.def == def && r.obligation == "req[0] of g").collect();
+        assert_eq!(rs.len(), 1, "{rs:#?}");
+        assert_eq!(rs[0].status, Status::Unknown, "{rs:#?}");
+        assert!(rs[0].reason.as_deref().unwrap().contains("also called by other functions"), "{rs:#?}");
+    }
+    // Modelled arguments are no proof of the call site either: h traps before f's call is reached.
+    let src = "fn g(x: Int) -> Int req x > 0 = x\nfn h() -> Int = g(0)\nfn f(x: Int) -> Int = h() + g(x)";
+    let r = reports(src).into_iter().find(|r| r.def == "f" && r.path == "body.right").unwrap();
+    assert_eq!(r.status, Status::Unknown, "{r:#?}");
+    // A callee that calls itself can raise its own `req` too.
+    let src = "fn g(t: Str, n: Int) -> Int req len(t) == 0 = if n > 0 then g(\"x\", n - 1) else 0\nfn f(t: Str) -> Int = g(t, 1)";
+    let r = reports(src).into_iter().find(|r| r.def == "f").unwrap();
+    assert_eq!(r.status, Status::Unknown, "{r:#?}");
+    // Still refuted: the only call of the callee is this one.
+    let r = reports("fn g(t: Str) -> Int req len(t) > 0 = 0\nfn f(t: Str) -> Int = g(t)").into_iter().find(|r| r.def == "f").unwrap();
+    assert_eq!(r.status, Status::Refuted, "{r:#?}");
+}
+
+#[test]
+fn many_call_sites_are_solved_in_one_encoding() {
+    // M4: the definition was encoded again for every obligation: of 3 000 trivial call sites only
+    // 50 were attempted within the budget.
+    let calls = vec!["g(x)"; 3000].join(", ");
+    let src = format!("fn g(a: Int) -> Int req a > 0 = a\nfn f(x: Int) -> Int req x > 0 = len([{calls}])");
+    let start = std::time::Instant::now();
+    let rs: Vec<Report> = reports(&src).into_iter().filter(|r| r.def == "f").collect();
+    assert_eq!(rs.len(), 3000);
+    assert!(rs.iter().all(|r| r.status == Status::Proven), "{:#?}", rs.iter().find(|r| r.status != Status::Proven));
+    assert!(start.elapsed() < Duration::from_secs(10), "{:?}", start.elapsed());
 }
