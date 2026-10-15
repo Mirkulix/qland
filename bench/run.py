@@ -163,45 +163,72 @@ def command_paths(cmd):
 # only judged outside heredoc bodies and quoted strings, so source code in either arm may contain them.
 SPECIFIC = ("bench/", "solutions/", "tests.json", "qal-bench", "$HOME", "${HOME}")
 
-def shell_outside(cmd):
-    """The shell text of a command without data: heredoc bodies and quoted strings are cut out, except
-    code that is executed (a quoted `-c`/`eval` argument, the body of a heredoc fed to python without
-    qalc.py)."""
-    def heredoc(m):
+HEREDOC = r"<<-?\s*(['\"]?)(\w+)\1[^\n]*\n.*?\n\s*\2[ \t]*(?=\n|$)"
+
+def heredoc_stripped(cmd, keep):
+    """cmd with heredoc bodies cut out; keep(line, body) -> True keeps a body (executed code)."""
+    def sub(m):
         head = m.group(0).split("\n", 1)[0]
         line = cmd[cmd.rfind("\n", 0, m.start()) + 1:m.start()] + head
-        return m.group(0) if re.search(r"\bpython3?\b", line) and "qalc.py" not in line else head + "\n<<HEREDOC"
-    cmd = re.sub(r"<<-?\s*(['\"]?)(\w+)\1[^\n]*\n.*?\n\s*\2[ \t]*(?=\n|$)", heredoc, cmd, flags=re.S)
+        return m.group(0) if keep(line) else head + "\n<<HEREDOC"
+    return re.sub(HEREDOC, sub, cmd, flags=re.S)
+
+def runs_python(line):
+    return re.search(r"\bpython3?\b", line) is not None and "qalc.py" not in line
+
+def shell_outside(cmd):
+    """The shell text of a command without data: heredoc bodies and quoted strings are cut out, except
+    executed code (a quoted `-c`/`eval` argument, the body of a heredoc fed to python without
+    qalc.py), which is kept verbatim: quotes inside executed code are not data."""
+    kept = []
+    def hold(text):
+        kept.append(text)
+        return f"\x00{len(kept) - 1}\x00"
+    def sub(m):
+        head = m.group(0).split("\n", 1)[0]
+        line = cmd[cmd.rfind("\n", 0, m.start()) + 1:m.start()] + head
+        return head + "\n" + hold(m.group(0)[len(head) + 1:]) if runs_python(line) else head + "\n<<HEREDOC"
+    text = re.sub(HEREDOC, sub, cmd, flags=re.S)
     def quoted(m):
-        before = cmd[:m.start()]
-        if re.search(r"(\s-[a-z]*c|\beval)\s+$", before):
-            return m.group(0)
+        if re.search(r"(\s-[a-z]*c|\beval)\s+$", text[:m.start()]):
+            return hold(m.group(0))
         return "''"
-    return re.sub(r"'[^']*'|\"(?:\\.|[^\"\\])*\"", quoted, cmd)
+    text = re.sub(r"'[^']*'|\"(?:\\.|[^\"\\])*\"", quoted, text)
+    return re.sub(r"\x00(\d+)\x00", lambda m: kept[int(m.group(1))], text)
+
+def cd_leaves(text):
+    """Statements `cd` with no argument, `-`, or $OLDPWD (quotes and redirections tolerated)."""
+    for m in re.finditer(r"(?:^|[;&|(`\n])[ \t]*cd\b([^;&|\n)`]*)", text, re.M):
+        args = re.sub(r"\d*[<>]+&?\S*|&>\S+", "", m.group(1))
+        tokens = [t.strip("'\"") for t in args.split()]
+        if not tokens or tokens[0] in ("-", "--") or "OLDPWD" in tokens[0]:
+            return True
+    return False
 
 def forbidden_in(text, wd, repo, outside_text=None):
     """Reasons why `text` (a command, a file's content or a Glob pattern) names something off limits;
     the agent's own work dir is masked first. `outside_text` (default: text) is what the generic
-    rules look at."""
+    rules look at; for a command it comes from shell_outside."""
     t = text.replace(wd, "<wd>")
     why = [f"names `{f}`" for f in SPECIFIC if f in t]
     if repo in t:
         why.append("names the repository")
     o = (text if outside_text is None else outside_text).replace(wd, "<wd>")
-    if re.search(r"(^|[\s/='\"(;|&<>`])\.\.($|[\s/'\";|&<>)`])", o):
+    o2 = o.replace("\\", "")
+    if re.search(r"(^|[\s/='\"(;|&<>`])\.\.($|[\s/'\";|&<>)`])", o2):
         why.append("names `..`")
-    if re.search(r"(^|[\s='\"(;|&<>`])~", o):
+    if re.search(r"(^|[\s='\"(;|&<>`])~(/|[A-Za-z_]|(?=$|[\s;|&)'\"]))", o):
         why.append("names `~`")
     if outside_text is not None:
-        if re.search(r"tasks/", o):
+        if "tasks/" in o:
             why.append("names `tasks/`")
-        if re.search(r"(^|[;&|(`]\s*)cd\s*($|[;&|)`])|\bcd\s+-|\bpushd\b|\bpopd\b|\$\{?OLDPWD|\$\(\s*dirname|`\s*dirname", o):
+        if cd_leaves(heredoc_stripped(text, runs_python).replace(wd, "WORKDIR")) or re.search(r"\bpushd\b|\bpopd\b|\$\{?OLDPWD|\$\(\s*dirname|`\s*dirname", o):
             why.append("leaves the work dir (cd -, bare cd, pushd/popd, OLDPWD, dirname)")
-        if re.search(r"(^|[\s;&|(=])\.[*?{\[]", o):
+        if re.search(r"(^|[\s;&|(=])\.[*?{\[]", o2) or re.search(r"\{(?:[^},]*,)*\.(?:,[^},]*)*\}\.|\.\{(?:[^},]*,)*\.(?:,[^},]*)*\}", o2):
             why.append("uses a glob that reaches `..`")
-        if re.search(r"os\.getcwd|os\.path\.dirname|os\.path\.abspath|\bpathlib\b|\.parent\b|__file__|os\.chdir", o):
+        if re.search(r"os\.getcwd|os\.path\.dirname|os\.path\.abspath|\.parents?\b|\.resolve\(|\.absolute\(|\bcwd\(|\.home\(|__file__|os\.chdir", o):
             why.append("reaches a parent directory from python")
-    elif re.search(r"tasks/", o):
+    elif "tasks/" in o:
         why.append("names `tasks/`")
     return why
 

@@ -140,6 +140,9 @@ class Audit(unittest.TestCase):
             ("Bash", {"command": f"cd {wd} && echo \"a .. ~ tasks/\" > data/x"}),
             ("Write", {"file_path": f"{wd}/src/main.rs", "content": "fn main() { let v = [1, 2, 3]; let _ = &v[..2]; for i in 0..3 { let _ = !i; } // ~ tasks/\n}"}),
             ("Edit", {"file_path": f"{wd}/src/main.rs", "old_string": "a", "new_string": "&v[1..]"}),
+            ("Bash", {"command": f"cd {wd} && python3 -c \"import pathlib; pathlib.Path('data').mkdir(exist_ok=True); print((~5)&0xff)\""}),
+            ("Bash", {"command": f"cd \"{wd}\" && ls 2>/dev/null"}),
+            ("Bash", {"command": f"cd {wd} && cd src && cd .. 2>/dev/null; true".replace("cd .. 2>/dev/null", "cd {}".format(wd))}),
         ]
         for tool, inp in clean:
             self.assertEqual(self.flagged([(tool, inp, "", False)]), [], (tool, inp))
@@ -166,6 +169,18 @@ class Audit(unittest.TestCase):
             ("Bash", {"command": f"cd {wd} && python3 -c \"import pathlib; print(list(pathlib.Path('.').resolve().parent.iterdir()))\""}),
             ("Bash", {"command": f"cd {wd} && python3 - <<'EOF'\nimport os\nprint(os.getcwd())\nEOF"}),
             ("Bash", {"command": f"cd {wd} && bash -c \"ls ..\""}),
+            ("Bash", {"command": f"cd {wd} && python3 - <<'EOF'\nopen('../../x')\nEOF"}),
+            ("Bash", {"command": f"cd {wd} && python3 -c \"open('../x')\""}),
+            ("Bash", {"command": f"cd {wd}\ncd"}),
+            ("Bash", {"command": f"cd {wd} && cd '-'"}),
+            ("Bash", {"command": f"cd {wd} && cd \"$OLDPWD\""}),
+            ("Bash", {"command": f"cd {wd} && cd 2>/dev/null"}),
+            ("Bash", {"command": f"cd {wd} && cd .\\."}),
+            ("Bash", {"command": f"cd {wd} && ls {{.,.}}."}),
+            ("Bash", {"command": f"cd {wd} && python3 -c \"import pathlib; print(pathlib.Path('.').resolve())\""}),
+            ("Bash", {"command": f"cd {wd} && python3 -c \"from pathlib import Path; print(Path.cwd())\""}),
+            ("Bash", {"command": f"cd {wd} && cat ~root/x"}),
+            ("Bash", {"command": f"cd {wd} && ls ~"}),
         ]
         for tool, inp in flagged:
             self.assertGreaterEqual(len(self.flagged([(tool, inp, "", False)])), 1, (tool, inp))
