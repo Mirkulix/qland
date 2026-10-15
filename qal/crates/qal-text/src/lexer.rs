@@ -45,6 +45,7 @@ pub fn lex(src: &str) -> Result<Vec<Token>, Diagnostic> {
         if c == '#' {
             while i < chars.len() && chars[i] != '\n' {
                 i += 1;
+                col += 1;
             }
             continue;
         }
@@ -134,6 +135,13 @@ mod tests {
     fn tracks_positions() {
         let t = lex("fn\n  x").unwrap();
         assert_eq!((t[1].line, t[1].col), (2, 3));
+    }
+
+    #[test]
+    fn eof_column_accounts_for_trailing_comment() {
+        let t = lex("x # c").unwrap();
+        let eof = t.last().unwrap();
+        assert_eq!((eof.line, eof.col), (1, 6));
     }
 
     #[test]
