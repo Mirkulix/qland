@@ -156,6 +156,8 @@ impl Parser {
                 self.next();
                 Ok(s)
             }
+            Tok::Ident(s) if s == "std" => Err(self.err_here("expected a name, found `std`")
+                .hint("`std` is a keyword since Phase 3b (standard library names are `std.<module>.<name>`); rename the parameter, local or field, e.g. to `std_`")),
             other => Err(self.err_here(format!("expected a name, found {}", Self::describe(&other)))),
         }
     }

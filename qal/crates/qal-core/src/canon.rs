@@ -1309,6 +1309,9 @@ fn decode_with(raw: &RawDecoder, name: &str, local_names: &[String], name_of: &m
     if self_ref {
         globals.insert(name.to_string());
     }
+    // `std` is a keyword since Phase 3b: a local stored under that name (before) is shown as
+    // `std_1`, so the text stays parseable (local names are not part of the hash).
+    globals.insert("std".to_string());
     let locals = avoid_capture(local_names, &globals);
     let (def, _) = raw(name, &locals, &mut |h| cache.get(h).cloned().unwrap_or_default())?;
     Ok(def)
@@ -2221,6 +2224,17 @@ mod tests {
         let c = by_name(&p);
         let d = decode(single(&c["f"]), "f", &c["f"].local_names, &mut |_| "x".into()).unwrap();
         assert_eq!(d, func("f", "x_1", Expr::Call("x".into(), vec![Expr::Var("x_1".into())])));
+    }
+
+    #[test]
+    fn locals_named_std_decode_under_another_name() {
+        // Stored before `std` became a keyword (Phase 3b): shown as `std_1`, same hash.
+        let p = Program { defs: vec![func("f", "std", Expr::Var("std".into()))] };
+        let c = by_name(&p);
+        let d = decode(single(&c["f"]), "f", &c["f"].local_names, &mut |_| "?".into()).unwrap();
+        assert_eq!(d, func("f", "std_1", Expr::Var("std_1".into())));
+        let again = Program { defs: vec![d] };
+        assert_eq!(by_name(&again)["f"].hash, c["f"].hash);
     }
 
     #[test]
