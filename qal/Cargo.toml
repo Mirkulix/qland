@@ -7,6 +7,7 @@ members = [
     "crates/qal-run",
     "crates/qal-store",
     "crates/qal-cli",
+    "crates/qal-prove",
 ]
 resolver = "2"
 
@@ -22,6 +23,7 @@ qal-check = { path = "crates/qal-check" }
 qal-wasm = { path = "crates/qal-wasm" }
 qal-run = { path = "crates/qal-run" }
 qal-store = { path = "crates/qal-store" }
+qal-prove = { path = "crates/qal-prove" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "=0.11.0"
@@ -29,3 +31,10 @@ rusqlite = { version = "=0.40.2", features = ["bundled"] }
 wasm-encoder = "=0.259.0"
 wasmparser = "=0.259.0"
 wasmtime = { version = "=49.0.1", default-features = false, features = ["cranelift", "runtime", "std"] }
+z3 = { version = "=0.21.1", features = ["vendored"] }
+
+# Z3 is compiled from source (C++, several minutes, once) and linked statically. Build it optimized
+# in debug and test builds too: a Debug build of Z3 is many times slower and writes `.z3-trace` files.
+[profile.dev.package.z3-sys]
+opt-level = 3
+debug = false
