@@ -15,6 +15,7 @@ mod pattern;
 mod schema;
 mod snapshot;
 
+pub use define::StdNames;
 pub use ops::{DepView, Entry, HistoryEntry, Query, Renamed, View};
 pub use package::{Exported, Imported};
 pub use pattern::matches as signature_matches;
@@ -218,6 +219,48 @@ impl Store {
     /// [`Store::import`] with the verification step of [`Store::define_verified`].
     pub fn import_verified(&mut self, file: &str, verify: &mut Verify) -> Result<Imported, Vec<Diagnostic>> {
         package::import(&mut self.conn, file, Some(verify))
+    }
+
+    /// Makes the store at `<project>/.qal/store.db` (created if missing) the std project's store
+    /// (`meta.role = 'std'`), where only `std.` names may be defined and no std package is imported
+    /// automatically. Refused for a store that already holds definitions or imported a std package
+    /// as an ordinary project.
+    pub fn init_std(project: &Path) -> Result<Store, Vec<Diagnostic>> {
+        let mut store = Store::init(project)?;
+        let tx = store.conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate).map_err(sql)?;
+        if !define::is_std_store(&tx)? {
+            let names: i64 = tx.query_row("SELECT count(*) FROM names", [], |r| r.get(0)).map_err(sql)?;
+            let imported = package::meta(&tx, package::META_STD_PACKAGE)?.is_some();
+            if names > 0 || imported {
+                return Err(vec![Diagnostic::store_error(format!("{} is the store of an ordinary project", store.path.display()))
+                    .hint("the std project needs its own store: run `qal init --std` in an empty directory (qal/std)")]);
+            }
+            package::set_meta(&tx, package::META_ROLE, define::ROLE_STD)?;
+        }
+        tx.commit().map_err(sql)?;
+        Ok(store)
+    }
+
+    /// True for the std project's store (`meta.role = 'std'`).
+    pub fn is_std(&self) -> Result<bool, Vec<Diagnostic>> {
+        define::is_std_store(&self.conn)
+    }
+
+    /// Imports the std package `file` unless the store already has it (`meta.std_package` is its
+    /// hash) or is the std project's store; returns the import, if one happened. Called before
+    /// every write of a project (Phase 3 §4.3), never by reads.
+    pub fn ensure_std(&mut self, file: &str, verify: Option<&mut Verify>) -> Result<Option<Imported>, Vec<Diagnostic>> {
+        if self.is_std()? {
+            return Ok(None);
+        }
+        let pkg = package::parse(file)?;
+        if pkg.name != package::STD_PACKAGE_NAME {
+            return Err(vec![Diagnostic::new("E0243", "package_mismatch", "", "", format!("the standard library package is named `{}`, not `std`", pkg.name))]);
+        }
+        if self.meta(package::META_STD_PACKAGE)?.as_deref() == Some(pkg.hash.as_str()) {
+            return Ok(None);
+        }
+        package::import(&mut self.conn, file, verify).map(Some)
     }
 
     /// A value of the store's `meta` table.

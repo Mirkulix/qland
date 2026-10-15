@@ -1138,3 +1138,198 @@ fn packages_never_replace_the_projects_own_definitions() {
     user.import(&v1.file).unwrap();
     assert_eq!(statuses(&user.import(&v2.file).unwrap().defined), vec![("lib_one", "replaced")]);
 }
+
+// ---------------------------------------------------------------------------------------------
+// Phase 3b: the `std.` namespace, the std project and the std package.
+
+/// A package file around `body` (everything after the `# package` line), with a valid checksum.
+fn sealed(name: &str, body: &str) -> String {
+    format!("# qal-pkg 1\n# package {name} {}\n{body}", Hash::of(body.as_bytes()).to_hex())
+}
+
+fn std_store() -> Store {
+    Store::init_std(&project()).unwrap()
+}
+
+const STD_A: &str = "type std.a.T = std.a.One | std.a.Two(Int)\n\
+                     type std.a.Box[A] = { item: A }\n\
+                     fn std.a.f(x: Int) -> Int = x + 1\n\
+                     fn std.a.unbox[A](b: std.a.Box[A]) -> A = b.item\n\
+                     fn std.a.g(t: std.a.T) -> Int = match t { std.a.One => std.a.f(0), std.a.Two(n) => n }\n\
+                     test std.a.t = std.a.g(std.a.Two(2)) == 2 && std.a.unbox(std.a.Box { item: 3 }) == 3";
+
+#[test]
+fn std_names_hash_and_round_trip_like_any_name() {
+    let p = qal_text::parse_program(STD_A).unwrap();
+    let h1 = hash_program(&p).unwrap();
+    let again = qal_text::parse_program(&qal_text::print_program(&p)).unwrap();
+    assert_eq!(again, p);
+    let h2 = hash_program(&again).unwrap();
+    assert_eq!(h1.defs.iter().map(|c| (c.name.clone(), c.hash)).collect::<Vec<_>>(), h2.defs.iter().map(|c| (c.name.clone(), c.hash)).collect::<Vec<_>>());
+    // Function names are not semantics: `std.a.f` hashes like the same function named `f`.
+    let plain = hash_program(&qal_text::parse_program("fn f(x: Int) -> Int = x + 1").unwrap()).unwrap();
+    let f = h1.defs.iter().find(|c| c.name == "std.a.f").unwrap();
+    assert_eq!(f.hash, plain.defs[0].hash);
+    // Variant names are: the std enum differs from the same enum with plain variants.
+    let t = h1.defs.iter().find(|c| c.name == "std.a.T").unwrap();
+    let plain = hash_program(&qal_text::parse_program("type T = One | Two(Int)").unwrap()).unwrap();
+    assert_ne!(t.hash, plain.defs[0].hash);
+    // Stored, viewed and decoded: the text is the same and defines the same hashes.
+    let mut s = std_store();
+    ok(&mut s, STD_A);
+    let g = text(&mut s, "std.a.g");
+    assert!(g.contains("std.a.One => std.a.f(0)") && g.contains("std.a.Two(n) => n"), "{g}");
+    assert_eq!(hash(&mut s, "std.a.g"), h1.defs.iter().find(|c| c.name == "std.a.g").unwrap().hash.to_hex());
+    let found: Vec<String> = s.query(&Query { name: Some("std.a.".into()), ..Query::default() }).unwrap().into_iter().map(|e| e.name).collect();
+    assert_eq!(found.len(), 6, "{found:?}");
+}
+
+#[test]
+fn the_std_project_defines_only_std_names() {
+    let mut s = std_store();
+    assert!(s.is_std().unwrap());
+    ok(&mut s, STD_A);
+    for (src, def, path) in [
+        ("fn helper() -> Int = 1", "helper", ""),
+        ("test t = true", "t", ""),
+        ("type std.b.E = std.b.X | Y", "std.b.E", "variants[1]"),
+        ("type std.b.E = std.b.X | std.c.Y", "std.b.E", "variants[1]"),
+    ] {
+        let d = err(&mut s, src);
+        assert_eq!((d[0].code, d[0].kind, d[0].def.as_str(), d[0].path.as_str()), ("E0240", "reserved_name", def, path), "{src}: {d:?}");
+    }
+    let d = s.rename("std.a.f", "f", "test").unwrap_err();
+    assert_eq!(d[0].code, "E0240");
+    s.rename("std.a.f", "std.a.inc", "test").unwrap();
+    assert!(text(&mut s, "std.a.g").contains("std.a.inc(0)"));
+    // `init_std` is idempotent for the std store and refused for an ordinary project's.
+    let path = s.path().parent().unwrap().parent().unwrap().to_path_buf();
+    drop(s);
+    assert!(Store::init_std(&path).unwrap().is_std().unwrap());
+    let mut user = store();
+    ok(&mut user, "fn f() -> Int = 1");
+    let dir = user.path().parent().unwrap().parent().unwrap().to_path_buf();
+    assert_eq!(Store::init_std(&dir).err().unwrap()[0].kind, "store_error");
+    assert!(!user.is_std().unwrap());
+}
+
+#[test]
+fn projects_cannot_define_or_rename_std_names() {
+    let mut s = store();
+    for (src, def, path) in [("fn std.a.f() -> Int = 1", "std.a.f", ""), ("type E = A | std.a.B", "E", "variants[1]"), ("test std.a.t = true", "std.a.t", "")] {
+        let d = err(&mut s, src);
+        assert_eq!((d[0].code, d[0].kind, d[0].def.as_str(), d[0].path.as_str()), ("E0240", "reserved_name", def, path), "{src}: {d:?}");
+        assert!(d[0].message.contains("read-only standard library namespace"), "{}", d[0].message);
+    }
+    ok(&mut s, "fn f() -> Int = 1");
+    assert_eq!(s.rename("f", "std.a.f", "test").unwrap_err()[0].code, "E0240");
+    assert_eq!(count(&s, "names"), 1);
+}
+
+#[test]
+fn the_std_package_is_imported_into_projects_once_per_version() {
+    let mut lib = std_store();
+    lib.define(STD_A, "std-a-1").unwrap();
+    let v1 = lib.export("std.", "std").unwrap();
+    assert!(v1.file.lines().filter(|l| l.starts_with("# def ")).all(|l| l.ends_with(" std-a-1")), "{}", v1.file);
+    // The std store itself never imports automatically.
+    assert!(lib.ensure_std(&v1.file, None).unwrap().is_none());
+    let mut s = store();
+    let i = s.ensure_std(&v1.file, None).unwrap().unwrap();
+    assert_eq!(i.defined.len(), 6);
+    assert_eq!(s.meta("std_package").unwrap(), Some(v1.hash.clone()));
+    assert_eq!(s.history("std.a.f").unwrap()[0].agent, format!("qal-std@{}", &v1.hash[..12]));
+    for n in ["std.a.T", "std.a.f", "std.a.g", "std.a.t", "std.a.Box", "std.a.unbox"] {
+        assert_eq!(hash(&mut s, n), hash(&mut lib, n), "{n}");
+    }
+    assert!(s.ensure_std(&v1.file, None).unwrap().is_none(), "same version: nothing to do");
+    let before = count(&s, "history");
+    // The project uses std, but cannot change it.
+    ok(&mut s, "fn use_it() -> Int = std.a.g(std.a.One) + std.a.unbox(std.a.Box { item: 1 })");
+    assert_eq!(err(&mut s, "fn std.a.f(x: Int) -> Int = x")[0].code, "E0240");
+    assert_eq!(count(&s, "history"), before + 1);
+    // Same signature, new body: replaced, and the project's users are relinked.
+    lib.define("fn std.a.f(x: Int) -> Int = x + 2\nfn std.a.h() -> Int = 7", "std-a-2").unwrap();
+    let v2 = lib.export("std.", "std").unwrap();
+    let use_it = hash(&mut s, "use_it");
+    let i = s.ensure_std(&v2.file, None).unwrap().unwrap();
+    let st = statuses(&i.defined);
+    assert!(st.contains(&("std.a.f", "replaced")) && st.contains(&("std.a.h", "added")) && st.contains(&("use_it", "relinked")), "{st:?}");
+    assert_ne!(hash(&mut s, "use_it"), use_it);
+    assert_eq!(s.meta("std_package").unwrap(), Some(v2.hash.clone()));
+    // A changed signature is refused (E0244) and nothing is written.
+    lib.define("fn std.a.h(x: Int) -> Int = x", "std-a-3").unwrap();
+    let v3 = lib.export("std.", "std").unwrap();
+    let names = hashes(&mut s);
+    let d = s.ensure_std(&v3.file, None).unwrap_err();
+    assert_eq!((d[0].code, d[0].kind, d[0].def.as_str()), ("E0244", "std_signature_change", "std.a.h"), "{d:?}");
+    assert_eq!((d[0].expected.as_deref(), d[0].found.as_deref()), (Some("fn() -> Int"), Some("fn(Int) -> Int")));
+    assert_eq!(hashes(&mut s), names);
+    assert_eq!(s.meta("std_package").unwrap(), Some(v2.hash.clone()));
+    // Only a package named `std` is the standard library.
+    let other = lib.export("std.", "other").unwrap();
+    assert_eq!(s.ensure_std(&other.file, None).unwrap_err()[0].code, "E0243");
+}
+
+#[test]
+fn other_packages_carry_std_definitions_only_unchanged() {
+    let mut lib = std_store();
+    lib.define(STD_A, "std-a-1").unwrap();
+    let std1 = lib.export("std.", "std").unwrap();
+    let mut app = store();
+    app.ensure_std(&std1.file, None).unwrap();
+    ok(&mut app, "fn app_main() -> Int = std.a.f(1)");
+    let pkg = app.export("app_", "app").unwrap();
+    assert!(pkg.file.contains("# def std.a.f "), "dependencies are exported with the package");
+    // Into a project with the same std: fine.
+    let mut same = store();
+    same.ensure_std(&std1.file, None).unwrap();
+    assert_eq!(statuses(&same.import(&pkg.file).unwrap().defined), vec![("std.a.f", "unchanged"), ("app_main", "added")]);
+    // Into one without (or with another) std: the package's std definitions would be new there.
+    let mut bare = store();
+    let d = bare.import(&pkg.file).unwrap_err();
+    assert_eq!((d[0].code, d[0].def.as_str()), ("E0240", "std.a.f"), "{d:?}");
+    assert_eq!(count(&bare, "names"), 0);
+}
+
+#[test]
+fn the_std_project_is_rebuilt_from_its_package_with_its_agents() {
+    let mut lib = std_store();
+    lib.define("fn std.a.f(x: Int) -> Int = x + 1", "std-a-1").unwrap();
+    lib.define("fn std.a.g(x: Int) -> Int = std.a.f(x) * 2", "std-a-2").unwrap();
+    let pkg = lib.export("std.", "std").unwrap();
+    let mut fresh = std_store();
+    fresh.import(&pkg.file).unwrap();
+    assert_eq!(fresh.history("std.a.f").unwrap()[0].agent, "std-a-1");
+    assert_eq!(fresh.history("std.a.g").unwrap()[0].agent, "std-a-2");
+    assert_eq!(fresh.export("std.", "std").unwrap().file, pkg.file, "the next export is identical");
+    // A newer std package replaces what the std agents wrote there.
+    lib.define("fn std.a.f(x: Int) -> Int = x + 3", "std-a-3").unwrap();
+    let v2 = lib.export("std.", "std").unwrap();
+    assert!(statuses(&fresh.import(&v2.file).unwrap().defined).contains(&("std.a.f", "replaced")));
+    assert_eq!(fresh.export("std.", "std").unwrap().file, v2.file);
+}
+
+#[test]
+fn package_def_lines_must_match_the_text() {
+    let mut lib = store();
+    ok(&mut lib, "fn lib_a() -> Int = 1\nfn lib_b() -> Int = 2");
+    let e = lib.export("lib_", "lib").unwrap();
+    let body = e.file.splitn(3, '\n').nth(2).unwrap().to_string();
+    let (a_line, rest) = body.split_once('\n').unwrap();
+    let (b_line, text) = rest.split_once('\n').unwrap();
+    // A listed name the text does not define (even if the target already has it).
+    let mut t = store();
+    ok(&mut t, "fn lib_b() -> Int = 2");
+    let only_a = format!("{a_line}\n{b_line}\n\nfn lib_a() -> Int = 1\n");
+    let d = t.import(&sealed("lib", &only_a)).unwrap_err();
+    assert!(d[0].code == "E0243" && d[0].message.contains("`lib_b` is listed in the package but its text does not define it"), "{d:?}");
+    // Unsorted or repeated `# def` lines, a malformed hash or an empty agent.
+    for bad in [format!("{b_line}\n{a_line}\n{text}"), format!("{a_line}\n{a_line}\n{text}"), format!("{}\n{b_line}\n{text}", a_line.replace(&a_line[11..17], "XXXXXX")), format!("{}\n{b_line}\n{text}", a_line.rsplit_once(' ').unwrap().0.to_string() + " ")] {
+        let d = t.import(&sealed("lib", &bad)).unwrap_err();
+        assert_eq!(d[0].code, "E0243", "{bad}: {d:?}");
+    }
+    assert_eq!(count(&t, "names"), 1);
+    // The real file still imports.
+    assert_eq!(t.import(&e.file).unwrap().defined.len(), 2);
+}

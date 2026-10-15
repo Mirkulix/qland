@@ -10,9 +10,13 @@
 //! ```
 //!
 //! `agent` is who last added or replaced the definition (the recorded origin). Importing defines
-//! the text in one atomic `define` and keeps it only if every name gets exactly the recorded hash.
+//! the text in one atomic `define` and keeps it only if every listed name is defined by the text
+//! and gets exactly the recorded hash, and nothing else is defined (E0243). `std.` names: only the
+//! package named `std` adds or replaces them (keeping their signatures, E0244); another package may
+//! carry them only unchanged (E0240). Importing into the std project keeps each `# def` agent.
 
-use crate::define;
+use crate::define::{self, StdNames};
+use qal_text::lexer::is_std_name;
 use crate::snapshot::Snapshot;
 use crate::{sql, Defined, Verify};
 use qal_core::ast::Program;
@@ -94,13 +98,14 @@ pub fn parse(file: &str) -> Result<Package, Vec<Diagnostic>> {
         let shown = || def.chars().take(80).collect::<String>();
         let (Some(n), Some(h), Some(agent)) = (p.next(), p.next(), p.next()) else { return Err(mismatch(format!("malformed `# def` line `{}`", shown()))) };
         // The checksum covers these lines but anyone can recompute it: everything is untrusted.
-        let is_name = n.len() <= 256 && n.starts_with(|c: char| c.is_ascii_alphabetic()) && n.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+        let is_name = n.len() <= 256 && (is_std_name(n) || (n.starts_with(|c: char| c.is_ascii_alphabetic()) && n.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')));
         let is_hash = h.len() == 64 && h.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
         if !is_name || !is_hash || agent.is_empty() || agent.chars().any(char::is_control) {
             return Err(mismatch(format!("malformed `# def` line `{}`: expected `# def <name> <64 hex digits> <agent>`", shown())));
         }
-        if defs.iter().any(|d: &PackageDef| d.name == n) {
-            return Err(mismatch(format!("`{n}` is listed twice")));
+        // Sorted by name without duplicates, as `export` writes them.
+        if let Some(last) = defs.last().filter(|d: &&PackageDef| d.name.as_str() >= n) {
+            return Err(mismatch(if last.name == n { format!("`{n}` is listed twice") } else { format!("the `# def` lines are not sorted by name (`{n}` after `{}`)", last.name) }));
         }
         defs.push(PackageDef { name: n.into(), hash: h.into(), agent: agent.into() });
     }
@@ -194,9 +199,16 @@ pub fn import(conn: &mut Connection, file: &str, verify: Option<&mut Verify>) ->
     if !valid_package_name(&pkg.name) {
         return Err(mismatch(format!("`{}` is not a package name", pkg.name)));
     }
+    let is_std = pkg.name == STD_PACKAGE_NAME;
     let agent = format!("qal-{}@{}", pkg.name, &pkg.hash[..12]);
     let expected: BTreeMap<&str, &str> = pkg.defs.iter().map(|d| (d.name.as_str(), d.hash.as_str())).collect();
     let check = |defined: &[Defined], tx: &rusqlite::Transaction| -> Result<(), Vec<Diagnostic>> {
+        // Every listed name is defined by the text (not only already stored).
+        let given: BTreeSet<&str> = defined.iter().filter(|d| d.status != "relinked").map(|d| d.name.as_str()).collect();
+        if let Some(missing) = expected.keys().find(|n| !given.contains(*n)) {
+            return Err(mismatch(format!("`{missing}` is listed in the package but its text does not define it")));
+        }
+        let std_store = define::is_std_store(tx)?;
         for (name, hash) in &expected {
             let stored: Option<String> = tx.query_row("SELECT hash FROM names WHERE name = ?1", params![name], |r| r.get(0)).optional().map_err(sql)?;
             if stored.as_deref() != Some(*hash) {
@@ -205,8 +217,9 @@ pub fn import(conn: &mut Connection, file: &str, verify: Option<&mut Verify>) ->
         }
         // A package may replace only what an earlier import of the same package defined, never
         // the project's own definitions.
+        // In the std project the std package replaces what the std agents wrote (a rebuild).
         let ours = format!("qal-{}@", pkg.name);
-        for d in defined.iter().filter(|d| d.status == "replaced") {
+        for d in defined.iter().filter(|d| d.status == "replaced" && !(std_store && is_std)) {
             let last: Option<String> = tx
                 .query_row("SELECT agent FROM history WHERE name = ?1 AND action IN ('added', 'replaced') AND new_hash != ?2 ORDER BY id DESC LIMIT 1", params![d.name, d.hash], |r| r.get(0))
                 .optional()
@@ -219,11 +232,37 @@ pub fn import(conn: &mut Connection, file: &str, verify: Option<&mut Verify>) ->
         if let Some(extra) = defined.iter().find(|d| !expected.contains_key(d.name.as_str()) && d.status != "relinked") {
             return Err(mismatch(format!("`{}` is defined by the package text but not listed in it", extra.name)));
         }
-        tx.execute("INSERT INTO meta (key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = excluded.value", params![format!("package:{}", pkg.name), pkg.hash]).map_err(sql)?;
+        set_meta(tx, &format!("package:{}", pkg.name), &pkg.hash)?;
+        if is_std {
+            set_meta(tx, META_STD_PACKAGE, &pkg.hash)?;
+        }
+        // The std project keeps the recorded origin of each definition (`# def` agent) when it is
+        // rebuilt from the package, so its next export names the same agents.
+        if std_store {
+            for d in &pkg.defs {
+                tx.execute(
+                    "UPDATE history SET agent = ?1 WHERE id = (SELECT max(id) FROM history WHERE name = ?2 AND agent = ?3 AND action IN ('added', 'replaced'))",
+                    params![d.agent, d.name, agent],
+                )
+                .map_err(sql)?;
+            }
+        }
         Ok(())
     };
-    let defined = define::define_checked(conn, &pkg.text, &agent, verify, &check)?;
+    let policy = if is_std { StdNames::Package } else { StdNames::Unchanged };
+    let defined = define::define_checked(conn, &pkg.text, &agent, policy, verify, &check)?;
     Ok(Imported { package: pkg.name, hash: pkg.hash, defined })
+}
+
+/// The name of the standard library package.
+pub const STD_PACKAGE_NAME: &str = "std";
+/// `meta` key: hash of the std package last imported into the store.
+pub const META_STD_PACKAGE: &str = "std_package";
+/// `meta` key: `std` for the std project's store (absent for every other project).
+pub const META_ROLE: &str = "role";
+
+pub(crate) fn set_meta(tx: &rusqlite::Transaction, key: &str, value: &str) -> Result<(), Vec<Diagnostic>> {
+    tx.execute("INSERT INTO meta (key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = excluded.value", params![key, value]).map(|_| ()).map_err(sql)
 }
 
 /// A value of the `meta` table.

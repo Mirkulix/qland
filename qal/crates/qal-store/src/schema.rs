@@ -24,8 +24,9 @@ CREATE TABLE proofs (
 );
 ";
 
-/// Key-value facts about the store (`package:<name>` = hash of the last imported package; later
-/// phases add `role` and `std_package`).
+/// Key-value facts about the store: `package:<name>` = hash of the last imported package,
+/// `std_package` = hash of the last imported std package (Phase 3b), `role` = `std` for the std
+/// project's store (absent for every other project).
 pub const META: &str = "CREATE TABLE meta (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL

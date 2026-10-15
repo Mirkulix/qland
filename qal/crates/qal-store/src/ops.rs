@@ -6,7 +6,7 @@ use crate::{now_ms, sql};
 use qal_core::ast::{Def, Program};
 use qal_core::canon::{self, Hash, Kind};
 use qal_core::diag::Diagnostic;
-use qal_text::lexer::{KEYWORDS, MAX_NAME_LEN};
+use qal_text::lexer::{is_std_name, std_parts, KEYWORDS, MAX_NAME_LEN};
 use rusqlite::{params, Connection, TransactionBehavior};
 use serde::Serialize;
 
@@ -149,14 +149,16 @@ fn valid_name(name: &str, kind: Kind) -> Result<(), Vec<Diagnostic>> {
         Kind::Fn => "function",
         Kind::Test => "test",
     };
-    let chars_ok = name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') && !name.starts_with(|c: char| c.is_ascii_digit()) && name != "_" && name.len() <= MAX_NAME_LEN;
-    let case_ok = !name.is_empty() && name.starts_with(|c: char| c.is_ascii_uppercase()) == (kind == Kind::Type);
-    if chars_ok && case_ok && !KEYWORDS.contains(&name) {
+    // A qualified `std.<module>.<name>` follows the rules in its last segment.
+    let last = std_parts(name).map_or(name, |(_, last)| last);
+    let chars_ok = last.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') && !last.starts_with(|c: char| c.is_ascii_digit()) && last != "_" && name.len() <= MAX_NAME_LEN;
+    let case_ok = !last.is_empty() && last.starts_with(|c: char| c.is_ascii_uppercase()) == (kind == Kind::Type);
+    if chars_ok && case_ok && !KEYWORDS.contains(&last) {
         return Ok(());
     }
     let rule = if kind == Kind::Type { "start with an uppercase letter" } else { "start with a lowercase letter or `_`" };
     Err(vec![Diagnostic::new("E0100", "parse", name, "", format!("`{name}` is not a valid {what} name"))
-        .hint(format!("{what} names {rule} and contain only ASCII letters, digits and `_`, at most {MAX_NAME_LEN} (no keywords)"))])
+        .hint(format!("{what} names {rule} and contain only ASCII letters, digits and `_`, at most {MAX_NAME_LEN} (no keywords); standard library names are `std.<module>.<name>`"))])
 }
 
 pub fn rename(conn: &mut Connection, old: &str, new: &str, agent: &str) -> Result<Renamed, Vec<Diagnostic>> {
@@ -170,6 +172,14 @@ pub fn rename(conn: &mut Connection, old: &str, new: &str, agent: &str) -> Resul
         return Err(vec![Diagnostic::duplicate_name(new, "", new).hint(format!("`{new}` is already taken; rename or replace it first"))]);
     }
     valid_name(new, kind)?;
+    // `std.` names are read-only in a project; the std project has only `std.` names.
+    if crate::define::is_std_store(&tx)? {
+        if !is_std_name(new) {
+            return Err(vec![Diagnostic::std_only(old, "", new, None)]);
+        }
+    } else if let Some(n) = [old, new].into_iter().find(|n| is_std_name(n)) {
+        return Err(vec![Diagnostic::std_reserved(old, "", n)]);
+    }
     // The renamed codebase must still check (built-in and reserved names, `main`'s signature) and
     // hash exactly as before.
     let renamed = snap.renamed(old, new);

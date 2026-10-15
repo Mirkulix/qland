@@ -3,12 +3,109 @@
 
 use crate::snapshot::Snapshot;
 use crate::{now_ms, sql, Defined, Verify};
-use qal_core::ast::{Def, Program};
+use qal_core::ast::{Def, Program, TypeBody};
 use qal_core::canon::{self, Canon, Hash, HashError, Hashed, Kind};
 use qal_core::diag::Diagnostic;
 use qal_core::tast::TProgram;
 use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
+use qal_text::lexer::{is_std_name, std_parts};
 use std::collections::{BTreeMap, HashMap, HashSet};
+
+/// Who may write `std.` names in a `define` (Phase 3 §4.1). In the std project (`meta.role = 'std'`)
+/// every definition must have a `std.` name instead, whatever the writer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StdNames {
+    /// A project's own `define`: `std.` names are reserved (E0240).
+    Refuse,
+    /// The import of a package other than std: a `std.` name only where it is identical to the
+    /// stored definition (a package exports the std definitions it depends on).
+    Unchanged,
+    /// The import of the std package: `std.` names are added or replaced, signatures kept (E0244).
+    Package,
+}
+
+/// The value of `meta.role` that marks the std project's store.
+pub const ROLE_STD: &str = "std";
+
+/// True if the store is the std project's (`meta.role = 'std'`).
+pub(crate) fn is_std_store(conn: &Connection) -> Result<bool, Vec<Diagnostic>> {
+    let role: Option<String> = conn.query_row("SELECT value FROM meta WHERE key = 'role'", [], |r| r.get(0)).optional().map_err(sql)?;
+    Ok(role.as_deref() == Some(ROLE_STD))
+}
+
+/// The namespace rule for the names `input` defines (before checking): see [`StdNames`].
+fn namespace(std_store: bool, policy: StdNames, input: &Program) -> Result<(), Vec<Diagnostic>> {
+    let mut diags = Vec::new();
+    for d in &input.defs {
+        let name = d.name();
+        let variants = match d {
+            Def::Type(t) => match &t.body {
+                TypeBody::Enum(vs) => vs.iter().map(|v| v.name.as_str()).collect(),
+                TypeBody::Record(_) => Vec::new(),
+            },
+            _ => Vec::new(),
+        };
+        if std_store {
+            let Some((module, _)) = std_parts(name) else {
+                diags.push(Diagnostic::std_only(name, "", name, None));
+                continue;
+            };
+            for (i, v) in variants.iter().enumerate() {
+                if std_parts(v).is_none_or(|(m, _)| m != module) {
+                    diags.push(Diagnostic::std_only(name, &format!("variants[{i}]"), v, Some(module)));
+                }
+            }
+            continue;
+        }
+        if is_std_name(name) {
+            if policy == StdNames::Refuse {
+                diags.push(Diagnostic::std_reserved(name, "", name));
+            }
+            continue;
+        }
+        for (i, v) in variants.iter().enumerate().filter(|(_, v)| is_std_name(v)) {
+            diags.push(Diagnostic::std_reserved(name, &format!("variants[{i}]"), v));
+        }
+    }
+    if diags.is_empty() {
+        Ok(())
+    } else {
+        Err(diags)
+    }
+}
+
+/// Imports keep the signature of every stored `std.` definition (E0244).
+fn std_signatures(tx: &Transaction, snap: &Snapshot, input: &Program) -> Result<(), Vec<Diagnostic>> {
+    let mut diags = Vec::new();
+    for d in input.defs.iter().filter(|d| is_std_name(d.name()) && snap.names.contains_key(d.name())) {
+        let (before, after) = (signature(&snap.decode_name(tx, d.name())?), signature(d));
+        if before != after {
+            diags.push(Diagnostic::std_signature_change(d.name(), &show(&before), &show(&after)));
+        }
+    }
+    if diags.is_empty() {
+        Ok(())
+    } else {
+        Err(diags)
+    }
+}
+
+/// [`StdNames::Unchanged`]: the `std.` names of the input must hash as stored.
+fn std_unchanged(snap: &Snapshot, input: &Program, canons: &[Canon]) -> Result<(), Vec<Diagnostic>> {
+    let hash_of: HashMap<&str, Hash> = canons.iter().map(|c| (c.name.as_str(), c.hash)).collect();
+    let diags: Vec<Diagnostic> = input
+        .defs
+        .iter()
+        .map(|d| d.name())
+        .filter(|n| is_std_name(n) && snap.names.get(*n).map(|e| e.hash) != hash_of.get(n).copied())
+        .map(|n| Diagnostic::std_reserved(n, "", n).hint("the package was exported with another version of the standard library: update this project's std (any write imports the std of this `qal`), or export the package again"))
+        .collect();
+    if diags.is_empty() {
+        Ok(())
+    } else {
+        Err(diags)
+    }
+}
 
 /// A definition's signature as the replacement rule compares it: kind plus the signature text
 /// with current names (so a replaced type keeps its name in the signatures that use it).
@@ -37,19 +134,20 @@ pub(crate) fn hash(p: &Program) -> Result<Hashed, Vec<Diagnostic>> {
 const ATTEMPTS: usize = 3;
 
 pub fn define(conn: &mut Connection, src: &str, agent: &str, verify: Option<&mut Verify>) -> Result<Vec<Defined>, Vec<Diagnostic>> {
-    define_checked(conn, src, agent, verify, &|_, _| Ok(()))
+    define_checked(conn, src, agent, StdNames::Refuse, verify, &|_, _| Ok(()))
 }
 
 /// A check of a `define` before it is committed, inside the write transaction that would commit it
 /// (it can also write more in the same transaction; used by package imports).
 pub type Check<'c> = dyn Fn(&[Defined], &Transaction) -> Result<(), Vec<Diagnostic>> + 'c;
 
-/// `define`, committed only if `check` accepts the written result (after the verification).
-pub fn define_checked(conn: &mut Connection, src: &str, agent: &str, verify: Option<&mut Verify>, check: &Check) -> Result<Vec<Defined>, Vec<Diagnostic>> {
+/// `define`, committed only if `check` accepts the written result (after the verification);
+/// `policy` says who may write `std.` names.
+pub fn define_checked(conn: &mut Connection, src: &str, agent: &str, policy: StdNames, verify: Option<&mut Verify>, check: &Check) -> Result<Vec<Defined>, Vec<Diagnostic>> {
     let input = qal_text::parse_program(src).map_err(|d| vec![d])?;
     let Some(v) = verify else {
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(sql)?;
-        let out = prepare(&tx, &input)?.write(&tx, &input, agent, false)?;
+        let out = prepare(&tx, &input, policy)?.write(&tx, &input, agent, false)?;
         check(&out, &tx)?;
         tx.commit().map_err(sql)?;
         return Ok(out);
@@ -63,7 +161,7 @@ pub fn define_checked(conn: &mut Connection, src: &str, agent: &str, verify: Opt
         let (typed, todo) = {
             // A deferred transaction that only reads: a consistent snapshot, no write lock.
             let tx = conn.transaction().map_err(sql)?;
-            let state = prepare(&tx, &input)?;
+            let state = prepare(&tx, &input, policy)?;
             let out = state.write(&tx, &input, agent, true)?;
             let todo = to_verify(&tx, &out, &v.key)?;
             (state.typed, todo)
@@ -72,7 +170,7 @@ pub fn define_checked(conn: &mut Connection, src: &str, agent: &str, verify: Opt
         // IMMEDIATE takes the write lock before reading, so two concurrent `define`s serialize
         // instead of both deciding on the same old state.
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(sql)?;
-        let out = prepare(&tx, &input)?.write(&tx, &input, agent, false)?;
+        let out = prepare(&tx, &input, policy)?.write(&tx, &input, agent, false)?;
         let now = to_verify(&tx, &out, &v.key)?;
         if now.iter().all(|d| todo.contains(d)) {
             let hashes: HashSet<&str> = now.iter().map(|(_, h)| h.as_str()).collect();
@@ -84,7 +182,7 @@ pub fn define_checked(conn: &mut Connection, src: &str, agent: &str, verify: Opt
         // Another writer changed what has to be verified: drop this transaction and start over.
     }
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(sql)?;
-    let state = prepare(&tx, &input)?;
+    let state = prepare(&tx, &input, policy)?;
     let out = state.write(&tx, &input, agent, false)?;
     let todo = to_verify(&tx, &out, &v.key)?;
     if !todo.is_empty() {
@@ -126,8 +224,13 @@ fn legacy_writer() -> bool {
 }
 
 /// Assembles the input with the stored codebase, enforces the replacement rule, checks and hashes.
-fn prepare(tx: &Transaction, input: &Program) -> Result<Prepared, Vec<Diagnostic>> {
+fn prepare(tx: &Transaction, input: &Program, policy: StdNames) -> Result<Prepared, Vec<Diagnostic>> {
     let snap = Snapshot::load(tx)?;
+    let std_store = is_std_store(tx)?;
+    namespace(std_store, policy, input)?;
+    if policy != StdNames::Refuse {
+        std_signatures(tx, &snap, input)?;
+    }
 
     let input_names: HashSet<&str> = input.defs.iter().map(|d| d.name()).collect();
     replacement_rule(tx, &snap, input, &input_names)?;
@@ -141,6 +244,9 @@ fn prepare(tx: &Transaction, input: &Program) -> Result<Prepared, Vec<Diagnostic
     let typed = qal_check::check_stored(&combined, &|n| input_names.contains(n) && !legacy_writer())?;
 
     let hashed = hash(&combined)?;
+    if policy == StdNames::Unchanged && !std_store {
+        std_unchanged(&snap, input, &hashed.defs)?;
+    }
     identical_types(&hashed.defs)?;
     group_aliases(&hashed.defs)?;
     alias_references(&hashed.defs, &input_names)?;

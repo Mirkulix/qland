@@ -237,6 +237,31 @@ impl Diagnostic {
             .hint("rename the stored types (qal_rename) or redefine the enums whose names or variants are prelude names (HttpHeader, HttpRequest, HttpResponse, HttpCall, NetError, SqlValue, DbRows, DbError and their variants)")
     }
 
+    /// A project's own definition (or rename) takes a `std.` name: the standard library namespace
+    /// is read-only outside the std project; its names come only from the std package.
+    pub fn std_reserved(def: &str, path: &str, name: &str) -> Self {
+        Diagnostic::new("E0240", "reserved_name", def, path, format!("`{name}` is in the read-only standard library namespace `std.`"))
+            .hint("`std.` names come from the standard library package (imported automatically); choose a name without the `std.` prefix")
+    }
+
+    /// A definition (or rename) in the std project (`meta.role = 'std'`) without a `std.` name, or a
+    /// variant outside its type's module.
+    pub fn std_only(def: &str, path: &str, name: &str, module: Option<&str>) -> Self {
+        let (message, hint) = match module {
+            Some(m) => (format!("variant `{name}` is not in its type's module `std.{m}.`"), format!("name it `std.{m}.<Variant>`")),
+            None => (format!("`{name}` is not a `std.` name; the std project defines only standard library names"), format!("name it `std.<module>.{name}` (e.g. `std.json.{name}`)")),
+        };
+        Diagnostic::new("E0240", "reserved_name", def, path, message).hint(hint)
+    }
+
+    /// An import would change the signature of an existing `std.` definition: the standard
+    /// library is additive in its signatures (spec Phase 3 §4.3).
+    pub fn std_signature_change(def: &str, old: &str, new: &str) -> Self {
+        Diagnostic::new("E0244", "std_signature_change", def, "", format!("the package changes the signature of the standard library definition `{def}`"))
+            .expected_found(old, new)
+            .hint(format!("std signatures never change: give the new version a new name (e.g. `{def}2`) and keep `{def}` as it is"))
+    }
+
     /// The `sql` argument of `db_exec` / `db_query` is not a string literal.
     pub fn sql_not_literal(def: &str, path: &str, callee: &str) -> Self {
         Diagnostic::new("E0241", "sql_not_literal", def, path, format!("the SQL text of `{callee}` must be a string literal"))
