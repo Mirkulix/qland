@@ -1,8 +1,8 @@
 //! QAL -> WebAssembly code generation from the checked, typed program (`qal_check::check`).
 //!
 //! Module layout:
-//!   imports   `qal_host.*` (see [`host`]): `fail` always; effect functions only if the compiled
-//!             code calls them (so a pure program has no system access at all)
+//!   imports   `qal_host.*` (see [`host`]): `fail` always; effect functions only if code reachable
+//!             from the entry uses them (so a pure program has no system access at all)
 //!   functions user fns reachable from the entry, then tests, then runtime/equality helpers
 //!             (all indices computed by the module builder)
 //!   table     the emitted user fns, for `call_indirect` through fn values
@@ -50,7 +50,8 @@ pub const HOST_MODULE: &str = "qal_host";
 
 /// Host functions in module `qal_host`. Effect functions are named `<effect>.<name>`.
 pub mod host {
-    use wasm_encoder::ValType::{self, F64, I32, I64};
+    pub use wasm_encoder::ValType;
+    use ValType::{F64, I32, I64};
 
     /// `fail(kind, func, site, vals_ptr)`: records a structured failure, then traps.
     pub const FAIL: &str = "fail";
@@ -68,6 +69,8 @@ pub mod host {
     pub const NOW_MS: &str = "time.now_ms";
     /// `(lo, hi) -> uniform Int in [lo, hi]` (the caller ensures lo <= hi)
     pub const RAND_INT: &str = "rand.rand_int";
+    /// Every effect host function.
+    pub const EFFECT_FNS: [&str; 6] = [PRINT, READ_LINE, READ_FILE, WRITE_FILE, NOW_MS, RAND_INT];
 
     pub fn signature(name: &str) -> (&'static [ValType], &'static [ValType]) {
         match name {

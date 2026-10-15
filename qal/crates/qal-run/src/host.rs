@@ -1,12 +1,16 @@
-//! Host functions (`qal_host.*`) and the permission model: only granted effect groups are linked,
-//! and `fs` only reaches files inside granted directories.
+//! Host functions (`qal_host.*`) and the permission model: only granted effect groups are linked
+//! (ungranted ones are stubs that fail with `permission_denied`), and `fs` only reaches files
+//! inside granted directories.
 
 use crate::value::read_str;
 use qal_wasm::{host, FAIL_OOM, HOST_MODULE, OOM_SCRATCH};
 use std::fs::File;
 use std::io::{BufRead, Read, Write};
 use std::path::{Path, PathBuf};
-use wasmtime::{Caller, Extern, Linker, Memory, StoreLimits};
+use wasmtime::{Caller, Extern, FuncType, Linker, Memory, StoreLimits, ValType};
+
+/// Failure kind recorded by the stub of an ungranted effect function; `func` indexes `host::EFFECT_FNS`.
+pub const FAIL_DENIED: i32 = -1;
 
 /// Effect permissions for one execution, e.g. parsed from `--allow io,fs:./data`.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -231,6 +235,15 @@ pub fn new_str(c: &mut Caller<'_, HostState>, s: &str) -> Result<i32, wasmtime::
     Ok(p)
 }
 
+fn val_type(t: &host::ValType) -> ValType {
+    match t {
+        host::ValType::I32 => ValType::I32,
+        host::ValType::I64 => ValType::I64,
+        host::ValType::F64 => ValType::F64,
+        other => unreachable!("host signatures use no {other:?}"),
+    }
+}
+
 /// splitmix64
 fn next_random(state: &mut u64) -> u64 {
     *state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
@@ -240,8 +253,21 @@ fn next_random(state: &mut u64) -> u64 {
     z ^ (z >> 31)
 }
 
-/// Defines `fail`, the pure helpers, and the functions of every granted effect.
+/// Defines `fail`, the pure helpers, the functions of every granted effect, and stubs for the
+/// ungranted ones: a module may import them (a fn value of an effectful fn makes it reachable)
+/// without ever calling them, so it must still instantiate.
 pub fn link(linker: &mut Linker<HostState>, perms: &Permissions) -> Result<(), wasmtime::Error> {
+    for (k, name) in host::EFFECT_FNS.iter().enumerate() {
+        if perms.allows(host::effect(name).expect("effect fn")) {
+            continue;
+        }
+        let (params, results) = host::signature(name);
+        let ty = FuncType::new(linker.engine(), params.iter().map(val_type), results.iter().map(val_type));
+        linker.func_new(HOST_MODULE, name, ty, move |mut c, _, _| {
+            c.data_mut().failure = Some(Failure { kind: FAIL_DENIED, func: k as i32, site: 0, vals: 0 });
+            Err(wasmtime::Error::msg("permission denied"))
+        })?;
+    }
     linker.func_wrap(HOST_MODULE, host::FAIL, |mut c: Caller<'_, HostState>, kind: i32, func: i32, site: i32, vals: i32| {
         c.data_mut().failure = Some(Failure { kind, func, site, vals });
         Err::<(), _>(wasmtime::Error::msg("qal failure"))

@@ -168,6 +168,28 @@ fn effects_must_be_granted() {
 }
 
 #[test]
+fn referencing_an_effectful_fn_needs_no_permission() {
+    let src = "fn pr(x: Int) -> Int !io = { print(\"p\"); x }\nfn main(args: List[Str]) -> Int = let f = pr in 0";
+    assert_eq!(main_runner(src, "").run_main(&[]).result, Ok(Value::Int(0)));
+    let r = Runner::new(compile("fn pr(x: Int) -> Int !io = { print(\"p\"); x }\ntest t = let f = pr in true\ntest u = 1 == 1", Entry::Tests)).unwrap();
+    let results = r.run_tests();
+    assert_eq!(results.iter().map(|t| (t.name.as_str(), t.passed, t.error.is_none())).collect::<Vec<_>>(), vec![("t", true, true), ("u", true, true)]);
+}
+
+#[test]
+fn calling_an_ungranted_effect_reports_permission_denied() {
+    // Checked code cannot reach an ungranted host function; bypass the entry check to exercise the stub.
+    let mut m = compile("fn main(args: List[Str]) -> Int !io = { print(\"hi\"); 0 }", Entry::Fn("main".into()));
+    m.funcs.iter_mut().for_each(|f| f.effects.clear());
+    let out = Runner::new(m).unwrap().run_main(&[]);
+    let e = out.result.unwrap_err();
+    assert_eq!((e.kind, e.code, e.def.as_str()), ("permission_denied", "E0508", "main"));
+    assert_eq!(e.message, "`io.print` needs effect io which was not granted");
+    assert_eq!(e.hints, vec!["grant it with `--allow io`".to_string()]);
+    assert_eq!(out.stdout, "");
+}
+
+#[test]
 fn pure_programs_import_no_effects() {
     let m = compile("fn main(args: List[Str]) -> Int = len(args)\nfn other() -> Unit !io = print(\"x\")", Entry::Fn("main".into()));
     assert_eq!(m.imports, vec![qal_wasm::host::FAIL]);

@@ -7,7 +7,7 @@ mod value;
 pub use host::Permissions;
 pub use value::{Value, Values};
 
-use host::{Failure, HostState};
+use host::{Failure, HostState, FAIL_DENIED};
 use qal_core::ast::Type;
 use qal_core::tast::TProgram;
 use qal_text::print_expr;
@@ -307,6 +307,13 @@ impl Runner {
                 e.values = Values(vec![("requested_bytes".into(), Value::Int(r)), ("limit_bytes".into(), Value::Int(self.memory_limit as i64))]);
             }
             return e;
+        }
+        if f.kind == FAIL_DENIED {
+            let name = qal_wasm::host::EFFECT_FNS[f.func as usize];
+            let effect = qal_wasm::host::effect(name).expect("effect fn");
+            let flag = if effect == "fs" { "fs:<dir>" } else { effect };
+            return RunError::new("permission_denied", entry, format!("`{name}` needs effect {effect} which was not granted"))
+                .hint(format!("grant it with `--allow {flag}`"));
         }
         let meta: &FuncMeta = &self.meta.funcs[f.func as usize];
         let site = &meta.sites[f.site as usize];
