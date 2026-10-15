@@ -1,0 +1,2 @@
+# The std project store is a binary; the checked-in form is std.qalpkg (qal export std. --out std.qalpkg).
+.qal/
