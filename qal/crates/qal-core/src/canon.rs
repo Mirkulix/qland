@@ -283,8 +283,24 @@ const BINOPS: [BinOp; 14] = [
     BinOp::Or,
 ];
 
+/// The operator's index in `BINOPS` (an exhaustive match, so a new operator cannot be forgotten).
 fn binop_tag(op: BinOp) -> u8 {
-    BINOPS.iter().position(|o| *o == op).expect("all operators are listed") as u8
+    match op {
+        BinOp::Add => 0,
+        BinOp::Sub => 1,
+        BinOp::Mul => 2,
+        BinOp::Div => 3,
+        BinOp::Rem => 4,
+        BinOp::Concat => 5,
+        BinOp::Eq => 6,
+        BinOp::Ne => 7,
+        BinOp::Lt => 8,
+        BinOp::Le => 9,
+        BinOp::Gt => 10,
+        BinOp::Ge => 11,
+        BinOp::And => 12,
+        BinOp::Or => 13,
+    }
 }
 
 /// A reference from one definition to another.
@@ -329,7 +345,7 @@ impl<'a> Env<'a> {
 /// name is kept in `err`.
 struct Enc<'a, 'r> {
     env: &'a Env<'a>,
-    refs: &'r mut dyn FnMut(&str) -> Ref,
+    refs: &'r mut dyn FnMut(&str) -> Option<Ref>,
     out: Vec<u8>,
     /// Visible local names, innermost last.
     scope: Vec<String>,
@@ -368,14 +384,16 @@ impl Enc<'_, '_> {
 
     fn reference(&mut self, name: &str) {
         match (self.refs)(name) {
-            Ref::Hash(h) => {
+            Some(Ref::Hash(h)) => {
                 self.byte(R_HASH);
                 self.out.extend_from_slice(&h.0);
             }
-            Ref::Group(i) => {
+            Some(Ref::Group(i)) => {
                 self.byte(R_GROUP);
                 self.varint(i as u64);
             }
+            // Fail closed: never encode a placeholder reference.
+            None => self.fail(format!("the reference to `{name}` cannot be resolved")),
         }
     }
 
@@ -701,7 +719,7 @@ impl Enc<'_, '_> {
 }
 
 /// Encodes `d` (its member part only), returning (bytes, local names) or the first unresolved name.
-fn encode_member(env: &Env, d: &Def, refs: &mut dyn FnMut(&str) -> Ref) -> Result<(Vec<u8>, Vec<String>), String> {
+fn encode_member(env: &Env, d: &Def, refs: &mut dyn FnMut(&str) -> Option<Ref>) -> Result<(Vec<u8>, Vec<String>), String> {
     let mut enc = Enc { env, refs, out: Vec::new(), scope: Vec::new(), locals: Vec::new(), err: None };
     enc.member(d);
     match enc.err {
@@ -715,7 +733,7 @@ fn references(env: &Env, d: &Def) -> Result<BTreeSet<String>, String> {
     let mut names = BTreeSet::new();
     let mut record = |n: &str| {
         names.insert(n.to_string());
-        Ref::Group(0)
+        Some(Ref::Group(0))
     };
     encode_member(env, d, &mut record)?;
     Ok(names)
@@ -890,12 +908,13 @@ pub fn hash_program(p: &Program) -> Result<Hashed, HashError> {
     Ok(Hashed { defs, groups })
 }
 
-fn resolve(n: &str, by_name: &HashMap<&str, usize>, pos: &HashMap<usize, u32>, hashes: &[Option<Hash>]) -> Ref {
-    // Every referenced name is a definition of the program (the encoder checked the name first).
-    let Some(&i) = by_name.get(n) else { return Ref::Group(u32::MAX) };
+/// What `n` refers to: a member of the group being encoded, or an already hashed definition.
+/// None (an internal error, never a placeholder hash) if neither holds.
+fn resolve(n: &str, by_name: &HashMap<&str, usize>, pos: &HashMap<usize, u32>, hashes: &[Option<Hash>]) -> Option<Ref> {
+    let i = *by_name.get(n)?;
     match pos.get(&i) {
-        Some(k) => Ref::Group(*k),
-        None => Ref::Hash(hashes[i].unwrap_or(Hash([0; 32]))),
+        Some(k) => Some(Ref::Group(*k)),
+        None => Some(Ref::Hash((*hashes.get(i)?)?)),
     }
 }
 
@@ -1398,9 +1417,9 @@ impl<'b> Dec<'b> {
     }
 
     fn i64(&mut self) -> R<i64> {
-        let bytes = self.b.get(self.pos..self.pos + 8).ok_or("truncated canonical form")?;
+        let bytes: [u8; 8] = self.b.get(self.pos..self.pos + 8).and_then(|b| b.try_into().ok()).ok_or("truncated canonical form")?;
         self.pos += 8;
-        Ok(i64::from_le_bytes(bytes.try_into().expect("8 bytes")))
+        Ok(i64::from_le_bytes(bytes))
     }
 
     fn str(&mut self) -> R<String> {
@@ -1429,9 +1448,9 @@ impl<'b> Dec<'b> {
     fn reference(&mut self, own: &str, name_of: &mut dyn FnMut(&Hash) -> String) -> R<String> {
         match self.byte()? {
             R_HASH => {
-                let bytes = self.b.get(self.pos..self.pos + 32).ok_or("truncated canonical form")?;
+                let bytes: [u8; 32] = self.b.get(self.pos..self.pos + 32).and_then(|b| b.try_into().ok()).ok_or("truncated canonical form")?;
                 self.pos += 32;
-                let h = Hash(bytes.try_into().expect("32 bytes"));
+                let h = Hash(bytes);
                 Ok(if self.counting && !self.collect { String::new() } else { name_of(&h) })
             }
             R_GROUP => {
@@ -1783,6 +1802,24 @@ mod tests {
 
     fn single(c: &Canon) -> Form<'_> {
         Form::new(&c.canonical, None)
+    }
+
+    #[test]
+    fn unresolvable_references_fail_closed() {
+        let pos = HashMap::new();
+        let by_name: HashMap<&str, usize> = [("f", 0)].into_iter().collect();
+        assert_eq!(resolve("g", &by_name, &pos, &[None]), None, "unknown name");
+        assert_eq!(resolve("f", &by_name, &pos, &[None]), None, "not hashed yet and not in the group");
+        assert_eq!(resolve("f", &by_name, &pos, &[]), None, "out of range");
+        let h = Hash::of(b"x");
+        assert_eq!(resolve("f", &by_name, &pos, &[Some(h)]), Some(Ref::Hash(h)));
+    }
+
+    #[test]
+    fn operator_tags_index_the_operator_table() {
+        for (i, op) in BINOPS.iter().enumerate() {
+            assert_eq!(binop_tag(*op) as usize, i, "{op:?}");
+        }
     }
 
     #[test]

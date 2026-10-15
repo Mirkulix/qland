@@ -144,7 +144,8 @@ impl Subst {
         while let Some(v) = changed.pop() {
             for k in 0..self.users[v as usize].len() {
                 let u = self.users[v as usize][k];
-                let bound = self.vars[u as usize].as_ref().expect("users are bound");
+                // Users are always bound (they are recorded when bound); skip one that is not.
+                let Some(bound) = self.vars[u as usize].as_ref() else { continue };
                 let (nd, nn) = (self.depth_of(bound), self.size_of(bound));
                 if nd > self.depth[u as usize] || nn > self.size[u as usize] {
                     if !self.within_limits(nd, nn) {

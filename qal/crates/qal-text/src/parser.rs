@@ -427,8 +427,11 @@ impl Parser {
             }
             Tok::Sym("-") if matches!(self.peek_at(1), Tok::Int(n) if *n <= 1 << 63) => {
                 self.next();
-                let Tok::Int(n) = self.next().tok else { unreachable!("checked by the guard") };
-                // `n <= 2^63`, so the negation fits; `-2^63` is i64::MIN.
+                let n = match self.next().tok {
+                    Tok::Int(n) => n,
+                    _ => 0,
+                };
+                // `n <= 2^63` (checked by the guard), so the negation fits; `-2^63` is i64::MIN.
                 Ok(Pat::Int(0i64.wrapping_sub(n as i64)))
             }
             Tok::Str(s) => {

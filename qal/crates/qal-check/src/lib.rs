@@ -252,7 +252,7 @@ fn check_fn(f: &FnDef, g: &Globals, diags: &mut Vec<Diagnostic>) -> Option<TFn> 
     cx.ret = Some(&f.ret);
     exprs.push(cx.expect(&f.body, &f.ret, "body"));
     let (locals, mut exprs) = cx.finish(exprs)?;
-    let body = exprs.pop().expect("body");
+    let body = exprs.pop()?;
     let ens = exprs.split_off(f.req.len());
     Some(TFn { def: f.clone(), locals, req: exprs, ens, result_local, body })
 }

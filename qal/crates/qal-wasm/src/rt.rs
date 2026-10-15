@@ -448,7 +448,7 @@ fn arith(m: &mut Mb, a: &mut Asm, op: BinOp) {
                 a.all([I::LocalGet(0), I::LocalGet(1), I::I64RemS]);
             }
         }
-        _ => unreachable!("not an arithmetic operator: {op:?}"),
+        _ => m.bug(format!("not an arithmetic operator: {op:?}")),
     }
 }
 

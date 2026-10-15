@@ -183,12 +183,13 @@ impl<'a> Cx<'a> {
                     let t = self.infer(x, &p);
                     if i + 1 < n && !self.sub.unify(&Type::Unit, &t.ty) {
                         self.mismatch(&p, &Type::Unit, &t.ty);
-                        self.diags.last_mut().expect("just pushed").hints =
-                            vec!["only Unit values can be discarded in `{ a; b }`; bind the value with `let` or handle it with `match`".into()];
+                        if let Some(d) = self.diags.last_mut() {
+                            d.hints = vec!["only Unit values can be discarded in `{ a; b }`; bind the value with `let` or handle it with `match`".into()];
+                        }
                     }
                     out.push(t);
                 }
-                (out.last().expect("non-empty").ty.clone(), TKind::Seq(out))
+                (out.last().map_or(Type::Unit, |t| t.ty.clone()), TKind::Seq(out))
             }
             Expr::Record(name, fields) => return self.record(name, fields, path),
             Expr::Field(target, field) => return self.field(target, field, path),
@@ -258,7 +259,8 @@ impl<'a> Cx<'a> {
         }
         let mut d = Diagnostic::unknown_name(self.def, path, v);
         if Builtin::NAMES.contains(&v) {
-            d = d.hint(format!("built-in `{v}` cannot be used as a value; wrap it in a fn"));
+            d.message = format!("built-in `{v}` is not a value");
+            d = d.hint(format!("built-in `{v}` cannot be used as a value; wrap it in a fn, e.g. `fn my_{v}(...) = {v}(...)`, and pass `my_{v}`"));
         }
         self.diags.push(d);
         self.poison()

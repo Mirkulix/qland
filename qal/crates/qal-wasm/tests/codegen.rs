@@ -9,7 +9,7 @@ type Failure = (i32, i32, i32, i32);
 fn build(src: &str, entry: Entry) -> CompiledModule {
     let p = qal_text::parse_program(src).expect("parse");
     let tp = qal_check::check(&p).unwrap_or_else(|d| panic!("check failed: {d:#?}"));
-    let m = compile(&tp, &entry);
+    let m = compile(&tp, &entry).unwrap();
     wasmparser::validate(&m.wasm).expect("valid wasm");
     m
 }
@@ -338,4 +338,14 @@ fn only_needed_host_functions_are_imported() {
 fn match_on_an_enum_without_variants_compiles() {
     let m = build("type Never = |\nfn absurd(n: Never) -> Int = match n { }\nfn main(args: List[Str]) -> Int = 0", Entry::All);
     assert!(m.func("absurd").is_some());
+}
+
+#[test]
+fn compile_reports_internal_errors_instead_of_panicking() {
+    let p = qal_text::parse_program("fn f(x: Int) -> Int = x + 1").unwrap();
+    let mut tp = qal_check::check(&p).unwrap();
+    // A typed program that never came from the checker: the call refers to a missing function.
+    tp.fns[0].body = qal_core::tast::TExpr { ty: qal_core::ast::Type::Int, kind: qal_core::tast::TKind::Call(7, vec![]) };
+    let e = compile(&tp, &Entry::All).unwrap_err();
+    assert!(e.starts_with("internal compiler error"), "{e}");
 }

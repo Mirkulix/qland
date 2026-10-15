@@ -195,7 +195,7 @@ impl TProgram {
         }
     }
 
-    /// Payload types of variant `tag` of the sum type `ty`.
+    /// Payload types of variant `tag` of the sum type `ty` (empty if there is no such variant).
     pub fn variant_fields(&self, ty: &Type, tag: u32) -> Vec<Type> {
         match (ty, tag) {
             (Type::Option(_), TAG_NONE) => vec![],
@@ -203,21 +203,21 @@ impl TProgram {
             (Type::Result(t, _), TAG_OK) => vec![(**t).clone()],
             (Type::Result(_, e), _) => vec![(**e).clone()],
             (Type::Named(n), _) => match self.type_def(n).map(|d| &d.body) {
-                Some(TypeBody::Enum(vs)) => vs[tag as usize].fields.clone(),
-                _ => panic!("`{n}` is not an enum"),
+                Some(TypeBody::Enum(vs)) => vs.get(tag as usize).map(|v| v.fields.clone()).unwrap_or_default(),
+                _ => Vec::new(),
             },
-            _ => panic!("{ty} is not a sum type"),
+            _ => Vec::new(),
         }
     }
 
-    /// Field names and types of the record type `ty`.
+    /// Field names and types of the record type `ty` (empty if it is not a record).
     pub fn record_fields(&self, ty: &Type) -> Vec<(String, Type)> {
         match ty {
             Type::Named(n) => match self.type_def(n).map(|d| &d.body) {
                 Some(TypeBody::Record(fs)) => fs.clone(),
-                _ => panic!("`{n}` is not a record"),
+                _ => Vec::new(),
             },
-            _ => panic!("{ty} is not a record"),
+            _ => Vec::new(),
         }
     }
 

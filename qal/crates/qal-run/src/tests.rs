@@ -5,7 +5,7 @@ use serde_json::json;
 fn compile(src: &str, entry: Entry) -> CompiledModule {
     let p = qal_text::parse_program(src).unwrap();
     let tp = qal_check::check(&p).unwrap_or_else(|d| panic!("{d:#?}"));
-    qal_wasm::compile(&tp, &entry)
+    qal_wasm::compile(&tp, &entry).unwrap()
 }
 
 fn runner(src: &str) -> Runner {

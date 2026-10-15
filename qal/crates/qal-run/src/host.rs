@@ -274,12 +274,12 @@ pub fn new_str(c: &mut Caller<'_, HostState>, s: &str) -> Result<i32, wasmtime::
     Ok(p)
 }
 
-fn val_type(t: &host::ValType) -> ValType {
+fn val_type(t: &host::ValType) -> Result<ValType, wasmtime::Error> {
     match t {
-        host::ValType::I32 => ValType::I32,
-        host::ValType::I64 => ValType::I64,
-        host::ValType::F64 => ValType::F64,
-        other => unreachable!("host signatures use no {other:?}"),
+        host::ValType::I32 => Ok(ValType::I32),
+        host::ValType::I64 => Ok(ValType::I64),
+        host::ValType::F64 => Ok(ValType::F64),
+        other => Err(wasmtime::Error::msg(format!("host signatures use no {other:?}"))),
     }
 }
 
@@ -297,11 +297,13 @@ fn next_random(state: &mut u64) -> u64 {
 /// without ever calling them, so it must still instantiate.
 pub fn link(linker: &mut Linker<HostState>, perms: &Permissions) -> Result<(), wasmtime::Error> {
     for (k, name) in host::EFFECT_FNS.iter().enumerate() {
-        if perms.allows(host::effect(name).expect("effect fn")) {
+        if perms.allows(host::effect(name).unwrap_or("")) {
             continue;
         }
-        let (params, results) = host::signature(name);
-        let ty = FuncType::new(linker.engine(), params.iter().map(val_type), results.iter().map(val_type));
+        let (params, results) = host::signature(name).ok_or_else(|| wasmtime::Error::msg(format!("unknown host function `{name}`")))?;
+        let params = params.iter().map(val_type).collect::<Result<Vec<_>, _>>()?;
+        let results = results.iter().map(val_type).collect::<Result<Vec<_>, _>>()?;
+        let ty = FuncType::new(linker.engine(), params, results);
         linker.func_new(HOST_MODULE, name, ty, move |mut c, _, _| {
             c.data_mut().failure = Some(Failure { kind: FAIL_DENIED, func: k as i32, site: 0, vals: 0 });
             Err(wasmtime::Error::msg("permission denied"))

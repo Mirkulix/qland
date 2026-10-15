@@ -344,3 +344,10 @@ fn a_function_cannot_be_named_r() {
     assert_eq!((d.kind, d.hints[0].as_str()), ("duplicate_name", "`r` names the result inside `ens`; choose another function name"));
     assert_eq!(check_src("test r = true\nfn f(r: Int) -> Int = r"), vec![]);
 }
+
+#[test]
+fn builtins_used_as_values_say_so() {
+    let d = one("fn f(xs: List[Str]) -> List[Int] = map(xs, len)");
+    assert_eq!((d.kind, d.message.as_str()), ("unknown_name", "built-in `len` is not a value"));
+    assert_eq!(d.hints, ["built-in `len` cannot be used as a value; wrap it in a fn, e.g. `fn my_len(...) = len(...)`, and pass `my_len`"]);
+}

@@ -72,8 +72,9 @@ pub mod host {
     /// Every effect host function.
     pub const EFFECT_FNS: [&str; 6] = [PRINT, READ_LINE, READ_FILE, WRITE_FILE, NOW_MS, RAND_INT];
 
-    pub fn signature(name: &str) -> (&'static [ValType], &'static [ValType]) {
-        match name {
+    /// Parameter and result types of a host function (None for an unknown name).
+    pub fn signature(name: &str) -> Option<(&'static [ValType], &'static [ValType])> {
+        Some(match name {
             FAIL => (&[I32, I32, I32, I32], &[]),
             FLOAT_TO_STR => (&[F64], &[I32]),
             STR_TO_FLOAT => (&[I32], &[I32, F64]),
@@ -83,8 +84,8 @@ pub mod host {
             WRITE_FILE => (&[I32, I32], &[I32, I32]),
             NOW_MS => (&[], &[I64]),
             RAND_INT => (&[I64, I64], &[I64]),
-            _ => panic!("unknown host function `{name}`"),
-        }
+            _ => return None,
+        })
     }
 
     /// The effect a host function belongs to (None for `fail` and the pure helpers).
@@ -151,7 +152,9 @@ pub enum Entry {
     All,
 }
 
-pub fn compile(p: &TProgram, entry: &Entry) -> CompiledModule {
+/// Compiles the code reachable from `entry`. `p` must have passed the checker; an `Err` is an
+/// internal compiler error (a broken invariant), never a property of the program.
+pub fn compile(p: &TProgram, entry: &Entry) -> Result<CompiledModule, String> {
     let (fn_roots, with_tests): (Vec<usize>, bool) = match entry {
         Entry::Fn(name) => (p.fn_index(name).into_iter().collect(), false),
         Entry::Tests => (vec![], true),
@@ -165,8 +168,10 @@ pub fn compile(p: &TProgram, entry: &Entry) -> CompiledModule {
         walk(&p.tests[*t].body, &mut stack, &mut builtins);
     }
     while let Some(i) = stack.pop() {
+        let Some(f) = p.fns.get(i) else {
+            return Err(format!("internal compiler error: reference to function {i}, which does not exist"));
+        };
         if reached.insert(i) {
-            let f = &p.fns[i];
             for e in f.req.iter().chain(&f.ens).chain([&f.body]) {
                 walk(e, &mut stack, &mut builtins);
             }
@@ -235,7 +240,10 @@ pub fn compile(p: &TProgram, entry: &Entry) -> CompiledModule {
     for &i in &reached {
         let f = &p.fns[i];
         let (body, sites) = FnGen::new(&mut mb, meta, &fn_index, &f.locals, f.def.params.len()).fn_body(f);
-        mb.define(fn_index[i].expect("declared"), body);
+        match fn_index[i] {
+            Some(idx) => mb.define(idx, body),
+            None => mb.bug(format!("function `{}` was not declared", f.def.name)),
+        }
         metas[meta as usize].sites = sites;
         meta += 1;
     }
@@ -247,7 +255,8 @@ pub fn compile(p: &TProgram, entry: &Entry) -> CompiledModule {
         meta += 1;
     }
 
-    CompiledModule { wasm: mb.finish(&exports, &table), funcs: metas, types: p.types.clone(), imports }
+    let wasm = mb.finish(&exports, &table)?;
+    Ok(CompiledModule { wasm, funcs: metas, types: p.types.clone(), imports })
 }
 
 /// Collects called/referenced functions and used built-ins.

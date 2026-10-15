@@ -9,6 +9,7 @@ use crate::{host, MAX_PAGES, TAG_TABLE};
 use qal_core::ast::{Type, TypeBody};
 use qal_core::tast::TProgram;
 use std::borrow::Cow;
+use std::cell::RefCell;
 use std::collections::HashMap;
 use wasm_encoder::{
     BlockType, CodeSection, ConstExpr, DataSection, ElementSection, Elements, EntityType, ExportKind, ExportSection, Function,
@@ -41,14 +42,19 @@ pub struct Mb<'p> {
     eqs: HashMap<Type, u32>,
     strs: HashMap<String, u32>,
     data: Vec<u8>,
+    /// The first broken invariant met while generating code (an internal compiler error).
+    bug: RefCell<Option<String>>,
 }
 
 impl<'p> Mb<'p> {
     /// `imports`: host functions (names from `crate::host`) this module needs; `fail` must be among them.
     pub fn new(p: &'p TProgram, imports: &[&'static str]) -> Mb<'p> {
-        let mut mb = Mb { p, types: Vec::new(), imports: Vec::new(), funcs: Vec::new(), rt: HashMap::new(), eqs: HashMap::new(), strs: HashMap::new(), data: Vec::new() };
+        let mut mb = Mb { p, types: Vec::new(), imports: Vec::new(), funcs: Vec::new(), rt: HashMap::new(), eqs: HashMap::new(), strs: HashMap::new(), data: Vec::new(), bug: RefCell::new(None) };
         for name in imports {
-            let (params, results) = host::signature(name);
+            let Some((params, results)) = host::signature(name) else {
+                mb.bug(format!("unknown host function `{name}`"));
+                continue;
+            };
             let ty = mb.ty(params, results);
             mb.imports.push((name, ty));
         }
@@ -82,9 +88,23 @@ impl<'p> Mb<'p> {
         }
     }
 
+    /// Records an internal compiler error; `finish` then fails instead of returning a module.
+    pub fn bug(&self, message: impl Into<String>) {
+        let mut bug = self.bug.borrow_mut();
+        if bug.is_none() {
+            *bug = Some(message.into());
+        }
+    }
+
     /// Function index of an imported host function.
     pub fn import(&self, name: &str) -> u32 {
-        self.imports.iter().position(|(n, _)| *n == name).unwrap_or_else(|| panic!("host import `{name}` not declared")) as u32
+        match self.imports.iter().position(|(n, _)| *n == name) {
+            Some(i) => i as u32,
+            None => {
+                self.bug(format!("host import `{name}` not declared"));
+                0
+            }
+        }
     }
 
     /// Declares a function and returns its index; its body is supplied later with `define`.
@@ -95,7 +115,10 @@ impl<'p> Mb<'p> {
     }
 
     pub fn define(&mut self, index: u32, f: Function) {
-        self.funcs[index as usize - self.imports.len()].1 = Some(f);
+        match (index as usize).checked_sub(self.imports.len()).and_then(|i| self.funcs.get_mut(i)) {
+            Some(slot) => slot.1 = Some(f),
+            None => self.bug(format!("function index {index} is not declared")),
+        }
     }
 
     /// Index of a runtime-library helper, generating it on first use.
@@ -252,7 +275,7 @@ impl<'p> Mb<'p> {
     }
 
     /// Assembles the module. `exports`: (name, function index); `table`: function indices for `call_indirect`.
-    pub fn finish(mut self, exports: &[(String, u32)], table: &[u32]) -> Vec<u8> {
+    pub fn finish(mut self, exports: &[(String, u32)], table: &[u32]) -> Result<Vec<u8>, String> {
         let alloc = self.rt(Rt::Alloc);
         let mut types = TypeSection::new();
         for (p, r) in &self.types {
@@ -266,7 +289,15 @@ impl<'p> Mb<'p> {
         let mut codes = CodeSection::new();
         for (ty, body) in &self.funcs {
             functions.function(*ty);
-            codes.function(body.as_ref().expect("every declared function is defined"));
+            match body {
+                Some(f) => {
+                    codes.function(f);
+                }
+                None => {
+                    self.bug("a declared function has no body");
+                    codes.function(&Function::new([]));
+                }
+            }
         }
         let mut tables = TableSection::new();
         tables.table(TableType { element_type: RefType::FUNCREF, table64: false, minimum: table.len() as u64, maximum: Some(table.len() as u64), shared: false });
@@ -302,6 +333,9 @@ impl<'p> Mb<'p> {
             .section(&elements)
             .section(&codes)
             .section(&data);
-        module.finish()
+        match self.bug.take() {
+            Some(bug) => Err(format!("internal compiler error: {bug}")),
+            None => Ok(module.finish()),
+        }
     }
 }

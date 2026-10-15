@@ -75,7 +75,8 @@ pub fn is_entry_point(typed: &TProgram, name: &str) -> bool {
 impl Loaded {
     /// Compiles only the code reachable from `entry` and prepares a runner with `perms`.
     pub fn runner(&self, entry: &Entry, perms: Permissions) -> Runner {
-        Runner::new(qal_wasm::compile(&self.typed, entry)).expect("checked programs compile to valid wasm").with_permissions(perms)
+        // Task 4 turns both failures into a `compile_error` runtime error.
+        Runner::new(qal_wasm::compile(&self.typed, entry).expect("checked programs compile")).expect("checked programs compile to valid wasm").with_permissions(perms)
     }
 }
 

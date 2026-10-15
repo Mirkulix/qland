@@ -136,27 +136,39 @@ impl<'g, 'p> FnGen<'g, 'p> {
                 self.a.i(I::LocalSet(*id));
                 self.expr(body, tail);
             }
-            TKind::Seq(items) => {
-                let (last, init) = items.split_last().expect("non-empty sequence");
-                for x in init {
-                    self.expr(x, false);
-                    self.a.i(I::Drop);
+            TKind::Seq(items) => match items.split_last() {
+                Some((last, init)) => {
+                    for x in init {
+                        self.expr(x, false);
+                        self.a.i(I::Drop);
+                    }
+                    self.expr(last, tail);
                 }
-                self.expr(last, tail);
-            }
+                // An empty sequence is `()` (the checker types it as Unit).
+                None => self.a.i(I::I32Const(0)),
+            },
             TKind::Call(i, args) => {
                 for x in args {
                     self.expr(x, false);
                 }
-                let f = self.fn_index[*i].expect("callee is reachable");
-                self.a.i(if tail { I::ReturnCall(f) } else { I::Call(f) });
+                match self.fn_index.get(*i).copied().flatten() {
+                    Some(f) => self.a.i(if tail { I::ReturnCall(f) } else { I::Call(f) }),
+                    None => {
+                        self.m.bug(format!("callee {i} is not reachable"));
+                        self.a.i(I::Unreachable);
+                    }
+                }
             }
             TKind::CallIndirect(f, args) => {
                 for x in args {
                     self.expr(x, false);
                 }
                 self.expr(f, false);
-                let Type::Fn(ps, r, _) = &f.ty else { unreachable!("checked: callee is a function") };
+                let Type::Fn(ps, r, _) = &f.ty else {
+                    self.m.bug(format!("indirect callee of type {} is not a function", f.ty));
+                    self.a.i(I::Unreachable);
+                    return;
+                };
                 let params: Vec<ValType> = ps.iter().map(val).collect();
                 let type_index = self.m.ty(&params, &[val(r)]);
                 self.a.i(if tail { I::ReturnCallIndirect { type_index, table_index: 0 } } else { I::CallIndirect { type_index, table_index: 0 } });
@@ -204,8 +216,22 @@ impl<'g, 'p> FnGen<'g, 'p> {
 
     fn table_index(&self, fn_idx: usize) -> u32 {
         // Emitted fns occupy table slots in the same order as their wasm indices.
-        let wasm = self.fn_index[fn_idx].expect("referenced function is reachable");
+        let Some(wasm) = self.fn_index.get(fn_idx).copied().flatten() else {
+            self.m.bug(format!("referenced function {fn_idx} is not reachable"));
+            return 0;
+        };
         self.fn_index.iter().flatten().filter(|w| **w < wasm).count() as u32
+    }
+
+    /// Element representation of a list type.
+    fn elem(&self, t: &Type) -> Repr {
+        match t {
+            Type::List(x) => Repr::of(x),
+            other => {
+                self.m.bug(format!("list built-in applied to {other}"));
+                Repr::I64
+            }
+        }
     }
 
     fn alloc(&mut self, size: i64, into: u32) {
@@ -271,7 +297,7 @@ impl<'g, 'p> FnGen<'g, 'p> {
                 }
             }
             BinOp::Concat => self.call_rt(if l.ty == Type::Str { Rt::StrConcat } else { Rt::ListConcat }),
-            BinOp::And | BinOp::Or => unreachable!("handled above"),
+            BinOp::And | BinOp::Or => self.m.bug("`&&`/`||` reached the strict operators"),
         }
     }
 
@@ -280,10 +306,6 @@ impl<'g, 'p> FnGen<'g, 'p> {
         for x in args {
             self.expr(x, false);
         }
-        let elem = |t: &Type| match t {
-            Type::List(x) => Repr::of(x),
-            _ => unreachable!("checked: list argument"),
-        };
         match b {
             B::StrLen => self.call_rt(Rt::StrLen),
             B::ListLen => self.a.all([I::I32Load(m32(0)), I::I64ExtendI32U]),
@@ -319,9 +341,9 @@ impl<'g, 'p> FnGen<'g, 'p> {
                 self.call_rt(Rt::ListPush);
             }
             B::Concat => self.call_rt(Rt::ListConcat),
-            B::Map => self.call_rt(Rt::Map(elem(&args[0].ty), elem(ret))),
-            B::Filter => self.call_rt(Rt::Filter(elem(&args[0].ty))),
-            B::Fold => self.call_rt(Rt::Fold(Repr::of(ret), elem(&args[0].ty))),
+            B::Map => self.call_rt(Rt::Map(self.elem(&args[0].ty), self.elem(ret))),
+            B::Filter => self.call_rt(Rt::Filter(self.elem(&args[0].ty))),
+            B::Fold => self.call_rt(Rt::Fold(Repr::of(ret), self.elem(&args[0].ty))),
             B::Range => self.call_rt(Rt::ListRange),
             B::Reverse => self.call_rt(Rt::ListReverse),
             B::SortInt => self.call_rt(Rt::ListSortInt),
