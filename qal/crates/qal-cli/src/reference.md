@@ -48,7 +48,7 @@ Built-ins (indices count characters; slice and range are half-open: the end is e
   Map  map_new() map_put(m, k, v) map_get(m, k) -> Option[V] map_del(m, k) map_has(m, k) map_size(m) map_keys(m) map_values(m)
   Bytes to_bytes(s) bytes_len(b) bytes_get(b, i) -> Option[Int] bytes_slice(b, from, to) bytes_from(xs) (0..=255) bytes_to_list(b) bytes_to_str(b) -> Option[Str]  b1 ++ b2
   Num  int_to_float(n)  float_to_int(x) -> Option[Int]   compare(a, b) -> Int: -1, 0 or 1 for any two values without functions
-       (Str bytewise, lists/records/variants in order): sort any list with it
+       (Str bytewise, lists/records/variants in order): write your own sort (e.g. merge sort) with it
   Sys  print(s) !io (writes s and a newline)  read_line() -> Option[Str] !io (next line without its `\n` or `\r\n`; None at end)
        read_all() -> Str !io (all remaining input including `\r`; "" at end; invalid UTF-8 becomes U+FFFD, as in read_line)
        read_file(path) -> Result[Str, Str] !fs  write_file(path, text) -> Result[Unit, Str] !fs  now_ms() -> Int !time  rand_int(lo, hi) -> Int !rand (both ends included; lo <= hi, else contract_violation)

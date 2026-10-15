@@ -9,7 +9,7 @@
 //! type at every level.
 
 use qal_core::ast::Type;
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 
 /// Maximum nesting depth of an inferred type.
 pub const MAX_TYPE_DEPTH: u32 = 256;
@@ -194,6 +194,11 @@ impl Subst {
         self.unify_in(expected, found, false)
     }
 
+    /// Makes `a` and `b` equal, effects of function types included (as sets).
+    pub fn unify_exact(&mut self, a: &Type, b: &Type) -> bool {
+        self.unify_in(a, b, true)
+    }
+
     /// Unification visits every node of both types once: an invariant position is unified once in
     /// `exact` mode (equal effect sets), not once in each direction, which would cost 2^depth for
     /// nested type applications such as `B[B[B[Int]]]`.
@@ -235,6 +240,41 @@ impl Subst {
             Type::Fn(ps, r, _) => ps.iter().any(Self::has_vars) || Self::has_vars(r),
             _ => false,
         }
+    }
+
+    /// The least type both `a` and `b` can be used as (`covariant`), or the greatest type usable as
+    /// both (`!covariant`, for function parameters): function types join their effects (union, or
+    /// intersection for parameters) through List/Option/Result/Map and function results and
+    /// parameters; every other position is unified exactly. So `if c then fn() => () else p` with
+    /// `p: fn() -> Unit !io` has the type of `p` whichever branch comes first. None if the types
+    /// do not fit together (bindings made so far are kept, as for `unify`).
+    pub fn join(&mut self, a: &Type, b: &Type, covariant: bool) -> Option<Type> {
+        let (ra, rb) = (self.resolve(a), self.resolve(b));
+        Some(match (&ra, &rb) {
+            (Type::List(x), Type::List(y)) => Type::list(self.join(x, y, covariant)?),
+            (Type::Option(x), Type::Option(y)) => Type::option(self.join(x, y, covariant)?),
+            (Type::Result(a1, b1), Type::Result(a2, b2)) => Type::result(self.join(a1, a2, covariant)?, self.join(b1, b2, covariant)?),
+            (Type::Map(a1, b1), Type::Map(a2, b2)) => Type::map(self.join(a1, a2, covariant)?, self.join(b1, b2, covariant)?),
+            (Type::Fn(p1, r1, e1), Type::Fn(p2, r2, e2)) if p1.len() == p2.len() => {
+                let mut ps = Vec::with_capacity(p1.len());
+                for (x, y) in p1.iter().zip(p2) {
+                    ps.push(self.join(x, y, !covariant)?);
+                }
+                let r = self.join(r1, r2, covariant)?;
+                let effs: Vec<String> = if covariant {
+                    e1.iter().chain(e2).collect::<BTreeSet<_>>().into_iter().cloned().collect()
+                } else {
+                    e1.iter().filter(|e| e2.contains(e)).collect::<BTreeSet<_>>().into_iter().cloned().collect()
+                };
+                Type::Fn(ps, Box::new(r), effs)
+            }
+            _ => {
+                if !self.unify_exact(&ra, &rb) {
+                    return None;
+                }
+                ra
+            }
+        })
     }
 }
 

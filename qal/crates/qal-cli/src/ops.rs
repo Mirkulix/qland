@@ -528,7 +528,11 @@ fn find_fn(ctx: &Ctx, source: &Source, loaded: &Loaded, name: &str) -> Result<()
     if loaded.typed.fn_index(name).is_some() {
         return Ok(());
     }
-    let mut e = RunError::new("unknown_function", name, format!("no function `{name}`"));
+    // A generic function already has its hint.
+    let mut e = crate::no_function(&loaded.typed, name);
+    if !e.hints.is_empty() {
+        return Err(e);
+    }
     if loaded.typed.tests.iter().any(|t| t.name == name) {
         e.message = format!("`{name}` is a test, not a function");
         e.hints.push(if ctx.is_mcp() { format!("run it with `qal_test` and names [\"{name}\"]") } else { format!("run it with `qal test {name}`") });

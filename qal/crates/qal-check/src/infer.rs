@@ -117,6 +117,40 @@ impl<'a> Cx<'a> {
         t
     }
 
+    /// Checks one of several expressions whose values share a type (if branches, list items, match
+    /// arms) against `acc`, the type of the ones before, and returns it with their joined type:
+    /// function types join their effects, so the order of the branches does not matter.
+    fn branch(&mut self, e: &Expr, acc: &Type, path: &str) -> (TExpr, Type) {
+        let t = match e {
+            Expr::Lambda(params, body) => self.lambda_against(params, body, acc, path),
+            _ => self.infer(e, path),
+        };
+        let joined = self.sub.join(acc, &t.ty, true);
+        let limits = self.sub.too_deep || self.sub.too_large;
+        match joined {
+            // The joined type is a supertype of both (checked again, cheaply).
+            Some(j) if !limits && self.sub.unify(&j, acc) && self.sub.unify(&j, &t.ty) => {
+                let j = self.wrap_at(path, j);
+                (t, j)
+            }
+            _ => {
+                if limits || !self.sub.unify(acc, &t.ty) || self.sub.too_deep || self.sub.too_large {
+                    self.mismatch(path, acc, &t.ty);
+                }
+                (t, acc.clone())
+            }
+        }
+    }
+
+    /// A variable bound to `t` (see `Subst::wrap`); reports at `path` if `t` exceeds a type limit.
+    fn wrap_at(&mut self, path: &str, t: Type) -> Type {
+        let v = self.sub.fresh();
+        if !self.sub.unify(&v, &t) {
+            self.mismatch(path, &v, &t);
+        }
+        v
+    }
+
     #[inline(never)]
     fn lambda_against(&mut self, params: &[(String, Option<Type>)], body: &Expr, want: &Type, path: &str) -> TExpr {
         match self.sub.resolve(want) {
@@ -175,8 +209,8 @@ impl<'a> Cx<'a> {
             Expr::If(c, t, f) => {
                 let c = self.expect(c, &Type::Bool, &format!("{path}.cond"));
                 let t = self.infer(t, &format!("{path}.then"));
-                let f = self.expect(f, &t.ty, &format!("{path}.else"));
-                (t.ty.clone(), TKind::If(Box::new(c), Box::new(t), Box::new(f)))
+                let (f, ty) = self.branch(f, &t.ty, &format!("{path}.else"));
+                (ty, TKind::If(Box::new(c), Box::new(t), Box::new(f)))
             }
             Expr::Let(name, ann, v, body) => {
                 let ann = ann.as_ref().and_then(|t| resolve_type(self.g, t, self.tps, self.def, &format!("{path}.type"), self.diags));
@@ -191,10 +225,19 @@ impl<'a> Cx<'a> {
                 (b.ty.clone(), TKind::Let(id, Box::new(v), Box::new(b)))
             }
             Expr::List(items) => {
+                // The list type is built first so that its depth is checked where an item makes it too deep.
                 let elem = self.sub.fresh();
                 let ty = self.sub.wrap(Type::list(elem.clone()));
-                let items: Vec<TExpr> = items.iter().enumerate().map(|(i, x)| self.expect(x, &elem, &format!("{path}.items[{i}]"))).collect();
-                (ty, TKind::List(items))
+                let mut acc = elem.clone();
+                let mut out = Vec::with_capacity(items.len());
+                for (i, x) in items.iter().enumerate() {
+                    let (x, joined) = self.branch(x, &acc, &format!("{path}.items[{i}]"));
+                    acc = joined;
+                    out.push(x);
+                }
+                // Joined function effects make a new element type (no deeper than the first one).
+                let ty = if acc == elem { ty } else { self.wrap_at(path, Type::list(acc)) };
+                (ty, TKind::List(out))
             }
             // Only built by hand (the parser needs at least one item): evaluates to `()`.
             Expr::Seq(items) if items.is_empty() => (Type::Unit, TKind::Unit),
@@ -493,7 +536,7 @@ impl<'a> Cx<'a> {
 
     fn match_expr(&mut self, s: &Expr, arms: &[Arm], path: &str) -> TExpr {
         let s = self.infer(s, &format!("{path}.scrutinee"));
-        let result = self.sub.fresh();
+        let mut result = self.sub.fresh();
         let mut tarms = Vec::new();
         let mut rows = Vec::new();
         for (i, a) in arms.iter().enumerate() {
@@ -501,7 +544,8 @@ impl<'a> Cx<'a> {
             let mut bound = Vec::new();
             let pat = self.pattern(&a.pat, &s.ty, &format!("{path}.arms[{i}].pattern"), &mut bound);
             let guard = a.guard.as_ref().map(|g| self.expect(g, &Type::Bool, &format!("{path}.arms[{i}].guard")));
-            let body = self.expect(&a.body, &result, &format!("{path}.arms[{i}].body"));
+            let (body, joined) = self.branch(&a.body, &result, &format!("{path}.arms[{i}].body"));
+            result = joined;
             self.scope.truncate(depth);
             if guard.is_none() {
                 rows.push(pat.clone());

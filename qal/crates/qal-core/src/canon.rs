@@ -1434,6 +1434,9 @@ struct Dec<'b> {
     scope: Vec<String>,
     /// Type parameters of the member being decoded.
     tparams: Vec<String>,
+    /// Indices of the type parameters read so far, in order (checked for a generic function's
+    /// parameter and result types).
+    tparam_uses: Vec<usize>,
     /// Format version of the form (1 or 2), and whether a version 2 construct was read.
     version: u8,
     saw_v2: bool,
@@ -1464,6 +1467,7 @@ impl<'b> Dec<'b> {
             next_name: 0,
             scope: Vec::new(),
             tparams: Vec::new(),
+            tparam_uses: Vec::new(),
             version: 1,
             saw_v2: false,
         }
@@ -1688,6 +1692,7 @@ impl<'b> Dec<'b> {
             T_PARAM => {
                 self.v2()?;
                 let i = self.index()?;
+                self.tparam_uses.push(i);
                 Type::Named(self.tparams.get(i).cloned().ok_or_else(|| format!("type parameter {i} out of range"))?)
             }
             T_MAP => {
@@ -1995,8 +2000,23 @@ impl<'b> Dec<'b> {
             }),
             1 => {
                 let n = self.count()?;
+                self.tparam_uses.clear();
                 let tys = (0..n).map(|_| self.ty(name, name_of)).collect::<R<Vec<_>>>()?;
                 let ret = self.ty(name, name_of)?;
+                // A generic function's type parameters are numbered by first occurrence in the
+                // parameter and result types (`fn_tparams`), and all occur: otherwise reordering
+                // them would give a second encoding of the same definition.
+                if !tparams.is_empty() {
+                    let mut first: Vec<usize> = Vec::new();
+                    for &i in &self.tparam_uses {
+                        if !first.contains(&i) {
+                            first.push(i);
+                        }
+                    }
+                    if !first.iter().copied().eq(0..tparams.len()) {
+                        return Err("type parameters of a generic function out of first-occurrence order (not canonical)".into());
+                    }
+                }
                 let effects = self.effects()?;
                 let mut params = Vec::with_capacity(n.min(16));
                 for ty in tys {
@@ -2225,6 +2245,33 @@ mod tests {
         assert!(dec(&v1, &["b".into()]).is_ok());
         v1[4] = 3;
         assert!(dec(&v1, &["b".into()]).unwrap_err().contains("unsupported"));
+    }
+
+    #[test]
+    fn generic_function_type_parameters_must_be_in_first_occurrence_order() {
+        // fn k[A, B](a: A, b: B) -> A = a: A is parameter 0, B parameter 1 (review finding M1).
+        let ty = |n: &str| Type::Named(n.into());
+        let k = Def::Fn(FnDef {
+            name: "k".into(),
+            tparams: vec!["A".into(), "B".into()],
+            params: vec![Param { name: "a".into(), ty: ty("A") }, Param { name: "b".into(), ty: ty("B") }],
+            ret: ty("A"),
+            effects: vec![],
+            req: vec![],
+            ens: vec![],
+            body: Expr::Var("a".into()),
+        });
+        let c = &by_name(&Program { defs: vec![k.clone()] })["k"];
+        let dec = |bytes: &[u8]| decode(Form::new(bytes, None), "k", &c.local_names, &mut |_| String::new());
+        assert_eq!(dec(&c.canonical).unwrap(), k);
+        // Swapping the indices gives `fn k[A, B](a: B, b: A) -> B`: the same definition, other bytes.
+        let at: Vec<usize> = (0..c.canonical.len() - 1).filter(|&i| c.canonical[i] == T_PARAM && c.canonical[i + 1] <= 1).collect();
+        assert_eq!(at.len(), 3, "{:?}", c.canonical);
+        let mut swapped = c.canonical.clone();
+        for i in at {
+            swapped[i + 1] ^= 1;
+        }
+        assert!(dec(&swapped).unwrap_err().contains("not canonical"));
     }
 
     #[test]

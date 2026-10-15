@@ -132,10 +132,31 @@ pub fn permissions(split: &Split) -> Result<Permissions, String> {
     Permissions::parse(&spec)
 }
 
+/// The error for calling fn `name` that is not in `typed.fns`: a generic function cannot be called
+/// directly (only its instances are compiled); the hint shows a monomorphic wrapper.
+pub fn no_function(typed: &TProgram, name: &str) -> RunError {
+    let mut e = RunError::new("unknown_function", name, format!("no function `{name}`"));
+    if let Some(g) = typed.generics.iter().find(|f| f.def.name == name) {
+        let tps = &g.def.tparams;
+        let ints = vec![Type::Int; tps.len()];
+        let params: Vec<String> = g.def.params.iter().zip(&g.locals).map(|(p, t)| format!("{}: {}", p.name, t.instantiate(tps, &ints))).collect();
+        let args: Vec<&str> = g.def.params.iter().map(|p| p.name.as_str()).collect();
+        let effects: String = g.def.effects.iter().map(|e| format!(" !{e}")).collect();
+        e.message = format!("`{name}` is generic ([{}]) and cannot be called directly", tps.join(", "));
+        e.hints.push(format!(
+            "call it from a monomorphic wrapper with concrete types, e.g. `fn call_{name}({}) -> {}{effects} = {name}({})`, then call `call_{name}`",
+            params.join(", "),
+            g.body.ty.instantiate(tps, &ints),
+            args.join(", ")
+        ));
+    }
+    e
+}
+
 /// Converts CLI strings to values according to the signature of fn `name` (Int, Float, Bool, Unit, Str).
 pub fn parse_args(typed: &TProgram, name: &str, raw: &[String]) -> Result<Vec<Value>, RunError> {
     let bad = |message: String| RunError::new("bad_args", name, message);
-    let f = typed.fns.iter().find(|f| f.def.name == name).ok_or_else(|| RunError::new("unknown_function", name, format!("no function `{name}`")))?;
+    let f = typed.fns.iter().find(|f| f.def.name == name).ok_or_else(|| no_function(typed, name))?;
     if f.def.params.len() != raw.len() {
         return Err(bad(format!("`{name}` takes {} argument(s), {} given", f.def.params.len(), raw.len())));
     }
@@ -166,7 +187,7 @@ pub fn parse_args(typed: &TProgram, name: &str, raw: &[String]) -> Result<Vec<Va
 /// for List and Bytes, `[[key, value], ...]` for Map, objects for records, `"None"` / `{"Some": [3]}`
 /// for variants.
 pub fn json_args(typed: &TProgram, name: &str, raw: &[serde_json::Value]) -> Result<Vec<Value>, RunError> {
-    let f = typed.fns.iter().find(|f| f.def.name == name).ok_or_else(|| RunError::new("unknown_function", name, format!("no function `{name}`")))?;
+    let f = typed.fns.iter().find(|f| f.def.name == name).ok_or_else(|| no_function(typed, name))?;
     if f.def.params.len() != raw.len() {
         return Err(RunError::new("bad_args", name, format!("`{name}` takes {} argument(s), {} given", f.def.params.len(), raw.len())));
     }
@@ -264,5 +285,19 @@ mod tests {
         assert_eq!(json_args(&l.typed, "g", &[json!({"y": 1})]).unwrap_err().message, "`p`: P has no field `y`");
         assert!(json_args(&l.typed, "f", &[]).unwrap_err().message.contains("takes 6 argument(s), 0 given"));
         assert_eq!(json_args(&l.typed, "h", &[]).unwrap_err().kind, "unknown_function");
+    }
+
+    #[test]
+    fn calling_a_generic_function_explains_how() {
+        // Review finding M3: `qal_call` on a stored generic function said it does not exist.
+        let l = load("type Pair[A, B] = { fst: A, snd: B }\nfn swap[A, B](p: Pair[A, B]) -> Pair[B, A] = Pair { fst: p.snd, snd: p.fst }").unwrap();
+        for e in [json_args(&l.typed, "swap", &[]).unwrap_err(), parse_args(&l.typed, "swap", &[]).unwrap_err()] {
+            assert_eq!((e.kind, e.message.as_str()), ("unknown_function", "`swap` is generic ([A, B]) and cannot be called directly"));
+            assert_eq!(
+                e.hints,
+                ["call it from a monomorphic wrapper with concrete types, e.g. `fn call_swap(p: Pair[Int, Int]) -> Pair[Int, Int] = swap(p)`, then call `call_swap`"]
+            );
+        }
+        assert_eq!(json_args(&l.typed, "nosuch", &[]).unwrap_err().message, "no function `nosuch`");
     }
 }

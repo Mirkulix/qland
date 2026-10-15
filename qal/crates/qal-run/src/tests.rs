@@ -617,7 +617,10 @@ fn bytes_hold_any_bytes() {
     let e = r.call("bad", &[Value::Int(256)]).unwrap_err();
     assert_eq!((e.kind, e.contract.as_deref()), ("contract_violation", Some("bytes_from: req 0 <= x <= 255")));
     assert_eq!(serde_json::to_value(&e.values).unwrap(), json!({"x": 256}));
-    assert_eq!(r.call("cut", &[Value::Int(3)]).unwrap_err().kind, "index");
+    let e = r.call("cut", &[Value::Int(3)]).unwrap_err();
+    assert_eq!(e.kind, "index");
+    // Review finding M5: the hint talks about bytes, not characters.
+    assert_eq!(e.hints, ["valid byte indices satisfy 0 <= start <= end <= bytes_len(b)"]);
     assert_eq!(r.call("raw", &[]), Ok(Value::Bytes(vec![0, 255], 0)));
 }
 

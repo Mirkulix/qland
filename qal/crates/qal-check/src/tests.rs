@@ -639,3 +639,39 @@ fn strongly_connected_components() {
     let ring: Vec<Vec<usize>> = (0..200_000).map(|i| vec![(i + 1) % 200_000]).collect();
     assert!(crate::scc(&ring).iter().all(|&x| x == 0));
 }
+
+#[test]
+fn branches_and_list_items_join_function_effects() {
+    // Review finding M2: the type of the first branch or item used to be the expected one.
+    let p = "fn p() -> Unit !io = print(\"x\")\n";
+    for body in [
+        "if b then fn() => () else p",
+        "if b then p else fn() => ()",
+        "match b { true => fn() => (), false => p }",
+        "match b { true => p, false => fn() => () }",
+    ] {
+        assert_eq!(check_src(&format!("{p}fn f(b: Bool) -> fn() -> Unit !io = {body}")), vec![], "{body}");
+        // The joined type keeps the effect: calling it needs `!io`.
+        let d = one(&format!("{p}fn f(b: Bool) -> Unit = let g = {body} in g()"));
+        assert_eq!(d.kind, "effect_violation", "{body}");
+    }
+    for items in ["[fn() => (), fn() => print(\"x\")]", "[fn() => print(\"x\"), fn() => ()]", "[fn() => (), p, fn() => ()]"] {
+        assert_eq!(check_src(&format!("{p}fn f() -> List[fn() -> Unit !io] = {items}")), vec![], "{items}");
+        let d = one(&format!("{p}fn f() -> Unit = match get({items}, 0) {{ Some(g) => g(), None => () }}"));
+        assert_eq!(d.kind, "effect_violation", "{items}");
+    }
+    // Nested in containers too.
+    assert_eq!(check_src(&format!("{p}fn f(b: Bool) -> Option[fn() -> Unit !io] = if b then Some(fn() => ()) else Some(p)")), vec![]);
+    // Parameters meet: a function that may get an io callback and one that only takes pure ones
+    // join to a function that takes only pure callbacks.
+    let src = format!("{p}fn f(b: Bool) -> Unit = let h = if b then fn(g: fn() -> Unit !io) => () else fn(g: fn() -> Unit) => () in h(p)");
+    assert_eq!(one(&src).kind, "type_mismatch");
+    assert_eq!(check_src(&src.replace("h(p)", "h(fn() => ())")), vec![]);
+    // Generic type arguments stay invariant (a type parameter may be used as a parameter type).
+    let boxed = format!("type Box[T] = {{ v: T }}\n{p}fn f(b: Bool) -> Box[fn() -> Unit !io] = if b then Box {{ v: fn() => () }} else Box {{ v: p }}");
+    let d = check_src(&boxed);
+    assert!(!d.is_empty() && d.iter().all(|d| d.kind == "type_mismatch"), "{d:#?}");
+    // Other mismatches are still reported at the later branch.
+    let d = one("fn f(b: Bool) -> Int = if b then 1 else \"s\"");
+    assert_eq!((d.kind, d.path.as_str()), ("type_mismatch", "body.else"));
+}

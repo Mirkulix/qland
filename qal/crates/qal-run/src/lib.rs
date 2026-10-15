@@ -481,8 +481,11 @@ impl Runner {
                 .hint("check the operand range before the operation"),
             FAIL_DIV_ZERO => RunError::new("div_by_zero", def, format!("division by zero in `{}`", site.label))
                 .hint("check the divisor first, e.g. `if b == 0 then ... else a / b`"),
-            FAIL_INDEX => RunError::new("index", def, format!("`{}` index out of range", site.label))
-                .hint("valid character indices satisfy 0 <= start <= end <= len(s)"),
+            FAIL_INDEX => RunError::new("index", def, format!("`{}` index out of range", site.label)).hint(if site.label == "bytes_slice" {
+                "valid byte indices satisfy 0 <= start <= end <= bytes_len(b)"
+            } else {
+                "valid character indices satisfy 0 <= start <= end <= len(s)"
+            }),
             FAIL_BUILTIN => {
                 let mut e = RunError::new("contract_violation", def, format!("precondition of a built-in was violated: `{}`", site.label));
                 e.contract = Some(site.label.clone());
