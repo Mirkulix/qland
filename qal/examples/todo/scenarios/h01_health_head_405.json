@@ -1,0 +1,101 @@
+{
+ "name": "h01_health_head_405",
+ "description": "health variants",
+ "steps": [
+  {
+   "name": "health",
+   "request": {
+    "method": "GET",
+    "path": "/health"
+   },
+   "expect": {
+    "status": 200,
+    "json": {
+     "ok": true
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "HEAD health",
+   "request": {
+    "method": "HEAD",
+    "path": "/health"
+   },
+   "expect": {
+    "status": 200,
+    "body": "",
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "POST health",
+   "request": {
+    "method": "POST",
+    "path": "/health"
+   },
+   "expect": {
+    "status": 405,
+    "json": {
+     "error": {
+      "code": "method_not_allowed",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "allow": "GET, HEAD",
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "DELETE health",
+   "request": {
+    "method": "DELETE",
+    "path": "/health"
+   },
+   "expect": {
+    "status": 405,
+    "json": {
+     "error": {
+      "code": "method_not_allowed",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "allow": "GET, HEAD",
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "health trailing slash",
+   "request": {
+    "method": "GET",
+    "path": "/health/"
+   },
+   "expect": {
+    "status": 404,
+    "json": {
+     "error": {
+      "code": "not_found",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  }
+ ]
+}

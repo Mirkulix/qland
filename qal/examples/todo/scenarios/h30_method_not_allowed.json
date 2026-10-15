@@ -1,0 +1,182 @@
+{
+ "name": "h30_method_not_allowed",
+ "description": "405 with allow",
+ "steps": [
+  {
+   "name": "PUT /todos",
+   "request": {
+    "method": "PUT",
+    "path": "/todos"
+   },
+   "expect": {
+    "status": 405,
+    "json": {
+     "error": {
+      "code": "method_not_allowed",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "allow": "GET, HEAD, POST",
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "DELETE /todos",
+   "request": {
+    "method": "DELETE",
+    "path": "/todos"
+   },
+   "expect": {
+    "status": 405,
+    "json": {
+     "error": {
+      "code": "method_not_allowed",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "allow": "GET, HEAD, POST",
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "PATCH /todos",
+   "request": {
+    "method": "PATCH",
+    "path": "/todos"
+   },
+   "expect": {
+    "status": 405,
+    "json": {
+     "error": {
+      "code": "method_not_allowed",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "allow": "GET, HEAD, POST",
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "OPTIONS /todos",
+   "request": {
+    "method": "OPTIONS",
+    "path": "/todos"
+   },
+   "expect": {
+    "status": 405,
+    "json": {
+     "error": {
+      "code": "method_not_allowed",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "allow": "GET, HEAD, POST",
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "PUT /todos/1",
+   "request": {
+    "method": "PUT",
+    "path": "/todos/1"
+   },
+   "expect": {
+    "status": 405,
+    "json": {
+     "error": {
+      "code": "method_not_allowed",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "allow": "DELETE, GET, HEAD, PATCH",
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "POST /todos/1",
+   "request": {
+    "method": "POST",
+    "path": "/todos/1"
+   },
+   "expect": {
+    "status": 405,
+    "json": {
+     "error": {
+      "code": "method_not_allowed",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "allow": "DELETE, GET, HEAD, PATCH",
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "PUT /todos/abc (route before id)",
+   "request": {
+    "method": "PUT",
+    "path": "/todos/abc"
+   },
+   "expect": {
+    "status": 405,
+    "json": {
+     "error": {
+      "code": "method_not_allowed",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "allow": "DELETE, GET, HEAD, PATCH",
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "lowercase method",
+   "request": {
+    "method": "get",
+    "path": "/health"
+   },
+   "expect": {
+    "status": 405,
+    "json": {
+     "error": {
+      "code": "method_not_allowed",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "allow": "GET, HEAD",
+     "content-type": "application/json"
+    }
+   }
+  }
+ ]
+}

@@ -1,0 +1,56 @@
+{
+ "name": "h04_first_id_is_1_and_location",
+ "description": "first id in a fresh database is 1",
+ "steps": [
+  {
+   "name": "create",
+   "request": {
+    "method": "POST",
+    "path": "/todos",
+    "json": {
+     "title": "x"
+    }
+   },
+   "expect": {
+    "status": 201,
+    "json": {
+     "id": 1,
+     "title": "x",
+     "done": false,
+     "created_at": {
+      "$type": "int"
+     }
+    },
+    "headers": {
+     "location": "/todos/1",
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "create 2",
+   "request": {
+    "method": "POST",
+    "path": "/todos",
+    "json": {
+     "title": "y"
+    }
+   },
+   "expect": {
+    "status": 201,
+    "json": {
+     "id": 2,
+     "title": "y",
+     "done": false,
+     "created_at": {
+      "$type": "int"
+     }
+    },
+    "headers": {
+     "location": "/todos/2",
+     "content-type": "application/json"
+    }
+   }
+  }
+ ]
+}
