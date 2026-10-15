@@ -16,6 +16,8 @@
 //!   qal query [--name <prefix>] [--type <pattern>] [--uses <name|#hash>]
 //!                                                    -> {"results":[{name,kind,hash,signature,effects}]}
 //!   qal rename <old> <new> [--agent <name>]          -> {"renamed":{name,kind,hash}}
+//!   qal delete <name>... [--agent <name>]           -> {"deleted":[{name,kind,hash}]} | {"diagnostics":[...]} (E0406 has_dependents:
+//!                                                       names other stored definitions refer to; all or nothing)
 //!   qal history <name>                               -> {"history":[{action,name,from_name?,to_name?,old_hash?,new_hash,agent,at}]}
 //!   qal build <name>                                 -> {"built":{name,hash,wasm,manifest,effects,bytes}} (paths relative to the project)
 //!   qal export <prefix> --out <file> [--name <pkg>]  -> {"exported":{package,hash,defs,file}} (names with the prefix and their dependencies)
@@ -57,7 +59,7 @@ use std::process::ExitCode;
 use std::sync::Arc;
 
 const USAGE: &str = "usage: qal <check|fmt> <file>\n       \
-                     qal init [--std] | define <file> [--agent <name>] | view <name>... | rename <old> <new> [--agent <name>] | history <name> | build <name>\n       \
+                     qal init [--std] | define <file> [--agent <name>] | view <name>... | rename <old> <new> [--agent <name>] | delete <name>... [--agent <name>] | history <name> | build <name>\n       \
                      qal export <prefix> --out <file> [--name <pkg>] | import <file>\n       \
                      qal query [--name <prefix>] [--type <pattern>] [--uses <name>]\n       \
                      qal call <file> [--allow <spec>] <fn> [args...] | call <fn> [--allow <spec>] [args...]\n       \
@@ -94,7 +96,7 @@ fn main() -> ExitCode {
     let rest = &args[1..];
     match cmd.as_str() {
         "check" | "fmt" => file_command(cmd, rest),
-        "init" | "define" | "view" | "query" | "rename" | "history" | "build" | "export" | "import" => store_command(cmd, rest),
+        "init" | "define" | "view" | "query" | "rename" | "delete" | "history" | "build" | "export" | "import" => store_command(cmd, rest),
         "call" | "test" | "run" => run_command(cmd, rest),
         "prove" => prove_command(rest),
         "mcp" => mcp(rest),
@@ -158,7 +160,7 @@ fn store_command(cmd: &str, args: &[String]) -> ExitCode {
         return init(true);
     }
     let options: &[&str] = match cmd {
-        "define" | "rename" => &["agent"],
+        "define" | "rename" | "delete" => &["agent"],
         "query" => &["name", "type", "uses"],
         "export" => &["out", "name"],
         _ => &[],
@@ -189,6 +191,7 @@ fn store_command(cmd: &str, args: &[String]) -> ExitCode {
         }
         ("rename", [old, new]) => with_ctx(|c| ops::rename(c, old, new, agent)),
         ("history", [name]) => with_ctx(|c| ops::history(c, name)),
+        ("delete", names) if !names.is_empty() => with_ctx(|c| ops::delete(c, names, agent)),
         ("build", [name]) => with_ctx(|c| ops::build(c, name)),
         ("export", [prefix]) => match s.one("out") {
             Some(out) => with_ctx(|c| ops::export(c, prefix, std::path::Path::new(out), s.one("name"))),

@@ -123,7 +123,7 @@ fn handshake_lists_the_tools_with_the_language_reference() {
     assert_eq!(c.request("ping", json!({}))["result"], json!({}));
     let tools = c.request("tools/list", json!({}))["result"]["tools"].clone();
     let names: Vec<&str> = tools.as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap()).collect();
-    assert_eq!(names, ["qal_define", "qal_test", "qal_prove", "qal_run", "qal_call", "qal_request", "qal_view", "qal_query", "qal_rename", "qal_history", "qal_build"]);
+    assert_eq!(names, ["qal_define", "qal_test", "qal_prove", "qal_run", "qal_call", "qal_request", "qal_view", "qal_query", "qal_rename", "qal_delete", "qal_history", "qal_build"]);
     for t in tools.as_array().unwrap() {
         assert_eq!(t["inputSchema"]["type"], "object", "{t}");
         assert!(!t["description"].as_str().unwrap().is_empty());
@@ -652,5 +652,24 @@ fn a_projects_first_write_imports_the_std_package() {
     assert!(err && v["diagnostics"][0]["code"] == "E0240" && v["diagnostics"][0]["kind"] == "reserved_name", "{v}");
     let (err, v) = c.call("qal_rename", json!({"old": "g", "new": "std.json.g"}));
     assert!(err && v["diagnostics"][0]["code"] == "E0240", "{v}");
+    assert_eq!(c.finish(), Some(0));
+}
+
+#[test]
+fn agents_delete_names_nothing_refers_to() {
+    let mut c = Client::start();
+    c.initialize();
+    assert!(!c.call("qal_define", json!({"source": "fn f(x: Int) -> Int = g(x)\nfn g(x: Int) -> Int = if x <= 0 then 0 else f(x - 1)\nfn h() -> Int = f(1)"})).0);
+    let (err, v) = c.call("qal_delete", json!({"name": "f"}));
+    assert!(err && v["diagnostics"][0]["kind"] == "has_dependents", "{v}");
+    let (err, v) = c.call("qal_delete", json!({"name": "h", "agent": "cleaner"}));
+    assert!(!err && v["deleted"][0]["name"] == "h", "{v}");
+    // A mutually recursive group goes together.
+    let (err, v) = c.call("qal_delete", json!({"name": "f", "with": ["g"]}));
+    assert!(!err && v["deleted"].as_array().map(Vec::len) == Some(2), "{v}");
+    let (_, v) = c.call("qal_history", json!({"name": "h"}));
+    assert_eq!((v["history"][1]["action"].as_str(), v["history"][1]["agent"].as_str()), (Some("deleted"), Some("cleaner")));
+    let (err, v) = c.call("qal_delete", json!({"name": "std.json.parse"}));
+    assert!(err && v["diagnostics"][0]["kind"] == "unknown_name", "{v}");
     assert_eq!(c.finish(), Some(0));
 }

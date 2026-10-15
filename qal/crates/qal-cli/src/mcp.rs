@@ -424,6 +424,11 @@ impl Server {
             "qal_build" => ops::build(&ctx, &a.required("entry")?),
             "qal_rename" => ops::rename(&ctx, &a.required("old")?, &a.required("new")?, &agent(&a)?),
             "qal_history" => ops::history(&ctx, &a.required("name")?),
+            "qal_delete" => {
+                let mut names = vec![a.required("name")?];
+                names.extend(a.names("with")?);
+                ops::delete(&ctx, &names, &agent(&a)?)
+            }
             "qal_request" => {
                 let handler = a.string("handler")?.unwrap_or_else(|| "handle".into());
                 let perms = perms(&a)?;
@@ -549,7 +554,7 @@ impl<'a> Args<'a> {
     }
 }
 
-const TOOL_NAMES: [&str; 11] = ["qal_define", "qal_test", "qal_prove", "qal_run", "qal_call", "qal_request", "qal_view", "qal_query", "qal_rename", "qal_history", "qal_build"];
+const TOOL_NAMES: [&str; 12] = ["qal_define", "qal_test", "qal_prove", "qal_run", "qal_call", "qal_request", "qal_view", "qal_query", "qal_rename", "qal_delete", "qal_history", "qal_build"];
 
 fn tool_params(tool: &str) -> &'static [&'static str] {
     match tool {
@@ -563,6 +568,7 @@ fn tool_params(tool: &str) -> &'static [&'static str] {
         "qal_build" => &["entry"],
         "qal_rename" => &["old", "new", "agent"],
         "qal_history" => &["name"],
+        "qal_delete" => &["name", "with", "agent"],
         "qal_request" => &["handler", "init", "allow", "requests"],
         _ => &[],
     }
@@ -585,7 +591,7 @@ pub fn tools() -> J {
         {"name": "qal_define", "title": "Define QAL code", "description": define, "annotations": writes,
          "inputSchema": {"type": "object", "properties": {"source": s("QAL source text with one or more definitions."), "agent": agent}, "required": ["source"], "additionalProperties": false}},
         {"name": "qal_test", "title": "Run QAL tests", "annotations": read_only,
-         "description": "Run the stored tests and the generated property tests (all, or the named tests and functions). A pure function with an `ens`, or that calls a function with `req`, gets a property test: 100 generated inputs that satisfy its `req`; any contract violation fails it, with a shrunk counterexample. Result: each test with passed true/false and the runtime error of a failing one, `properties` (passed, failed, gave_up, skipped), plus passed/failed counts.",
+         "description": "Run the stored tests and the generated property tests (all, or the named tests and functions; in a project, all means its own: `std.` tests run when named). A pure function with an `ens`, or that calls a function with `req`, gets a property test: 100 generated inputs that satisfy its `req`; any contract violation fails it, with a shrunk counterexample. Result: each test with passed true/false and the runtime error of a failing one, `properties` (passed, failed, gave_up, skipped), plus passed/failed counts.",
          "inputSchema": {"type": "object", "properties": {"names": list("Test or function names (default: all)."), "seed": {"type": "integer", "minimum": 0, "description": "Seed of the generated inputs (default 0)."}}, "additionalProperties": false}},
         {"name": "qal_prove", "title": "Prove QAL contracts", "annotations": read_only,
          "description": "Prove the `req`/`ens` contracts of stored functions and tests with Z3 (all, or the named ones): every `ens`, and the `req` of every called function at its call site. Status per obligation: proven, refuted (with a counterexample that really violates it), or unknown (with the reason: Int and Bool facts are modelled exactly, other values only approximately; the contract stays checked at runtime). Results are stored per definition hash.",
@@ -614,8 +620,11 @@ pub fn tools() -> J {
         {"name": "qal_rename", "title": "Rename a QAL definition", "annotations": writes,
          "description": "Rename a stored definition. No hash changes; everything that refers to it follows the new name; the history moves along.",
          "inputSchema": {"type": "object", "properties": {"old": s("Current name."), "new": s("New name."), "agent": agent.clone()}, "required": ["old", "new"], "additionalProperties": false}},
+        {"name": "qal_delete", "title": "Delete a QAL definition", "annotations": {"readOnlyHint": false, "destructiveHint": true, "idempotentHint": false, "openWorldHint": false},
+         "description": "Remove a stored name that no other stored definition refers to (otherwise `has_dependents` lists them: delete or redefine those first, or name them in `with`). The history keeps a `deleted` entry and the old version stays viewable by #hash; the name is gone from query, view, test and export and can be defined again. `std.` names cannot be deleted in a project.",
+         "inputSchema": {"type": "object", "properties": {"name": s("Name to delete."), "with": list("More names deleted in the same call, e.g. the other members of a mutually recursive group (default: none)."), "agent": agent.clone()}, "required": ["name"], "additionalProperties": false}},
         {"name": "qal_history", "title": "QAL definition history", "annotations": read_only,
-         "description": "Every recorded change of a name, oldest first: added, replaced, relinked, renamed, with hashes, agent and time.",
+         "description": "Every recorded change of a name, oldest first: added, replaced, relinked, renamed, deleted, with hashes, agent and time.",
          "inputSchema": {"type": "object", "properties": {"name": s("Definition name.")}, "required": ["name"], "additionalProperties": false}},
         {"name": "qal_build", "title": "Build a QAL module", "annotations": writes,
          "description": "Compile a stored function into a standalone WebAssembly module `.qal/build/<entry>.wasm` plus `<entry>.manifest.json` (hash, signature, required effects, host imports).",

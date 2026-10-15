@@ -8,7 +8,8 @@ use qal_core::diag::Diagnostic;
 use qal_core::tast::TProgram;
 use qal_prove::{PropOptions, PropReport, PropStatus, Report, Status};
 use qal_run::{Permissions, RunError, TestResult, Value};
-use qal_store::{Defined, Entry as QueryEntry, HistoryEntry, Query, Renamed, Store, Verify, View};
+use qal_store::{Defined, Deleted, Entry as QueryEntry, HistoryEntry, Query, Renamed, Store, Verify, View};
+use qal_text::lexer::is_std_name;
 use qal_wasm::Entry;
 use serde::Serialize;
 use std::path::{Path, PathBuf};
@@ -30,6 +31,8 @@ pub struct Output {
     pub results: Option<Vec<QueryEntry>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub renamed: Option<Renamed>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub deleted: Option<Vec<Deleted>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub history: Option<Vec<HistoryEntry>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -677,6 +680,14 @@ pub fn rename(ctx: &Ctx, old: &str, new: &str, agent: &str) -> Reply {
     }
 }
 
+/// Removes names nothing else refers to (all or nothing).
+pub fn delete(ctx: &Ctx, names: &[String], agent: &str) -> Reply {
+    match open_for_write(ctx, false).and_then(|(mut s, std_imported)| Ok((s.delete(names, agent)?, std_imported))) {
+        Ok((d, std_imported)) => Reply::new(Output { deleted: Some(d), std_imported, ..Output::default() }, 0),
+        Err(d) => Reply::diagnostics(d),
+    }
+}
+
 pub fn history(ctx: &Ctx, name: &str) -> Reply {
     match ctx.open().and_then(|mut s| s.history(name)) {
         Ok(h) => Reply::new(Output { history: Some(h), ..Output::default() }, 0),
@@ -718,7 +729,17 @@ pub fn test(ctx: &Ctx, source: &Source, perms: Permissions, names: &[String], se
     let mut tests = Vec::new();
     let mut skipped = Vec::new();
     let run_all = names.is_empty();
-    for t in loaded.typed.tests.iter().filter(|t| run_all || names.contains(&t.name)) {
+    // In a project, "all" means the project's own tests: std's run when named (or in the std store).
+    let own_only = run_all
+        && match source {
+            Source::Store => match ctx.open().and_then(|s| s.is_std()) {
+                Ok(is_std) => !is_std,
+                Err(d) => return Reply::diagnostics(d),
+            },
+            Source::Text(_) => false,
+        };
+    let selected = |n: &str| if run_all { !(own_only && is_std_name(n)) } else { names.iter().any(|m| m == n) };
+    for t in loaded.typed.tests.iter().filter(|t| selected(&t.name)) {
         if ctx.test_budget.is_some_and(|b| start.elapsed() > b) {
             skipped.push(t.name.clone());
             continue;
@@ -728,15 +749,15 @@ pub fn test(ctx: &Ctx, source: &Source, perms: Permissions, names: &[String], se
         tests.push(r);
     }
     // Property tests: of every candidate, or of the functions named; with the rest of the time budget.
-    let prop_names: Vec<String> = names.iter().filter(|n| candidates.contains(n)).cloned().collect();
+    let prop_names: Vec<String> = if own_only { candidates.iter().filter(|n| !is_std_name(n)).cloned().collect() } else { names.iter().filter(|n| candidates.contains(n)).cloned().collect() };
     let mut properties = Vec::new();
-    if run_all || !prop_names.is_empty() {
+    if (run_all && !own_only) || !prop_names.is_empty() {
         let mut opts = PropOptions { seed, ..PropOptions::default() };
         if let (Some(budget), Some(timeout)) = (ctx.test_budget, ctx.timeout) {
             opts.budget = budget.saturating_sub(start.elapsed());
             opts.timeout = opts.timeout.min(timeout);
         }
-        let only = (!run_all).then_some(prop_names.as_slice());
+        let only = (!run_all || own_only).then_some(prop_names.as_slice());
         match qal_prove::check_properties(&loaded.typed, only, &opts) {
             Ok(ps) => properties = ps,
             Err(e) => return Reply::error(e),

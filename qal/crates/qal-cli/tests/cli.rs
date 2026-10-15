@@ -590,12 +590,11 @@ fn packages_round_trip_between_projects() {
     }
     assert_eq!(qal_json_in(&a, &["define", &example("math.qal")]).0, 0);
     let (code, v) = qal_json_in(&a, &["export", "", "--out", "out/math.qalpkg"]);
-    // The empty prefix also exports the standard library imported into the project.
-    let n = 8 + std_defs().len();
-    assert_eq!((code, v["exported"]["package"].as_str(), v["exported"]["defs"].as_u64()), (0, Some("math"), Some(n as u64)));
+    // The empty prefix does not export the standard library imported into the project.
+    assert_eq!((code, v["exported"]["package"].as_str(), v["exported"]["defs"].as_u64()), (0, Some("math"), Some(8)));
     let file = a.join("out/math.qalpkg");
     let (code, v) = qal_json_in(&b, &["import", file.to_str().unwrap()]);
-    assert_eq!((code, v["imported"]["defined"].as_array().map(|d| d.len())), (0, Some(n)), "{v}");
+    assert_eq!((code, v["imported"]["defined"].as_array().map(|d| d.len())), (0, Some(8)), "{v}");
     let (_, qa) = qal_json_in(&a, &["query"]);
     let (_, qb) = qal_json_in(&b, &["query"]);
     assert_eq!(qa, qb, "identical names and hashes");
@@ -608,11 +607,6 @@ fn packages_round_trip_between_projects() {
 
 // ---------------------------------------------------------------------------------------------
 // Phase 3b: the standard library namespace and package.
-
-/// The `# def` lines of the embedded (checked-in) std package.
-fn std_defs() -> Vec<qal_store::package::PackageDef> {
-    qal_store::package::parse(qal_cli::STD_PACKAGE).unwrap().defs
-}
 
 fn std_hash() -> String {
     qal_store::package::parse(qal_cli::STD_PACKAGE).unwrap().hash
@@ -738,4 +732,49 @@ fn the_std_launcher_and_registration_exist() {
     for needle in ["`std.<module>.<name>` is one name", "std.json.Str(\"a\")", "read-only in a project", "E0240", "imported automatically"] {
         assert!(r.contains(needle), "{needle}");
     }
+}
+
+#[test]
+fn delete_removes_unused_names() {
+    let dir = project("delete");
+    qal_in(&dir, &["init"]);
+    let f = write(&dir, "d.qal", "fn base() -> Int = 1\nfn top() -> Int = base() + 1\nfn lone() -> Int = 3");
+    assert_eq!(qal_in(&dir, &["define", &f]).0, 0);
+    let (code, v) = qal_in(&dir, &["delete", "base"]);
+    assert_eq!((code, v["diagnostics"][0]["code"].as_str(), &v["diagnostics"][0]["dependents"]), (1, Some("E0406"), &json!(["top"])), "{v}");
+    let (code, v) = qal_in(&dir, &["delete", "lone", "--agent", "cleaner"]);
+    assert_eq!((code, v["deleted"][0]["name"].as_str(), v["deleted"][0]["kind"].as_str()), (0, Some("lone"), Some("fn")), "{v}");
+    assert_eq!(qal_in(&dir, &["view", "lone"]).1["diagnostics"][0]["kind"], "unknown_name");
+    let (_, v) = qal_in(&dir, &["history", "lone"]);
+    assert_eq!((v["history"][1]["action"].as_str(), v["history"][1]["agent"].as_str()), (Some("deleted"), Some("cleaner")));
+    let (code, v) = qal_in(&dir, &["delete", "top", "base"]);
+    assert_eq!((code, v["deleted"].as_array().map(Vec::len)), (0, Some(2)), "{v}");
+    assert_eq!(qal_in(&dir, &["query"]).1["results"], json!([]));
+    let out = Command::new(env!("CARGO_BIN_EXE_qal")).current_dir(&dir).arg("delete").output().unwrap();
+    assert_eq!(out.status.code(), Some(2), "a name is required");
+}
+
+#[test]
+fn project_tests_skip_std_tests_unless_named() {
+    // A std with a test and a property-tested function, imported into a project.
+    let std_dir = project("std-tests-lib");
+    let mut lib = qal_store::Store::init_std(&std_dir).unwrap();
+    lib.define("fn std.a.abs(x: Int) -> Int ens r >= 0 = if x < 0 then 0 - x else x\ntest std.a.t = std.a.abs(-2) == 2", "std-a-1").unwrap();
+    let pkg = lib.export("std.", "std").unwrap();
+    drop(lib);
+    let dir = project("std-tests-user");
+    let mut s = qal_store::Store::init(&dir).unwrap();
+    s.ensure_std(&pkg.file, None).unwrap();
+    s.define("fn own(x: Int) -> Int ens r >= x = x + 0\ntest mine = own(1) == 1", "test").unwrap();
+    drop(s);
+    let names = |v: &Value, key: &str, field: &str| -> Vec<String> { v[key].as_array().map(|xs| xs.iter().map(|x| x[field].as_str().unwrap_or("").to_string()).collect()).unwrap_or_default() };
+    let (code, v) = qal_in(&dir, &["test"]);
+    assert_eq!(code, 0, "{v}");
+    assert_eq!(names(&v, "tests", "name"), ["mine"], "{v}");
+    assert_eq!(names(&v, "properties", "def"), ["own"], "{v}");
+    let (_, v) = qal_in(&dir, &["test", "std.a.t", "std.a.abs"]);
+    assert_eq!((names(&v, "tests", "name"), names(&v, "properties", "def")), (vec!["std.a.t".to_string()], vec!["std.a.abs".to_string()]), "{v}");
+    // In the std store, all means all.
+    let (_, v) = qal_in(&std_dir, &["test"]);
+    assert_eq!((names(&v, "tests", "name"), names(&v, "properties", "def")), (vec!["std.a.t".to_string()], vec!["std.a.abs".to_string()]), "{v}");
 }
