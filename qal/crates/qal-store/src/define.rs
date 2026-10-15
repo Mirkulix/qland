@@ -52,11 +52,48 @@ pub fn define(conn: &mut Connection, src: &str, agent: &str) -> Result<Vec<Defin
     let hashed = hash(&combined)?;
     identical_types(&hashed.defs)?;
     group_aliases(&hashed.defs)?;
+    alias_references(&hashed.defs)?;
     canonical_check(&snap, &input_names, &hashed.defs)?;
 
     let out = write(&tx, &snap, &input, &hashed, agent)?;
     tx.commit().map_err(sql)?;
     Ok(out)
+}
+
+/// A stored definition records one name per referenced definition, so a definition that refers to
+/// two names of the same definition cannot be stored.
+fn alias_references(canons: &[Canon]) -> Result<(), Vec<Diagnostic>> {
+    let hash_of: HashMap<&str, Hash> = canons.iter().map(|c| (c.name.as_str(), c.hash)).collect();
+    let mut diags = Vec::new();
+    for c in canons {
+        let mut by_target: BTreeMap<Hash, Vec<&str>> = BTreeMap::new();
+        for n in &c.refs {
+            if let Some(h) = hash_of.get(n.as_str()) {
+                by_target.entry(*h).or_default().push(n);
+            }
+        }
+        for (h, names) in by_target.iter().filter(|(_, ns)| ns.len() > 1) {
+            let list = match names.split_last() {
+                Some((last, rest)) => format!("{} and `{last}`", rest.iter().map(|n| format!("`{n}`")).collect::<Vec<_>>().join(", ")),
+                None => String::new(),
+            };
+            diags.push(
+                Diagnostic::new(
+                    "E0404",
+                    "alias_reference",
+                    &c.name,
+                    "",
+                    format!("`{}` refers to {list}, which are the same definition (#{}); a stored definition can name each referenced definition only once.", c.name, h.short()),
+                )
+                .hint("refer to one of them, or make them differ (redefine `u` in the same call)".replace('u', &c.name)),
+            );
+        }
+    }
+    if diags.is_empty() {
+        Ok(())
+    } else {
+        Err(diags)
+    }
 }
 
 /// A member of a recursive group can have only one name: a second name would decode its sibling
@@ -170,12 +207,7 @@ fn json(list: &[String]) -> String {
 /// names it used for that hash), sorted.
 fn ref_names(c: &Canon, hash_of: &HashMap<&str, Hash>) -> Vec<String> {
     let mut seen = HashSet::new();
-    let mut out: Vec<String> = c
-        .refs
-        .iter()
-        .filter(|n| hash_of.get(n.as_str()).is_some_and(|h| c.deps.contains(h) && seen.insert(*h)))
-        .cloned()
-        .collect();
+    let mut out: Vec<String> = c.refs.iter().filter(|n| hash_of.get(n.as_str()).is_some_and(|h| c.deps.contains(h))).inspect(|n| debug_assert!(seen.insert(hash_of[n.as_str()]), "`{}` names one definition twice", c.name)).cloned().collect();
     out.sort();
     out
 }
