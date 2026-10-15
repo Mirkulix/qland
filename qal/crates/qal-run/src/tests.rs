@@ -442,11 +442,20 @@ fn output_beyond_the_stdout_limit_is_counted_not_kept() {
 
 #[test]
 fn large_functions_compile_in_linear_time() {
-    // Optimizing compilation took minutes for this (quadratic register allocation).
-    let items: Vec<String> = (0..30_000).map(|i| i.to_string()).collect();
-    let src = format!("fn main(args: List[Str]) -> Int = len([{}])", items.join(","));
-    let t = std::time::Instant::now();
-    let out = main_runner(&src, "").run_main(&[]);
-    assert_eq!(out.result, Ok(Value::Int(30_000)));
-    assert!(t.elapsed() < std::time::Duration::from_secs(20), "{:?}", t.elapsed());
+    // Optimizing compilation took minutes for this (quadratic register allocation). Compares
+    // scaling instead of an absolute time, which is flaky under parallel load: 4x the size must
+    // cost well under 10x the time (linear is about 4x, quadratic at least 16x).
+    let time = |n: usize| {
+        let items: Vec<String> = (0..n).map(|i| i.to_string()).collect();
+        let src = format!("fn main(args: List[Str]) -> Int = len([{}])", items.join(","));
+        let t = std::time::Instant::now();
+        let out = main_runner(&src, "").run_main(&[]);
+        let elapsed = t.elapsed();
+        assert_eq!(out.result, Ok(Value::Int(n as i64)));
+        assert!(elapsed < std::time::Duration::from_secs(60), "{elapsed:?}");
+        elapsed
+    };
+    let small = time(5_000).min(time(5_000)).max(std::time::Duration::from_millis(200));
+    let large = time(20_000);
+    assert!(large < small * 10, "5000 elements: {small:?}, 20000 elements: {large:?}");
 }
