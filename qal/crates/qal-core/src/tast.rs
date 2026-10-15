@@ -66,13 +66,21 @@ builtins! {
     WriteFile => "write_file",
     NowMs => "now_ms",
     RandInt => "rand_int",
+    ReadAll => "read_all",
+    SortStr => "sort_str",
+    CharCode => "char_code",
+    FromCharCode => "from_char_code",
+    ToUpper => "to_upper",
+    ToLower => "to_lower",
+    Replace => "replace",
+    IndexOf => "index_of",
 }
 
 impl Builtin {
     /// The effect a call needs (map/filter/fold need the effects of their function argument).
     pub fn effect(self) -> Option<&'static str> {
         match self {
-            Builtin::Print | Builtin::ReadLine => Some("io"),
+            Builtin::Print | Builtin::ReadLine | Builtin::ReadAll => Some("io"),
             Builtin::ReadFile | Builtin::WriteFile => Some("fs"),
             Builtin::NowMs => Some("time"),
             Builtin::RandInt => Some("rand"),
@@ -84,7 +92,8 @@ impl Builtin {
     pub const NAMES: &'static [&'static str] = &[
         "len", "slice", "split", "join", "trim", "contains", "starts_with", "to_int", "to_float", "from_int", "from_float",
         "chars", "get", "push", "concat", "map", "filter", "fold", "range", "reverse", "sort_int", "int_to_float",
-        "float_to_int", "print", "read_line", "read_file", "write_file", "now_ms", "rand_int",
+        "float_to_int", "print", "read_line", "read_file", "write_file", "now_ms", "rand_int", "read_all", "sort_str",
+        "char_code", "from_char_code", "to_upper", "to_lower", "replace", "index_of",
     ];
 }
 
@@ -262,7 +271,9 @@ mod tests {
         names.sort_unstable();
         assert_eq!(names.len(), Builtin::NAMES.len(), "Builtin::NAMES has duplicates");
         assert_eq!(names, from_variants);
-        assert_eq!(Builtin::ALL.len(), 30);
+        assert_eq!(Builtin::ALL.len(), 38);
         assert_eq!(Builtin::ALL[0], Builtin::StrLen);
+        assert_eq!(Builtin::ReadAll.effect(), Some("io"));
+        assert_eq!((Builtin::SortStr.effect(), Builtin::Replace.effect()), (None, None));
     }
 }

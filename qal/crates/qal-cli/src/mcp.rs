@@ -541,7 +541,7 @@ pub fn tools() -> J {
     let s = |d: &str| json!({"type": "string", "description": d});
     let list = |d: &str| json!({"type": "array", "items": {"type": "string"}, "description": d});
     let allow = list("Effects to grant: \"io\", \"time\", \"rand\", \"fs:<dir>\" (a directory inside the project, relative to its root; hidden entries like .git are never reachable). Default: none.");
-    let stdin = s("Text that read_line() reads (default: empty).");
+    let stdin = s("Text that read_line() and read_all() read (default: empty).");
     let agent = s("Who makes the change, recorded in the history (default: the MCP client's name).");
     let read_only = json!({"readOnlyHint": true, "openWorldHint": false});
     let writes = json!({"readOnlyHint": false, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false});

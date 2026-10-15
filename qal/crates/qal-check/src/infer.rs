@@ -214,6 +214,18 @@ impl<'a> Cx<'a> {
         }
     }
 
+    /// The type of an ordered operand (`<` `<=` `>` `>=`): Int, Float or Str (unknown defaults to Int).
+    fn ordered(&mut self, path: &str, t: &Type) -> Type {
+        match self.sub.resolve(t) {
+            Type::Str => Type::Str,
+            Type::Int | Type::Float | Type::Var(_) => self.numeric(path, t),
+            other => {
+                self.diags.push(Diagnostic::type_mismatch(self.def, path, "Int, Float or Str", &self.sub.finish(&other).to_string()));
+                self.sub.fresh()
+            }
+        }
+    }
+
     fn binary(&mut self, op: BinOp, l: &Expr, r: &Expr, path: &str) -> TExpr {
         let (lp, rp) = (format!("{path}.left"), format!("{path}.right"));
         let (l, r, ty) = match op {
@@ -222,7 +234,17 @@ impl<'a> Cx<'a> {
             BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => {
                 let l = self.infer(l, &lp);
                 let r = self.infer(r, &rp);
-                let t = self.numeric(&lp, &l.ty);
+                // An ordered operand whose type is still unknown takes the other side's (`x < "a"`).
+                let left_unknown = matches!(self.sub.resolve(&l.ty), Type::Var(_)) && !matches!(self.sub.resolve(&r.ty), Type::Var(_));
+                let t = if !op.is_comparison() {
+                    self.numeric(&lp, &l.ty)
+                } else if left_unknown {
+                    let t = self.ordered(&rp, &r.ty);
+                    self.unify_at(&lp, &t, &l.ty);
+                    t
+                } else {
+                    self.ordered(&lp, &l.ty)
+                };
                 self.unify_at(&rp, &t, &r.ty);
                 (l, r, if op.is_comparison() { Type::Bool } else { t })
             }

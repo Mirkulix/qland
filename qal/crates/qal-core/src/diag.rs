@@ -57,6 +57,19 @@ impl Diagnostic {
         Diagnostic::new("E0202", "duplicate_name", def, path, format!("`{name}` is defined more than once"))
     }
 
+    /// A definition named like a built-in function. A store written before that built-in existed can
+    /// hold one: it must be renamed (`qal_rename` accepts the store while others remain).
+    pub fn builtin_name(name: &str) -> Self {
+        Diagnostic::new("E0202", "duplicate_name", name, "", format!("`{name}` is the name of a built-in function")).hint(format!(
+            "choose another name; a `{name}` stored before this built-in existed must be renamed first: qal_rename it, e.g. to `my_{name}`"
+        ))
+    }
+
+    /// Whether this is a [`Diagnostic::builtin_name`] diagnostic.
+    pub fn is_builtin_name(&self) -> bool {
+        self.code == "E0202" && self.message.ends_with("` is the name of a built-in function")
+    }
+
     pub fn type_mismatch(def: &str, path: &str, expected: &str, found: &str) -> Self {
         Diagnostic::new("E0203", "type_mismatch", def, path, format!("expected {expected}, found {found}"))
             .expected_found(expected, found)

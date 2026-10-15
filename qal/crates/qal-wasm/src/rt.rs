@@ -56,6 +56,18 @@ pub enum Rt {
     /// (n: i64) -> Str
     IntToStr,
     StrChars,
+    /// (a, b) -> -1, 0 or 1: byte-wise (= Unicode scalar value) order, a proper prefix is smaller
+    StrCmp,
+    /// (s) -> Str with ASCII letters mapped to upper case (true) or lower case (false)
+    StrCase(bool),
+    /// (s, from, to, func, site) -> Str; fails if from is empty
+    StrReplace,
+    /// (s, sub) -> Option[Int] char index of the first occurrence
+    StrIndexOf,
+    /// (s, func, site) -> i64 scalar value of the first char; fails if s is empty
+    CharCode,
+    /// (n: i64, func, site) -> Str of one char; fails unless n is a Unicode scalar value
+    FromCharCode,
     /// (n: i32) -> fresh List with uninitialized slots
     ListNew,
     /// (xs, i: i64) -> Option[slot]
@@ -66,9 +78,10 @@ pub enum Rt {
     ListReverse,
     /// (a: i64, b: i64) -> List[Int]
     ListRange,
-    ListSortInt,
-    /// (base, root, end): heap sift-down over i64 elements
-    Sift,
+    /// sort_int (false) or sort_str (true)
+    ListSort(bool),
+    /// (base, root, end): heap sift-down over i64 elements (false) or Str pointers (true)
+    Sift(bool),
     /// (x: f64) -> Option[Int]
     FloatToInt,
     /// (lo: i64, hi: i64, func, site) -> i64
@@ -106,8 +119,11 @@ impl Rt {
             Rt::Alloc => (&[I64], &[I32]),
             Rt::Arith(_) => (&[I64, I64, I32, I32], &[I64]),
             Rt::Variant1 => (&[I32, I64], &[I32]),
-            Rt::OptFromPtr | Rt::StrNew | Rt::StrTrim | Rt::StrToInt | Rt::StrChars | Rt::ListNew | Rt::ListReverse | Rt::ListSortInt => (&[I32], &[I32]),
-            Rt::ResultFrom | Rt::ResultUnitFrom | Rt::StrConcat | Rt::StrEq | Rt::StrContains | Rt::StrStartsWith | Rt::StrJoin | Rt::ListConcat => (&[I32, I32], &[I32]),
+            Rt::OptFromPtr | Rt::StrNew | Rt::StrTrim | Rt::StrToInt | Rt::StrChars | Rt::StrCase(_) | Rt::ListNew | Rt::ListReverse | Rt::ListSort(_) => (&[I32], &[I32]),
+            Rt::ResultFrom | Rt::ResultUnitFrom | Rt::StrConcat | Rt::StrEq | Rt::StrContains | Rt::StrStartsWith | Rt::StrJoin | Rt::StrCmp | Rt::StrIndexOf | Rt::ListConcat => (&[I32, I32], &[I32]),
+            Rt::StrReplace => (&[I32, I32, I32, I32, I32], &[I32]),
+            Rt::CharCode => (&[I32, I32, I32], &[I64]),
+            Rt::FromCharCode => (&[I64, I32, I32], &[I32]),
             Rt::StrLen => (&[I32], &[I64]),
             Rt::BytesEq | Rt::StrSub | Rt::StrFind => (&[I32, I32, I32], &[I32]),
             Rt::CharToByte => (&[I32, I64], &[I32]),
@@ -116,7 +132,7 @@ impl Rt {
             Rt::IntToStr => (&[I64], &[I32]),
             Rt::ListGet | Rt::ListPush => (&[I32, I64], &[I32]),
             Rt::ListRange => (&[I64, I64], &[I32]),
-            Rt::Sift => (&[I32, I32, I32], &[]),
+            Rt::Sift(_) => (&[I32, I32, I32], &[]),
             Rt::FloatToInt => (&[F64], &[I32]),
             Rt::RandChecked => (&[I64, I64, I32, I32], &[I64]),
             Rt::Map(..) | Rt::Filter(_) => (&[I32, I32], &[I32]),
@@ -320,8 +336,35 @@ impl Rt {
                 loop_next(&mut a, k);
                 a.i(I::LocalGet(p));
             }
-            Rt::ListSortInt => sort_int(m, &mut a),
-            Rt::Sift => sift(&mut a),
+            Rt::ListSort(strs) => sort(m, &mut a, strs),
+            Rt::Sift(strs) => sift(m, &mut a, strs),
+            Rt::StrCmp => str_cmp(&mut a),
+            Rt::StrCase(upper) => {
+                let (n, p, i, c) = (a.local(I32), a.local(I32), a.local(I32), a.local(I32));
+                let first = if upper { b'a' } else { b'A' } as i32;
+                a.all([I::LocalGet(0), I::I32Load(m32(0)), I::LocalTee(n), I::Call(m.rt(Rt::StrNew)), I::LocalTee(p), I::I32Const(4), I::I32Add]);
+                a.all([I::LocalGet(0), I::I32Const(4), I::I32Add, I::LocalGet(n), copy()]);
+                loop_until(&mut a, i, n);
+                // ASCII letters only: (c - first) <u 26; flipping bit 5 changes the case
+                a.all([I::LocalGet(p), I::LocalGet(i), I::I32Add, I::I32Load8U(m8(4)), I::LocalTee(c), I::I32Const(first), I::I32Sub, I::I32Const(26), I::I32LtU]);
+                a.all([I::If(BlockType::Empty), I::LocalGet(p), I::LocalGet(i), I::I32Add, I::LocalGet(c), I::I32Const(0x20), I::I32Xor, I::I32Store8(m8(4)), I::End]);
+                loop_next(&mut a, i);
+                a.i(I::LocalGet(p));
+            }
+            Rt::StrReplace => replace(m, &mut a),
+            Rt::StrIndexOf => {
+                let (f, i, c) = (a.local(I32), a.local(I32), a.local(I64));
+                a.all([I::LocalGet(0), I::LocalGet(1), I::I32Const(0), I::Call(m.rt(Rt::StrFind)), I::LocalTee(f), I::I32Const(0), I::I32LtS]);
+                a.all([I::If(BlockType::Empty), I::I32Const(m.tag_addr(TAG_NONE)), I::Return, I::End]);
+                // a match starts at a char boundary (UTF-8 lead bytes never equal continuation bytes): count the chars before it
+                loop_until(&mut a, i, f);
+                a.all([I::LocalGet(0), I::LocalGet(i), I::I32Add, I::I32Load8U(m8(4)), I::I32Const(0xC0), I::I32And, I::I32Const(0x80), I::I32Ne]);
+                a.all([I::I64ExtendI32U, I::LocalGet(c), I::I64Add, I::LocalSet(c)]);
+                loop_next(&mut a, i);
+                a.all([I::I32Const(TAG_SOME as i32), I::LocalGet(c), I::Call(m.rt(Rt::Variant1))]);
+            }
+            Rt::CharCode => char_code(m, &mut a),
+            Rt::FromCharCode => from_char_code(m, &mut a),
             Rt::FloatToInt => {
                 a.all([I::LocalGet(0), I::LocalGet(0), I::F64Ne, I::LocalGet(0), I::F64Const(9223372036854775808.0.into()), I::F64Ge, I::I32Or]);
                 a.all([I::LocalGet(0), I::F64Const((-9223372036854775808.0).into()), I::F64Lt, I::I32Or]);
@@ -557,10 +600,10 @@ fn int_to_str(m: &mut Mb, a: &mut Asm) {
     a.all([I::LocalGet(neg), I::If(BlockType::Empty), I::LocalGet(p), I::I32Const(b'-' as i32), I::I32Store8(m8(4)), I::End, I::LocalGet(p)]);
 }
 
-/// sort_int(xs): heapsort on a copy (O(n log n), no extra memory).
-fn sort_int(m: &mut Mb, a: &mut Asm) {
+/// sort_int(xs) / sort_str(xs): heapsort on a copy (O(n log n), no extra memory).
+fn sort(m: &mut Mb, a: &mut Asm, strs: bool) {
     let (n, p, base, i) = (a.local(I32), a.local(I32), a.local(I32), a.local(I32));
-    let sift = m.rt(Rt::Sift);
+    let sift = m.rt(Rt::Sift(strs));
     a.all([I::LocalGet(0), I::I32Load(m32(0)), I::LocalTee(n), I::Call(m.rt(Rt::ListNew)), I::LocalTee(p), I::I32Const(8), I::I32Add, I::LocalTee(base)]);
     a.all([I::LocalGet(0), I::I32Const(8), I::I32Add, I::LocalGet(n), I::I32Const(3), I::I32Shl, copy()]);
     // heapify: i = n/2 - 1 down to 0
@@ -578,10 +621,20 @@ fn sort_int(m: &mut Mb, a: &mut Asm) {
     a.i(I::LocalGet(p));
 }
 
-/// Sift-down for a max-heap of i64 at `base` (params: base = 0, root = 1, end = 2).
-fn sift(a: &mut Asm) {
+/// Sift-down for a max-heap at `base` (params: base = 0, root = 1, end = 2) of i64 elements, or
+/// of Str pointers (`strs`, ordered by `StrCmp`).
+fn sift(m: &mut Mb, a: &mut Asm, strs: bool) {
     let (child, t) = (a.local(I32), a.local(I64));
     let at = |a: &mut Asm, idx: u32| a.all([I::LocalGet(0), I::LocalGet(idx), I::I32Const(3), I::I32Shl, I::I32Add]);
+    // With the two loaded slots on the stack, leaves the comparison `op` of them (`I64LtS` or `I64GeS`).
+    let cmp = |m: &mut Mb, a: &mut Asm, op: I<'static>| {
+        if strs {
+            let (x, y) = (a.local(I64), a.local(I64));
+            a.all([I::LocalSet(y), I::LocalSet(x), I::LocalGet(x), I::I32WrapI64, I::LocalGet(y), I::I32WrapI64, I::Call(m.rt(Rt::StrCmp)), I::I64ExtendI32S, I::I64Const(0), op]);
+        } else {
+            a.i(op);
+        }
+    };
     a.i(I::Loop(BlockType::Empty));
     a.all([I::LocalGet(1), I::I32Const(1), I::I32Shl, I::I32Const(1), I::I32Add, I::LocalTee(child), I::LocalGet(2), I::I32GeS, I::If(BlockType::Empty), I::Return, I::End]);
     // pick the larger child
@@ -589,11 +642,15 @@ fn sift(a: &mut Asm) {
     at(a, child);
     a.i(I::I64Load(m64(0)));
     at(a, child);
-    a.all([I::I64Load(m64(8)), I::I64LtS, I::If(BlockType::Empty), I::LocalGet(child), I::I32Const(1), I::I32Add, I::LocalSet(child), I::End, I::End]);
+    a.i(I::I64Load(m64(8)));
+    cmp(m, a, I::I64LtS);
+    a.all([I::If(BlockType::Empty), I::LocalGet(child), I::I32Const(1), I::I32Add, I::LocalSet(child), I::End, I::End]);
     at(a, 1);
     a.i(I::I64Load(m64(0)));
     at(a, child);
-    a.all([I::I64Load(m64(0)), I::I64GeS, I::If(BlockType::Empty), I::Return, I::End]);
+    a.i(I::I64Load(m64(0)));
+    cmp(m, a, I::I64GeS);
+    a.all([I::If(BlockType::Empty), I::Return, I::End]);
     // swap root and child, continue at child
     at(a, 1);
     a.all([I::I64Load(m64(0)), I::LocalSet(t)]);
@@ -602,4 +659,109 @@ fn sift(a: &mut Asm) {
     a.all([I::I64Load(m64(0)), I::I64Store(m64(0))]);
     at(a, child);
     a.all([I::LocalGet(t), I::I64Store(m64(0)), I::LocalGet(child), I::LocalSet(1), I::Br(0), I::End]);
+}
+
+/// Byte-wise comparison of two Strs (params: a = 0, b = 1) -> -1, 0 or 1.
+fn str_cmp(a: &mut Asm) {
+    let (la, lb, n, i, x, y) = (a.local(I32), a.local(I32), a.local(I32), a.local(I32), a.local(I32), a.local(I32));
+    a.all([I::LocalGet(0), I::I32Load(m32(0)), I::LocalSet(la), I::LocalGet(1), I::I32Load(m32(0)), I::LocalSet(lb)]);
+    a.all([I::LocalGet(la), I::LocalGet(lb), I::LocalGet(la), I::LocalGet(lb), I::I32LtU, I::Select, I::LocalSet(n)]);
+    loop_until(a, i, n);
+    a.all([I::LocalGet(0), I::LocalGet(i), I::I32Add, I::I32Load8U(m8(4)), I::LocalTee(x), I::LocalGet(1), I::LocalGet(i), I::I32Add, I::I32Load8U(m8(4)), I::LocalTee(y), I::I32Ne]);
+    a.all([I::If(BlockType::Empty), I::I32Const(-1), I::I32Const(1), I::LocalGet(x), I::LocalGet(y), I::I32LtU, I::Select, I::Return, I::End]);
+    loop_next(a, i);
+    // equal up to the shorter length: the shorter one is smaller
+    a.all([I::LocalGet(la), I::LocalGet(lb), I::I32GtU, I::LocalGet(la), I::LocalGet(lb), I::I32LtU, I::I32Sub]);
+}
+
+/// replace(s, from, to): every non-overlapping occurrence, left to right. Params: s = 0, from = 1,
+/// to = 2, func = 3, site = 4.
+fn replace(m: &mut Mb, a: &mut Asm) {
+    let (lfrom, lto, count, pos, f, total, p, at) = (a.local(I32), a.local(I32), a.local(I32), a.local(I32), a.local(I32), a.local(I64), a.local(I32), a.local(I32));
+    let find = m.rt(Rt::StrFind);
+    a.all([I::LocalGet(1), I::I32Load(m32(0)), I::LocalTee(lfrom), I::I32Eqz, I::If(BlockType::Empty)]);
+    m.emit_fail(a, FAIL_BUILTIN, Arg::Local(3), Arg::Local(4), &[(1, Repr::I32)]);
+    a.i(I::End);
+    a.all([I::LocalGet(2), I::I32Load(m32(0)), I::LocalSet(lto)]);
+    // pass 1: count occurrences
+    a.all([I::Block(BlockType::Empty), I::Loop(BlockType::Empty)]);
+    a.all([I::LocalGet(0), I::LocalGet(1), I::LocalGet(pos), I::Call(find), I::LocalTee(f), I::I32Const(0), I::I32LtS, I::BrIf(1)]);
+    incr(a, count);
+    a.all([I::LocalGet(f), I::LocalGet(lfrom), I::I32Add, I::LocalSet(pos), I::Br(0), I::End, I::End]);
+    // total = len(s) + count * (len(to) - len(from)), in i64 so that huge results cannot wrap
+    a.all([I::LocalGet(0), I::I32Load(m32(0)), I::I64ExtendI32U, I::LocalGet(count), I::I64ExtendI32U, I::LocalGet(lto), I::I64ExtendI32U, I::LocalGet(lfrom), I::I64ExtendI32U, I::I64Sub, I::I64Mul, I::I64Add, I::LocalSet(total)]);
+    // Beyond 2 GiB the i32 length cannot be stored; such a request always exceeds the memory limit.
+    a.all([I::LocalGet(total), I::I64Const(0x7FFF_0000), I::I64GtU, I::If(BlockType::Empty), I::LocalGet(total), I::Call(m.rt(Rt::Alloc)), I::Drop, I::End]);
+    a.all([I::LocalGet(total), I::I32WrapI64, I::Call(m.rt(Rt::StrNew)), I::LocalTee(p), I::I32Const(4), I::I32Add, I::LocalSet(at), I::I32Const(0), I::LocalSet(pos)]);
+    // pass 2: copy the text before each occurrence, then the replacement
+    a.all([I::Block(BlockType::Empty), I::Loop(BlockType::Empty)]);
+    a.all([I::LocalGet(0), I::LocalGet(1), I::LocalGet(pos), I::Call(find), I::LocalTee(f), I::I32Const(0), I::I32LtS, I::BrIf(1)]);
+    a.all([I::LocalGet(at), I::LocalGet(0), I::I32Const(4), I::I32Add, I::LocalGet(pos), I::I32Add, I::LocalGet(f), I::LocalGet(pos), I::I32Sub, copy()]);
+    a.all([I::LocalGet(at), I::LocalGet(f), I::LocalGet(pos), I::I32Sub, I::I32Add, I::LocalSet(at)]);
+    a.all([I::LocalGet(at), I::LocalGet(2), I::I32Const(4), I::I32Add, I::LocalGet(lto), copy(), I::LocalGet(at), I::LocalGet(lto), I::I32Add, I::LocalSet(at)]);
+    a.all([I::LocalGet(f), I::LocalGet(lfrom), I::I32Add, I::LocalSet(pos), I::Br(0), I::End, I::End]);
+    a.all([I::LocalGet(at), I::LocalGet(0), I::I32Const(4), I::I32Add, I::LocalGet(pos), I::I32Add, I::LocalGet(0), I::I32Load(m32(0)), I::LocalGet(pos), I::I32Sub, copy(), I::LocalGet(p)]);
+}
+
+/// char_code(s): the scalar value of the first char, decoded from its UTF-8 sequence (strings are
+/// valid UTF-8). Params: s = 0, func = 1, site = 2.
+fn char_code(m: &mut Mb, a: &mut Asm) {
+    let b0 = a.local(I32);
+    a.all([I::LocalGet(0), I::I32Load(m32(0)), I::I32Eqz, I::If(BlockType::Empty)]);
+    m.emit_fail(a, FAIL_BUILTIN, Arg::Local(1), Arg::Local(2), &[(0, Repr::I32)]);
+    a.i(I::End);
+    // continuation byte k (1..=3), its low six bits shifted left by `shift`
+    let cont = |a: &mut Asm, k: u64, shift: i32| {
+        a.all([I::LocalGet(0), I::I32Load8U(m8(4 + k)), I::I32Const(0x3F), I::I32And, I::I32Const(shift), I::I32Shl, I::I32Or]);
+    };
+    a.all([I::LocalGet(0), I::I32Load8U(m8(4)), I::LocalTee(b0), I::I32Const(0x80), I::I32LtU, I::If(BlockType::Empty), I::LocalGet(b0), I::I64ExtendI32U, I::Return, I::End]);
+    a.all([I::LocalGet(b0), I::I32Const(0xE0), I::I32LtU, I::If(BlockType::Empty), I::LocalGet(b0), I::I32Const(0x1F), I::I32And, I::I32Const(6), I::I32Shl]);
+    cont(a, 1, 0);
+    a.all([I::I64ExtendI32U, I::Return, I::End]);
+    a.all([I::LocalGet(b0), I::I32Const(0xF0), I::I32LtU, I::If(BlockType::Empty), I::LocalGet(b0), I::I32Const(0x0F), I::I32And, I::I32Const(12), I::I32Shl]);
+    cont(a, 1, 6);
+    cont(a, 2, 0);
+    a.all([I::I64ExtendI32U, I::Return, I::End]);
+    a.all([I::LocalGet(b0), I::I32Const(0x07), I::I32And, I::I32Const(18), I::I32Shl]);
+    cont(a, 1, 12);
+    cont(a, 2, 6);
+    cont(a, 3, 0);
+    a.i(I::I64ExtendI32U);
+}
+
+/// from_char_code(n): the one-char Str with scalar value n, UTF-8 encoded. Params: n = 0 (i64),
+/// func = 1, site = 2.
+fn from_char_code(m: &mut Mb, a: &mut Asm) {
+    let (c, p) = (a.local(I32), a.local(I32));
+    // valid iff 0 <= n <= 0x10FFFF (unsigned) and not a surrogate (n - 0xD800 <u 0x800)
+    a.all([I::LocalGet(0), I::I64Const(0x10FFFF), I::I64GtU, I::LocalGet(0), I::I64Const(0xD800), I::I64Sub, I::I64Const(0x800), I::I64LtU, I::I32Or, I::If(BlockType::Empty)]);
+    m.emit_fail(a, FAIL_BUILTIN, Arg::Local(1), Arg::Local(2), &[(0, Repr::I64)]);
+    a.i(I::End);
+    a.all([I::LocalGet(0), I::I32WrapI64, I::LocalSet(c)]);
+    // byte k of the result = `lead | ((c >> shift) & mask)`
+    let byte = |a: &mut Asm, k: u64, lead: i32, shift: i32, mask: i32| {
+        a.all([I::LocalGet(p), I::LocalGet(c), I::I32Const(shift), I::I32ShrU, I::I32Const(mask), I::I32And, I::I32Const(lead), I::I32Or, I::I32Store8(m8(4 + k))]);
+    };
+    let new = |m: &mut Mb, a: &mut Asm, len: i32| a.all([I::I32Const(len), I::Call(m.rt(Rt::StrNew)), I::LocalSet(p)]);
+    a.all([I::LocalGet(c), I::I32Const(0x80), I::I32LtU, I::If(BlockType::Empty)]);
+    new(m, a, 1);
+    byte(a, 0, 0, 0, 0x7F);
+    a.all([I::LocalGet(p), I::Return, I::End]);
+    a.all([I::LocalGet(c), I::I32Const(0x800), I::I32LtU, I::If(BlockType::Empty)]);
+    new(m, a, 2);
+    byte(a, 0, 0xC0, 6, 0x1F);
+    byte(a, 1, 0x80, 0, 0x3F);
+    a.all([I::LocalGet(p), I::Return, I::End]);
+    a.all([I::LocalGet(c), I::I32Const(0x10000), I::I32LtU, I::If(BlockType::Empty)]);
+    new(m, a, 3);
+    byte(a, 0, 0xE0, 12, 0x0F);
+    byte(a, 1, 0x80, 6, 0x3F);
+    byte(a, 2, 0x80, 0, 0x3F);
+    a.all([I::LocalGet(p), I::Return, I::End]);
+    new(m, a, 4);
+    byte(a, 0, 0xF0, 18, 0x07);
+    byte(a, 1, 0x80, 12, 0x3F);
+    byte(a, 2, 0x80, 6, 0x3F);
+    byte(a, 3, 0x80, 0, 0x3F);
+    a.i(I::LocalGet(p));
 }

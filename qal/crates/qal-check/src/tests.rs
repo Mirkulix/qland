@@ -358,3 +358,23 @@ fn builtins_used_as_values_say_so() {
     assert_eq!((d.kind, d.message.as_str()), ("unknown_name", "built-in `len` is not a value"));
     assert_eq!(d.hints, ["built-in `len` cannot be used as a value; wrap it in a fn, e.g. `fn my_len(...) = len(...)`, and pass `my_len`"]);
 }
+
+#[test]
+fn strings_are_ordered_and_text_builtins_type_check() {
+    let src = "fn before(a: Str, b: Str) -> Bool = a < b || a <= b || a > b || a >= b\n\
+               fn words(s: Str) -> List[Str] = sort_str(split(to_lower(replace(s, \",\", \" \")), \" \"))\n\
+               fn at(s: Str, sub: Str) -> Int = match index_of(s, sub) { Some(i) => i, None => -1 }\n\
+               fn shift(c: Str) -> Str = from_char_code(char_code(c) + 1) ++ to_upper(c)\n\
+               fn main(args: List[Str]) -> Int !io = len(read_all())";
+    assert_eq!(check_src(src), vec![]);
+    let d = one("fn f(a: Bool, b: Bool) -> Bool = a < b");
+    assert_eq!((d.kind, d.path.as_str(), d.expected.as_deref()), ("type_mismatch", "body.left", Some("Int, Float or Str")));
+    let d = one("fn f(a: Str) -> Bool = a < 1");
+    assert_eq!((d.kind, d.path.as_str()), ("type_mismatch", "body.right"));
+    assert_eq!(kinds("fn f() -> Str = read_all()"), vec![("effect_violation", "f".into(), "body".into())]);
+    assert_eq!(kinds("fn f(xs: List[Int]) -> List[Int] = sort_str(xs)")[0].0, "type_mismatch");
+    assert_eq!(kinds("fn char_code(s: Str) -> Int = 1")[0].0, "duplicate_name");
+    // The operand types are found from either side.
+    assert_eq!(check_src("fn f(xs: List[Str]) -> Bool = match get([], 0) { Some(x) => x < \"a\", None => false }"), vec![]);
+    assert_eq!(check_src("fn g() -> Bool = match get([], 0) { Some(x) => x <= 1.5, None => false }"), vec![]);
+}

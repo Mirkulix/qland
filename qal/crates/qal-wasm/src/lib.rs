@@ -69,8 +69,10 @@ pub mod host {
     pub const NOW_MS: &str = "time.now_ms";
     /// `(lo, hi) -> uniform Int in [lo, hi]` (the caller ensures lo <= hi)
     pub const RAND_INT: &str = "rand.rand_int";
-    /// Every effect host function.
-    pub const EFFECT_FNS: [&str; 6] = [PRINT, READ_LINE, READ_FILE, WRITE_FILE, NOW_MS, RAND_INT];
+    /// `() -> Str ptr` of the rest of the input (empty at end of input)
+    pub const READ_ALL: &str = "io.read_all";
+    /// Every effect host function (the index is reported for a denied call: append only).
+    pub const EFFECT_FNS: [&str; 7] = [PRINT, READ_LINE, READ_FILE, WRITE_FILE, NOW_MS, RAND_INT, READ_ALL];
 
     /// Parameter and result types of a host function (None for an unknown name).
     pub fn signature(name: &str) -> Option<(&'static [ValType], &'static [ValType])> {
@@ -79,7 +81,7 @@ pub mod host {
             FLOAT_TO_STR => (&[F64], &[I32]),
             STR_TO_FLOAT => (&[I32], &[I32, F64]),
             PRINT => (&[I32], &[]),
-            READ_LINE => (&[], &[I32]),
+            READ_LINE | READ_ALL => (&[], &[I32]),
             READ_FILE => (&[I32], &[I32, I32]),
             WRITE_FILE => (&[I32, I32], &[I32, I32]),
             NOW_MS => (&[], &[I64]),
@@ -185,6 +187,7 @@ pub fn compile(p: &TProgram, entry: &Entry) -> Result<CompiledModule, String> {
             Builtin::ToFloat => host::STR_TO_FLOAT,
             Builtin::Print => host::PRINT,
             Builtin::ReadLine => host::READ_LINE,
+            Builtin::ReadAll => host::READ_ALL,
             Builtin::ReadFile => host::READ_FILE,
             Builtin::WriteFile => host::WRITE_FILE,
             Builtin::NowMs => host::NOW_MS,

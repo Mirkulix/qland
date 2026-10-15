@@ -458,6 +458,15 @@ pub fn link(linker: &mut Linker<HostState>, perms: &Permissions) -> Result<(), w
             }
             new_str(&mut c, &String::from_utf8_lossy(&buf))
         })?;
+        linker.func_wrap(HOST_MODULE, host::READ_ALL, |mut c: Caller<'_, HostState>| {
+            let mut buf = Vec::new();
+            let limit = c.data().limit;
+            let n = c.data_mut().stdin.by_ref().take(limit as u64 + 1).read_to_end(&mut buf).map_err(wasmtime::Error::msg)?;
+            if n > limit {
+                return Err(host_oom(&mut c, n));
+            }
+            new_str(&mut c, &String::from_utf8_lossy(&buf))
+        })?;
     }
     if !perms.fs.is_empty() {
         linker.func_wrap(HOST_MODULE, host::READ_FILE, |mut c: Caller<'_, HostState>, p: i32| {

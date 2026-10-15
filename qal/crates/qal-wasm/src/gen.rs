@@ -286,6 +286,17 @@ impl<'g, 'p> FnGen<'g, 'p> {
                     _ => I::F64Div,
                 }),
             },
+            BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge if l.ty == Type::Str => {
+                // byte-wise comparison of UTF-8 = comparison by Unicode scalar values
+                self.call_rt(Rt::StrCmp);
+                self.a.i(I::I32Const(0));
+                self.a.i(match op {
+                    BinOp::Lt => I::I32LtS,
+                    BinOp::Le => I::I32LeS,
+                    BinOp::Gt => I::I32GtS,
+                    _ => I::I32GeS,
+                });
+            }
             BinOp::Lt => self.a.i(if float { I::F64Lt } else { I::I64LtS }),
             BinOp::Le => self.a.i(if float { I::F64Le } else { I::I64LeS }),
             BinOp::Gt => self.a.i(if float { I::F64Gt } else { I::I64GtS }),
@@ -346,7 +357,26 @@ impl<'g, 'p> FnGen<'g, 'p> {
             B::Fold => self.call_rt(Rt::Fold(Repr::of(ret), self.elem(&args[0].ty))),
             B::Range => self.call_rt(Rt::ListRange),
             B::Reverse => self.call_rt(Rt::ListReverse),
-            B::SortInt => self.call_rt(Rt::ListSortInt),
+            B::SortInt => self.call_rt(Rt::ListSort(false)),
+            B::SortStr => self.call_rt(Rt::ListSort(true)),
+            B::CharCode => {
+                let site = self.site(path, "char_code: req s != \"\"", &[("s", Type::Str)], None);
+                self.site_args(site);
+                self.call_rt(Rt::CharCode);
+            }
+            B::FromCharCode => {
+                let site = self.site(path, "from_char_code: req 0 <= n <= 1114111 && !(55296 <= n <= 57343)", &[("n", Type::Int)], None);
+                self.site_args(site);
+                self.call_rt(Rt::FromCharCode);
+            }
+            B::ToUpper => self.call_rt(Rt::StrCase(true)),
+            B::ToLower => self.call_rt(Rt::StrCase(false)),
+            B::Replace => {
+                let site = self.site(path, "replace: req from != \"\"", &[("from", Type::Str)], None);
+                self.site_args(site);
+                self.call_rt(Rt::StrReplace);
+            }
+            B::IndexOf => self.call_rt(Rt::StrIndexOf),
             B::IntToFloat => self.a.i(I::F64ConvertI64S),
             B::FloatToInt => self.call_rt(Rt::FloatToInt),
             B::Print => self.a.all([I::Call(self.m.import(host::PRINT)), I::I32Const(0)]),
@@ -354,6 +384,7 @@ impl<'g, 'p> FnGen<'g, 'p> {
                 self.a.i(I::Call(self.m.import(host::READ_LINE)));
                 self.call_rt(Rt::OptFromPtr);
             }
+            B::ReadAll => self.a.i(I::Call(self.m.import(host::READ_ALL))),
             B::ReadFile => {
                 self.a.i(I::Call(self.m.import(host::READ_FILE)));
                 self.call_rt(Rt::ResultFrom);

@@ -42,6 +42,14 @@ impl Cx<'_> {
             "write_file" => (B::WriteFile, vec![Type::Str, Type::Str], Type::result(Type::Unit, Type::Str)),
             "now_ms" => (B::NowMs, vec![], Type::Int),
             "rand_int" => (B::RandInt, vec![Type::Int, Type::Int], Type::Int),
+            "read_all" => (B::ReadAll, vec![], Type::Str),
+            "sort_str" => (B::SortStr, vec![list(Type::Str)], list(Type::Str)),
+            "char_code" => (B::CharCode, vec![Type::Str], Type::Int),
+            "from_char_code" => (B::FromCharCode, vec![Type::Int], Type::Str),
+            "to_upper" => (B::ToUpper, vec![Type::Str], Type::Str),
+            "to_lower" => (B::ToLower, vec![Type::Str], Type::Str),
+            "replace" => (B::Replace, vec![Type::Str, Type::Str, Type::Str], Type::Str),
+            "index_of" => (B::IndexOf, vec![Type::Str, Type::Str], Type::option(Type::Int)),
             _ => return None,
         };
         // Bound before the arguments bind `a`/`b`, so the result's depth stays tracked.

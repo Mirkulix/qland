@@ -17,21 +17,25 @@ Expressions (everything is an expression, there are no statements):
   { a; b; c }   sequence: a and b must be Unit (e.g. print(..)); the value is c. A `let` inside one item ends at
     its `;`, so bind first: let x = f(y) in { print(x); x }
   "text"  escapes \n \t \r \0 \\ \" \u{1F600}
-  [1, 2]  f(x)  p.x  -x  !b  * / %  + -  ++ (Str or List concatenation)  == != (any type)  < <= > >= (Int, Float)  && ||
-  / truncates toward zero; % has the sign of the left operand.
+  [1, 2]  f(x)  p.x  -x  !b  * / %  + -  ++ (Str or List concatenation)  == != (any type)  < <= > >= (Int, Float, Str)  && ||
+  / truncates toward zero; % has the sign of the left operand. Str order compares Unicode code points ("B" < "a" < "é").
 Effects: a fn that uses the system declares it after the result type and callers declare the union:
-  !io print, read_line   !fs read_file, write_file   !time now_ms   !rand rand_int.  Several: `-> Int !io !fs`. Tests and contracts are pure.
+  !io print, read_line, read_all   !fs read_file, write_file   !time now_ms   !rand rand_int.  Several: `-> Int !io !fs`. Tests and contracts are pure.
 Contracts: fn sqrt_floor(n: Int) -> Int req n >= 0 ens r * r <= n = ...   (`r` is the result inside `ens`; `r` cannot be a definition name, nor a parameter of a fn with `ens`; elsewhere parameters and locals named `r` are fine; checked at run time)
 Record construction needs every field (`field: value`). There are no list patterns: use len and get.
 
 Built-ins (indices count characters; slice and range are half-open: the end is excluded):
   Str  len(s) slice(s, from, to) split(s, sep) -> List[Str] join(xs, sep) trim(s) contains(s, sub) starts_with(s, prefix)
        chars(s) -> List[Str]  to_int(s) -> Option[Int]  to_float(s) -> Option[Float]  from_int(n) -> Str  from_float(x) -> Str
+       to_upper(s) to_lower(s) (ASCII letters only)  replace(s, from, to) (every occurrence, left to right; from != "")
+       index_of(s, sub) -> Option[Int] (first occurrence; "" is at 0)  char_code(s) -> Int (code point of the first char; s != "")
+       from_char_code(n) -> Str (n a code point 0..=1114111, not 55296..=57343)  Violated preconditions are contract_violation.
   List len(xs) get(xs, i) -> Option[T] push(xs, x) concat(xs, ys) map(xs, f) filter(xs, pred) fold(xs, init, f) with f(acc, x)
        (f may carry effects; the caller then declares them. For-each: fn step(acc: Int, x: Int) -> Int !io = { print(from_int(x)); acc }, then fold(xs, 0, step))
-       range(from, to) -> List[Int]  reverse(xs)  sort_int(xs)
+       range(from, to) -> List[Int]  reverse(xs)  sort_int(xs)  sort_str(xs)
   Num  int_to_float(n)  float_to_int(x) -> Option[Int]
   Sys  print(s) !io (writes s and a newline)  read_line() -> Option[Str] !io (next line without its `\n` or `\r\n`; None at end)
+       read_all() -> Str !io (all remaining input including `\r`; "" at end; invalid UTF-8 becomes U+FFFD, as in read_line)
        read_file(path) -> Result[Str, Str] !fs  write_file(path, text) -> Result[Unit, Str] !fs  now_ms() -> Int !time  rand_int(lo, hi) -> Int !rand (both ends included; lo <= hi, else contract_violation)
   to_int accepts an optional sign and digits only (no spaces: trim first). Deep non-tail recursion can overflow the stack (about 100 000 calls).
 Performance: push on a list or ++ on a string in a loop is quadratic (about 8 000 elements at most): build lists with split/map/filter/range. len and slice on Str are O(n): iterate with chars.

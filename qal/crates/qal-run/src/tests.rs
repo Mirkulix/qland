@@ -176,6 +176,38 @@ fn read_line_reads_stdin_until_end() {
 }
 
 #[test]
+fn read_all_reads_the_rest_of_stdin() {
+    let src = "fn main(args: List[Str]) -> Int !io = match read_line() {\n\
+                 None => 1,\n\
+                 Some(first) => let rest = read_all() in { print(first ++ \"|\" ++ rest ++ \"|\" ++ read_all()); len(split(rest, \"\\n\")) },\n\
+               }";
+    let r = main_runner(src, "io").with_stdin("head\r\nb\r\nc é");
+    let out = r.run_main(&[]);
+    assert_eq!((out.result, out.stdout.as_str()), (Ok(Value::Int(2)), "head|b\r\nc é|\n"));
+    let r = main_runner("fn main(args: List[Str]) -> Int !io = len(read_all())", "io").with_stdin(vec![0xFF, b'a']);
+    assert_eq!(r.run_main(&[]).result, Ok(Value::Int(2)), "invalid UTF-8 is replaced by U+FFFD");
+    let r = main_runner("fn main(args: List[Str]) -> Int !io = len(read_all())", "io").with_memory_limit(1 << 20).with_stdin(vec![b'x'; 2 << 20]);
+    assert_eq!(r.run_main(&[]).result.unwrap_err().kind, "out_of_memory");
+    let r = main_runner("fn main(args: List[Str]) -> Int !io = len(read_all())", "");
+    assert_eq!(r.run_main(&[]).result.unwrap_err().kind, "permission_denied");
+}
+
+#[test]
+fn text_builtin_failures_are_contract_violations_with_values() {
+    let r = runner("fn code(s: Str) -> Int = char_code(s)\nfn text(n: Int) -> Str = from_char_code(n)\nfn rep(s: Str, f: Str) -> Str = replace(s, f, \"-\")");
+    let e = r.call("code", &[Value::Str("".into())]).unwrap_err();
+    assert_eq!((e.kind, e.contract.as_deref()), ("contract_violation", Some("char_code: req s != \"\"")));
+    assert_eq!(serde_json::to_value(&e.values).unwrap(), json!({"s": ""}));
+    let e = r.call("text", &[Value::Int(55296)]).unwrap_err();
+    assert_eq!(e.message, "precondition of a built-in was violated: `from_char_code: req 0 <= n <= 1114111 && !(55296 <= n <= 57343)`");
+    assert_eq!(serde_json::to_value(&e.values).unwrap(), json!({"n": 55296}));
+    assert_eq!(r.call("text", &[Value::Int(97)]), Ok(Value::Str("a".into())));
+    let e = r.call("rep", &[Value::Str("abc".into()), Value::Str("".into())]).unwrap_err();
+    assert_eq!(serde_json::to_value(&e.values).unwrap(), json!({"from": ""}));
+    assert_eq!(r.call("rep", &[Value::Str("a b".into()), Value::Str(" ".into())]), Ok(Value::Str("a-b".into())));
+}
+
+#[test]
 fn effects_must_be_granted() {
     let r = main_runner("fn main(args: List[Str]) -> Int !io = { print(\"hi\"); 0 }", "");
     let out = r.run_main(&[]);

@@ -230,6 +230,25 @@ fn strings() {
 }
 
 #[test]
+fn text_builtins() {
+    all_tests_pass(
+        "test ordering = \"a\" < \"b\" && \"ab\" > \"a\" && \"\" < \"a\" && \"B\" < \"a\" && \"x\" <= \"x\" && \"x\" >= \"x\" && !(\"b\" < \"a\") && \"z\" < \"é\" && \"é\" < \"😀\"\n\
+         test sorting = sort_str([\"pear\", \"Apple\", \"fig\", \"\", \"fig\", \"é\"]) == [\"\", \"Apple\", \"fig\", \"fig\", \"pear\", \"é\"] && sort_str([]) == []\n\
+         test sorting_many = sort_str(map(reverse(range(0, 300)), key)) == map(range(0, 300), key)\n\
+         fn key(n: Int) -> Str = from_char_code(1000 + n)\n\
+         test codes = char_code(\"A\") == 65 && char_code(\"é\") == 233 && char_code(\"€\") == 8364 && char_code(\"😀\") == 128512 && char_code(\"ab\") == 97 && char_code(\"\\0\") == 0\n\
+         test from_codes = from_char_code(65) == \"A\" && from_char_code(233) == \"é\" && from_char_code(8364) == \"€\" && from_char_code(128512) == \"😀\" && from_char_code(127) == \"\\u{7F}\" && from_char_code(128) == \"\\u{80}\" && from_char_code(2047) == \"\\u{7FF}\" && from_char_code(2048) == \"\\u{800}\" && from_char_code(65535) == \"\\u{FFFF}\" && from_char_code(65536) == \"\\u{10000}\" && from_char_code(1114111) == \"\\u{10FFFF}\"\n\
+         test round_trip = map(map(range(0, 2980), scalar_text), code_of) == map(range(0, 2980), scalar)\n\
+         fn scalar(n: Int) -> Int = let c = n * 373 in if c >= 55296 && c <= 57343 then c + 2048 else c\n\
+         fn scalar_text(n: Int) -> Str = from_char_code(scalar(n))\n\
+         fn code_of(s: Str) -> Int = char_code(s)\n\
+         test case = to_upper(\"Hello, wörld 9!\") == \"HELLO, WöRLD 9!\" && to_lower(\"HeLLo É Z@[`{\") == \"hello É z@[`{\" && to_upper(\"\") == \"\" && to_upper(\"az\") == \"AZ\" && to_lower(\"AZ\") == \"az\"\n\
+         test replacing = replace(\"a,b,,c\", \",\", \";\") == \"a;b;;c\" && replace(\"aaa\", \"aa\", \"b\") == \"ba\" && replace(\"abc\", \"x\", \"y\") == \"abc\" && replace(\"\", \"a\", \"b\") == \"\" && replace(\"héllo\", \"é\", \"e\") == \"hello\" && replace(\"ab\", \"ab\", \"\") == \"\" && replace(\"xax\", \"a\", \"long\") == \"xlongx\"\n\
+         test finding = index_of(\"hello\", \"l\") == Some(2) && index_of(\"héllo\", \"l\") == Some(2) && index_of(\"😀x\", \"x\") == Some(1) && index_of(\"abc\", \"\") == Some(0) && index_of(\"abc\", \"abcd\") == None && index_of(\"\", \"a\") == None && index_of(\"abab\", \"ab\") == Some(0)",
+    );
+}
+
+#[test]
 fn lists_and_function_values() {
     all_tests_pass(
         "fn double(x: Int) -> Int = x * 2\n\
@@ -290,6 +309,36 @@ fn builtin_preconditions_fail_with_values() {
     assert_eq!((r.slot(vals, 0), r.slot(vals, 1), r.slot(vals, 2)), (2, 9, 5));
     let (kind, _, _, _) = r.call("parts", &[]).unwrap_err();
     assert_eq!(kind, FAIL_BUILTIN);
+}
+
+#[test]
+fn text_builtin_preconditions_fail_with_values() {
+    let m = build(
+        "fn code() -> Int = char_code(\"\")\nfn bad(n: Int) -> Str = from_char_code(n)\nfn rep() -> Str = replace(\"abc\", \"\", \"x\")",
+        Entry::All,
+    );
+    let mut r = instantiate(&m);
+    let (kind, func, site, _) = r.call("code", &[]).unwrap_err();
+    assert_eq!((kind, m.funcs[func as usize].sites[site as usize].label.as_str()), (FAIL_BUILTIN, "char_code: req s != \"\""));
+    for n in [-1, 0xD800, 0xDFFF, 0x110000, i64::MIN, i64::MAX] {
+        let (kind, func, site, vals) = r.call("bad", &[Val::I64(n)]).unwrap_err();
+        assert_eq!(kind, FAIL_BUILTIN, "{n}");
+        assert_eq!(m.funcs[func as usize].sites[site as usize].label, "from_char_code: req 0 <= n <= 1114111 && !(55296 <= n <= 57343)");
+        assert_eq!(r.slot(vals, 0), n);
+    }
+    let (kind, func, site, _) = r.call("rep", &[]).unwrap_err();
+    assert_eq!((kind, m.funcs[func as usize].sites[site as usize].label.as_str()), (FAIL_BUILTIN, "replace: req from != \"\""));
+}
+
+#[test]
+fn huge_replace_is_out_of_memory_not_a_wrapped_length() {
+    // 2^20 matches each replaced by 4 KiB need 4 GiB: the length must not wrap in i32.
+    let src = "fn rep(s: Str, n: Int) -> Str = if n == 0 then s else rep(s ++ s, n - 1)\n\
+               fn big() -> Int = len(replace(rep(\"a\", 20), \"a\", rep(\"b\", 12)))\n\
+               fn ok() -> Int = len(replace(rep(\"a\", 10), \"a\", rep(\"b\", 2)))";
+    let m = build(src, Entry::All);
+    assert_eq!(call_i64(&m, "big", &[]).map_err(|f| f.0), Err(FAIL_OOM));
+    assert_eq!(call_i64(&m, "ok", &[]), Ok(4096));
 }
 
 #[test]

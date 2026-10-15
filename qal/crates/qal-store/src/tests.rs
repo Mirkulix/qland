@@ -723,3 +723,32 @@ fn invalid_signature_patterns_are_diagnostics() {
     assert_eq!((d[0].code, d[0].kind, d[0].message.as_str()), ("E0102", "bad_pattern", "invalid signature pattern `fn(`: unclosed `(`"));
     assert_eq!(s.query(&Query { type_pattern: Some("fn(_) -> _".into()), ..Query::default() }).unwrap().len(), 1);
 }
+
+#[test]
+fn definitions_named_like_new_builtins_can_be_renamed_one_by_one() {
+    // A store from before `replace` and `to_upper` were built-ins: simulated by renaming in SQL.
+    let dir = project();
+    let mut s = Store::init(&dir).unwrap();
+    ok(&mut s, "fn rep(s: Str) -> Str = s ++ \"!\"\nfn up(s: Str) -> Str = s\nfn shout(s: Str) -> Str = up(rep(s))\ntest t = shout(\"a\") == \"a!\"");
+    let before = hash(&mut s, "shout");
+    drop(s);
+    let db = dir.join(".qal").join("store.db");
+    let conn = rusqlite::Connection::open(&db).unwrap();
+    conn.execute_batch(
+        "UPDATE names SET name = 'replace' WHERE name = 'rep'; UPDATE names SET name = 'to_upper' WHERE name = 'up';\
+         UPDATE names SET refs = replace(replace(refs, '\"rep\"', '\"replace\"'), '\"up\"', '\"to_upper\"');",
+    )
+    .unwrap();
+    drop(conn);
+    let mut s = Store::open(&db).unwrap();
+    let d = err(&mut s, "fn helper() -> Int = 1");
+    assert_eq!((d[0].kind, d[0].message.as_str()), ("duplicate_name", "`replace` is the name of a built-in function"));
+    assert!(d[0].hints[0].contains("qal_rename"), "{:?}", d[0].hints);
+    s.rename("replace", "bang", "test").unwrap();
+    s.rename("to_upper", "same", "test").unwrap();
+    ok(&mut s, "fn helper() -> Int = 1");
+    assert_eq!(hash(&mut s, "shout"), before);
+    assert_eq!(text(&mut s, "shout"), "fn shout(s: Str) -> Str\n= same(bang(s))");
+    // Renaming onto a built-in name is still refused.
+    assert_eq!(s.rename("bang", "index_of", "test").unwrap_err()[0].message, "`index_of` is the name of a built-in function");
+}

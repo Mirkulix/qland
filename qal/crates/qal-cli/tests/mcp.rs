@@ -195,6 +195,10 @@ fn programs_read_the_given_stdin_never_the_protocol_channel() {
     assert_eq!(v["stdout"], "3\n");
     let (_, v) = c.call("qal_run", json!({"allow": ["io"]}));
     assert_eq!(v["stdout"], "0\n");
+    let src = "fn wc(args: List[Str]) -> Int !io = let text = read_all() in { print(from_int(len(text))); len(split(text, \"\\n\")) }";
+    assert!(!c.call("qal_define", json!({"source": src})).0);
+    let (_, v) = c.call("qal_run", json!({"entry": "wc", "allow": ["io"], "stdin": "x\ny"}));
+    assert_eq!((v["stdout"].as_str(), v["exit_code"].as_i64()), (Some("3\n"), Some(2)));
     // The server still answers: nothing of the protocol stream was consumed by the program.
     assert_eq!(c.request("ping", json!({}))["result"], json!({}));
 }
@@ -442,7 +446,7 @@ fn a_missing_root_is_named_in_the_error() {
 #[test]
 fn reference_and_launcher_are_precise() {
     let r = qal_cli::mcp::REFERENCE;
-    for needle in ["rand_int(lo, hi) -> Int !rand (both ends included; lo <= hi", "!io !fs", "narrowest", "fold(xs, 0, step)", "quadratic", "`r` cannot be a definition name", "no list patterns", "every field"] {
+    for needle in ["rand_int(lo, hi) -> Int !rand (both ends included; lo <= hi", "!io !fs", "narrowest", "fold(xs, 0, step)", "quadratic", "`r` cannot be a definition name", "no list patterns", "every field", "read_all() -> Str !io", "sort_str(xs)", "< <= > >= (Int, Float, Str)", "from_char_code(n) -> Str"] {
         assert!(r.contains(needle), "{needle}");
     }
     let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..");

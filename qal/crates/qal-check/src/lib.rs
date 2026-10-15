@@ -145,7 +145,7 @@ fn globals(p: &Program, diags: &mut Vec<Diagnostic>) -> Globals {
         if !seen.insert(d.name().to_string()) {
             diags.push(Diagnostic::duplicate_name(d.name(), "", d.name()));
         } else if Builtin::NAMES.contains(&d.name()) {
-            diags.push(Diagnostic::duplicate_name(d.name(), "", d.name()).hint(format!("`{}` is a built-in function", d.name())));
+            diags.push(Diagnostic::builtin_name(d.name()));
         } else if RESERVED_EXPORTS.contains(&d.name()) {
             diags.push(Diagnostic::duplicate_name(d.name(), "", d.name()).hint(format!("`{}` is reserved by the runtime", d.name())));
         } else if d.name() == RESULT_VAR && matches!(d, Def::Fn(_)) {
