@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/qal-core",
+    "crates/qal-text",
 ]
 resolver = "2"
 
