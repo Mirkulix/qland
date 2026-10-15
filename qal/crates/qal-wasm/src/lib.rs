@@ -150,6 +150,8 @@ pub struct CompiledModule {
     pub types: Vec<TypeDef>,
     /// Host functions the module imports.
     pub imports: Vec<&'static str>,
+    /// Elements of the module's function table (its minimum and maximum size).
+    pub table_len: usize,
 }
 
 impl CompiledModule {
@@ -280,8 +282,8 @@ pub fn compile(p: &TProgram, entry: &Entry) -> Result<CompiledModule, String> {
         meta += 1;
     }
 
-    let wasm = mb.finish(&exports)?;
-    Ok(CompiledModule { wasm, funcs: metas, types: p.types.clone(), imports })
+    let (wasm, table_len) = mb.finish(&exports)?;
+    Ok(CompiledModule { wasm, funcs: metas, types: p.types.clone(), imports, table_len })
 }
 
 /// Collects called/referenced functions and used built-ins.

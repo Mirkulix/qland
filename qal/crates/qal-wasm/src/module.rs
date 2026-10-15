@@ -463,10 +463,12 @@ impl<'p> Mb<'p> {
         index
     }
 
-    /// Assembles the module. `exports`: (name, function index).
-    pub fn finish(mut self, exports: &[(String, u32)]) -> Result<Vec<u8>, String> {
+    /// Assembles the module. `exports`: (name, function index). Returns the module and the number
+    /// of elements of its function table (named functions used as values and every closure).
+    pub fn finish(mut self, exports: &[(String, u32)]) -> Result<(Vec<u8>, usize), String> {
         let table = std::mem::take(&mut self.table);
         let table = &table[..];
+        let table_len = table.len();
         let alloc = self.rt(Rt::Alloc);
         let mut types = TypeSection::new();
         for (p, r) in &self.types {
@@ -526,7 +528,7 @@ impl<'p> Mb<'p> {
             .section(&data);
         match self.bug.take() {
             Some(bug) => Err(format!("internal compiler error: {bug}")),
-            None => Ok(module.finish()),
+            None => Ok((module.finish(), table_len)),
         }
     }
 }

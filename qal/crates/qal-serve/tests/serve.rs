@@ -376,6 +376,26 @@ fn instance_overhead_meets_the_gate() {
     assert!(mean <= gate, "mean {mean:?} > {gate:?}");
 }
 
+/// Final review I1: every closure and function value has a table slot (Phase 2a); the pool's
+/// table size must count them, or the service silently loses the pooling allocator.
+#[test]
+fn closure_heavy_handlers_keep_the_pooling_allocator() {
+    let mut src = String::from("fn inc(x: Int) -> Int = x + 1\nfn many(rq: HttpRequest) -> HttpResponse = let a = map([1, 2], inc) in ");
+    for k in 0..40 {
+        src += &format!("let a = map(a, fn(x) => x + {k}) in ");
+    }
+    src += "HttpResponse { status: 200, headers: [], body: from_int(fold(a, 0, fn(s, x) => s + x)) }";
+    let typed = qal_check::check(&qal_text::parse_program(&src).unwrap()).unwrap();
+    let cfg = ServiceConfig { entry: "many".into(), ..ServiceConfig::default() };
+    let svc = Service::new(&typed, Permissions::default(), cfg).unwrap();
+    assert!(svc.runner().meta().table_len > typed.fns.len(), "more table slots than named functions");
+    assert!(svc.pooled(), "the pooling allocator is still used");
+    let mut w = svc.worker().unwrap();
+    let h = svc.handle(&mut w, &qal_serve::Request { method: "GET".into(), path: "/".into(), ..Default::default() }, 1, 0);
+    // (1 + 1) + (2 + 1) + 2 * (0 + 1 + ... + 39)
+    assert_eq!((h.response.status, h.response.body.as_str()), (200, "1565"));
+}
+
 #[test]
 fn kept_alive_clients_do_not_hold_workers_while_others_wait() {
     let dir = project();

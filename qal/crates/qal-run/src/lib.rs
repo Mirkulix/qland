@@ -250,7 +250,8 @@ impl Runner {
     /// one execution survives into the next. Wall-clock limits use an epoch ticker, so concurrent
     /// executions do not affect each other's deadlines.
     pub fn prepared(meta: CompiledModule, perms: Permissions, memory_limit: usize, slots: usize) -> Result<Runner, String> {
-        let table = meta.funcs.iter().filter(|f| !f.is_test).count().max(1);
+        // Every table slot counts: named functions used as values and each closure (Phase 2a).
+        let table = meta.table_len.max(1);
         let mut pool = PoolingAllocationConfig::default();
         let slots = slots.clamp(1, 1024) as u32;
         pool.total_memories(slots).total_core_instances(slots).total_tables(slots);
