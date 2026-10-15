@@ -357,6 +357,9 @@ fn prove_one(tp: &TProgram, name: &str, which: Which, start: Instant, opts: &Opt
             // one guard (so the formula is internalized once, not once per obligation).
             let s = Solver::new();
             s.assert(&vc.pre);
+            for d in &vc.defs {
+                s.assert(d);
+            }
             let guards: Vec<Bool> = vc.obligations.iter().map(|_| Bool::fresh_const("goal")).collect();
             for (g, o) in guards.iter().zip(&vc.obligations) {
                 s.assert(g.implies(vc::and(&[o.hyp.clone(), o.holds.not()])));

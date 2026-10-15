@@ -455,6 +455,23 @@ fn reference_and_launcher_are_precise() {
 }
 
 #[test]
+fn a_committed_define_is_never_reported_as_too_large() {
+    // Review finding I3: one proof report and one warning per call site made the result of a
+    // committed `qal_define` exceed the result limit, so it was reported as an error.
+    let mut c = Client::start();
+    c.initialize();
+    let req = format!("len(s) > 0 || s == \"{}\"", "a".repeat(4000));
+    let src = format!("fn g(s: Str) -> Int req {req} = 1\nfn f(s: Str) -> Int = len([{}])", vec!["g(s)"; 300].join(", "));
+    let (err, v) = c.call("qal_define", json!({"source": src}));
+    assert!(!err, "{}", v.to_string().chars().take(500).collect::<String>());
+    assert_eq!(v["defined"].as_array().map(Vec::len), Some(2));
+    assert!(v["warnings_omitted"].as_u64().unwrap() > 0, "{}", v.to_string().chars().take(500).collect::<String>());
+    assert!(v.to_string().len() < 3 << 20);
+    assert_eq!(c.call("qal_view", json!({"names": ["f"]})).0, false);
+    assert_eq!(c.finish(), Some(0));
+}
+
+#[test]
 fn agents_get_proofs_counterexamples_and_property_tests() {
     let mut c = Client::start();
     c.initialize();

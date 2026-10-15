@@ -48,10 +48,16 @@ pub struct Output {
     /// Contract proofs: one report per obligation (`define`: of the definitions it changed; `prove`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub proofs: Option<Vec<Report>>,
+    /// Number of reports left out of `proofs` to keep the result small ([`MAX_LISTED_BYTES`]).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub proofs_omitted: Option<usize>,
     /// Proof results that are not `proven`, as diagnostics: E0801 `contract_refuted` (of a test, or in
     /// `prove`), E0802 `contract_unproven`. They do not make the operation fail.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub warnings: Option<Vec<Diagnostic>>,
+    /// Number of diagnostics left out of `warnings` to keep the result small ([`MAX_LISTED_BYTES`]).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub warnings_omitted: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub proven: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -278,15 +284,18 @@ pub fn define(ctx: &Ctx, src: &str, agent: &str) -> Reply {
     let result = {
         let mut run = |tp: &TProgram, todo: &[(String, String)]| -> Result<Vec<(String, String)>, Vec<Diagnostic>> {
             let names: Vec<String> = todo.iter().map(|(n, _)| n.clone()).collect();
-            let rs = qal_prove::prove(tp, Some(&names), &opts);
+            let proofs = qal_prove::prove_defs(tp, Some(&names), &opts);
             let is_test = |n: &str| tp.tests.iter().any(|t| t.name == n);
-            let refuted: Vec<Diagnostic> = rs.iter().filter(|r| r.status == Status::Refuted && !is_test(&r.def)).filter_map(Report::diagnostic).collect();
+            let refuted: Vec<Diagnostic> = proofs.iter().flat_map(|p| &p.reports).filter(|r| r.status == Status::Refuted && !is_test(&r.def)).filter_map(Report::diagnostic).collect();
             if !refuted.is_empty() {
-                return Err(refuted);
+                let (mut shown, omitted) = listed(refuted);
+                if let (Some(n), Some(last)) = (omitted, shown.last_mut()) {
+                    last.hints.push(format!("{n} more refuted obligations are not listed"));
+                }
+                return Err(shown);
             }
-            let stable = |n: &str| rs.iter().filter(|r| r.def == n).all(Report::is_stable);
-            let rows = todo.iter().filter(|(n, _)| stable(n)).map(|(n, h)| (h.clone(), proofs_json(rs.iter().filter(|r| r.def == *n)))).collect();
-            reports = rs;
+            let rows = todo.iter().filter_map(|(n, h)| proofs.iter().find(|p| p.def == *n)?.record.as_ref().map(|r| (h.clone(), record_json(r)))).collect();
+            reports = proofs.into_iter().flat_map(|p| p.reports).collect();
             Ok(rows)
         };
         let mut verify = Verify { key: opts.key(), run: &mut run };
@@ -294,24 +303,65 @@ pub fn define(ctx: &Ctx, src: &str, agent: &str) -> Reply {
     };
     match result {
         Ok(d) => {
-            let mut out = Output { defined: Some(d), warnings: warnings(&reports), ..Output::default() };
-            if !reports.is_empty() {
-                out.proofs = Some(reports);
-            }
+            let mut out = Output { defined: Some(d), ..Output::default() };
+            out.set_proofs(reports);
             Reply::new(out, 0)
         }
         Err(d) => Reply::diagnostics(d),
     }
 }
 
-/// The diagnostic form of the results that are not `proven` (None if there are none).
-fn warnings(reports: &[Report]) -> Option<Vec<Diagnostic>> {
-    let w: Vec<Diagnostic> = reports.iter().filter_map(Report::diagnostic).collect();
-    (!w.is_empty()).then_some(w)
+/// Bytes of JSON that `proofs` and `warnings` may each take in one result; the rest is counted in
+/// `proofs_omitted` / `warnings_omitted` (a result must stay below [`crate::mcp::MAX_RESULT_BYTES`]).
+pub const MAX_LISTED_BYTES: usize = 512 << 10;
+
+/// The longest prefix of `items` within [`MAX_LISTED_BYTES`] of JSON, and how many were left out.
+fn listed<T: Serialize>(items: Vec<T>) -> (Vec<T>, Option<usize>) {
+    let total = items.len();
+    let mut bytes = 0;
+    let mut kept = Vec::new();
+    for x in items {
+        bytes += serde_json::to_vec(&x).map(|v| v.len() + 1).unwrap_or(0);
+        if bytes > MAX_LISTED_BYTES {
+            break;
+        }
+        kept.push(x);
+    }
+    let omitted = total - kept.len();
+    (kept, (omitted > 0).then_some(omitted))
 }
 
-fn proofs_json<'a>(rs: impl Iterator<Item = &'a Report>) -> String {
-    serde_json::to_string(&rs.collect::<Vec<_>>()).unwrap_or_else(|_| "[]".into())
+impl Output {
+    /// Sets `proofs` (if there are any) and `warnings`, the diagnostic form of the results that are
+    /// not `proven`, each within [`MAX_LISTED_BYTES`].
+    fn set_proofs(&mut self, reports: Vec<Report>) {
+        let w: Vec<Diagnostic> = reports.iter().filter_map(Report::diagnostic).collect();
+        if !w.is_empty() {
+            let (w, omitted) = listed(w);
+            self.warnings = Some(w);
+            self.warnings_omitted = omitted;
+        }
+        if !reports.is_empty() {
+            let (r, omitted) = listed(reports);
+            self.proofs = Some(r);
+            self.proofs_omitted = omitted;
+        }
+    }
+
+    /// Leaves out every proof report and warning (a committed `define` whose result would be too
+    /// large otherwise): their numbers stay in `proofs_omitted` / `warnings_omitted`.
+    pub fn omit_proofs(&mut self) {
+        if let Some(p) = self.proofs.take() {
+            self.proofs_omitted = Some(p.len() + self.proofs_omitted.unwrap_or(0));
+        }
+        if let Some(w) = self.warnings.take() {
+            self.warnings_omitted = Some(w.len() + self.warnings_omitted.unwrap_or(0));
+        }
+    }
+}
+
+fn record_json(r: &qal_prove::Record) -> String {
+    serde_json::to_string(r).unwrap_or_else(|_| "{\"results\":[]}".into())
 }
 
 /// Proves the contracts of the named functions and tests (all if `names` is empty). From the
@@ -349,12 +399,17 @@ pub fn prove(ctx: &Ctx, source: &Source, names: &[String]) -> Reply {
     };
     let count = |st: Status| reports.iter().filter(|r| r.status == st).count();
     let (proven, refuted, unknown) = (count(Status::Proven), count(Status::Refuted), count(Status::Unknown));
-    let out = Output { warnings: warnings(&reports), proofs: Some(reports), proven: Some(proven), refuted: Some(refuted), unknown: Some(unknown), ..Output::default() };
+    let mut out = Output { proven: Some(proven), refuted: Some(refuted), unknown: Some(unknown), ..Output::default() };
+    out.set_proofs(reports);
+    out.proofs.get_or_insert_with(Vec::new);
     Reply::new(out, u8::from(refuted > 0))
 }
 
-/// Proof results of the stored definitions: reused per (hash, prover key), computed and stored if missing.
+/// Proof results of the stored definitions: reused per (hash, prover key) and shown with the
+/// current names, computed and stored if missing. Showing and computing share one time budget.
 fn stored_proofs(ctx: &Ctx, tp: &TProgram, only: Option<&[String]>, opts: &qal_prove::Options) -> Result<Vec<Report>, Vec<Diagnostic>> {
+    let start = Instant::now();
+    let deadline = start + opts.budget;
     let mut store = ctx.open()?;
     let hashes: std::collections::HashMap<String, String> = store.query(&Query::default())?.into_iter().map(|e| (e.name, e.hash)).collect();
     let key = opts.key();
@@ -372,7 +427,7 @@ fn stored_proofs(ctx: &Ctx, tp: &TProgram, only: Option<&[String]>, opts: &qal_p
     let mut missing = Vec::new();
     for n in &targets {
         let stored = match hashes.get(n) {
-            Some(h) => store.proofs(h, &key)?.and_then(|j| serde_json::from_str::<Vec<Report>>(&j).ok()),
+            Some(h) => store.proofs(h, &key)?.and_then(|j| serde_json::from_str::<qal_prove::Record>(&j).ok()).and_then(|rec| qal_prove::render(tp, n, &rec, deadline)),
             None => None,
         };
         match stored {
@@ -383,13 +438,12 @@ fn stored_proofs(ctx: &Ctx, tp: &TProgram, only: Option<&[String]>, opts: &qal_p
         }
     }
     if !missing.is_empty() {
-        let fresh = qal_prove::prove(tp, Some(&missing), opts);
-        for n in &missing {
-            let rs: Vec<Report> = fresh.iter().filter(|r| r.def == *n).cloned().collect();
-            if let Some(h) = hashes.get(n).filter(|_| rs.iter().all(Report::is_stable)) {
-                store.save_proofs(h, &key, &proofs_json(rs.iter()))?;
+        let left = qal_prove::Options { budget: opts.budget.saturating_sub(start.elapsed()), ..opts.clone() };
+        for p in qal_prove::prove_defs(tp, Some(&missing), &left) {
+            if let (Some(h), Some(rec)) = (hashes.get(&p.def), &p.record) {
+                store.save_proofs(h, &key, &record_json(rec))?;
             }
-            cached.insert(n.clone(), rs);
+            cached.insert(p.def, p.reports);
         }
     }
     Ok(targets.iter().flat_map(|n| cached.remove(n).unwrap_or_default()).collect())

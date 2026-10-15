@@ -96,6 +96,8 @@ pub struct Vc {
     pub truncated: bool,
     /// The encoding passed its deadline; the obligations are incomplete and must not be used.
     pub out_of_time: bool,
+    /// Definitions `p == c` of fresh constants that name shared conditions (true in every check).
+    pub defs: Vec<Bool>,
 }
 
 /// The conjunction of `xs`, leaving out literal `true`s (most `ok` conditions are `true`, and a
@@ -155,6 +157,7 @@ struct Enc<'p> {
     /// The encoding stops (`Vc::out_of_time`) once this has passed.
     deadline: Option<Instant>,
     out_of_time: bool,
+    defs: Vec<Bool>,
 }
 
 /// The clock is read once per this many encoded expressions.
@@ -162,7 +165,7 @@ const CLOCK_EVERY: usize = 256;
 
 /// The verification conditions of a function (monomorphic or generic).
 pub fn function<'p>(tp: &'p TProgram, f: &'p TFn, deadline: Option<Instant>) -> Vc {
-    let mut enc = Enc { tp, record: false, depth: 0, locals: vec![&f.locals], obligations: Vec::new(), approx: BTreeSet::new(), nodes: 0, deadline, out_of_time: false };
+    let mut enc = Enc { tp, record: false, depth: 0, locals: vec![&f.locals], obligations: Vec::new(), approx: BTreeSet::new(), nodes: 0, deadline, out_of_time: false, defs: Vec::new() };
     let mut env: Vec<Option<Term>> = vec![None; f.locals.len()];
     let mut facts = Vec::new();
     let mut params = Vec::new();
@@ -207,19 +210,31 @@ pub fn function<'p>(tp: &'p TProgram, f: &'p TFn, deadline: Option<Instant>) -> 
         }
     }
     let truncated = enc.nodes > MAX_VC_NODES;
-    Vc { pre, params, obligations: enc.obligations, approx: enc.approx, truncated, out_of_time: enc.out_of_time }
+    Vc { pre, params, obligations: enc.obligations, approx: enc.approx, truncated, out_of_time: enc.out_of_time, defs: enc.defs }
 }
 
 /// The verification conditions of a test: the `req` of every function it calls.
 pub fn test<'p>(tp: &'p TProgram, t: &'p TTest, deadline: Option<Instant>) -> Vc {
-    let mut enc = Enc { tp, record: true, depth: 0, locals: vec![&t.locals], obligations: Vec::new(), approx: BTreeSet::new(), nodes: 0, deadline, out_of_time: false };
+    let mut enc = Enc { tp, record: true, depth: 0, locals: vec![&t.locals], obligations: Vec::new(), approx: BTreeSet::new(), nodes: 0, deadline, out_of_time: false, defs: Vec::new() };
     let mut env: Vec<Option<Term>> = vec![None; t.locals.len()];
     enc.enc(&t.body, &mut env, &truth(), "body");
     let truncated = enc.nodes > MAX_VC_NODES;
-    Vc { pre: truth(), params: Vec::new(), obligations: enc.obligations, approx: enc.approx, truncated, out_of_time: enc.out_of_time }
+    Vc { pre: truth(), params: Vec::new(), obligations: enc.obligations, approx: enc.approx, truncated, out_of_time: enc.out_of_time, defs: enc.defs }
 }
 
 impl<'p> Enc<'p> {
+    /// A fresh constant defined as `c` (a literal stays itself): a condition that many obligations
+    /// share, like the path condition after each item of a long list, then stays one node in each
+    /// of them, where the solver would otherwise flatten it into every obligation (quadratic).
+    fn name(&mut self, c: Bool) -> Bool {
+        if c.as_bool().is_some() {
+            return c;
+        }
+        let p = Bool::fresh_const("pc");
+        self.defs.push(p.eq(&c));
+        p
+    }
+
     /// The Bool of a value (a fresh one, noted as `why`, if it is not modelled).
     fn as_bool(&mut self, v: Option<Term>, why: &str) -> Bool {
         match v {
@@ -268,7 +283,7 @@ impl<'p> Enc<'p> {
         let mut here = pc.clone();
         for (i, x) in xs.iter().enumerate() {
             let (v, ok) = self.enc(x, env, &here, &format!("{path}.{item}[{i}]"));
-            here = conj(&here, &ok);
+            here = self.name(conj(&here, &ok));
             vals.push(v);
             oks.push(ok);
         }
@@ -350,7 +365,7 @@ impl<'p> Enc<'p> {
                 for (i, x) in fs {
                     let name = names.get(*i as usize).map(|(n, _)| n.clone()).unwrap_or_default();
                     let ok = self.enc(x, env, &here, &format!("{path}.fields.{name}")).1;
-                    here = conj(&here, &ok);
+                    here = self.name(conj(&here, &ok));
                     oks.push(ok);
                 }
                 (None, and(&oks))

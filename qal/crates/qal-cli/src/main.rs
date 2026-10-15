@@ -22,6 +22,8 @@
 //!                                                       (names: tests, or functions for their property test)
 //!   qal prove <file> | qal prove [<name>...]         -> {"proofs":[{def,obligation,path,contract,status,counterexample?,reason?}],
 //!                                                        "proven":n,"refuted":m,"unknown":k} (exit 1 if refuted)
+//!                                                       (`proofs` and `warnings` are cut at 512 KiB each; `proofs_omitted`
+//!                                                        and `warnings_omitted` count what was left out)
 //!   qal run <file> [--allow <spec>] [--] [args..]    -> {"exit_code":n,"stdout":".."} | {"error":{...},"stdout":".."} | {"diagnostics":[...]}
 //!   qal run <name> [--allow <spec>] [--] [args..]    (store; `<name>` is any `fn(List[Str]) -> Int`)
 //! For agents:

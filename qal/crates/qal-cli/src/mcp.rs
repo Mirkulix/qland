@@ -302,7 +302,14 @@ impl Server {
                 // The output is serialized once; the response holds it twice (as text and as
                 // structured content), so its size follows from the text.
                 let mut text = to_line(&reply.out);
-                let size = text.len() + to_line(&text).len();
+                let mut size = text.len() + to_line(&text).len();
+                if size > MAX_RESULT_BYTES && reply.out.defined.is_some() {
+                    // A `define` has committed: its result keeps `defined` and only counts the
+                    // proof results it cannot show.
+                    reply.out.omit_proofs();
+                    text = to_line(&reply.out);
+                    size = text.len() + to_line(&text).len();
+                }
                 if size > MAX_RESULT_BYTES {
                     let d = Diagnostic::new("E0702", "result_too_large", "", "", format!("the result of {name} is about {size} bytes of JSON, more than {MAX_RESULT_BYTES}"))
                         .hint("return or print less data, e.g. a summary or a prefix");

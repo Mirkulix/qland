@@ -433,6 +433,26 @@ fn deep_recursion_works_and_overflow_is_reported() {
 }
 
 #[test]
+fn stored_proofs_are_shown_with_current_names() {
+    // Review finding I2: results are stored per hash, but carried the names of whichever
+    // definition stored them last.
+    let dir = project("prove-names");
+    qal_in(&dir, &["init"]);
+    let a = write(&dir, "a.qal", "fn a(x: Int) -> Int ens r > x = x + 1\nfn pos(x: Int) -> Int req x > 0 = x\nfn user(y: Int) -> Int req y > 1 = pos(y)");
+    assert_eq!(qal_in(&dir, &["define", &a]).0, 0);
+    let b = write(&dir, "b.qal", "fn b(y: Int) -> Int ens r > y = y + 1");
+    let (code, v) = qal_in(&dir, &["define", &b]);
+    assert_eq!((code, v["defined"][0]["hash"].as_str()), (0, qal_in(&dir, &["query", "--name", "a"]).1["results"][0]["hash"].as_str()), "{v}");
+    let (_, v) = qal_in(&dir, &["prove", "a"]);
+    assert_eq!((v["proofs"][0]["def"].as_str(), v["proofs"][0]["contract"].as_str()), (Some("a"), Some("ens r > x")), "{v}");
+    assert_eq!(qal_in(&dir, &["rename", "a", "c"]).0, 0);
+    assert_eq!(qal_in(&dir, &["rename", "pos", "positive"]).0, 0);
+    let (_, v) = qal_in(&dir, &["prove", "c", "user"]);
+    let shown: Vec<(&str, &str, &str)> = v["proofs"].as_array().unwrap().iter().map(|r| (r["def"].as_str().unwrap(), r["obligation"].as_str().unwrap(), r["contract"].as_str().unwrap())).collect();
+    assert_eq!(shown, [("c", "ens[0]", "ens r > x"), ("user", "req[0] of positive", "req x > 0")], "{v}");
+}
+
+#[test]
 fn prove_and_property_tests_from_files_and_the_store() {
     let dir = project("prove");
     qal_in(&dir, &["init"]);
