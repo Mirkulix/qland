@@ -997,7 +997,7 @@ fn an_empty_package_is_valid_and_old_stores_are_migrated() {
     let mut s = store();
     let e = s.export("std.", "std").unwrap();
     assert_eq!(e.file, format!("# qal-pkg 1\n# package std {}\n", Hash::of(b"").to_hex()));
-    assert_eq!(s.import(&e.file).unwrap().defined.len(), 0);
+    assert_eq!(s.ensure_std(&e.file, None).unwrap().unwrap().defined.len(), 0);
     assert_eq!(s.meta("package:std").unwrap(), Some(Hash::of(b"").to_hex()));
     // A version-3 store (Phase 2b: `proofs`, no `meta`) is upgraded when opened.
     let mut old = store();
@@ -1322,7 +1322,8 @@ fn delete_removes_names_nothing_refers_to() {
     let out = s.delete(&["lone".into()], "agent-d").unwrap();
     assert_eq!((out[0].name.as_str(), out[0].kind, out[0].hash.as_str()), ("lone", "fn", h.as_str()));
     assert!(hashes(&mut s).iter().all(|(n, _)| n != "lone"));
-    assert_eq!(s.view(&["lone".into()]).unwrap_err()[0].kind, "unknown_name");
+    let d = s.view(&["lone".into()]).unwrap_err();
+    assert!(d[0].kind == "unknown_name" && d[0].hints.iter().any(|h| h.contains("`lone` was deleted")), "{d:?}");
     assert!(s.view(&[format!("#{h}")]).is_ok(), "the definition stays stored by hash");
     let hist = s.history("lone").unwrap();
     assert_eq!((hist.last().unwrap().action.as_str(), hist.last().unwrap().agent.as_str()), ("deleted", "agent-d"));
@@ -1381,7 +1382,13 @@ fn the_std_project_is_rebuilt_from_its_package_with_its_agents() {
     lib.define("fn std.a.f(x: Int) -> Int = x + 1", "std-a-1").unwrap();
     lib.define("fn std.a.g(x: Int) -> Int = std.a.f(x) * 2", "std-a-2").unwrap();
     let pkg = lib.export("std.", "std").unwrap();
+    // Not the release: the file's agents are not taken over (review M3).
+    let mut other = std_store();
+    other.import(&pkg.file).unwrap();
+    assert_eq!(other.history("std.a.f").unwrap()[0].agent, format!("qal-std@{}", &pkg.hash[..12]));
+    // The release (the package embedded in the binary): they are.
     let mut fresh = std_store();
+    fresh.set_release(&pkg.file).unwrap();
     fresh.import(&pkg.file).unwrap();
     assert_eq!(fresh.history("std.a.f").unwrap()[0].agent, "std-a-1");
     assert_eq!(fresh.history("std.a.g").unwrap()[0].agent, "std-a-2");
@@ -1389,6 +1396,7 @@ fn the_std_project_is_rebuilt_from_its_package_with_its_agents() {
     // A newer std package replaces what the std agents wrote there.
     lib.define("fn std.a.f(x: Int) -> Int = x + 3", "std-a-3").unwrap();
     let v2 = lib.export("std.", "std").unwrap();
+    fresh.set_release(&v2.file).unwrap();
     assert!(statuses(&fresh.import(&v2.file).unwrap().defined).contains(&("std.a.f", "replaced")));
     assert_eq!(fresh.export("std.", "std").unwrap().file, v2.file);
 }
@@ -1415,4 +1423,83 @@ fn package_def_lines_must_match_the_text() {
     assert_eq!(count(&t, "names"), 1);
     // The real file still imports.
     assert_eq!(t.import(&e.file).unwrap().defined.len(), 2);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Phase 3b final review: C1, I1, I2.
+
+#[test]
+fn project_types_identical_to_std_types_do_not_block_the_std_import() {
+    // C1: a 3a project with `{ name: Str, value: Str }` and a std with the same structure.
+    let mut lib = std_store();
+    lib.define("type std.url.Param = { name: Str, value: Str }\nfn std.url.mk(n: Str) -> std.url.Param = std.url.Param { name: n, value: \"\" }", "std-url-1").unwrap();
+    let pkg = lib.export("std.", "std").unwrap();
+    let mut s = store();
+    ok(&mut s, "type Header = { name: Str, value: Str }\nfn h(n: Str) -> Header = Header { name: n, value: \"\" }");
+    let i = s.ensure_std(&pkg.file, None).unwrap().unwrap();
+    assert_eq!(i.defined.len(), 2);
+    assert_eq!(hash(&mut s, "Header"), hash(&mut s, "std.url.Param"), "same structure, two nominal types");
+    // Both decode as written, and each keeps its users.
+    assert!(text(&mut s, "h").contains("-> Header"));
+    assert!(text(&mut s, "std.url.mk").contains("-> std.url.Param"));
+    ok(&mut s, "fn use_std() -> Str = std.url.mk(\"a\").name\nfn use_own() -> Str = h(\"b\").name");
+    // One definition cannot use both names of the shared structure; the hint says which to use.
+    let d = err(&mut s, "fn both(h: Header, p: std.url.Param) -> Str = h.name");
+    assert!(d[0].code == "E0404" && d[0].hints.iter().any(|h| h.contains("same structure as the standard library's `std.url.Param`")), "{d:?}");
+    // Replacing the project's type relinks only the project's users.
+    let before = hash(&mut s, "std.url.mk");
+    let d = ok(&mut s, "type Header = { name: Str, value: Str, extra: Int }\nfn h(n: Str) -> Header = Header { name: n, value: \"\", extra: 0 }");
+    assert!(statuses(&d).contains(&("Header", "replaced")));
+    assert_eq!(hash(&mut s, "std.url.mk"), before);
+    // Within one namespace identical types are still one type.
+    assert_eq!(err(&mut s, "type Other = { name: Str, value: Str, extra: Int }")[0].kind, "duplicate_name");
+}
+
+#[test]
+fn only_the_released_std_package_writes_std_names_into_a_project() {
+    // I1: a crafted package named `std` (checksum recomputed) with a std function, an enum with
+    // unqualified variants and an unqualified helper.
+    let text = "fn helper() -> Int = 1\n\ntype std.evil.T = Foo | Bar\n\nfn std.evil.x() -> Int = 2\n";
+    let program = qal_text::parse_program(text).unwrap();
+    let hashed = hash_program(&program).unwrap();
+    let mut lines: Vec<String> = hashed.defs.iter().map(|c| format!("# def {} {} someone", c.name, c.hash.to_hex())).collect();
+    lines.sort();
+    let evil = sealed("std", &format!("{}\n\n{text}", lines.join("\n")));
+    let mut s = store();
+    let d = s.import(&evil).unwrap_err();
+    assert!(d[0].code == "E0243" && d[0].message.contains("is not the standard library of this qal"), "{d:?}");
+    // Not even made the release by `ensure_std`: the namespace rule of the std store applies.
+    let d = s.ensure_std(&evil, None).unwrap_err();
+    assert_eq!(d.iter().map(|d| (d.code, d.def.as_str())).collect::<Vec<_>>(), vec![("E0240", "helper"), ("E0240", "std.evil.T"), ("E0240", "std.evil.T")], "{d:?}");
+    assert!(hashes(&mut s).is_empty());
+    assert_eq!(s.meta("std_package").unwrap(), None);
+    // A real release imported, a different `std` file is still refused.
+    let mut lib = std_store();
+    lib.define("fn std.a.f() -> Int = 1", "std-a-1").unwrap();
+    let real = lib.export("std.", "std").unwrap();
+    s.ensure_std(&real.file, None).unwrap();
+    lib.define("fn std.a.g() -> Int = 2", "std-a-1").unwrap();
+    let newer = lib.export("std.", "std").unwrap();
+    assert_eq!(s.import(&newer.file).unwrap_err()[0].code, "E0243");
+    assert!(s.import(&real.file).is_ok(), "the release itself may be imported again");
+}
+
+#[test]
+fn released_std_names_keep_their_signatures_in_the_std_store() {
+    // I2: the embedded package is the release; in the std store its names are additive.
+    let mut lib = std_store();
+    lib.define("fn std.a.f(x: Int) -> Int = x\ntest std.a.t = std.a.f(1) == 1\nfn std.a.lone() -> Int = 0", "std-a-1").unwrap();
+    let release = lib.export("std.", "std").unwrap();
+    lib.set_release(&release.file).unwrap();
+    let d = lib.define("fn std.a.f(x: Int, y: Int) -> Int = x\ntest std.a.t = std.a.f(1, 2) == 1", "std-a-2").unwrap_err();
+    assert_eq!((d[0].code, d[0].def.as_str()), ("E0244", "std.a.f"), "{d:?}");
+    assert!(d[0].hints.iter().any(|h| h.contains("--breaking")));
+    assert_eq!(lib.delete(&["std.a.lone".into()], "std-a-2").unwrap_err()[0].code, "E0244");
+    // Same signature, new body, and new names: fine.
+    lib.define("fn std.a.f(x: Int) -> Int = x + 0\nfn std.a.new() -> Int = 1", "std-a-2").unwrap();
+    lib.delete(&["std.a.new".into()], "std-a-2").unwrap();
+    // Deliberately breaking.
+    lib.set_breaking(true);
+    lib.define("fn std.a.f(x: Int, y: Int) -> Int = x\ntest std.a.t = std.a.f(1, 2) == 1", "std-a-3").unwrap();
+    lib.delete(&["std.a.lone".into()], "std-a-3").unwrap();
 }

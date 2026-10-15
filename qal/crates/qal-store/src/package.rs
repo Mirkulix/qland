@@ -15,7 +15,7 @@
 //! package named `std` adds or replaces them (keeping their signatures, E0244); another package may
 //! carry them only unchanged (E0240). Importing into the std project keeps each `# def` agent.
 
-use crate::define::{self, StdNames};
+use crate::define::{self, Release, Rules, StdNames};
 use qal_text::lexer::is_std_name;
 use crate::snapshot::Snapshot;
 use crate::{sql, Defined, Verify};
@@ -214,12 +214,20 @@ pub fn export(conn: &mut Connection, prefix: &str, package: &str) -> Result<Expo
 /// only if every name gets the recorded hash (`package_mismatch`, E0243, otherwise; nothing is
 /// written). Records `package:<name>` in `meta`. With `verify`, the definitions are verified (the
 /// contracts proven) exactly as by `define`.
-pub fn import(conn: &mut Connection, file: &str, verify: Option<&mut Verify>) -> Result<Imported, Vec<Diagnostic>> {
+pub fn import(conn: &mut Connection, file: &str, verify: Option<&mut Verify>, release: Option<&Release>) -> Result<Imported, Vec<Diagnostic>> {
     let pkg = parse(file)?;
     if !valid_package_name(&pkg.name) {
         return Err(mismatch(format!("`{}` is not a package name", pkg.name)));
     }
     let is_std = pkg.name == STD_PACKAGE_NAME;
+    let is_release = release.is_some_and(|r| r.hash == pkg.hash);
+    // Only the released std (embedded in the binary) adds or replaces `std.` names in a project:
+    // anyone can name a package `std` and recompute its checksum (review finding I1).
+    if is_std && !is_release && !define::is_std_store(conn)? {
+        let ours = release.map_or("none".to_string(), |r| short(&r.hash).to_string());
+        return Err(vec![Diagnostic::new("E0243", "package_mismatch", "", "", format!("package `std` {} is not the standard library of this qal (std {ours})", short(&pkg.hash)))
+            .hint("a project gets its standard library only from its qal (it is imported automatically); to change std, change the std project (qal/std) and rebuild qal")]);
+    }
     let agent = format!("qal-{}@{}", pkg.name, &pkg.hash[..12]);
     let expected: BTreeMap<&str, &str> = pkg.defs.iter().map(|d| (d.name.as_str(), d.hash.as_str())).collect();
     let check = |defined: &[Defined], tx: &rusqlite::Transaction| -> Result<(), Vec<Diagnostic>> {
@@ -257,8 +265,9 @@ pub fn import(conn: &mut Connection, file: &str, verify: Option<&mut Verify>) ->
             set_meta(tx, META_STD_PACKAGE, &pkg.hash)?;
         }
         // The std project keeps the recorded origin of each definition (`# def` agent) when it is
-        // rebuilt from the package, so its next export names the same agents.
-        if std_store {
+        // rebuilt from the released package, so its next export names the same agents. Only the
+        // release: another file's agents are not trusted (review finding M3).
+        if std_store && is_release {
             for d in &pkg.defs {
                 tx.execute(
                     "UPDATE history SET agent = ?1 WHERE id = (SELECT max(id) FROM history WHERE name = ?2 AND agent = ?3 AND action IN ('added', 'replaced'))",
@@ -269,9 +278,9 @@ pub fn import(conn: &mut Connection, file: &str, verify: Option<&mut Verify>) ->
         }
         Ok(())
     };
-    let policy = if is_std { StdNames::Package } else { StdNames::Unchanged };
+    let rules = Rules { std: if is_std { StdNames::Package } else { StdNames::Unchanged }, release, breaking: false };
     let ours = meta(conn, META_STD_PACKAGE)?;
-    let defined = define::define_checked(conn, &pkg.text, &agent, policy, verify, &check).map_err(|mut d| {
+    let defined = define::define_checked(conn, &pkg.text, &agent, &rules, verify, &check).map_err(|mut d| {
         // Built against another std: say so first (the hashes or names differ because of it).
         if let Some(theirs) = pkg.std.as_deref().filter(|h| ours.as_deref() != Some(*h)) {
             let mine = ours.as_deref().map_or("none".to_string(), |h| short(h).to_string());

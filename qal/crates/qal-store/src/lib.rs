@@ -15,7 +15,7 @@ mod pattern;
 mod schema;
 mod snapshot;
 
-pub use define::StdNames;
+pub use define::{Release, StdNames};
 pub use ops::{Deleted, DepView, Entry, HistoryEntry, Query, Renamed, View};
 pub use package::{Exported, Imported};
 pub use pattern::matches as signature_matches;
@@ -55,6 +55,10 @@ pub fn project_of(start: &Path) -> Option<PathBuf> {
 pub struct Store {
     conn: Connection,
     path: PathBuf,
+    /// The released standard library (see [`Store::set_release`]).
+    release: Option<define::Release>,
+    /// The std store only: changing or deleting released names is allowed.
+    breaking: bool,
 }
 
 /// The checked codebase and the (name, hash) of the definitions to verify.
@@ -124,7 +128,7 @@ impl Store {
                 schema::SCHEMA_VERSION
             ))]);
         }
-        Ok(Store { conn, path })
+        Ok(Store { conn, path, release: None, breaking: false })
     }
 
     pub fn path(&self) -> &Path {
@@ -151,12 +155,14 @@ impl Store {
     /// result lists every name that changed or was given, or nothing is stored and the diagnostics
     /// say why. `agent` is recorded in the history.
     pub fn define(&mut self, src: &str, agent: &str) -> Result<Vec<Defined>, Vec<Diagnostic>> {
-        define::define(&mut self.conn, src, agent, None)
+        let rules = define::Rules { std: StdNames::Refuse, release: self.release.as_ref(), breaking: self.breaking };
+        define::define(&mut self.conn, src, agent, &rules, None)
     }
 
     /// Like `define`, with a verification step before anything is committed (see [`Verify`]).
     pub fn define_verified(&mut self, src: &str, agent: &str, verify: &mut Verify) -> Result<Vec<Defined>, Vec<Diagnostic>> {
-        define::define(&mut self.conn, src, agent, Some(verify))
+        let rules = define::Rules { std: StdNames::Refuse, release: self.release.as_ref(), breaking: self.breaking };
+        define::define(&mut self.conn, src, agent, &rules, Some(verify))
     }
 
     /// Renames a definition. No hash changes; the history of `old` moves to `new`.
@@ -166,7 +172,8 @@ impl Store {
 
     /// Removes names nothing else refers to (see [`ops::delete`]); their history stays.
     pub fn delete(&mut self, names: &[String], agent: &str) -> Result<Vec<Deleted>, Vec<Diagnostic>> {
-        ops::delete(&mut self.conn, names, agent)
+        let rules = define::Rules { std: StdNames::Refuse, release: self.release.as_ref(), breaking: self.breaking };
+        ops::delete(&mut self.conn, names, agent, &rules)
     }
 
     /// Text, signature and direct dependencies of each name (or `#<hash>`).
@@ -218,12 +225,26 @@ impl Store {
 
     /// Imports a package file atomically, verifying its checksum and every hash.
     pub fn import(&mut self, file: &str) -> Result<Imported, Vec<Diagnostic>> {
-        package::import(&mut self.conn, file, None)
+        package::import(&mut self.conn, file, None, self.release.as_ref())
     }
 
     /// [`Store::import`] with the verification step of [`Store::define_verified`].
     pub fn import_verified(&mut self, file: &str, verify: &mut Verify) -> Result<Imported, Vec<Diagnostic>> {
-        package::import(&mut self.conn, file, Some(verify))
+        package::import(&mut self.conn, file, Some(verify), self.release.as_ref())
+    }
+
+    /// Sets the released standard library: the std package embedded in the binary (`file`). Only
+    /// this package may be imported as `std` into a project; in the std store its names keep their
+    /// signatures and cannot be deleted (E0244) unless [`Store::set_breaking`] allows it, and a
+    /// rebuild from it keeps its recorded agents.
+    pub fn set_release(&mut self, file: &str) -> Result<(), Vec<Diagnostic>> {
+        self.release = Some(define::Release::of(file)?);
+        Ok(())
+    }
+
+    /// Allows changing the signature of, or deleting, released std names in the std store.
+    pub fn set_breaking(&mut self, breaking: bool) {
+        self.breaking = breaking;
     }
 
     /// Makes the store at `<project>/.qal/store.db` (created if missing) the std project's store
@@ -251,21 +272,22 @@ impl Store {
         define::is_std_store(&self.conn)
     }
 
-    /// Imports the std package `file` unless the store already has it (`meta.std_package` is its
+    /// Imports the std package `file` (and makes it the release, see [`Store::set_release`]) unless the store already has it (`meta.std_package` is its
     /// hash) or is the std project's store; returns the import, if one happened. Called before
     /// every write of a project (Phase 3 §4.3), never by reads.
     pub fn ensure_std(&mut self, file: &str, verify: Option<&mut Verify>) -> Result<Option<Imported>, Vec<Diagnostic>> {
+        // The package this is called with is the release (the one embedded in the binary).
+        let release = define::Release::of(file)?;
         if self.is_std()? {
+            self.release = Some(release);
             return Ok(None);
         }
-        let pkg = package::parse(file)?;
-        if pkg.name != package::STD_PACKAGE_NAME {
-            return Err(vec![Diagnostic::new("E0243", "package_mismatch", "", "", format!("the standard library package is named `{}`, not `std`", pkg.name))]);
-        }
-        if self.meta(package::META_STD_PACKAGE)?.as_deref() == Some(pkg.hash.as_str()) {
+        if self.meta(package::META_STD_PACKAGE)?.as_deref() == Some(release.hash.as_str()) {
+            self.release = Some(release);
             return Ok(None);
         }
-        package::import(&mut self.conn, file, verify).map(Some)
+        self.release = Some(release);
+        package::import(&mut self.conn, file, verify, self.release.as_ref()).map(Some)
     }
 
     /// A value of the store's `meta` table.

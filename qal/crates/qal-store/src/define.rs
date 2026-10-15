@@ -24,6 +24,59 @@ pub enum StdNames {
     Package,
 }
 
+/// The released standard library: the std package embedded in the `qal` binary (its hash is fixed
+/// at build time). Only it may add or replace `std.` names in a project, and in the std store its
+/// names keep their signatures and cannot be deleted unless the change is declared breaking.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Release {
+    pub hash: String,
+    /// name -> (kind, signature text) of every released definition.
+    pub signatures: BTreeMap<String, (Kind, String)>,
+}
+
+impl Release {
+    /// The release a std package file describes (checksum verified).
+    pub fn of(file: &str) -> Result<Release, Vec<Diagnostic>> {
+        let pkg = crate::package::parse(file)?;
+        if pkg.name != crate::package::STD_PACKAGE_NAME {
+            return Err(vec![Diagnostic::new("E0243", "package_mismatch", "", "", format!("the standard library package is named `{}`, not `std`", pkg.name))]);
+        }
+        let program = qal_text::parse_program(&pkg.text).map_err(|d| vec![d])?;
+        Ok(Release { hash: pkg.hash, signatures: program.defs.iter().map(|d| (d.name().to_string(), signature(d))).collect() })
+    }
+}
+
+/// What a write may do with `std.` names.
+#[derive(Debug, Clone, Copy)]
+pub struct Rules<'a> {
+    pub std: StdNames,
+    pub release: Option<&'a Release>,
+    /// The std store only: allow changing or deleting released names (`--breaking`).
+    pub breaking: bool,
+}
+
+/// In the std store: released names keep their signatures unless the change is breaking (E0244).
+fn released_signatures(rules: &Rules, input: &Program) -> Result<(), Vec<Diagnostic>> {
+    let (Some(release), false) = (rules.release, rules.breaking) else { return Ok(()) };
+    let diags: Vec<Diagnostic> = input
+        .defs
+        .iter()
+        .filter_map(|d| {
+            let before = release.signatures.get(d.name())?;
+            let after = signature(d);
+            (*before != after).then(|| {
+                Diagnostic::std_signature_change(d.name(), &show(before), &show(&after))
+                    .hint(format!("`{}` is in the released standard library (std {}); a deliberate break needs `qal define --breaking` on the command line", d.name(), &release.hash[..release.hash.len().min(12)]))
+            })
+        })
+        .collect();
+    if diags.is_empty() {
+        Ok(())
+    } else {
+        Err(diags)
+    }
+}
+
 /// The value of `meta.role` that marks the std project's store.
 pub const ROLE_STD: &str = "std";
 
@@ -45,7 +98,9 @@ fn namespace(std_store: bool, policy: StdNames, input: &Program) -> Result<(), V
             },
             _ => Vec::new(),
         };
-        if std_store {
+        // The std store, and (defence in depth) the std package anywhere: only `std.` names,
+        // variants in their type's module.
+        if std_store || policy == StdNames::Package {
             let Some((module, _)) = std_parts(name) else {
                 diags.push(Diagnostic::std_only(name, "", name, None));
                 continue;
@@ -133,8 +188,8 @@ pub(crate) fn hash(p: &Program) -> Result<Hashed, Vec<Diagnostic>> {
 /// How often `define` verifies on a snapshot, outside the write lock, before it verifies inside it.
 const ATTEMPTS: usize = 3;
 
-pub fn define(conn: &mut Connection, src: &str, agent: &str, verify: Option<&mut Verify>) -> Result<Vec<Defined>, Vec<Diagnostic>> {
-    define_checked(conn, src, agent, StdNames::Refuse, verify, &|_, _| Ok(()))
+pub fn define(conn: &mut Connection, src: &str, agent: &str, rules: &Rules, verify: Option<&mut Verify>) -> Result<Vec<Defined>, Vec<Diagnostic>> {
+    define_checked(conn, src, agent, rules, verify, &|_, _| Ok(()))
 }
 
 /// A check of a `define` before it is committed, inside the write transaction that would commit it
@@ -142,12 +197,12 @@ pub fn define(conn: &mut Connection, src: &str, agent: &str, verify: Option<&mut
 pub type Check<'c> = dyn Fn(&[Defined], &Transaction) -> Result<(), Vec<Diagnostic>> + 'c;
 
 /// `define`, committed only if `check` accepts the written result (after the verification);
-/// `policy` says who may write `std.` names.
-pub fn define_checked(conn: &mut Connection, src: &str, agent: &str, policy: StdNames, verify: Option<&mut Verify>, check: &Check) -> Result<Vec<Defined>, Vec<Diagnostic>> {
+/// `rules` say who may write `std.` names.
+pub fn define_checked(conn: &mut Connection, src: &str, agent: &str, rules: &Rules, verify: Option<&mut Verify>, check: &Check) -> Result<Vec<Defined>, Vec<Diagnostic>> {
     let input = qal_text::parse_program(src).map_err(|d| vec![d])?;
     let Some(v) = verify else {
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(sql)?;
-        let out = prepare(&tx, &input, policy)?.write(&tx, &input, agent, false)?;
+        let out = prepare(&tx, &input, rules)?.write(&tx, &input, agent, false)?;
         check(&out, &tx)?;
         tx.commit().map_err(sql)?;
         return Ok(out);
@@ -161,7 +216,7 @@ pub fn define_checked(conn: &mut Connection, src: &str, agent: &str, policy: Std
         let (typed, todo) = {
             // A deferred transaction that only reads: a consistent snapshot, no write lock.
             let tx = conn.transaction().map_err(sql)?;
-            let state = prepare(&tx, &input, policy)?;
+            let state = prepare(&tx, &input, rules)?;
             let out = state.write(&tx, &input, agent, true)?;
             let todo = to_verify(&tx, &out, &v.key)?;
             (state.typed, todo)
@@ -170,7 +225,7 @@ pub fn define_checked(conn: &mut Connection, src: &str, agent: &str, policy: Std
         // IMMEDIATE takes the write lock before reading, so two concurrent `define`s serialize
         // instead of both deciding on the same old state.
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(sql)?;
-        let out = prepare(&tx, &input, policy)?.write(&tx, &input, agent, false)?;
+        let out = prepare(&tx, &input, rules)?.write(&tx, &input, agent, false)?;
         let now = to_verify(&tx, &out, &v.key)?;
         if now.iter().all(|d| todo.contains(d)) {
             let hashes: HashSet<&str> = now.iter().map(|(_, h)| h.as_str()).collect();
@@ -182,7 +237,7 @@ pub fn define_checked(conn: &mut Connection, src: &str, agent: &str, policy: Std
         // Another writer changed what has to be verified: drop this transaction and start over.
     }
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(sql)?;
-    let state = prepare(&tx, &input, policy)?;
+    let state = prepare(&tx, &input, rules)?;
     let out = state.write(&tx, &input, agent, false)?;
     let todo = to_verify(&tx, &out, &v.key)?;
     if !todo.is_empty() {
@@ -224,10 +279,14 @@ fn legacy_writer() -> bool {
 }
 
 /// Assembles the input with the stored codebase, enforces the replacement rule, checks and hashes.
-fn prepare(tx: &Transaction, input: &Program, policy: StdNames) -> Result<Prepared, Vec<Diagnostic>> {
+fn prepare(tx: &Transaction, input: &Program, rules: &Rules) -> Result<Prepared, Vec<Diagnostic>> {
+    let policy = rules.std;
     let snap = Snapshot::load(tx)?;
     let std_store = is_std_store(tx)?;
     namespace(std_store, policy, input)?;
+    if std_store && policy == StdNames::Refuse {
+        released_signatures(rules, input)?;
+    }
     if policy != StdNames::Refuse {
         std_signatures(tx, &snap, input)?;
     }
@@ -295,7 +354,11 @@ fn alias_references(canons: &[Canon], input_names: &HashSet<&str>) -> Result<(),
         }
         for (h, names) in by_target.iter().filter(|(_, ns)| ns.len() > 1) {
             let names: Vec<String> = names.iter().map(|n| n.to_string()).collect();
-            diags.push(Diagnostic::alias_reference(&c.name, "", &names, &h.short(), input_names.contains(c.name.as_str())));
+            let mut d = Diagnostic::alias_reference(&c.name, "", &names, &h.short(), input_names.contains(c.name.as_str()));
+            if let (Some(std), Some(own)) = (names.iter().find(|n| is_std_name(n)), names.iter().find(|n| !is_std_name(n))) {
+                d = d.hint(format!("`{own}` has the same structure as the standard library's `{std}`: use `{std}` here (or replace `{own}` with it everywhere and delete `{own}`)"));
+            }
+            diags.push(d);
         }
     }
     if diags.is_empty() {
@@ -389,11 +452,14 @@ fn replacement_rule(tx: &Transaction, snap: &Snapshot, input: &Program, input_na
 }
 
 /// Types are identified by their structure: a second name for the same type would need type
-/// aliases, which Phase 1 does not have.
+/// aliases, which Phase 1 does not have. A standard library type and a project type with the same
+/// structure are allowed (review finding C1): std is written independently of every project, and
+/// each is a distinct nominal type to the checker; stored definitions keep the name they were
+/// written against (`names.refs`), so both decode as written.
 fn identical_types(canons: &[Canon]) -> Result<(), Vec<Diagnostic>> {
-    let mut by_hash: BTreeMap<Hash, Vec<&str>> = BTreeMap::new();
+    let mut by_hash: BTreeMap<(Hash, bool), Vec<&str>> = BTreeMap::new();
     for c in canons.iter().filter(|c| c.kind == Kind::Type) {
-        by_hash.entry(c.hash).or_default().push(&c.name);
+        by_hash.entry((c.hash, is_std_name(&c.name))).or_default().push(&c.name);
     }
     let mut diags = Vec::new();
     for names in by_hash.values_mut().filter(|ns| ns.len() > 1) {

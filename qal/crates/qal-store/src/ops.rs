@@ -133,7 +133,14 @@ pub(crate) fn unknown(conn: &Connection, names: &dyn Fn(&str) -> bool, name: &st
     let d = Diagnostic::unknown_name(name, "", name);
     match renamed_to(conn, names, name) {
         Ok(Some(new)) => d.hint(format!("`{name}` was renamed to `{new}`")),
-        _ => d,
+        _ => {
+            let last: Option<String> = conn.query_row("SELECT action FROM history WHERE name = ?1 ORDER BY id DESC LIMIT 1", params![name], |r| r.get(0)).ok();
+            if last.as_deref() == Some("deleted") {
+                d.hint(format!("`{name}` was deleted; its history and old versions remain (history of `{name}`, view `#<hash>`)"))
+            } else {
+                d
+            }
+        }
     }
 }
 
@@ -173,7 +180,7 @@ fn valid_name(name: &str, kind: Kind) -> Result<(), Vec<Diagnostic>> {
 /// of them (E0406 `has_dependents` otherwise), and only names the store's namespace rule allows
 /// (no `std.` names in a project; in the std project every name is one). Each gets a `deleted`
 /// history entry; the definitions stay stored by hash but have no name any more.
-pub fn delete(conn: &mut Connection, names: &[String], agent: &str) -> Result<Vec<Deleted>, Vec<Diagnostic>> {
+pub fn delete(conn: &mut Connection, names: &[String], agent: &str, rules: &crate::define::Rules) -> Result<Vec<Deleted>, Vec<Diagnostic>> {
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(sql)?;
     let snap = Snapshot::load(&tx)?;
     let std_store = crate::define::is_std_store(&tx)?;
@@ -194,6 +201,13 @@ pub fn delete(conn: &mut Connection, names: &[String], agent: &str) -> Result<Ve
             diags.push(unknown(&tx, &|n| snap.names.contains_key(n), name));
             continue;
         };
+        // A released std name stays (std is additive), unless the break is deliberate.
+        if let (true, Some(release), false) = (std_store, rules.release, rules.breaking) {
+            if release.signatures.contains_key(name) {
+                diags.push(Diagnostic::std_released_delete(name, &release.hash));
+                continue;
+            }
+        }
         let users: Vec<String> = snap.dependents(name).into_iter().filter(|u| !wanted.contains(u.as_str())).collect();
         if !users.is_empty() {
             diags.push(Diagnostic::has_dependents(name, &users));
