@@ -459,3 +459,11 @@ fn large_functions_compile_in_linear_time() {
     let large = time(20_000);
     assert!(large < small * 10, "5000 elements: {small:?}, 20000 elements: {large:?}");
 }
+
+#[test]
+fn confined_fs_path_is_trimmed() {
+    let root = std::env::temp_dir().join(format!("qal-run-trim-{}", std::process::id()));
+    std::fs::create_dir_all(root.join("data")).unwrap();
+    let p = Permissions::parse_in(&["fs: data".to_string()], &root).unwrap();
+    assert_eq!(p.fs, vec![root.join("data").canonicalize().unwrap()]);
+}

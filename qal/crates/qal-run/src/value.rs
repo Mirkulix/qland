@@ -99,19 +99,26 @@ struct Budget {
     bytes: usize,
 }
 
-/// `s`, cut (at a character boundary) to what is left of the string-byte budget.
-fn budget_str(s: String, budget: &mut Budget) -> Value {
+/// The string at `ptr`, cut (at a character boundary) to what is left of the string-byte budget.
+/// Only the kept prefix is copied and validated, so repeated references to one huge string stay cheap;
+/// the `...(+N bytes)` suffix comes from the declared length.
+fn budget_str(mem: &[u8], ptr: u32, budget: &mut Budget) -> Option<Value> {
+    let len = u32_at(mem, ptr as usize)? as usize;
+    let start = (ptr as usize).checked_add(4)?;
+    let bytes = mem.get(start..start.checked_add(len)?)?;
     let room = MAX_STR_BYTES.saturating_sub(budget.bytes);
-    if s.len() <= room {
+    if len <= room {
+        let s = String::from_utf8_lossy(bytes).into_owned();
         budget.bytes += s.len();
-        return Value::Str(s);
+        return Some(Value::Str(s));
     }
     let mut end = room;
-    while !s.is_char_boundary(end) {
+    while end > 0 && (bytes[end] & 0xC0) == 0x80 {
         end -= 1;
     }
+    let kept = String::from_utf8_lossy(&bytes[..end]).into_owned();
     budget.bytes = MAX_STR_BYTES;
-    Value::Str(format!("{}...(+{} bytes)", &s[..end], s.len() - end))
+    Some(Value::Str(format!("{kept}...(+{} bytes)", len - end)))
 }
 
 fn decode_at(tp: &TProgram, mem: &[u8], ty: &Type, slot: i64, depth: usize, budget: &mut Budget) -> Value {
@@ -127,10 +134,7 @@ fn decode_at(tp: &TProgram, mem: &[u8], ty: &Type, slot: i64, depth: usize, budg
         Type::Bool => Value::Bool(slot != 0),
         Type::Unit | Type::Var(_) => Value::Unit,
         Type::Fn(..) => Value::Str(format!("<fn #{ptr}>")),
-        Type::Str => match read_str(mem, ptr) {
-            Some(s) => budget_str(s, budget),
-            None => bad(),
-        },
+        Type::Str => budget_str(mem, ptr, budget).unwrap_or_else(bad),
         Type::List(elem) => {
             let Some(len) = u32_at(mem, ptr as usize) else { return bad() };
             let mut out = Vec::new();
@@ -218,5 +222,26 @@ mod tests {
         let Value::List(xs) = decode(&tp, &mem, &Type::list(Type::Str), 0) else { panic!("not a list") };
         assert_eq!(xs[0], Value::Str("a".repeat(big)));
         assert_eq!(xs[1], Value::Str("a...(+9 bytes)".into()));
+    }
+
+    #[test]
+    fn many_references_to_one_large_string_decode_quickly() {
+        let tp = TProgram::default();
+        // One 16 MiB string after the slots, referenced by 50 000 list slots.
+        let len = 16usize << 20;
+        let n = 50_000usize;
+        let mut mem = vec![b'a'; 8 + 8 * n + 4 + len];
+        let at = 8 + 8 * n;
+        mem[0..4].copy_from_slice(&(n as u32).to_le_bytes());
+        for k in 0..n {
+            mem[8 + 8 * k..16 + 8 * k].copy_from_slice(&(at as i64).to_le_bytes());
+        }
+        mem[at..at + 4].copy_from_slice(&(len as u32).to_le_bytes());
+        let t = std::time::Instant::now();
+        let Value::List(xs) = decode(&tp, &mem, &Type::list(Type::Str), 0) else { panic!("not a list") };
+        assert!(t.elapsed() < std::time::Duration::from_secs(2), "{:?}", t.elapsed());
+        let Value::Str(first) = &xs[0] else { panic!("not a string") };
+        assert_eq!(first.len(), MAX_STR_BYTES + format!("...(+{} bytes)", len - MAX_STR_BYTES).len());
+        assert_eq!(xs[1], Value::Str(format!("...(+{len} bytes)")));
     }
 }

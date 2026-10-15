@@ -68,6 +68,7 @@ impl Permissions {
                 _ => match item.strip_prefix("fs:") {
                     Some(dir) if dir.trim().is_empty() => return Err("`fs:` needs a directory: `fs:<dir>` relative to the project root, e.g. `fs:data` or `fs:.`".into()),
                     Some(dir) => {
+                        let dir = dir.trim();
                         require_open_flags()?;
                         let canonical = root.join(dir).canonicalize().map_err(|_| format!("fs:{dir}: no such directory in the project"))?;
                         let rel = canonical.strip_prefix(&root).map_err(|_| format!("fs:{dir}: outside the project root"))?;

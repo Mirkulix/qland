@@ -145,7 +145,8 @@ impl Runner {
     }
 
     /// Wall-clock limit per call; exceeding it reports `timeout` (fuel bounds instructions, this
-    /// also bounds time spent in host functions and large memory copies).
+    /// also bounds time spent in host functions and large memory copies). The epoch is engine-wide:
+    /// concurrent calls on one `Runner` interfere with each other's deadline, so use one call at a time.
     pub fn with_timeout(mut self, timeout: Duration) -> Runner {
         self.timeout = Some(timeout);
         self
@@ -222,7 +223,10 @@ impl Runner {
         store.limiter(|s| &mut s.limits);
         // Relative to the engine's current epoch, so ticks of earlier watchdogs do not count.
         store.set_epoch_deadline(1);
-        let watchdog = self.timeout.map(|t| Watchdog::start(self.engine.clone(), t));
+        let watchdog = match self.timeout.map(|t| Watchdog::start(self.engine.clone(), t)).transpose() {
+            Ok(w) => w,
+            Err(m) => return Outcome { result: Err(RunError::new("trap", export, m)), stdout: String::new(), stdout_bytes: 0 },
+        };
         let result = self.invoke_in(&mut store, export, args);
         drop(watchdog);
         let stdout_bytes = store.data().stdout_bytes.max(store.data().stdout.len());
@@ -415,7 +419,7 @@ struct Watchdog {
 }
 
 impl Watchdog {
-    fn start(engine: Engine, timeout: Duration) -> Watchdog {
+    fn start(engine: Engine, timeout: Duration) -> Result<Watchdog, String> {
         let (stop, wait) = mpsc::channel::<()>();
         let thread = std::thread::Builder::new()
             .name("qal-watchdog".into())
@@ -424,8 +428,8 @@ impl Watchdog {
                     engine.increment_epoch();
                 }
             })
-            .ok();
-        Watchdog { stop: Some(stop), thread }
+            .map_err(|e| format!("cannot start the wall-clock watchdog: {e}"))?;
+        Ok(Watchdog { stop: Some(stop), thread: Some(thread) })
     }
 }
 
