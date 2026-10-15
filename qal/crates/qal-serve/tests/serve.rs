@@ -180,7 +180,7 @@ fn crud_over_keep_alive_and_pipelined_requests() {
     assert!(ids[0] < ids[1] && ids[1] < ids[2], "monotonic request ids {ids:?}");
     write!(s, "DELETE /todos/1 HTTP/1.1\r\nHost: t\r\n\r\n").unwrap();
     let d = read_resp(&mut s, &mut rest, false).unwrap();
-    assert_eq!((d.status, d.header("content-length")), (204, None), "no content-length for 204");
+    assert_eq!((d.status, d.header("content-length"), d.header("content-type")), (204, None, None), "no content-length and no default content-type for 204");
     write!(s, "GET /todos/1 HTTP/1.1\r\nHost: t\r\nConnection: close\r\n\r\n").unwrap();
     let e = read_resp(&mut s, &mut rest, false).unwrap();
     assert_eq!((e.status, e.header("connection"), e.header("content-type")), (404, Some("close"), Some("text/plain; charset=utf-8")));
@@ -398,6 +398,27 @@ fn closure_heavy_handlers_keep_the_pooling_allocator() {
     let h = svc.handle(&mut w, &qal_serve::Request { method: "GET".into(), path: "/".into(), ..Default::default() }, 1, 0);
     // (1 + 1) + (2 + 1) + 2 * (0 + 1 + ... + 39)
     assert_eq!((h.response.status, h.response.body.as_str()), (200, "1565"));
+}
+
+/// Phase 3c: a bodiless response (204, 304) gets no default `content-type` (and no
+/// `content-length`); one the handler set is kept; other statuses still get the default.
+#[test]
+fn bodiless_responses_get_no_default_content_type() {
+    let src = "fn h(rq: HttpRequest) -> HttpResponse = match to_int(rq.query) {\n  Some(s) => HttpResponse { status: s, headers: if rq.path == \"/typed\" then [HttpHeader { name: \"content-type\", value: \"application/json\" }] else [], body: \"\" },\n  None => HttpResponse { status: 400, headers: [], body: \"no status\" }\n}";
+    let typed = qal_check::check(&qal_text::parse_program(src).unwrap()).unwrap();
+    let svc = Service::new(&typed, Permissions::default(), ServiceConfig { entry: "h".into(), ..ServiceConfig::default() }).unwrap();
+    let mut w = svc.worker().unwrap();
+    let mut run = |path: &str, status: u16| {
+        let rq = qal_serve::Request { method: "GET".into(), path: path.into(), query: status.to_string(), ..Default::default() };
+        let r = svc.handle(&mut w, &rq, 1, 0).response;
+        assert_eq!(r.status, status);
+        (r.header("content-type").map(str::to_string), r.header("content-length").map(str::to_string))
+    };
+    assert_eq!(run("/", 204), (None, None));
+    assert_eq!(run("/", 304), (None, None));
+    assert_eq!(run("/typed", 204), (Some("application/json".into()), None), "a content-type the handler set is kept");
+    assert_eq!(run("/", 200), (Some("text/plain; charset=utf-8".into()), Some("0".into())));
+    assert_eq!(run("/", 404), (Some("text/plain; charset=utf-8".into()), Some("0".into())));
 }
 
 #[test]

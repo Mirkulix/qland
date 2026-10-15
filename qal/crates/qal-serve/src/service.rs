@@ -3,7 +3,7 @@
 //! [`Service::handle`] is everything between the HTTP parser and the HTTP writer: the request
 //! becomes an `HttpRequest` value, the handler runs in a fresh instance of the prepared module
 //! (inside one database transaction when it uses `db`), and its `HttpResponse` is validated and
-//! completed (`content-length`, a default `content-type`, `x-request-id`). Traps and invalid
+//! completed (`content-length` and a default `content-type`, both not for 204/304; `x-request-id`). Traps and invalid
 //! responses become 500/503 responses; nothing a handler does ends the process. `qal serve` and
 //! `qal_request` both run exactly this pipeline.
 
@@ -357,10 +357,12 @@ impl Service {
         let result = out.outcome.result.and_then(|v| validate(&v, max).map_err(|m| RunError::new("bad_response", &self.cfg.entry, format!("invalid response: {m}"))));
         match result {
             Ok(mut resp) => {
-                if resp.header("content-type").is_none() {
-                    resp.headers.push(("content-type".into(), "text/plain; charset=utf-8".into()));
-                }
+                // A 204/304 has no body, so nothing to describe: no default content-type and no
+                // content-length (RFC 9110 §8.3, §8.6).
                 if !bodiless(resp.status) {
+                    if resp.header("content-type").is_none() {
+                        resp.headers.push(("content-type".into(), "text/plain; charset=utf-8".into()));
+                    }
                     resp.headers.push(("content-length".into(), resp.body.len().to_string()));
                 }
                 resp.headers.push(("x-request-id".into(), id.to_string()));
