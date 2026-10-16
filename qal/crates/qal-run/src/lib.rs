@@ -6,6 +6,7 @@ mod fs;
 mod guest;
 mod host;
 mod net;
+pub mod selfhost;
 mod value;
 
 pub use db::{Db, DbGrant};
