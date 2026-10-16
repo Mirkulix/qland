@@ -1,0 +1,1 @@
+fn f(xs: List[Int], i: Int) -> Int ens let y = list_at(xs, i) in true = 0

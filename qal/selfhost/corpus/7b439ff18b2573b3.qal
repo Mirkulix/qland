@@ -1,0 +1,1 @@
+fn c(s: Str) -> Int ens let x = char_code(s) in true = 0

@@ -1,0 +1,1 @@
+fn k(n: Int) -> Int ens from_char_code(n) == from_char_code(n) || true = 0

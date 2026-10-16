@@ -8,7 +8,7 @@ use qal_core::tform;
 /// Programs of part (1): examples, fixtures, 20 benchmark solutions, the std and todo packages.
 const FILES: usize = 27;
 /// Programs of part (2), extracted by `selfhost/tools/extract_corpus.py`.
-const EXTRACTED: usize = 640;
+const EXTRACTED: usize = 669;
 
 #[test]
 fn the_corpus_size_is_fixed() {
@@ -69,6 +69,44 @@ fn every_checked_corpus_program_round_trips_through_qalt() {
     }
     assert_eq!((files.parsed, files.checked), (FILES, FILES), "{files:?}");
     // Fixed with the corpus: a change means the corpus or the pipeline changed.
-    assert_eq!((st.parsed, st.checked), (617, 429), "{st:?}");
+    assert_eq!((st.parsed, st.checked), (646, 456), "{st:?}");
 }
 
+
+#[test]
+fn the_extracted_corpus_is_up_to_date() {
+    // Review M2: the corpus follows the Rust tests. After adding QAL source to a Rust test, run
+    // `python3 qal/selfhost/tools/extract_corpus.py` and update EXTRACTED and the pinned counts.
+    if std::env::var("QAL_SKIP_PYTHON").is_ok() {
+        return;
+    }
+    let script = qal_gen::qal_root().join("selfhost/tools/extract_corpus.py");
+    let out = std::process::Command::new("python3").arg("-I").arg(&script).arg("--check").output().unwrap_or_else(|e| panic!("python3 is needed for this test (or set QAL_SKIP_PYTHON): {e}"));
+    assert!(out.status.success(), "{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+}
+
+#[test]
+fn mutated_typed_forms_decode_to_errors_or_compile() {
+    // Review M6: a QALT form that decodes has shapes that fit its types, so code generation does
+    // not panic on it. Single-byte mutations of the typed forms of corpus programs.
+    let mut rng = qal_gen::Rng(qal_gen::seed());
+    let (mut accepted, mut panics) = (0, Vec::new());
+    for s in qal_gen::corpus().iter().filter(|s| s.text.len() < 3000).take(150) {
+        let Ok(p) = qal_compiler::parse_program(&s.text) else { continue };
+        let Ok(tp) = qal_compiler::check(&p) else { continue };
+        let bytes = tform::encode(&tp);
+        for _ in 0..100 {
+            let mut b = bytes.clone();
+            let i = rng.below(b.len());
+            b[i] = rng.next() as u8;
+            if let Ok(t) = tform::decode(&b) {
+                accepted += 1;
+                if std::panic::catch_unwind(|| qal_compiler::compile(&t, &Entry::All)).is_err() {
+                    panics.push(s.name.clone());
+                }
+            }
+        }
+    }
+    eprintln!("mutated QALT: {accepted} decoded, {} panicked in codegen", panics.len());
+    assert!(panics.is_empty(), "{panics:?}");
+}

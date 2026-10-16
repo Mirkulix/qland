@@ -1,0 +1,1 @@
+fn k(n: Int) -> Int req n >= 0 ens let c = from_char_code(n) in true = 0

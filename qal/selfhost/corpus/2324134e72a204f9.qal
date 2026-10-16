@@ -1,0 +1,1 @@
+fn t(s: Str) -> Int ens let x = trim(s) ++ to_upper(s) in true = 0
