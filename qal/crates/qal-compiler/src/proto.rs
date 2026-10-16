@@ -19,7 +19,8 @@
 //! sentry   := name:str hash[32] kind:u8(0 type | 1 fn | 2 test) canonical:bytes local_names:n str refs:n str
 //! group    := hash[32] form:bytes
 //! entry    := 0 name:str | 1 names:n str | 2 (tests) | 3 (all)
-//! options  := memory_max_pages:uint max_instances:uint      (fixed field list of version 1)
+//! options  := memory_max_pages:uint                         (fixed field list of version 1; the
+//!             checker's limits, e.g. MAX_INSTANCES, are constants of the language, not options)
 //!
 //! res      := "QALR" ver:u8(1) status:u8 payload
 //!   0 DONE        payload:bytes                              (op-specific, below)
@@ -79,12 +80,11 @@ pub struct StoreState {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Options {
     pub memory_max_pages: u64,
-    pub max_instances: u64,
 }
 
 impl Default for Options {
     fn default() -> Options {
-        Options { memory_max_pages: crate::MAX_PAGES, max_instances: crate::MAX_INSTANCES as u64 }
+        Options { memory_max_pages: crate::MAX_PAGES }
     }
 }
 
@@ -221,7 +221,6 @@ impl Put for Writer {
 
     fn options(&mut self, o: &Options) {
         self.uint(o.memory_max_pages);
-        self.uint(o.max_instances);
     }
 }
 
@@ -289,7 +288,7 @@ impl Get for Reader<'_> {
     }
 
     fn options(&mut self) -> R<Options> {
-        Ok(Options { memory_max_pages: self.uint()?, max_instances: self.uint()? })
+        Ok(Options { memory_max_pages: self.uint()? })
     }
 }
 
@@ -914,7 +913,7 @@ mod tests {
     fn requests_and_responses_round_trip() {
         let st = state();
         assert_eq!(st.groups.len(), 1, "even/odd are a group");
-        let opts = Options { memory_max_pages: 16384, max_instances: 7 };
+        let opts = Options { memory_max_pages: 16384 };
         let reqs = [
             Request::Parse { text: SRC.into() },
             Request::Define { state: st.clone(), text: "fn x() -> Int = 1".into(), options: opts },
@@ -994,7 +993,7 @@ mod tests {
         let typed = done(&serve(&Request::Typed { state: st.clone(), roots: vec!["t".into()], options: Options::default() }.encode()));
         assert_eq!(typed, tform::encode(&crate::check(&p).unwrap()));
         // BUILD: the module, metadata included
-        let opts = Options { memory_max_pages: 16384, ..Options::default() };
+        let opts = Options { memory_max_pages: 16384 };
         let m = decode_module(&done(&serve(&Request::Build { state: st.clone(), entry: Entry::All, options: opts }.encode()))).unwrap();
         let reference = crate::compile_with(&crate::check(&p).unwrap(), &Entry::All, &CompileOptions::compiler()).unwrap();
         assert_eq!(m.wasm, reference.wasm);
@@ -1010,7 +1009,7 @@ mod tests {
         for req in [b"nope".to_vec(), Request::Define { state: st.clone(), text: String::new(), options: opts }.encode(), join(b"", &[]), Request::Print { state: st.clone(), names: vec!["zz".into()] }.encode()] {
             assert!(matches!(Response::decode(&serve(&req)).unwrap(), Response::Internal(_)));
         }
-        let bad = Options { memory_max_pages: 0, ..opts };
+        let bad = Options { memory_max_pages: 0 };
         assert!(matches!(Response::decode(&serve(&Request::Build { state: st, entry: Entry::All, options: bad }.encode())).unwrap(), Response::Internal(m) if m.contains("memory_max_pages")));
     }
 
