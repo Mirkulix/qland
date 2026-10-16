@@ -1,0 +1,1 @@
+test spare_two = spare() == 3

@@ -1,0 +1,1 @@
+fn mine() -> Int = spare()

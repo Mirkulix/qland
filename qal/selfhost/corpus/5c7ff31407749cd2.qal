@@ -1,0 +1,2 @@
+fn g() -> Int = base() + uses()
+fn uses() -> Int = base() * 100
