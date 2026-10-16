@@ -91,10 +91,18 @@ pub fn session(ctx: &Ctx, id: &str, ttl: Option<&str>, out: &Path) -> Reply {
             Some(t) => qal_store::team::parse_ttl(t).ok_or_else(|| vec![Diagnostic::new("E0701", "bad_arguments", "", "", format!("`{t}` is not a duration")).hint("e.g. 90m, 24h, 7d")])?,
         };
         let mut s = store(ctx)?;
-        // Refuse a link or directory before a session is made.
+        // Refuse a link, a directory or a place in the project before a session is made.
         crate::secret_file::check_target(out)?;
+        if qal_store::team::keys::in_project(out, s.project_dir()?).map_err(|d| vec![d])? {
+            return Err(vec![Diagnostic::new("E0926", "key_dir_in_project", "", "", format!("the session file {} would be inside the project", out.display()))
+                .hint("a session token is a secret: write it outside the project (next to the keys, e.g. ~/.config/qal/sessions)")]);
+        }
         let new = s.team_session(id, ttl_ms)?;
-        crate::secret_file::write(out, format!("{}\n", new.token.as_str()).as_bytes())?;
+        // Reserved up front: the buffer with the token never reallocates.
+        let mut line = zeroize::Zeroizing::new(String::with_capacity(new.token.len() + 1));
+        line.push_str(&new.token);
+        line.push('\n');
+        crate::secret_file::write(out, line.as_bytes())?;
         Ok(reply(json!({"session": {"id": new.id, "member": new.member, "expires_at": new.expires_at, "file": out.display().to_string()}})))
     })
 }
@@ -138,10 +146,10 @@ pub fn sync_std(ctx: &Ctx) -> Reply {
 }
 
 /// `qal verify [--trust team.json] [--from <seq>]` (and `qal_verify`): exit 1 unless ok.
-pub fn verify(ctx: &Ctx, trust: Option<&str>, from: i64) -> Reply {
+pub fn verify(ctx: &Ctx, trust: Option<&str>, from: i64, head: Option<&str>) -> Reply {
     run(|| {
         let trust = trust.map(Trust::parse).transpose().map_err(|d| vec![d])?;
-        let outcome = store(ctx)?.verify(trust.as_ref(), from)?;
+        let outcome = store(ctx)?.verify(trust.as_ref(), from, head)?;
         let ok = outcome.ok;
         let mut r = reply(value(&outcome));
         if !ok {

@@ -611,3 +611,81 @@ fn the_first_result_after_a_newer_qal_says_std_is_outdated() {
     let (_, v) = rev.call("qal_query", json!({}));
     assert!(v.get("notices").is_none(), "once per version: {v}");
 }
+
+/// Review I3: in team mode a read never writes to `store.db`, so it never waits for a writer's
+/// lock (spec §5.1); its bookkeeping (call log, seen notices) goes to `.qal/team-log.db`.
+#[test]
+fn team_reads_do_not_wait_for_the_write_lock() {
+    let t = Team::new();
+    let mut rev = t.agent("rev-1");
+    rev.call("qal_whoami", json!({}));
+    let s = qal_store::Store::open(&t.project.join(".qal/store.db")).unwrap();
+    s.notify("rev-1", "merged", &json!({"n": 1})).unwrap();
+    drop(s);
+    // Another process holds the write lock of the store for 4 s.
+    let db = t.project.join(".qal/store.db");
+    let (locked_tx, locked_rx) = std::sync::mpsc::channel();
+    let holder = std::thread::spawn(move || {
+        let c = rusqlite::Connection::open(&db).unwrap();
+        c.execute_batch("BEGIN IMMEDIATE; INSERT INTO meta (key, value) VALUES ('held', '1');").unwrap();
+        locked_tx.send(()).unwrap();
+        std::thread::sleep(Duration::from_secs(4));
+        c.execute_batch("ROLLBACK").unwrap();
+    });
+    locked_rx.recv().unwrap();
+    let started = Instant::now();
+    let (err, v) = rev.call("qal_view", json!({"names": ["base"]}));
+    assert!(!err, "{v}");
+    assert_eq!(v["notices"][0]["kind"], "merged", "notices still arrive: {v}");
+    let (_, v) = rev.call("qal_whoami", json!({}));
+    assert_eq!(v["notices"], json!([]), "seen once returned");
+    assert_eq!(rev.code("qal_query", json!({"name": "ba"})), "ok");
+    assert_eq!(rev.code("qal_verify", json!({})), "ok");
+    let took = started.elapsed();
+    assert!(took < Duration::from_millis(2500), "reads waited for the lock: {took:?}");
+    holder.join().unwrap();
+    // The calls were logged (in the team log, not in the store).
+    let (_, stats) = t.qal(&["team", "stats"]);
+    assert!(stats["stats"]["members"]["rev-1"]["calls"].as_i64().unwrap() >= 5, "{stats}");
+    assert!(t.project.join(".qal/team-log.db").is_file());
+}
+
+/// Review M4: a store that exists but cannot be read is an error, never "no team mode".
+#[test]
+fn the_team_check_fails_closed() {
+    let t = Team::new();
+    let mut imp = t.agent("impl-1");
+    std::fs::write(t.project.join(".qal/store.db"), b"this is not a database at all, padded to look like a file of some size").unwrap();
+    let _ = std::fs::remove_file(t.project.join(".qal/store.db-wal"));
+    let _ = std::fs::remove_file(t.project.join(".qal/store.db-shm"));
+    let (err, v) = imp.call("qal_run", json!({"entry": "main", "allow": ["fs:.", "net:example.com"]}));
+    assert!(err && v["diagnostics"][0]["kind"] == "store_error" && v.get("exit_code").is_none(), "{v}");
+    assert_eq!(imp.tools(), ["qal_whoami"]);
+}
+
+#[test]
+fn session_files_stay_out_of_the_project_and_heads_can_be_pinned() {
+    let t = Team::new();
+    let inside = t.project.join("arch.session");
+    let (code, v) = t.qal(&["team", "session", "arch-1", "--out", inside.to_str().unwrap()]);
+    assert_eq!((code, diag(&v).0), (1, "E0926"), "{v}");
+    assert!(!inside.exists());
+    // A link at the target is replaced, not written through.
+    let victim = t.home.join("victim.txt");
+    std::fs::write(&victim, "keep").unwrap();
+    let link = t.home.join("link.session");
+    std::os::unix::fs::symlink(&victim, &link).unwrap();
+    let (code, _) = t.qal(&["team", "session", "arch-1", "--out", link.to_str().unwrap()]);
+    assert_eq!(code, 2, "a link is refused");
+    assert_eq!(std::fs::read_to_string(&victim).unwrap(), "keep");
+    // The head printed by verify (and status) can be pinned.
+    let (_, v) = t.qal(&["verify"]);
+    let head = v["head"].as_str().unwrap().to_string();
+    assert!(v["warnings"].as_array().unwrap().iter().any(|w| w.as_str().unwrap().contains("--head")));
+    let (code, v) = t.qal(&["verify", "--head", &head]);
+    assert_eq!((code, v["ok"].as_bool()), (0, Some(true)), "{v}");
+    let (code, v) = t.qal(&["verify", "--head", &"0".repeat(64)]);
+    assert_eq!((code, v["error"]["code"].as_str()), (1, Some("E0922")), "{v}");
+    let (code, v) = t.qal(&["verify", "--from", "3"]);
+    assert_eq!((code, v["signatures_from"].as_i64()), (0, Some(3)), "{v}");
+}

@@ -20,3 +20,7 @@ qal-serve = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 zeroize = { workspace = true }
+
+[dev-dependencies]
+# Tests hold the store's write lock to show that team reads never wait for it.
+rusqlite = { workspace = true }

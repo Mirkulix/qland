@@ -25,10 +25,33 @@ pub fn write(path: &Path, bytes: &[u8]) -> Result<(), Vec<Diagnostic>> {
     use std::io::Write;
     use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
     check_target(path)?;
-    let open = || std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(path);
-    let mut f = open().map_err(|e| err(format!("cannot write {}: {e}", path.display())))?;
-    f.set_permissions(std::fs::Permissions::from_mode(0o600)).map_err(|e| err(format!("cannot set the mode of {}: {e}", path.display())))?;
-    f.write_all(bytes).and_then(|_| f.sync_all()).map_err(|e| err(format!("cannot write {}: {e}", path.display())))
+    // A new file (O_EXCL: never through a link) next to the target, renamed over it: the rename
+    // replaces a link at `path` itself instead of writing where it points.
+    let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let mut nonce = [0u8; 8];
+    getrandom_nonce(&mut nonce);
+    let tmp = path.with_file_name(format!(".{name}.{}.{}.tmp", std::process::id(), qal_store::team::canonical::hex(&nonce)));
+    let written = (|| {
+        let mut f = std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(&tmp)?;
+        f.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+        f.write_all(bytes)?;
+        f.sync_all()?;
+        std::fs::rename(&tmp, path)
+    })();
+    if let Err(e) = written {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(err(format!("cannot write {}: {e}", path.display())));
+    }
+    Ok(())
+}
+
+/// A few random bytes for a temporary file name (falls back to the time).
+#[cfg(unix)]
+fn getrandom_nonce(out: &mut [u8; 8]) {
+    match qal_store::team::keys::random32() {
+        Ok(r) => out.copy_from_slice(&r[..8]),
+        Err(_) => *out = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos() as u64).to_le_bytes(),
+    }
 }
 
 #[cfg(not(unix))]

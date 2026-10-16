@@ -22,7 +22,7 @@ use qal_core::diag::Diagnostic;
 use qal_run::Permissions;
 use qal_store::team::keys::KeyDir;
 use qal_store::team::policy::{self, Role, Space};
-use qal_store::team::{Identity, Signer};
+use qal_store::team::{Identity, Notice, Signer, TeamLog};
 use qal_store::{Query, Store};
 use std::sync::Arc;
 use std::time::Instant;
@@ -192,14 +192,15 @@ impl Server {
         Ok(s)
     }
 
-    /// The project's store if it is a team store.
-    fn team_store(&self) -> Option<Store> {
+    /// The project's store if it is a team store. Fails closed: a store that exists but cannot be
+    /// opened or read is an error, never treated as a store without team mode.
+    fn team_store(&self) -> Result<Option<Store>, Vec<Diagnostic>> {
         let path = self.root.join(qal_store::STORE_DIR).join(qal_store::STORE_FILE);
-        if !path.is_file() {
-            return None;
+        if !path.exists() {
+            return Ok(None);
         }
-        let store = Store::open(&path).ok()?;
-        store.is_team().ok()?.then_some(store)
+        let store = Store::open(&path)?;
+        Ok(store.is_team()?.then_some(store))
     }
 
     /// The agent's identity in a team store (E0902 without a valid session).
@@ -355,8 +356,10 @@ impl Server {
             "ping" => Ok(finish(Map::new())),
             "tools/list" => {
                 let list = match self.team_store() {
-                    Some(store) => self.team_tools(&store),
-                    None => tools(),
+                    Ok(Some(store)) => self.team_tools(&store),
+                    Ok(None) => tools(),
+                    // Fail closed: only the tool that reports the problem.
+                    Err(_) => J::Array(tools_with_team().into_iter().filter(|t| t["name"] == "qal_whoami").collect()),
                 };
                 Ok(finish(object(json!({ "tools": list }))))
             }
@@ -429,15 +432,22 @@ impl Server {
 
     fn call_tool(&self, name: &str, args: &Map<String, J>, client: Option<&str>) -> Reply {
         let start = Instant::now();
-        let team = self.team_store();
+        let team = match self.team_store() {
+            Ok(t) => t,
+            Err(d) => return Reply::diagnostics(d),
+        };
+        // The team's bookkeeping file (best effort: without it, no notices and no call log).
+        let log = team.as_ref().and_then(|s| s.team_log().ok());
         let mut who = None;
+        let mut pending = None;
         let result = match &team {
             None if TEAM_TOOLS.contains(&name) => Ok(Reply::diagnostics(vec![qal_store::team::not_a_team(&format!("`{name}`"))])),
             None => self.tool(name, args, client, None),
             Some(store) => match self.identity(store) {
                 Err(d) => Ok(Reply::diagnostics(vec![d])),
                 Ok(id) => {
-                    let r = self.team_tool(store, &id, name, args);
+                    pending = log.as_ref().and_then(|l| std_notice(store, l, &id));
+                    let r = self.team_tool(store, log.as_ref(), &id, name, args, &mut pending);
                     who = Some(id);
                     r
                 }
@@ -465,23 +475,22 @@ impl Server {
             }
         }
         if let Some(store) = &team {
-            team_envelope(store, who.as_ref(), name, &mut reply, start);
+            team_envelope(store, log.as_ref(), who.as_ref(), pending, name, &mut reply, start);
         }
         reply
     }
 
     /// A tool call in a team store by the session's member: the matrix (E0903), the grants
     /// (E0915), the member's key for writes (E0920), then the tool itself, signed.
-    fn team_tool(&self, store: &Store, who: &Identity, name: &str, args: &Map<String, J>) -> Result<Reply, String> {
+    fn team_tool(&self, store: &Store, log: Option<&TeamLog>, who: &Identity, name: &str, args: &Map<String, J>, pending: &mut Option<Notice>) -> Result<Reply, String> {
         let Some(role) = Role::parse(&who.role) else {
             return Ok(Reply::diagnostics(vec![qal_store::team::no_session(format!("the member `{}` has no agent role", who.member))]));
         };
         if !policy::allows(name, None, role, Space::Main) {
             return Ok(Reply::diagnostics(vec![policy::forbidden(name, None, role, Space::Main)]));
         }
-        std_notice(store, who);
         match name {
-            "qal_whoami" => return whoami(store, who, &Args::new(name, args)?),
+            "qal_whoami" => return whoami(store, log, who, &Args::new(name, args)?, pending.take()),
             "qal_verify" => {
                 let a = Args::new(name, args)?;
                 let from = match a.get("from") {
@@ -489,7 +498,8 @@ impl Server {
                     Some(J::Number(n)) => n.as_i64().filter(|n| *n >= 1).ok_or("`from` must be a record number (1 or more)")?,
                     Some(_) => return Err("`from` must be a record number (1 or more)".into()),
                 };
-                return Ok(crate::team::verify(&self.ctx(None, None), None, from));
+                let head = a.string("head")?;
+                return Ok(crate::team::verify(&self.ctx(None, None), None, from, head.as_deref()));
             }
             _ => {}
         }
@@ -727,18 +737,25 @@ fn error_code(reply: &Reply) -> Option<String> {
     reply.out.extra.get("error").and_then(|e| e.get("code")).and_then(J::as_str).map(str::to_string)
 }
 
-/// Team mode around every tool result: unseen notices (at most 10, `notices_more` counts the
-/// rest), the space, and the call log entry (spec §10.2-10.4).
-fn team_envelope(store: &Store, who: Option<&Identity>, tool: &str, reply: &mut Reply, start: Instant) {
+/// Team mode around every tool result: notices not given yet (at most 10, `notices_more` counts
+/// the rest; `pending` first), the space, and the call log entry (spec §10.2-10.4). Nothing here
+/// writes to `store.db` (spec §5.1): seen-marks and the log go to the team log file.
+fn team_envelope(store: &Store, log: Option<&TeamLog>, who: Option<&Identity>, pending: Option<Notice>, tool: &str, reply: &mut Reply, start: Instant) {
     if let Some(w) = who {
         if tool != "qal_whoami" {
-            if let Ok((notices, more)) = store.take_notices(&w.member, qal_store::team::NOTICES_PER_REPLY) {
-                if !notices.is_empty() {
-                    reply.out.extra.insert("notices".into(), serde_json::to_value(&notices).unwrap_or(J::Null));
+            let mut notices: Vec<Notice> = pending.into_iter().collect();
+            let mut more = 0;
+            if let Some(l) = log {
+                if let Ok((n, m)) = store.take_notices(l, &w.member, qal_store::team::NOTICES_PER_REPLY.saturating_sub(notices.len())) {
+                    notices.extend(n);
+                    more = m;
                 }
-                if more > 0 {
-                    reply.out.extra.insert("notices_more".into(), J::from(more));
-                }
+            }
+            if !notices.is_empty() {
+                reply.out.extra.insert("notices".into(), serde_json::to_value(&notices).unwrap_or(J::Null));
+            }
+            if more > 0 {
+                reply.out.extra.insert("notices_more".into(), J::from(more));
             }
         }
         reply.out.extra.insert("space".into(), J::from("main"));
@@ -753,41 +770,61 @@ fn team_envelope(store: &Store, who: Option<&Identity>, tool: &str, reply: &mut 
         ms: i64::try_from(start.elapsed().as_millis()).unwrap_or(i64::MAX),
     };
     // The log is measurement only: a failure to write it does not change the answer.
-    let _ = store.log_call(&call);
-}
-
-/// The notice `std_outdated` (once per std version and member) when this qal embeds a newer
-/// standard library than the team store has: the owner imports it with `qal team sync-std`.
-fn std_notice(store: &Store, who: &Identity) {
-    let Ok(embedded) = qal_store::package::parse(crate::STD_PACKAGE).map(|p| p.hash) else { return };
-    let have = store.meta(qal_store::package::META_STD_PACKAGE).ok().flatten();
-    if have.as_deref() != Some(embedded.as_str()) && !store.is_std().unwrap_or(false) {
-        let body = json!({"embedded": embedded, "store": have, "hint": "the owner imports the standard library of this qal with `qal team sync-std`"});
-        let _ = store.notify_once(&who.member, "std_outdated", &body);
+    if let Some(l) = log {
+        let _ = l.log_call(&call);
     }
 }
 
-/// `qal_whoami {wait_s}`: who the session is, and its unseen notices; with `wait_s`, waits up to
-/// that long for a first notice (checking every 200 ms).
-fn whoami(store: &Store, who: &Identity, a: &Args) -> Result<Reply, String> {
+/// The notice `std_outdated`, once per std version and member, when this qal embeds a newer
+/// standard library than the team store has (the owner imports it with `qal team sync-std`). It
+/// is not stored in `store.db` (a read writes nothing there): a flag in the team log remembers
+/// that it was given, and it is returned with this call.
+fn std_notice(store: &Store, log: &TeamLog, who: &Identity) -> Option<Notice> {
+    let embedded = qal_store::package::parse(crate::STD_PACKAGE).ok()?.hash;
+    let have = store.meta(qal_store::package::META_STD_PACKAGE).ok().flatten();
+    if have.as_deref() == Some(embedded.as_str()) || store.is_std().unwrap_or(false) {
+        return None;
+    }
+    if !log.flag_once(&who.member, &format!("std_outdated:{embedded}")).ok()? {
+        return None;
+    }
+    let body = json!({"embedded": embedded, "store": have, "hint": "the owner imports the standard library of this qal with `qal team sync-std`"});
+    let body = match body {
+        J::Object(m) => m,
+        _ => Map::new(),
+    };
+    let at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(0));
+    Some(Notice { id: 0, kind: "std_outdated".into(), at, body })
+}
+
+/// `qal_whoami {wait_s}`: who the session is, and the notices it was not given yet; with
+/// `wait_s`, waits up to that long for a first notice (checking every 200 ms).
+fn whoami(store: &Store, log: Option<&TeamLog>, who: &Identity, a: &Args, pending: Option<Notice>) -> Result<Reply, String> {
     let wait = match a.get("wait_s") {
         None => 0,
         Some(J::Number(n)) => n.as_u64().filter(|w| *w <= MAX_WAIT_S).ok_or(format!("`wait_s` must be an integer from 0 to {MAX_WAIT_S}"))?,
         Some(_) => return Err(format!("`wait_s` must be an integer from 0 to {MAX_WAIT_S}")),
     };
-    let deadline = Instant::now() + Duration::from_secs(wait);
-    loop {
-        match store.has_notices(&who.member) {
-            Ok(true) => break,
-            Ok(false) if Instant::now() >= deadline => break,
-            Ok(false) => std::thread::sleep(POLL),
+    let mut notices: Vec<Notice> = pending.into_iter().collect();
+    let mut more = 0;
+    if let Some(l) = log {
+        let deadline = Instant::now() + Duration::from_secs(wait);
+        while notices.is_empty() {
+            match store.has_notices(l, &who.member) {
+                Ok(true) => break,
+                Ok(false) if Instant::now() >= deadline => break,
+                Ok(false) => std::thread::sleep(POLL),
+                Err(d) => return Ok(Reply::diagnostics(d)),
+            }
+        }
+        match store.take_notices(l, &who.member, qal_store::team::NOTICES_PER_REPLY.saturating_sub(notices.len())) {
+            Ok((n, m)) => {
+                notices.extend(n);
+                more = m;
+            }
             Err(d) => return Ok(Reply::diagnostics(d)),
         }
     }
-    let (notices, more) = match store.take_notices(&who.member, qal_store::team::NOTICES_PER_REPLY) {
-        Ok(n) => n,
-        Err(d) => return Ok(Reply::diagnostics(d)),
-    };
     let mut out = ops::Output::default();
     let mut fields = json!({"member": who.member, "role": who.role, "session": who.session, "expires_at": who.expires_at, "change": null, "leases": [], "notices": notices});
     if more > 0 {
@@ -824,7 +861,7 @@ fn tools_with_team() -> Vec<J> {
         "inputSchema": {"type": "object", "properties": {"wait_s": {"type": "integer", "minimum": 0, "maximum": MAX_WAIT_S, "description": "Seconds to wait for a new notice (default 0)."}}, "additionalProperties": false}}));
     all.push(json!({"name": "qal_verify", "title": "Verify the team's records", "annotations": read_only,
         "description": "Check the signed record chain of the team store: sequence and hashes, every Ed25519 signature, each record's rights, and that replaying all records gives exactly the current names. Result: {ok, records, members, trust, head} or {ok: false, error: {code, kind, seq, message}, checked}.",
-        "inputSchema": {"type": "object", "properties": {"from": {"type": "integer", "minimum": 1, "description": "Check signatures from this record on (default 1)."}}, "additionalProperties": false}}));
+        "inputSchema": {"type": "object", "properties": {"from": {"type": "integer", "minimum": 1, "description": "Check signatures from this record on (default 1; the result says when signatures were skipped)."}, "head": {"type": "string", "description": "A record hash the chain must contain (a head pinned earlier: finds a cut-off tail)."}}, "additionalProperties": false}}));
     all
 }
 
@@ -845,7 +882,7 @@ fn tool_params(tool: &str) -> &'static [&'static str] {
         "qal_delete" => &["name", "with", "agent"],
         "qal_request" => &["handler", "init", "allow", "requests"],
         "qal_whoami" => &["wait_s"],
-        "qal_verify" => &["from"],
+        "qal_verify" => &["from", "head"],
         _ => &[],
     }
 }

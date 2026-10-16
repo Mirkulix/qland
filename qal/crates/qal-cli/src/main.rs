@@ -60,7 +60,8 @@
 //!   qal team export-trust --out <file>               -> {"trust":{file,owner,members}} (public keys only)
 //!   qal team status | qal team stats [--json]        -> {"status":{...}} | {"stats":{...}} (never tokens)
 //!   qal team sync-std                                -> {"std":{hash,status}} (signed import of the embedded std)
-//!   qal verify [--trust <team.json>] [--from <seq>]  -> {"ok":true,"records":n,"members":m,"trust":"file"|"store","head":..}
+//!   qal verify [--trust <team.json>] [--from <seq>] [--head <hash>]
+//!                                                    -> {"ok":true,"records":n,"members":m,"trust":"file"|"store","head":..,"signatures_from"?}
 //!                                                       | {"ok":false,"error":{code,kind,seq,message},"checked":n} (exit 1)
 //! In a team store the command line does not write code (define, rename, delete, import: E0903); agents do, over MCP.
 //!
@@ -88,7 +89,7 @@ const USAGE: &str = "usage: qal <check|fmt> <file>\n       \
                      qal request [<handler>] [--allow <spec>] [--init <fn>] <requests.json>\n       \
                      qal mcp [--root <dir>] [--session-file <file>]\n       \
                      qal team <init [--owner <id>] | add <id> --role <role> | rekey <id> | revoke <id> | session <id> [--ttl 24h] --out <file> | export-trust --out <file> | status | stats | sync-std>\n       \
-                     qal verify [--trust <team.json>] [--from <seq>]";
+                     qal verify [--trust <team.json>] [--from <seq>] [--head <record hash>]";
 
 fn usage() -> ExitCode {
     bad_usage(USAGE)
@@ -394,9 +395,9 @@ fn team(args: &[String]) -> ExitCode {
 }
 
 fn verify(args: &[String]) -> ExitCode {
-    let s = match split(args, &["trust", "from"], &[], &all) {
+    let s = match split(args, &["trust", "from", "head"], &[], &all) {
         Ok(s) if s.targets.is_empty() => s,
-        _ => return bad_usage("usage: qal verify [--trust <team.json>] [--from <seq>]"),
+        _ => return bad_usage("usage: qal verify [--trust <team.json>] [--from <seq>] [--head <record hash>]"),
     };
     let from = match s.one("from").map(str::parse::<i64>) {
         None => 1,
@@ -408,7 +409,7 @@ fn verify(args: &[String]) -> ExitCode {
         Some(Ok(t)) => Some(t),
         Some(Err(code)) => return code,
     };
-    with_ctx(|c| qal_cli::team::verify(c, trust.as_deref(), from))
+    with_ctx(|c| qal_cli::team::verify(c, trust.as_deref(), from, s.one("head")))
 }
 
 /// The options of `qal serve` with their defaults (spec Phase 3 §7.1).

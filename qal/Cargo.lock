@@ -956,6 +956,7 @@ dependencies = [
  "qal-store",
  "qal-text",
  "qal-wasm",
+ "rusqlite",
  "serde",
  "serde_json",
  "zeroize",
