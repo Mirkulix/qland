@@ -795,7 +795,10 @@ fn plan_rebase(tx: &Transaction, signer: &Signer, id: &str) -> Result<Rebase, Ve
     }
     // A mark nobody resolved yet stays (a later rebase does not decide it), unless both sides
     // now have the same definition.
-    for (n, r) in meta.rows.iter().filter(|(n, r)| r.conflict.is_some() && !marks.contains_key(*n)) {
+    for (n, r) in &meta.rows {
+        if marks.contains_key(n) {
+            continue;
+        }
         let converged = ds.iter().any(|d| d.name == *n && d.class == Class::Converged);
         let kept = r.hash.is_some() || main.contains_key(n);
         if let (Some(mark), false, true) = (&r.conflict, converged, kept) {
