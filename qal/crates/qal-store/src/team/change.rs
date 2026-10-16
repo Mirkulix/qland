@@ -206,7 +206,9 @@ fn conflicts(conn: &Connection, change: &str, names: &[&str], now: i64) -> Resul
 
 /// Takes (or extends) the leases on `names` for `change` (all or nothing): E0901 for those another
 /// change set holds, nothing taken then. Returns the leases that were new to `change`.
-pub(crate) fn acquire(tx: &Transaction, change: &str, member: &str, names: &[&str], ttl_ms: i64, now: i64) -> Result<Vec<Lease>, Vec<Diagnostic>> {
+/// `reserve`: the leases count toward the 256 reservations of names the change set has not
+/// changed (explicit acquires and claims); a write's own leases count toward its delta instead.
+pub(crate) fn acquire(tx: &Transaction, change: &str, member: &str, names: &[&str], ttl_ms: i64, now: i64, reserve: bool) -> Result<Vec<Lease>, Vec<Diagnostic>> {
     let held = conflicts(tx, change, names, now)?;
     if !held.is_empty() {
         return Err(held);
@@ -227,11 +229,50 @@ pub(crate) fn acquire(tx: &Transaction, change: &str, member: &str, names: &[&st
             fresh.push(Lease { name: n.to_string(), change: change.into(), member: member.into(), expires_at });
         }
     }
-    let count: i64 = tx.query_row("SELECT count(*) FROM leases WHERE change = ?1 AND expires_at > ?2", params![change, now], |r| r.get(0)).map_err(sql)?;
+    let count = if reserve { reserved(tx, change, now)? } else { 0 };
     if count > MAX_LEASES_PER_CHANGE {
-        return Err(one(team_limit(format!("a change set holds at most {MAX_LEASES_PER_CHANGE} leases ({change} would hold {count})")).hint("release the leases you no longer need (qal_lease release)")));
+        return Err(one(team_limit(format!("a change set reserves at most {MAX_LEASES_PER_CHANGE} names it has not changed ({change} would reserve {count})")).hint("release the leases you no longer need (qal_lease release); the names a change set changes count against its delta (2 000) instead")));
     }
     Ok(fresh)
+}
+
+/// The live leases of `change` on names it has not changed (§14: 256 per change set). Leases on
+/// the names it changed are bounded by its delta (2 000) instead, so a large define is never
+/// refused for its leases (review I2).
+fn reserved(conn: &Connection, change: &str, now: i64) -> Result<i64, Vec<Diagnostic>> {
+    conn.query_row(
+        "SELECT count(*) FROM leases l WHERE l.change = ?1 AND l.expires_at > ?2 AND NOT EXISTS \
+         (SELECT 1 FROM change_names c WHERE c.change = l.change AND c.name = l.name AND c.origin IN ('edited', 'added', 'renamed'))",
+        params![change, now],
+        |r| r.get(0),
+    )
+    .map_err(sql)
+}
+
+/// The delta of `change` (§14): the names it edited, added or renamed.
+fn delta(conn: &Connection, change: &str) -> Result<i64, Vec<Diagnostic>> {
+    conn.query_row("SELECT count(*) FROM change_names WHERE change = ?1 AND origin IN ('edited', 'added', 'renamed')", params![change], |r| r.get(0)).map_err(sql)
+}
+
+fn delta_limit(c: &str, n: i64) -> Vec<Diagnostic> {
+    one(team_limit(format!("a change set changes at most {MAX_DELTA} names; {c} would change {n}")).hint("split the work into several change sets"))
+}
+
+/// The delta `change` would have after writing `names` (an upper bound: relinks do not count).
+/// Checked before the prover runs.
+fn delta_check(conn: &Connection, change: &str, names: &[&str]) -> Result<(), Vec<Diagnostic>> {
+    let mut stmt = conn.prepare_cached("SELECT 1 FROM change_names WHERE change = ?1 AND name = ?2 AND origin IN ('edited', 'added', 'renamed')").map_err(sql)?;
+    let mut new = 0i64;
+    for n in names {
+        if stmt.query_row(params![change, n], |_| Ok(())).optional().map_err(sql)?.is_none() {
+            new += 1;
+        }
+    }
+    let total = delta(conn, change)? + new;
+    if total > MAX_DELTA {
+        return Err(delta_limit(change, total));
+    }
+    Ok(())
 }
 
 // --- The rules of a write in a change set ---------------------------------------------------
@@ -290,22 +331,31 @@ fn stale(tx: &Transaction, log: Option<&super::TeamLog>, signer: &Signer, c: &st
     let mut diags = Vec::new();
     for n in names {
         let Some(current) = snap.names.get(*n).map(|e| e.hash.to_hex()) else { continue };
-        let last: Option<(String, String, Vec<u8>)> = tx
+        let last: Option<(i64, String, String, Vec<u8>)> = tx
             .query_row(
-                "SELECT h.new_hash, h.agent, r.body FROM history h JOIN records r ON r.seq = h.record WHERE h.space = ?1 AND h.name = ?2 AND h.action IN ('added', 'replaced') ORDER BY h.id DESC LIMIT 1",
+                "SELECT h.id, h.new_hash, h.agent, r.body FROM history h JOIN records r ON r.seq = h.record WHERE h.space = ?1 AND h.name = ?2 AND h.action IN ('added', 'replaced') ORDER BY h.id DESC LIMIT 1",
                 params![c, n],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
             )
             .optional()
             .map_err(sql)?;
-        let Some((written, by, body)) = last else { continue };
+        let Some((id, written, by, body)) = last else { continue };
         if record_session(&body).as_deref() == Some(signer.session.as_str()) {
             continue;
         }
         // What it wrote (store.db) or viewed (the team log; unreadable counts as not seen).
         let wrote = seen_hash(tx, &signer.session, c, n)?;
         let viewed = log.and_then(|l| l.seen(&signer.session, c, n).ok().flatten());
-        let ok = |h: &Option<String>| h.as_deref() == Some(current.as_str()) || h.as_deref() == Some(written.as_str());
+        // The versions of that edit: its hash and the hashes relinks gave it since (same text).
+        let mut versions: BTreeSet<String> = [written.clone(), current.clone()].into();
+        {
+            let mut stmt = tx.prepare_cached("SELECT new_hash FROM history WHERE space = ?1 AND name = ?2 AND action = 'relinked' AND id > ?3").map_err(sql)?;
+            let rows = stmt.query_map(params![c, n, id], |r| r.get::<_, String>(0)).map_err(sql)?;
+            for h in rows {
+                versions.insert(h.map_err(sql)?);
+            }
+        }
+        let ok = |h: &Option<String>| h.as_ref().is_some_and(|h| versions.contains(h));
         if !ok(&wrote) && !ok(&viewed) {
             let mut d = Diagnostic::new("E0904", "stale_base", n, "", format!("`{n}` was changed in change set {c} by `{by}` (another session) to #{current}, which this session has not seen"))
                 .hint(format!("look at the current version first (qal_view {{\"names\": [\"{n}\"]}}), then write it again"));
@@ -346,7 +396,7 @@ fn lease_write(tx: &Transaction, signer: &Signer, row: &ChangeRow, names: &[&str
         let held = conflicts(tx, &row.id, names, now)?;
         return if held.is_empty() { Ok(Vec::new()) } else { Err(held) };
     }
-    let fresh = acquire(tx, &row.id, &signer.member, names, DEFAULT_LEASE_TTL_MS, now)?;
+    let fresh = acquire(tx, &row.id, &signer.member, names, DEFAULT_LEASE_TTL_MS, now, false)?;
     if row.owner == signer.member && row.status == "submitted" {
         tx.execute("UPDATE changes SET status = 'open', updated_at = ?2 WHERE id = ?1", params![row.id, now]).map_err(sql)?;
     } else {
@@ -407,6 +457,7 @@ pub(crate) fn guard_define(tx: &Transaction, log: Option<&super::TeamLog>, signe
         return Err(diags);
     }
     stale(tx, log, signer, &row.id, snap, &names)?;
+    delta_check(tx, &row.id, &names)?;
     lease_write(tx, signer, &row, &names, dry)
 }
 
@@ -426,21 +477,26 @@ pub(crate) fn guard_names(tx: &Transaction, signer: Option<&Signer>, space: &Spa
 /// wrote; a change set keeps within its delta; on `main`, holders of leases on relinked names hear
 /// of it (`relinked`).
 pub(crate) fn after_write(tx: &Transaction, signer: &Signer, space: &Space, entries: &[super::Entry]) -> Result<(), Vec<Diagnostic>> {
+    // The writer has seen what it wrote. A relinked dependent (or a user whose refs follow a
+    // rename) it did not look at: its seen-mark moves to the new hash only if it had seen the old
+    // one, so a relink never counts as a view (review I1).
     for e in entries {
-        match &e.new {
-            Some(h) => tx.execute(
+        let carried = matches!(e.action.as_str(), "relinked" | "updated");
+        match (&e.new, carried) {
+            (Some(h), false) => tx.execute(
                 "INSERT INTO seen (session, space, name, hash) VALUES (?1, ?2, ?3, ?4) ON CONFLICT(session, space, name) DO UPDATE SET hash = excluded.hash",
                 params![signer.session, space.id(), e.name, h],
             ),
-            None => tx.execute("DELETE FROM seen WHERE session = ?1 AND space = ?2 AND name = ?3", params![signer.session, space.id(), e.name]),
+            (Some(h), true) => tx.execute("UPDATE seen SET hash = ?4 WHERE session = ?1 AND space = ?2 AND name = ?3 AND hash = ?5", params![signer.session, space.id(), e.name, h, e.old]),
+            (None, _) => tx.execute("DELETE FROM seen WHERE session = ?1 AND space = ?2 AND name = ?3", params![signer.session, space.id(), e.name]),
         }
         .map_err(sql)?;
     }
     match space {
         Space::Change(c) => {
-            let delta: i64 = tx.query_row("SELECT count(*) FROM change_names WHERE change = ?1 AND origin IN ('edited', 'added', 'renamed')", params![c], |r| r.get(0)).map_err(sql)?;
-            if delta > MAX_DELTA {
-                return Err(one(team_limit(format!("a change set changes at most {MAX_DELTA} names; {c} would change {delta}")).hint("split the work into several change sets")));
+            let n = delta(tx, c)?;
+            if n > MAX_DELTA {
+                return Err(delta_limit(c, n));
             }
         }
         Space::Main => {
@@ -453,6 +509,41 @@ pub(crate) fn after_write(tx: &Transaction, signer: &Signer, space: &Space, entr
         }
     }
     Ok(())
+}
+
+// --- The signed metadata of a change set (review I4) -----------------------------------------
+
+/// SHA-256 over everything a change set's decisions rest on, as stored: its `changes` row (title,
+/// description, scope, owner, assignee, status, claimed, base_seq, base_root, created_at) and every
+/// `change_names` row with its raw columns (name, hash, local_names, refs, origin, base_hash,
+/// conflict), rows without a hash included. Every record about a change set signs this digest
+/// (`args.meta_after`), and `qal verify` recomputes it, so any byte change of these columns is
+/// found. Not included: times of the last change, `needs_rebase` (a hint others set), leases and
+/// seen-marks (unsigned coordination, spec §9.1).
+pub fn meta_digest(conn: &Connection, change: &str) -> Result<String, Vec<Diagnostic>> {
+    let head: Option<[String; 10]> = conn
+        .query_row(
+            "SELECT id, title, description, scope, owner, coalesce(assignee, ''), status, CAST(claimed AS TEXT), CAST(base_seq AS TEXT), base_root || char(0) || CAST(created_at AS TEXT) FROM changes WHERE id = ?1",
+            params![change],
+            |r| Ok([r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?, r.get(8)?, r.get(9)?]),
+        )
+        .optional()
+        .map_err(sql)?;
+    let mut bytes = Vec::new();
+    match head {
+        Some(cols) => bytes.extend_from_slice(cols.join("\0").as_bytes()),
+        None => bytes.extend_from_slice(b"no change set"),
+    }
+    bytes.push(b'\n');
+    let mut stmt = conn
+        .prepare_cached("SELECT name, coalesce(hash, ''), local_names, refs, origin, coalesce(base_hash, ''), coalesce(conflict, '') FROM change_names WHERE change = ?1 ORDER BY CAST(name AS BLOB)")
+        .map_err(sql)?;
+    let rows = stmt.query_map(params![change], |r| Ok([r.get::<_, String>(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?])).map_err(sql)?;
+    for row in rows {
+        bytes.extend_from_slice(row.map_err(sql)?.join("\0").as_bytes());
+        bytes.push(b'\n');
+    }
+    Ok(qal_core::canon::Hash::of(&bytes).to_hex())
 }
 
 // --- Change set operations --------------------------------------------------------------------
@@ -493,7 +584,8 @@ fn summary(conn: &Connection, row: &ChangeRow) -> Result<Value, Vec<Diagnostic>>
         conn.query_row(&format!("SELECT count(*) FROM change_names WHERE change = ?1 AND origin IN ({origins})"), params![row.id], |r| r.get(0)).map_err(sql)
     };
     let conflicts: i64 = conn.query_row("SELECT count(*) FROM change_names WHERE change = ?1 AND conflict IS NOT NULL", params![row.id], |r| r.get(0)).map_err(sql)?;
-    let current = root_of(&space_rows(conn, &Space::Change(row.id.clone()))?);
+    // Roots only of live change sets (finished ones keep their rows, but nobody reviews them).
+    let current = if row.is_live() { root_of(&space_rows(conn, &Space::Change(row.id.clone()))?) } else { String::new() };
     let mut reviews = Vec::new();
     {
         let mut stmt = conn.prepare("SELECT member, verdict, root FROM reviews WHERE change = ?1 ORDER BY id").map_err(sql)?;
@@ -506,7 +598,7 @@ fn summary(conn: &Connection, row: &ChangeRow) -> Result<Value, Vec<Diagnostic>>
     Ok(json!({
         "change": row.id, "title": row.title, "status": row.status, "owner": row.owner, "assignee": row.assignee, "package": row.is_package(),
         "scope": row.scope, "edited": count("'edited', 'added', 'renamed'")?, "relinked": count("'relinked'")?, "needs_rebase": row.needs_rebase,
-        "conflicts": conflicts, "root": current, "reviews": reviews,
+        "conflicts": conflicts, "root": if row.is_live() { Value::from(current) } else { Value::Null }, "reviews": reviews,
     }))
 }
 
@@ -605,9 +697,13 @@ impl Store {
         if row.assignee.as_deref().is_some_and(|a| a != signer.member) {
             return Err(one(Diagnostic::new("E0909", "not_owner", "", "change", format!("work package {id} is assigned to `{}`", row.assignee.as_deref().unwrap_or(""))).hint("claim a package assigned to you or to nobody")));
         }
+        let mine: i64 = tx.query_row("SELECT count(*) FROM changes WHERE status IN ('open', 'submitted') AND owner = ?1", params![signer.member], |r| r.get(0)).map_err(sql)?;
+        if mine >= MAX_OPEN_PER_MEMBER {
+            return Err(one(team_limit(format!("a member owns at most {MAX_OPEN_PER_MEMBER} open change sets")).hint("submit or abandon one of yours first (qal_change list with \"mine\": true)")));
+        }
         let now = now_ms();
         let scope: Vec<&str> = row.scope.iter().map(String::as_str).collect();
-        let leases = acquire(&tx, id, &signer.member, &scope, DEFAULT_LEASE_TTL_MS, now)?;
+        let leases = acquire(&tx, id, &signer.member, &scope, DEFAULT_LEASE_TTL_MS, now, true)?;
         tx.execute("UPDATE changes SET owner = ?2, claimed = 1, updated_at = ?3 WHERE id = ?1", params![id, signer.member, now]).map_err(sql)?;
         // The claimer takes the package as it is: it has seen what the architect wrote into it (§5.3).
         tx.execute(
@@ -657,6 +753,7 @@ impl Store {
         }
         tx.execute("UPDATE changes SET status = 'abandoned', updated_at = ?2 WHERE id = ?1", params![id, now_ms()]).map_err(sql)?;
         tx.execute("DELETE FROM leases WHERE change = ?1", params![id]).map_err(sql)?;
+        tx.execute("DELETE FROM seen WHERE space = ?1", params![id]).map_err(sql)?;
         tx.execute("UPDATE sessions SET current_change = NULL WHERE current_change = ?1", params![id]).map_err(sql)?;
         let record = record_change(&tx, signer, id, "abandon", json!({}))?;
         if row.owner != signer.member {
@@ -695,9 +792,13 @@ impl Store {
         Ok(json!({"change": id, "scope": scope, "record": record}))
     }
 
-    /// `qal_change list` (the board): change sets with status in `statuses` (all if empty), only
-    /// `member`'s (owned or assigned) if `mine`, newest first.
-    pub fn change_list(&mut self, member: &str, statuses: &[String], mine: bool) -> Result<Value, Vec<Diagnostic>> {
+    /// `qal_change list` (the board): change sets with status in `statuses` (default: open and
+    /// submitted), only `member`'s (owned or assigned) if `mine`, newest first, at most `limit`
+    /// (default 50, at most 200; `more` counts the rest).
+    pub fn change_list(&mut self, member: &str, statuses: &[String], mine: bool, limit: Option<usize>) -> Result<Value, Vec<Diagnostic>> {
+        let live = ["open".to_string(), "submitted".to_string()];
+        let statuses: &[String] = if statuses.is_empty() { &live } else { statuses };
+        let limit = limit.unwrap_or(50).clamp(1, 200);
         if !super::is_team(&self.conn)? {
             return Err(one(super::not_a_team("`qal_change`")));
         }
@@ -708,17 +809,22 @@ impl Store {
             rows.collect::<Result<Vec<_>, _>>().map_err(sql)?
         };
         let mut out = Vec::new();
+        let mut more = 0usize;
         for id in ids {
             let row = require(&tx, &id)?;
-            if !statuses.is_empty() && !statuses.contains(&row.status) {
+            if !statuses.contains(&row.status) {
                 continue;
             }
             if mine && row.owner != member && row.assignee.as_deref() != Some(member) {
                 continue;
             }
+            if out.len() >= limit {
+                more += 1;
+                continue;
+            }
             out.push(summary(&tx, &row)?);
         }
-        Ok(json!({"changes": out}))
+        Ok(if more > 0 { json!({"changes": out, "more": more}) } else { json!({"changes": out}) })
     }
 
     /// `qal_change show`: a change set with its description, base, changed names and leases.
@@ -804,7 +910,7 @@ impl Store {
         let list: Vec<&str> = names.iter().map(String::as_str).collect();
         let out = match action {
             "acquire" => {
-                acquire(&tx, change, member, &list, ttl, now)?;
+                acquire(&tx, change, member, &list, ttl, now, true)?;
                 json!({"leases": leases_of(&tx, change)?.into_iter().filter(|l| names.contains(&l.name)).collect::<Vec<_>>()})
             }
             "renew" => {
@@ -850,8 +956,14 @@ impl Store {
         }
         let now = now_ms();
         let mut broken = Vec::new();
+        let mut skipped = Vec::new();
         for n in names {
             let Some(l) = lease_of(&tx, n)? else { continue };
+            // Breaking applies to other members' change sets: own leases are released instead.
+            if load(&tx, &l.change)?.is_some_and(|c| c.owner == signer.member) {
+                skipped.push(json!({"name": n, "change": l.change, "why": "own change set: release it (qal_lease release)"}));
+                continue;
+            }
             tx.execute("DELETE FROM leases WHERE name = ?1", params![n]).map_err(sql)?;
             if l.expires_at <= now {
                 continue;
@@ -864,7 +976,7 @@ impl Store {
             broken.push(json!({"name": n, "change": l.change, "holder": l.member, "record": record}));
         }
         tx.commit().map_err(sql)?;
-        Ok(json!({"broken": broken}))
+        Ok(json!({"broken": broken, "skipped": skipped}))
     }
 
     /// Notes that `session` saw these (name, hash) in `space` (`qal_view`, §5.3), in the team log:

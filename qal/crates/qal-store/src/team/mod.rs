@@ -281,6 +281,11 @@ pub(crate) fn append_in(tx: &Transaction, signer: &Signer, op: &str, args: Value
         return Err(one(keys::unusable(format!("key {} is not the current key of `{}` (that is {})", signer.key.key_id(), m.id, m.key_id)).hint("the member was rekeyed: restart the server so it loads the new key")));
     }
     let kind = change::kind_of(tx, space, &m.id)?;
+    // A record about a change set signs its metadata (review I4).
+    let mut args = args;
+    if let (Space::Change(c), Value::Object(map)) = (space, &mut args) {
+        map.insert("meta_after".into(), Value::from(change::meta_digest(tx, c)?));
+    }
     let action = args.get("action").and_then(Value::as_str);
     if !policy::record_allowed(op, action, &m.role, kind) {
         let mut d = Diagnostic::new("E0903", "role_forbidden", "", "", format!("the role {} may not make `{op}` records {}", m.role, if space.is_main() { "on main".to_string() } else { format!("in change set {space}") }));

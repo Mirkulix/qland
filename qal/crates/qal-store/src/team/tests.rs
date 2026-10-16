@@ -305,6 +305,8 @@ fn flip(s: &Store, table: &str, column: &str, key: &str, at: usize) {
     bytes[i] = match bytes[i] {
         b'0' => b'1',
         b'a' => b'b',
+        // `f` ^ 1 would be `g`, which is not a hex digit (the test then hit another check).
+        b'f' => b'e',
         b => b ^ 0x01,
     };
     let is_blob: bool = c.query_row(&format!("SELECT typeof({column}) = 'blob' FROM {table} WHERE {key}"), [], |r| r.get(0)).unwrap();
@@ -627,7 +629,8 @@ fn signatures_have_one_spelling_and_from_says_what_it_skipped() {
     assert_eq!(verified(&mut s, Some(&trust)).signatures_from, None);
     // A bad signature before `from` is not checked (and the result says so).
     flip(&s, "records", "sig", "seq = 2", 9);
-    assert!(s.verify(Some(&trust), 3, None).unwrap().ok);
+    let o3 = s.verify(Some(&trust), 3, None).unwrap();
+    assert!(o3.ok, "{o3:?}");
     assert_eq!(code(&verified(&mut s, Some(&trust))), "E0921");
 }
 
@@ -891,4 +894,106 @@ fn a_stale_base_is_refused() {
     write_in(&mut s, &keys, &imp, &c, "fn f() -> Int = 2").unwrap();
     s.change_submit(&imp, &c).unwrap();
     assert_eq!(write_in(&mut s, &keys, &ver, &c, "test f_one = f() == 2").unwrap_err()[0].code, "E0904");
+}
+
+/// Review I1: a relink is not a view. The owner replaces `f` (same signature), which relinks the
+/// verifier's test; the owner has still not seen that test and may not overwrite it.
+#[test]
+fn a_relink_does_not_count_as_seen() {
+    let (mut s, keys, _owner, _arch, imp, ver, _imp2) = full_team();
+    let c = open(&mut s, &imp, "work", &[], None);
+    write_in(&mut s, &keys, &imp, &c, "fn f() -> Int = 1").unwrap();
+    s.change_submit(&imp, &c).unwrap();
+    write_in(&mut s, &keys, &ver, &c, "test f_one = f() == 1").unwrap();
+    let d = write_in(&mut s, &keys, &imp, &c, "fn f() -> Int = 2").unwrap();
+    assert!(d.iter().any(|x| x.name == "f_one" && x.status == "relinked"), "{d:?}");
+    let e = write_in(&mut s, &keys, &imp, &c, "test f_one = f() == 2").unwrap_err();
+    assert_eq!(e[0].code, "E0904", "a relink is not a view: {e:?}");
+    // Seen before the relink: the mark moves along with it.
+    let h = s.view(&["f_one".into()]).unwrap()[0].hash.clone();
+    s.mark_seen(&imp.session, &crate::Space::Change(c.clone()), &[("f_one".into(), h)]).unwrap();
+    write_in(&mut s, &keys, &imp, &c, "fn f() -> Int = 3").unwrap();
+    write_in(&mut s, &keys, &imp, &c, "test f_one = f() == 3").unwrap();
+}
+
+/// Review I2: the leases of a define count against the delta (2 000), not the 256 reservations,
+/// and the delta is checked before anything is proven.
+#[test]
+fn large_defines_are_bounded_by_the_delta_not_by_leases() {
+    let (mut s, keys, _owner, arch, _imp, _ver, _imp2) = full_team();
+    let c = open(&mut s, &arch, "big", &[], None);
+    let src = |from: usize, n: usize| -> String { (from..from + n).map(|i| format!("fn g{i}() -> Int = {i}\n")).collect() };
+    write_in(&mut s, &keys, &arch, &c, &src(0, 300)).unwrap();
+    assert_eq!(s.last_write().leases.len(), 300);
+    write_in(&mut s, &keys, &arch, &c, &src(300, 1700)).unwrap();
+    assert_eq!(s.leases(&c).unwrap().len(), 2000);
+    // One more name is over the delta: refused before the prover (fast), nothing written.
+    let start = std::time::Instant::now();
+    let e = write_in(&mut s, &keys, &arch, &c, &src(2000, 1)).unwrap_err();
+    assert_eq!((e[0].code, e[0].kind), ("E0914", "team_limit"), "{e:?}");
+    assert!(e[0].message.contains("2000"), "{e:?}");
+    eprintln!("refused in {:?}", start.elapsed());
+    // Explicit reservations of names it has not changed: 256 on top.
+    let names = |a: usize, n: usize| (a..a + n).map(|i| format!("r{i}")).collect::<Vec<_>>();
+    for k in 0..4 {
+        s.lease("arch-1", "acquire", &c, &names(k * 64, 64), None).unwrap();
+    }
+    assert_eq!(s.lease("arch-1", "acquire", &c, &names(256, 1), None).unwrap_err()[0].code, "E0914");
+    let trust = Trust::parse(&s.team_trust().unwrap().to_string()).unwrap();
+    assert!(verified(&mut s, Some(&trust)).ok);
+}
+
+/// Review I4: every column a change set's decisions rest on is bound by its records.
+#[test]
+fn tampering_with_change_set_metadata_is_detected() {
+    let store = || {
+        let (mut s, keys, _owner, arch, imp, _ver, _imp2) = full_team();
+        // A deleted base name keeps a row without a hash (an architect's own change set).
+        let own = open(&mut s, &arch, "own", &[], None);
+        write_in(&mut s, &keys, &arch, &own, "fn spare() -> Int = 3").unwrap();
+        s.delete(&["base".into()], "x").unwrap();
+        s.lease("arch-1", "release", &own, &["base".into()], None).unwrap();
+        let p = open(&mut s, &arch, "pkg", &["base"], Some("impl-1"));
+        s.change_claim(&imp, &p).unwrap();
+        write_in(&mut s, &keys, &imp, &p, "fn base() -> Int = 7\nfn added() -> Int = 1").unwrap();
+        let trust = Trust::parse(&s.team_trust().unwrap().to_string()).unwrap();
+        assert!(verified(&mut s, Some(&trust)).ok);
+        (s, trust)
+    };
+    let probes: &[(&str, &str)] = &[
+        ("origin of an added name", "UPDATE change_names SET origin = 'base' WHERE name = 'added'"),
+        ("origin of an edited name", "UPDATE change_names SET origin = 'relinked' WHERE name = 'base'"),
+        ("base_hash", "UPDATE change_names SET base_hash = NULL WHERE name = 'base'"),
+        ("base_hash of an added name", "UPDATE change_names SET base_hash = hash WHERE name = 'added'"),
+        ("conflict mark", "UPDATE change_names SET conflict = '{}' WHERE name = 'base'"),
+        ("the row of a deleted base name", "UPDATE change_names SET origin = 'renamed' WHERE hash IS NULL"),
+        ("ghost row without a hash", "INSERT INTO change_names (change, name, hash, local_names, refs, origin, base_hash, conflict, updated_at) SELECT change, 'ghost', NULL, '[]', '[]', 'renamed', NULL, NULL, 0 FROM change_names LIMIT 1"),
+        ("refs re-spelled", "UPDATE change_names SET refs = '[ ]' WHERE name = 'added'"),
+        ("changes.base_root", "UPDATE changes SET base_root = 'aa'"),
+        ("changes.base_seq", "UPDATE changes SET base_seq = 0"),
+        ("changes.claimed", "UPDATE changes SET claimed = 0"),
+        ("changes.assignee", "UPDATE changes SET assignee = 'impl-2'"),
+        ("changes.title", "UPDATE changes SET title = 'other'"),
+    ];
+    for (what, sql) in probes {
+        let (mut s, trust) = store();
+        raw(&s).execute_batch(&format!("PRAGMA foreign_keys = OFF; {sql};")).unwrap();
+        let o = verified(&mut s, Some(&trust));
+        assert_eq!(code(&o), "E0923", "{what}: {o:?}");
+    }
+}
+
+/// Review M3, M4: claiming respects the per-member limit; an architect does not break its own leases.
+#[test]
+fn claims_count_toward_the_limit_and_own_leases_are_not_broken() {
+    let (mut s, _keys, _owner, arch, imp, _ver, _imp2) = full_team();
+    for k in 0..change::MAX_OPEN_PER_MEMBER {
+        open(&mut s, &imp, &format!("own {k}"), &[], None);
+    }
+    let p = open(&mut s, &arch, "pkg", &[], Some("impl-1"));
+    assert_eq!(s.change_claim(&imp, &p).unwrap_err()[0].code, "E0914");
+    s.lease("arch-1", "acquire", &p, &["mine".into()], None).unwrap();
+    let r = s.lease_break(&arch, &["mine".into()]).unwrap();
+    assert_eq!((r["broken"].as_array().unwrap().len(), r["skipped"].as_array().unwrap().len()), (0, 1));
+    assert!(!s.change(&p).unwrap().unwrap().needs_rebase);
 }

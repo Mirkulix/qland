@@ -86,7 +86,18 @@ pub struct Verify<'a> {
 }
 
 pub(crate) fn sql(e: rusqlite::Error) -> Vec<Diagnostic> {
-    vec![Diagnostic::store_error(format!("store database error: {e}"))]
+    let busy = matches!(e.sqlite_error_code(), Some(rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked));
+    let mut d = Diagnostic::store_error(format!("store database error: {e}"));
+    if busy {
+        // Another writer held the lock past the busy timeout (team mode reports it as E0907).
+        d.detail = Some(serde_json::json!({"sqlite": "busy"}));
+    }
+    vec![d]
+}
+
+/// True for the store error of a write lock held past the busy timeout (see [`sql`]).
+pub fn is_busy(d: &Diagnostic) -> bool {
+    d.kind == "store_error" && d.detail.as_ref().and_then(|v| v.get("sqlite")).and_then(|v| v.as_str()) == Some("busy")
 }
 
 pub(crate) fn now_ms() -> i64 {

@@ -153,6 +153,12 @@ struct State {
     changes: BTreeMap<String, Change>,
     /// The `names_after` of the last record about each space.
     digests: BTreeMap<String, String>,
+    /// The `meta_after` of the last record about each change set (its signed metadata).
+    metas: BTreeMap<String, String>,
+    /// The seq of the record that opened each change set.
+    opened: BTreeMap<String, i64>,
+    /// (seq, hash) of what verifiers defined: must be tests (checked against `defs` at the end).
+    verifier_defs: Vec<(i64, String)>,
     /// Every hash a record names.
     hashes: BTreeSet<String>,
     /// From the genesis record.
@@ -221,6 +227,9 @@ pub fn verify(conn: &Connection, trust: Option<&Trust>, from: i64, head: Option<
         roots: BTreeMap::new(),
         changes: BTreeMap::new(),
         digests: BTreeMap::new(),
+        metas: BTreeMap::new(),
+        opened: BTreeMap::new(),
+        verifier_defs: Vec::new(),
         hashes: BTreeSet::new(),
         owner: String::new(),
         team_allow: None,
@@ -457,6 +466,9 @@ fn after_signature(st: &mut State, p: &Parsed) -> Result<(), Bad> {
             }
             let entries: Vec<Entry> = args.get("entries").cloned().map(serde_json::from_value).transpose().ok().flatten().ok_or_else(|| chain(format!("record {seq} has no valid `entries`")))?;
             let mut rows = st.rows(&space);
+            if role == "verifier" {
+                st.verifier_defs.extend(entries.iter().filter(|e| matches!(e.action.as_str(), "added" | "replaced")).filter_map(|e| e.new.clone()).map(|h| (seq, h)));
+            }
             for e in &entries {
                 let had = rows.get(&e.name).map(|r| &r.hash);
                 if had != e.old.as_ref() {
@@ -493,6 +505,13 @@ fn after_signature(st: &mut State, p: &Parsed) -> Result<(), Bad> {
     }
     if st.root(&space) != after {
         return Err(replay(format!("record {seq}: replaying it does not give its recorded root")));
+    }
+    if space != "main" {
+        let meta = args.get("meta_after").and_then(Value::as_str).ok_or_else(|| chain(format!("record {seq} about change set {space} does not sign its metadata (`meta_after`)")))?;
+        st.metas.insert(space.clone(), meta.to_string());
+        if opening {
+            st.opened.insert(space.clone(), seq);
+        }
     }
     st.digests.insert(space, text(body, "names_after")?.to_string());
     Ok(())
@@ -608,6 +627,16 @@ fn final_state(conn: &Connection, st: &State) -> Result<(), Bad> {
             let (n, what) = first_difference(&stored, &replayed);
             return Err(replay(format!("the names of change set {c} differ from the replayed records (first at `{n}`: {what})")));
         }
+        // Everything else the change set's decisions rest on (origins, base hashes, conflict marks,
+        // rows without a hash, its row in `changes`), as its last record signed it.
+        let meta = super::change::meta_digest(conn, c).map_err(db)?;
+        if st.metas.get(c) != Some(&meta) {
+            return Err(replay(format!("the metadata of change set {c} (change_names origin/base_hash/conflict, or its changes row) differs from what its last record signed")));
+        }
+        let base_seq: i64 = conn.query_row("SELECT base_seq FROM changes WHERE id = ?1", params![c], |r| r.get(0)).map_err(sqlerr)?;
+        if st.opened.get(c).map(|s| s - 1) != Some(base_seq) {
+            return Err(replay(format!("change set {c}'s base_seq is not the record before the one that opened it")));
+        }
         if st.digests.get(c).is_some_and(|d| *d != names_digest(conn, &replayed).unwrap_or_default()) {
             return Err(replay(format!("the stored definitions of change set {c}'s names differ from what its last record signed")));
         }
@@ -642,6 +671,13 @@ fn final_state(conn: &Connection, st: &State) -> Result<(), Bad> {
     }
     if seen != st.members.len() {
         return Err(replay("the members table lacks members the records added".into()));
+    }
+    // Verifiers write only tests (§8), decided by the kind of what their records defined.
+    for (seq, h) in &st.verifier_defs {
+        let kind: Option<String> = conn.query_row("SELECT kind FROM defs WHERE hash = ?1", params![h], |r| r.get(0)).optional().map_err(sqlerr)?;
+        if kind.as_deref() != Some("test") {
+            return Err(unauthorized(format!("record {seq}: a verifier defined #{h}, which is not a test")));
+        }
     }
     // Step 5: every definition decodes from verified forms, and `deps` matches its references.
     let snap = Snapshot::load(conn, &Space::Main).map_err(db)?;
