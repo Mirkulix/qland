@@ -6,7 +6,7 @@
 //! key id). Seeds and file contents live in memory only inside `Zeroizing`, and `SigningKey`
 //! zeroizes itself on drop.
 
-use super::canonical::{hex, unhex};
+use super::canonical::{hex, hex_into, unhex, unhex_into};
 use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
 use qal_core::canon::Hash;
 use qal_core::diag::Diagnostic;
@@ -118,9 +118,21 @@ impl KeyDir {
         self.ready(project, true)?;
         let seed = random32()?;
         let key = SecretKey::from_seed(&seed);
-        let line = Zeroizing::new(format!("{SECRET_PREFIX} {}\n", hex(seed.as_slice())));
+        // Reserved up front: the buffer holding the seed's hex never reallocates.
+        let mut line = Zeroizing::new(String::with_capacity(SECRET_PREFIX.len() + 66));
+        line.push_str(SECRET_PREFIX);
+        line.push(' ');
+        hex_into(seed.as_slice(), &mut line);
+        line.push('\n');
         write_secret(&self.file(&key.id), line.as_bytes())?;
         Ok(key)
+    }
+
+    /// Removes the key file `key_id` (a key generated for a write that was then not committed).
+    pub fn discard(&self, key_id: &str) {
+        if key_id.len() == 16 && key_id.bytes().all(|b| b.is_ascii_hexdigit()) {
+            let _ = std::fs::remove_file(self.file(key_id));
+        }
     }
 
     /// Loads the key `key_id` (the file name must match the key in it).
@@ -135,8 +147,8 @@ impl KeyDir {
         let Some((prefix, seed_hex)) = body.split_once(' ') else {
             return Err(unusable(format!("{} is not a QAL key file (key {key_id})", path.display())));
         };
-        let seed = Zeroizing::new(unhex::<32>(seed_hex).unwrap_or([0u8; 32]));
-        if prefix != SECRET_PREFIX || seed_hex.len() != 64 || !seed_hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+        let mut seed = Zeroizing::new([0u8; 32]);
+        if prefix != SECRET_PREFIX || !unhex_into(seed_hex, &mut seed) {
             return Err(unusable(format!("{} is not a QAL key file of format v1 (key {key_id})", path.display())));
         }
         let key = SecretKey::from_seed(&seed);
@@ -153,9 +165,35 @@ impl KeyDir {
     }
 }
 
+/// `path` resolved through its deepest existing ancestor (which is canonicalized), so a path that
+/// does not exist yet can be compared with the project before anything is created.
+pub fn resolve(path: &Path) -> std::io::Result<PathBuf> {
+    let abs = if path.is_absolute() { path.to_path_buf() } else { std::env::current_dir()?.join(path) };
+    let mut rest = Vec::new();
+    let mut cur = abs.as_path();
+    loop {
+        match cur.canonicalize() {
+            Ok(c) => return Ok(rest.iter().rev().fold(c, |p: PathBuf, part| p.join(part))),
+            Err(e) => {
+                let (Some(parent), Some(name)) = (cur.parent(), cur.file_name()) else { return Err(e) };
+                rest.push(name.to_os_string());
+                cur = parent;
+            }
+        }
+    }
+}
+
+/// True if `path` (existing or not) is the project directory or inside it.
+pub fn in_project(path: &Path, project: &Path) -> Result<bool, Diagnostic> {
+    let canon = resolve(path).map_err(|e| unusable(format!("cannot resolve {}: {e}", path.display())))?;
+    let project = project.canonicalize().map_err(|e| Diagnostic::store_error(format!("cannot resolve the project directory {}: {e}", project.display())))?;
+    Ok(canon.starts_with(&project))
+}
+
 /// The key directory must not be the project or inside it (keys never next to versioned code).
+/// Checked before the directory is created, so a refused one is not left behind.
 fn outside_project(dir: &Path, project: &Path) -> Result<PathBuf, Diagnostic> {
-    let canon = dir.canonicalize().map_err(|e| unusable(format!("cannot resolve the key directory {}: {e}", dir.display())))?;
+    let canon = resolve(dir).map_err(|e| unusable(format!("cannot resolve the key directory {}: {e}", dir.display())))?;
     let project = project.canonicalize().map_err(|e| Diagnostic::store_error(format!("cannot resolve the project directory {}: {e}", project.display())))?;
     if canon.starts_with(&project) {
         return Err(Diagnostic::new("E0926", "key_dir_in_project", "", "", format!("the key directory {} is inside the project {}", canon.display(), project.display()))
@@ -175,6 +213,7 @@ mod platform {
     use zeroize::Zeroizing;
 
     pub fn ready(dir: &Path, project: &Path, create: bool) -> Result<PathBuf, Diagnostic> {
+        outside_project(dir, project)?;
         match std::fs::symlink_metadata(dir) {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound && create => {
                 std::fs::DirBuilder::new().recursive(true).mode(0o700).create(dir).map_err(|e| unusable(format!("cannot create the key directory {}: {e}", dir.display())))?;
@@ -232,7 +271,8 @@ mod platform {
             return Err(unusable(format!("{} is not a QAL key file (too long)", path.display())));
         }
         let mut f = std::fs::File::open(path).map_err(|e| unusable(format!("cannot read the key file {}: {e}", path.display())))?;
-        let mut text = Zeroizing::new(String::with_capacity(128));
+        // Larger than any accepted file: reading never reallocates (and leaves no copy behind).
+        let mut text = Zeroizing::new(String::with_capacity(1024));
         f.read_to_string(&mut text).map_err(|e| unusable(format!("cannot read the key file {}: {e}", path.display())))?;
         Ok(text)
     }

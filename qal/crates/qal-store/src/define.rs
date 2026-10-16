@@ -189,8 +189,9 @@ pub(crate) fn hash(p: &Program) -> Result<Hashed, Vec<Diagnostic>> {
 const ATTEMPTS: usize = 3;
 
 /// A check of a `define` before it is committed, inside the write transaction that would commit it
-/// (it can also write more in the same transaction; used by package imports).
-pub type Check<'c> = dyn Fn(&[Defined], &Transaction) -> Result<(), Vec<Diagnostic>> + 'c;
+/// (it can also write more in the same transaction; used by package imports and the signed records
+/// of a team store). It gets the result and the names as they were before the write.
+pub type Check<'c> = dyn Fn(&[Defined], &Transaction, &crate::team::Rows) -> Result<(), Vec<Diagnostic>> + 'c;
 
 /// `define`, committed only if `check` accepts the written result (after the verification);
 /// `rules` say who may write `std.` names.
@@ -198,8 +199,9 @@ pub fn define_checked(conn: &mut Connection, src: &str, agent: &str, rules: &Rul
     let input = qal_text::parse_program(src).map_err(|d| vec![d])?;
     let Some(v) = verify else {
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(sql)?;
-        let out = prepare(&tx, &input, rules)?.write(&tx, &input, agent, false)?;
-        check(&out, &tx)?;
+        let state = prepare(&tx, &input, rules)?;
+        let out = state.write(&tx, &input, agent, false)?;
+        check(&out, &tx, &crate::team::rows_of(&state.snap))?;
         tx.commit().map_err(sql)?;
         return Ok(out);
     };
@@ -221,12 +223,13 @@ pub fn define_checked(conn: &mut Connection, src: &str, agent: &str, rules: &Rul
         // IMMEDIATE takes the write lock before reading, so two concurrent `define`s serialize
         // instead of both deciding on the same old state.
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(sql)?;
-        let out = prepare(&tx, &input, rules)?.write(&tx, &input, agent, false)?;
+        let state = prepare(&tx, &input, rules)?;
+        let out = state.write(&tx, &input, agent, false)?;
         let now = to_verify(&tx, &out, &v.key)?;
         if now.iter().all(|d| todo.contains(d)) {
             let hashes: HashSet<&str> = now.iter().map(|(_, h)| h.as_str()).collect();
             store_results(&tx, &v.key, rows.into_iter().filter(|(h, _)| hashes.contains(h.as_str())))?;
-            check(&out, &tx)?;
+            check(&out, &tx, &crate::team::rows_of(&state.snap))?;
             tx.commit().map_err(sql)?;
             return Ok(out);
         }
@@ -239,7 +242,7 @@ pub fn define_checked(conn: &mut Connection, src: &str, agent: &str, rules: &Rul
     if !todo.is_empty() {
         store_results(&tx, &v.key, (v.run)(&state.typed, &todo)?.into_iter())?;
     }
-    check(&out, &tx)?;
+    check(&out, &tx, &crate::team::rows_of(&state.snap))?;
     tx.commit().map_err(sql)?;
     Ok(out)
 }

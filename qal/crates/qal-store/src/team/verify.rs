@@ -6,21 +6,26 @@
 //! 2. every signature with the signer's key valid at that point; the owner's key from the trust
 //!    file (`--trust team.json`), else from the genesis record (E0921, E0925);
 //! 3. the rights of each record (§8, as far as records decide them) (E0924);
-//! 4. replaying every entry from the genesis gives exactly the current `names` (and, in 4a, no
-//!    `change_names` and the `members` table as recorded) (E0923);
-//! 5. every hash the names and records refer to is stored in `defs` and matches its canonical
-//!    bytes (E0923).
+//! 4. replaying every entry from the genesis gives exactly the current `names` rows (hash, refs,
+//!    local names), the full-state digest of the last record (`names_after`, which also binds each
+//!    named definition's kind, signature, effects and local names in `defs`), and, in 4a, no
+//!    `change_names`, the `members` table and the team's `meta` as recorded (E0923);
+//! 5. every definition the names and records refer to is stored and self-verifying: its canonical
+//!    form (and group form) match their hashes, its `deps` rows are exactly its references (E0923).
 //! Merge gates and leases are not checked here (Phase 4c; leases are not signed).
+//!
+//! Signatures are checked in parallel, in batches, alongside the sequential replay; the first
+//! failure by sequence number is reported either way.
 
-use super::canonical::{self, root, unhex};
+use super::canonical::{self, unhex};
 use super::keys::{key_id, parse_public};
 use super::policy::{self, Role, OWNER};
-use super::{main_names, valid_member_id, Entry, RECORD_PREFIX, ZERO_HASH};
-use crate::sql;
+use super::{main_rows, names_digest, valid_member_id, Entry, NameRow, Rows, META_OWNER, META_TEAM_ALLOW, RECORD_PREFIX, ZERO_HASH};
+use crate::snapshot::Snapshot;
 use ed25519_dalek::{Signature, VerifyingKey};
 use qal_core::canon::Hash;
 use qal_core::diag::Diagnostic;
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, Connection};
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
@@ -68,6 +73,9 @@ pub struct Outcome {
     pub trust: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub head: Option<String>,
+    /// Signatures were checked only from this record on (`--from`); absent: all of them.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub signatures_from: Option<i64>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub warnings: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -79,7 +87,12 @@ pub struct Outcome {
 
 impl Outcome {
     fn failed(code: &'static str, kind: &'static str, seq: i64, message: String, checked: i64) -> Outcome {
-        Outcome { ok: false, records: None, members: None, trust: None, head: None, warnings: Vec::new(), error: Some(Failure { code, kind, seq, message }), checked: Some(checked) }
+        Outcome { ok: false, records: None, members: None, trust: None, head: None, signatures_from: None, warnings: Vec::new(), error: Some(Failure { code, kind, seq, message }), checked: Some(checked) }
+    }
+
+    /// A store whose team tables were changed so that the chain cannot even be read as a team's.
+    pub fn tampered(message: String) -> Outcome {
+        Outcome::failed("E0923", "replay_mismatch", 0, message, 0)
     }
 }
 
@@ -113,66 +126,163 @@ fn text<'a>(body: &'a Value, key: &str) -> Result<&'a str, Bad> {
     body.get(key).and_then(Value::as_str).ok_or_else(|| chain(format!("the record has no string `{key}`")))
 }
 
+fn strings(v: Option<&Value>) -> Option<Vec<String>> {
+    v.and_then(|v| serde_json::from_value(v.clone()).ok())
+}
+
 /// The replayed state.
 struct State {
     members: BTreeMap<String, Known>,
-    names: BTreeMap<String, String>,
-    /// `root(names)`, kept up to date (records that change no name do not recompute it).
+    rows: Rows,
+    /// The root of `rows`, kept up to date (records that change no name do not recompute it).
     root: String,
     /// Every hash a record names.
     hashes: BTreeSet<String>,
+    /// From the genesis record.
+    owner: String,
+    team_allow: Option<String>,
+    /// The last record's `names_after` and hash.
+    names_after: String,
+    head: String,
+    /// Every record hash (for `--head`), only collected when asked for.
+    seen_head: bool,
 }
 
-pub fn verify(conn: &Connection, trust: Option<&Trust>, from: i64) -> Result<Outcome, Vec<Diagnostic>> {
-    let mut rows = Vec::new();
-    {
-        let mut stmt = conn.prepare("SELECT seq, hash, body, sig FROM records ORDER BY seq").map_err(sql)?;
-        let it = stmt.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, Vec<u8>>(2)?, r.get::<_, String>(3)?))).map_err(sql)?;
-        for r in it {
-            rows.push(r.map_err(sql)?);
+/// A signature to check: the record, its signer and key.
+struct Job {
+    seq: i64,
+    member: String,
+    key_id: String,
+    key: VerifyingKey,
+    body: Vec<u8>,
+    sig: [u8; 64],
+}
+
+/// Records per batch of parallel signature checks.
+const BATCH: usize = 4096;
+
+/// The first record (by `seq`) in `jobs` whose signature does not verify.
+fn first_bad_signature(jobs: &[Job]) -> Option<(i64, Bad)> {
+    if jobs.is_empty() {
+        return None;
+    }
+    let threads = std::thread::available_parallelism().map_or(1, usize::from).clamp(1, 16);
+    let chunk = jobs.len().div_ceil(threads).max(64);
+    let bad = |js: &[Job]| js.iter().find(|j| j.key.verify_strict(&j.body, &Signature::from_bytes(&j.sig)).is_err()).map(|j| j.seq);
+    let found: Vec<i64> = if threads == 1 || jobs.len() <= chunk {
+        bad(jobs).into_iter().collect()
+    } else {
+        std::thread::scope(|s| {
+            let handles: Vec<_> = jobs.chunks(chunk).map(|c| s.spawn(move || bad(c))).collect();
+            // A thread that panicked counts its chunk as failed at its first record.
+            handles.into_iter().zip(jobs.chunks(chunk)).filter_map(|(h, c)| h.join().unwrap_or(Some(c[0].seq))).collect()
+        })
+    };
+    let seq = found.into_iter().min()?;
+    let j = jobs.iter().find(|j| j.seq == seq)?;
+    Some((seq, signature(format!("the signature of record {seq} by `{}` (key {}) is not valid", j.member, j.key_id))))
+}
+
+pub fn verify(conn: &Connection, trust: Option<&Trust>, from: i64, head: Option<&str>) -> Result<Outcome, Vec<Diagnostic>> {
+    let mut st = State {
+        members: BTreeMap::new(),
+        rows: Rows::new(),
+        root: canonical::root(&BTreeMap::new()),
+        hashes: BTreeSet::new(),
+        owner: String::new(),
+        team_allow: None,
+        names_after: String::new(),
+        head: ZERO_HASH.to_string(),
+        seen_head: false,
+    };
+    let mut jobs: Vec<Job> = Vec::with_capacity(BATCH);
+    let mut count = 0i64;
+    let mut stmt = conn.prepare("SELECT seq, hash, body, sig FROM records ORDER BY seq").map_err(crate::sql)?;
+    let mut rows = stmt.query([]).map_err(crate::sql)?;
+    // On a failure at `seq`: an invalid signature of an earlier record (still in the batch) is
+    // reported first; `own` adds the failing record's own signature job (failures after it).
+    let fail = |jobs: &mut Vec<Job>, own: Option<Job>, (code, kind, m): Bad, seq: i64| -> Outcome {
+        jobs.extend(own);
+        match first_bad_signature(jobs) {
+            Some((s, (c, k, msg))) => Outcome::failed(c, k, s, msg, s - 1),
+            None => Outcome::failed(code, kind, seq, m, seq - 1),
+        }
+    };
+    while let Some(r) = rows.next().map_err(crate::sql)? {
+        let (seq, hash, body, sig): (i64, String, Vec<u8>, String) = (r.get(0).map_err(crate::sql)?, r.get(1).map_err(crate::sql)?, r.get(2).map_err(crate::sql)?, r.get(3).map_err(crate::sql)?);
+        let expected = count + 1;
+        let at = if seq == expected { seq } else { expected };
+        let (parsed, job) = match before_signature(&mut st, expected, seq, &hash, body, &sig, trust) {
+            Ok(x) => x,
+            Err(b) => return Ok(fail(&mut jobs, None, b, at)),
+        };
+        if head == Some(hash.as_str()) {
+            st.seen_head = true;
+        }
+        if let Err(b) = after_signature(&mut st, &parsed) {
+            return Ok(fail(&mut jobs, (seq >= from).then_some(job), b, seq));
+        }
+        if seq >= from {
+            jobs.push(job);
+        }
+        count += 1;
+        if jobs.len() >= BATCH {
+            if let Some((s, (c, k, m))) = first_bad_signature(&jobs) {
+                return Ok(Outcome::failed(c, k, s, m, s - 1));
+            }
+            jobs.clear();
         }
     }
-    let mut st = State { members: BTreeMap::new(), names: BTreeMap::new(), root: root(&BTreeMap::new()), hashes: BTreeSet::new() };
-    let mut prev = ZERO_HASH.to_string();
-    let mut checked = 0i64;
-    for (i, (seq, hash, body, sig)) in rows.iter().enumerate() {
-        let expected = i as i64 + 1;
-        let at = if *seq == expected { *seq } else { expected };
-        if let Err((code, kind, m)) = check_record(&mut st, &mut prev, expected, *seq, hash, body, sig, trust, from) {
-            return Ok(Outcome::failed(code, kind, at, m, checked));
-        }
-        checked += 1;
+    if let Some((s, (c, k, m))) = first_bad_signature(&jobs) {
+        return Ok(Outcome::failed(c, k, s, m, s - 1));
     }
-    let last = rows.last().map_or(0, |r| r.0);
-    if rows.is_empty() {
+    if count == 0 {
         return Ok(Outcome::failed("E0922", "chain_broken", 1, "the store has no records (the genesis record is missing)".into(), 0));
     }
+    if let Some(h) = head {
+        if !st.seen_head {
+            return Ok(Outcome::failed("E0922", "chain_broken", count, format!("the pinned head {h} is not in the chain (records were removed or replaced)"), count));
+        }
+    }
     if let Err((code, kind, m)) = final_state(conn, &st) {
-        return Ok(Outcome::failed(code, kind, last, m, checked));
+        return Ok(Outcome::failed(code, kind, count, m, count));
     }
     let mut warnings = Vec::new();
     if trust.is_none() {
         warnings.push("no trust file: the owner's key was taken from this store's genesis record, which whoever can rewrite the store can rewrite too; verify with --trust team.json".to_string());
     }
+    if head.is_none() {
+        warnings.push(format!("no pinned head: cutting off the newest records together with their changes cannot be found; keep the head ({}) and verify with --head", st.head));
+    }
+    if from > 1 {
+        warnings.push(format!("signatures were checked only from record {from} on (--from); the records before it were replayed but not authenticated"));
+    }
     Ok(Outcome {
         ok: true,
-        records: Some(rows.len() as i64),
+        records: Some(count),
         members: Some(st.members.len()),
         trust: Some(if trust.is_some() { "file" } else { "store" }),
-        head: Some(prev),
+        head: Some(st.head.clone()),
+        signatures_from: (from > 1).then_some(from),
         warnings,
         error: None,
         checked: None,
     })
 }
 
-#[allow(clippy::too_many_arguments)]
-fn check_record(st: &mut State, prev: &mut String, expected: i64, seq: i64, hash: &str, bytes: &[u8], sig: &str, trust: Option<&Trust>, from: i64) -> Result<(), Bad> {
-    // 1. The chain.
+/// A record parsed and authenticated (up to its deferred signature).
+struct Parsed {
+    seq: i64,
+    body: Value,
+    role: String,
+}
+
+/// Steps 1 and 2 up to the signature itself: the chain, the body, the signer and its key.
+fn before_signature(st: &mut State, expected: i64, seq: i64, hash: &str, bytes: Vec<u8>, sig: &str, trust: Option<&Trust>) -> Result<(Parsed, Job), Bad> {
     if seq != expected {
         return Err(chain(format!("record {expected} is missing (the next one is {seq})")));
     }
-    if Hash::of(bytes).to_hex() != hash {
+    if Hash::of(&bytes).to_hex() != hash {
         return Err(chain(format!("record {seq} does not match its hash")));
     }
     let rest = bytes.strip_prefix(RECORD_PREFIX.as_bytes()).ok_or_else(|| chain(format!("record {seq} does not start with `qal-record-v1`")))?;
@@ -186,17 +296,19 @@ fn check_record(st: &mut State, prev: &mut String, expected: i64, seq: i64, hash
     if body.get("seq").and_then(Value::as_i64) != Some(seq) {
         return Err(chain(format!("record {seq} says it is record {}", body.get("seq").map_or("?".into(), Value::to_string))));
     }
-    if text(&body, "prev")? != prev.as_str() {
+    if text(&body, "prev")? != st.head.as_str() {
         return Err(chain(format!("record {seq} does not follow record {}", seq - 1)));
     }
-    *prev = hash.to_string();
+    st.head = hash.to_string();
     let (op, member, key) = (text(&body, "op")?, text(&body, "member")?, text(&body, "key")?);
-    text(&body, "session")?;
+    for k in ["session", "space", "root_before", "root_after", "names_after"] {
+        text(&body, k)?;
+    }
     body.get("at").and_then(Value::as_i64).ok_or_else(|| chain(format!("record {seq} has no time")))?;
     let args = body.get("args").filter(|a| a.is_object()).ok_or_else(|| chain(format!("record {seq} has no arguments")))?;
-    let (before, after) = (text(&body, "root_before")?, text(&body, "root_after")?);
+    // Only the lowercase form: any other spelling would be an undetected byte change.
+    let sig_bytes = unhex::<64>(sig).ok_or_else(|| signature(format!("the signature of record {seq} is not 128 lowercase hex digits")))?;
 
-    // 2. The signature, with the key the signer had at this point.
     let (role, public) = if seq == 1 {
         if op != "genesis" {
             return Err(unauthorized("the first record is not the genesis record".into()));
@@ -212,6 +324,8 @@ fn check_record(st: &mut State, prev: &mut String, expected: i64, seq: i64, hash
         if member != owner || key != key_id(&public) {
             return Err(unauthorized("the genesis record is not signed by its owner".into()));
         }
+        st.owner = owner.to_string();
+        st.team_allow = args.get("team_allow").and_then(Value::as_str).map(str::to_string);
         st.members.insert(owner.to_string(), Known { role: OWNER.into(), key: public, key_id: key_id(&public), revoked: false });
         (OWNER.to_string(), public)
     } else {
@@ -227,20 +341,22 @@ fn check_record(st: &mut State, prev: &mut String, expected: i64, seq: i64, hash
         }
         (m.role.clone(), m.key)
     };
-    let sig_bytes = unhex::<64>(sig).ok_or_else(|| signature(format!("the signature of record {seq} is not 128 hex digits")))?;
-    if seq >= from && public.verify_strict(bytes, &Signature::from_bytes(&sig_bytes)).is_err() {
-        return Err(signature(format!("the signature of record {seq} by `{member}` (key {key}) is not valid")));
-    }
+    let job = Job { seq, member: member.to_string(), key_id: key.to_string(), key: public, body: bytes, sig: sig_bytes };
+    Ok((Parsed { seq, body, role }, job))
+}
 
-    // 3. Rights.
-    if !policy::record_allowed(op, &role) {
+/// Steps 3 and 4 for one record: its rights and its replay.
+fn after_signature(st: &mut State, p: &Parsed) -> Result<(), Bad> {
+    let (seq, body, role) = (p.seq, &p.body, p.role.as_str());
+    let (op, member) = (text(body, "op")?, text(body, "member")?);
+    let args = body.get("args").filter(|a| a.is_object()).ok_or_else(|| chain(format!("record {seq} has no arguments")))?;
+    let (before, after) = (text(body, "root_before")?, text(body, "root_after")?);
+    if !policy::record_allowed(op, role) {
         return Err(unauthorized(format!("record {seq}: `{member}` (role {role}) may not make `{op}` records")));
     }
-    if text(&body, "space")? != "main" {
+    if text(body, "space")? != "main" {
         return Err(unauthorized(format!("record {seq} writes to a change set, which this version does not have")));
     }
-
-    // 4. Replay.
     if op != "genesis" && st.root != before {
         return Err(replay(format!("record {seq}: the names before it do not have the recorded root (changed without a record?)")));
     }
@@ -248,14 +364,14 @@ fn check_record(st: &mut State, prev: &mut String, expected: i64, seq: i64, hash
     match op {
         "genesis" => {
             let main = args.get("main").and_then(Value::as_array).ok_or_else(|| chain("the genesis record has no `main` list".into()))?;
-            for pair in main {
-                let (Some(n), Some(h)) = (pair.get(0).and_then(Value::as_str), pair.get(1).and_then(Value::as_str)) else {
+            for item in main {
+                let (Some(n), Some(h), Some(refs), Some(locals)) = (item.get(0).and_then(Value::as_str), item.get(1).and_then(Value::as_str), strings(item.get(2)), strings(item.get(3))) else {
                     return Err(chain("the genesis record's `main` list is malformed".into()));
                 };
                 st.hashes.insert(h.to_string());
-                st.names.insert(n.to_string(), h.to_string());
+                st.rows.insert(n.to_string(), NameRow { hash: h.to_string(), refs, locals });
             }
-            st.root = root(&st.names);
+            st.root = super::root_of(&st.rows);
             if st.root != before {
                 return Err(replay("the genesis record's names do not have its root".into()));
             }
@@ -275,6 +391,9 @@ fn check_record(st: &mut State, prev: &mut String, expected: i64, seq: i64, hash
             let m = st.members.get_mut(id).filter(|m| m.role != OWNER && !m.revoked).ok_or_else(|| unauthorized(format!("record {seq} changes `{id}`, who is not an active agent member")))?;
             match k {
                 Some(k) => {
+                    if args.get("role").and_then(Value::as_str) != Some(m.role.as_str()) {
+                        return Err(unauthorized(format!("record {seq} rekeys `{id}` with another role than it has")));
+                    }
                     m.key_id = key_id(&k);
                     m.key = k;
                 }
@@ -282,44 +401,84 @@ fn check_record(st: &mut State, prev: &mut String, expected: i64, seq: i64, hash
             }
         }
         "define" | "rename" | "delete" | "import" => {
+            if op == "import" && args.get("package").and_then(Value::as_str) != Some(crate::package::STD_PACKAGE_NAME) {
+                return Err(unauthorized(format!("record {seq} imports a package other than the standard library")));
+            }
             let entries: Vec<Entry> = args.get("entries").cloned().map(serde_json::from_value).transpose().ok().flatten().ok_or_else(|| chain(format!("record {seq} has no valid `entries`")))?;
             for e in &entries {
-                if st.names.get(&e.name) != e.old.as_ref() {
-                    return Err(replay(format!("record {seq}: `{}` had {} before it, the record says {}", e.name, st.names.get(&e.name).map_or("no definition", |s| s.as_str()), e.old.as_deref().unwrap_or("none"))));
+                let had = st.rows.get(&e.name).map(|r| &r.hash);
+                if had != e.old.as_ref() {
+                    return Err(replay(format!("record {seq}: `{}` had {} before it, the record says {}", e.name, had.map_or("no definition", |s| s.as_str()), e.old.as_deref().unwrap_or("none"))));
                 }
                 st.hashes.extend(e.old.iter().chain(e.new.iter()).cloned());
-                match &e.new {
-                    Some(h) => st.names.insert(e.name.clone(), h.clone()),
-                    None => st.names.remove(&e.name),
-                };
+                match (&e.new, &e.refs, &e.locals) {
+                    (Some(h), Some(refs), Some(locals)) => {
+                        st.rows.insert(e.name.clone(), NameRow { hash: h.clone(), refs: refs.clone(), locals: locals.clone() });
+                    }
+                    (None, _, _) => {
+                        st.rows.remove(&e.name);
+                    }
+                    _ => return Err(chain(format!("record {seq}: the entry of `{}` has no refs or local names", e.name))),
+                }
             }
-            st.root = root(&st.names);
+            if !entries.is_empty() {
+                st.root = super::root_of(&st.rows);
+            }
         }
         other => return Err(unauthorized(format!("record {seq} has the unknown operation `{other}`"))),
     }
     if st.root != after {
         return Err(replay(format!("record {seq}: replaying it does not give its recorded root")));
     }
+    st.names_after = text(body, "names_after")?.to_string();
     Ok(())
 }
 
 /// Steps 4 (the tables now) and 5 (the definitions).
 fn final_state(conn: &Connection, st: &State) -> Result<(), Bad> {
     let db = |e: Vec<Diagnostic>| replay(e.into_iter().next().map_or_else(|| "store error".to_string(), |d| d.message));
-    let current = main_names(conn).map_err(db)?;
-    if current != st.names {
-        let differs = current.keys().chain(st.names.keys()).find(|n| current.get(*n) != st.names.get(*n)).cloned().unwrap_or_default();
-        return Err(replay(format!("the current names differ from the replayed records (first at `{differs}`)")));
+    let sqlerr = |e: rusqlite::Error| db(crate::sql(e));
+    let current = main_rows(conn).map_err(db)?;
+    if current != st.rows {
+        let (n, what) = current
+            .keys()
+            .chain(st.rows.keys())
+            .find_map(|n| {
+                let (c, r) = (current.get(n), st.rows.get(n));
+                let what = match (c, r) {
+                    (Some(c), Some(r)) if c.hash != r.hash => "hash",
+                    (Some(c), Some(r)) if c.refs != r.refs => "refs",
+                    (Some(c), Some(r)) if c.locals != r.locals => "local_names",
+                    (Some(_), Some(_)) => return None,
+                    (None, _) => "existence (missing now)",
+                    (_, None) => "existence (no record made it)",
+                };
+                Some((n.clone(), what))
+            })
+            .unwrap_or_default();
+        return Err(replay(format!("the current names differ from the replayed records (first at `{n}`: {what})")));
     }
-    let change_names: i64 = conn.query_row("SELECT count(*) FROM change_names", [], |r| r.get(0)).map_err(|e| db(sql(e)))?;
+    let digest = names_digest(conn, &st.rows).map_err(db)?;
+    if digest != st.names_after {
+        return Err(replay("the stored definitions of the names (kind, signature, effects or local names in `defs`) differ from what the last record signed".into()));
+    }
+    let change_names: i64 = conn.query_row("SELECT count(*) FROM change_names", [], |r| r.get(0)).map_err(sqlerr)?;
     if change_names > 0 {
         return Err(replay(format!("`change_names` has {change_names} rows that no record made")));
     }
-    let mut stmt = conn.prepare("SELECT id, role, key, revoked_at FROM members ORDER BY id").map_err(|e| db(sql(e)))?;
-    let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, Option<i64>>(3)?))).map_err(|e| db(sql(e)))?;
+    // The team's own state as recorded.
+    let meta = |k: &str| crate::package::meta(conn, k).map_err(db);
+    if meta(META_OWNER)?.as_deref() != Some(st.owner.as_str()) {
+        return Err(replay("meta.owner is not the owner of the genesis record".into()));
+    }
+    if st.team_allow.is_some() && meta(META_TEAM_ALLOW)? != st.team_allow {
+        return Err(replay("meta.team_allow (the effects agents may grant) differs from the genesis record".into()));
+    }
+    let mut stmt = conn.prepare("SELECT id, role, key, revoked_at FROM members ORDER BY id").map_err(sqlerr)?;
+    let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, Option<i64>>(3)?))).map_err(sqlerr)?;
     let mut seen = 0;
     for row in rows {
-        let (id, role, key, revoked) = row.map_err(|e| db(sql(e)))?;
+        let (id, role, key, revoked) = row.map_err(sqlerr)?;
         let ok = st.members.get(&id).is_some_and(|m| m.role == role && super::keys::public_hex(&m.key) == key && m.revoked == revoked.is_some());
         if !ok {
             return Err(replay(format!("the member `{id}` in the members table differs from the records")));
@@ -329,12 +488,18 @@ fn final_state(conn: &Connection, st: &State) -> Result<(), Bad> {
     if seen != st.members.len() {
         return Err(replay("the members table lacks members the records added".into()));
     }
-    for h in current.values().chain(st.hashes.iter()) {
-        let canonical: Option<Vec<u8>> = conn.query_row("SELECT canonical FROM defs WHERE hash = ?1", params![h], |r| r.get(0)).optional().map_err(|e| db(sql(e)))?;
-        match canonical {
-            None => return Err(replay(format!("the definition #{h} is not stored"))),
-            Some(c) if Hash::of(&c).to_hex() != *h => return Err(replay(format!("the stored definition #{h} does not match its hash"))),
-            Some(_) => {}
+    // Step 5: every definition decodes from verified forms, and `deps` matches its references.
+    let snap = Snapshot::load(conn).map_err(db)?;
+    let mut deps = conn.prepare("SELECT dep_hash FROM deps WHERE hash = ?1 ORDER BY dep_hash").map_err(sqlerr)?;
+    let all: BTreeSet<&String> = current.values().map(|r| &r.hash).chain(st.hashes.iter()).collect();
+    for h in all {
+        let hash = Hash::from_hex(h).ok_or_else(|| replay(format!("`{h}` is not a hash")))?;
+        let row = snap.row(conn, &hash).map_err(db)?.ok_or_else(|| replay(format!("the definition #{h} is not stored")))?;
+        let stored: Vec<String> = deps.query_map(params![h], |r| r.get::<_, String>(0)).map_err(sqlerr)?.collect::<Result<_, _>>().map_err(sqlerr)?;
+        let mut expected: Vec<String> = row.refs.iter().map(Hash::to_hex).collect();
+        expected.sort();
+        if stored != expected {
+            return Err(replay(format!("the dependencies stored for #{h} are not the ones its definition refers to")));
         }
     }
     Ok(())

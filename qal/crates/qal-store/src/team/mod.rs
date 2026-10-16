@@ -8,6 +8,7 @@
 
 pub mod canonical;
 pub mod keys;
+pub mod log;
 pub mod policy;
 pub mod verify;
 
@@ -15,8 +16,9 @@ pub mod verify;
 mod tests;
 
 use crate::{now_ms, sql, Defined, Store};
-use canonical::{hex, root};
+use canonical::hex;
 use keys::{KeyDir, SecretKey};
+pub use log::{Call, TeamLog};
 use policy::{Role, OWNER};
 use qal_core::canon::Hash;
 use qal_core::diag::Diagnostic;
@@ -93,21 +95,43 @@ pub struct Signer {
 }
 
 /// One change of a name in a record: `old`/`new` are hashes, `None` where the name did not exist
-/// before / does not exist after (a deleted name, the old name of a rename).
+/// before / does not exist after (a deleted name, the old name of a rename). `refs` and `locals`
+/// are the name's full row after the change (`names.refs`, `names.local_names`; `None` with `new`),
+/// so replaying the records rebuilds every name exactly.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Entry {
     pub name: String,
     pub old: Option<String>,
     pub new: Option<String>,
     pub action: String,
+    #[serde(default)]
+    pub refs: Option<Vec<String>>,
+    #[serde(default)]
+    pub locals: Option<Vec<String>>,
 }
 
 impl Entry {
-    /// The entries of a `define`/import result: every name that changed (`unchanged` ones are not).
+    /// A label of a write's result (the action per name; the rows come from the store).
+    pub fn label(name: &str, old: Option<&str>, new: Option<&str>, action: &str) -> Entry {
+        Entry { name: name.into(), old: old.map(str::to_string), new: new.map(str::to_string), action: action.into(), refs: None, locals: None }
+    }
+
+    /// The labels of a `define`/import result: every name that changed (`unchanged` ones are not).
     pub fn of_defined(defined: &[Defined]) -> Vec<Entry> {
-        defined.iter().filter(|d| d.status != "unchanged").map(|d| Entry { name: d.name.clone(), old: d.old_hash.clone(), new: Some(d.hash.clone()), action: d.status.to_string() }).collect()
+        defined.iter().filter(|d| d.status != "unchanged").map(|d| Entry::label(&d.name, d.old_hash.as_deref(), Some(&d.hash), d.status)).collect()
     }
 }
+
+/// The full stored state of one name: what `names` holds besides its time.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NameRow {
+    pub hash: String,
+    pub refs: Vec<String>,
+    pub locals: Vec<String>,
+}
+
+/// All names of a space with their rows.
+pub type Rows = BTreeMap<String, NameRow>;
 
 /// True if the store is a team store (`meta.team = 1`).
 pub fn is_team(conn: &Connection) -> Result<bool, Vec<Diagnostic>> {
@@ -116,21 +140,81 @@ pub fn is_team(conn: &Connection) -> Result<bool, Vec<Diagnostic>> {
 
 /// The current `name -> hash` of `main`.
 pub fn main_names(conn: &Connection) -> Result<BTreeMap<String, String>, Vec<Diagnostic>> {
-    let mut stmt = conn.prepare("SELECT name, hash FROM names").map_err(sql)?;
-    let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))).map_err(sql)?;
-    rows.collect::<Result<BTreeMap<_, _>, _>>().map_err(sql)
+    Ok(main_rows(conn)?.into_iter().map(|(n, r)| (n, r.hash)).collect())
 }
 
-/// The state before `entries` were applied to `after`.
-fn undo(after: &BTreeMap<String, String>, entries: &[Entry]) -> BTreeMap<String, String> {
-    let mut m = after.clone();
-    for e in entries.iter().rev() {
-        match &e.old {
-            Some(h) => m.insert(e.name.clone(), h.clone()),
-            None => m.remove(&e.name),
-        };
+fn list(text: &str, what: &str, name: &str) -> Result<Vec<String>, Vec<Diagnostic>> {
+    serde_json::from_str(text).map_err(|e| one(Diagnostic::store_error(format!("the store is corrupt: {what} of `{name}` is not a JSON list of strings ({e})"))))
+}
+
+/// The current rows of `main`.
+pub fn main_rows(conn: &Connection) -> Result<Rows, Vec<Diagnostic>> {
+    let mut stmt = conn.prepare("SELECT name, hash, refs, local_names FROM names").map_err(sql)?;
+    let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, String>(3)?))).map_err(sql)?;
+    let mut out = Rows::new();
+    for row in rows {
+        let (name, hash, refs, locals) = row.map_err(sql)?;
+        let row = NameRow { hash, refs: list(&refs, "names.refs", &name)?, locals: list(&locals, "names.local_names", &name)? };
+        out.insert(name, row);
     }
-    m
+    Ok(out)
+}
+
+/// The rows of a snapshot (the state a write started from, inside its transaction).
+pub(crate) fn rows_of(snap: &crate::snapshot::Snapshot) -> Rows {
+    snap.names.iter().map(|(n, e)| (n.clone(), NameRow { hash: e.hash.to_hex(), refs: e.refs.clone(), locals: e.locals.clone() })).collect()
+}
+
+/// The root (§3) of rows: their names and hashes.
+pub fn root_of(rows: &Rows) -> String {
+    canonical::root_iter(rows.iter().map(|(n, r)| (n.as_str(), r.hash.as_str())))
+}
+
+/// SHA-256 over the full state of every name: per name (byte order) the line
+/// `name 0 hash 0 refs 0 local_names 0 kind 0 signature 0 effects 0 defs.local_names 10`, with the
+/// definition's columns as stored in `defs` (JSON lists in compact form). Each record carries this
+/// digest of the state after it (`names_after`), so `qal verify` detects any change of a name's
+/// row or of its definition's columns, not only of its hash.
+pub fn names_digest(conn: &Connection, rows: &Rows) -> Result<String, Vec<Diagnostic>> {
+    let mut stmt = conn.prepare_cached("SELECT kind, signature, effects, local_names FROM defs WHERE hash = ?1").map_err(sql)?;
+    let mut bytes = Vec::new();
+    let mut cache: BTreeMap<&str, [String; 4]> = BTreeMap::new();
+    for (name, row) in rows {
+        if !cache.contains_key(row.hash.as_str()) {
+            let cols: Option<[String; 4]> = stmt.query_row(params![row.hash], |r| Ok([r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?])).optional().map_err(sql)?;
+            let cols = cols.ok_or_else(|| one(Diagnostic::store_error(format!("the store is corrupt: `{name}` points to the missing definition #{}", row.hash))))?;
+            cache.insert(row.hash.as_str(), cols);
+        }
+        let as_json = |v: &Vec<String>| serde_json::Value::from(v.clone()).to_string();
+        let mut fields = vec![name.clone(), row.hash.clone(), as_json(&row.refs), as_json(&row.locals)];
+        fields.extend(cache[row.hash.as_str()].iter().cloned());
+        bytes.extend_from_slice(fields.join("\0").as_bytes());
+        bytes.push(b'\n');
+    }
+    Ok(Hash::of(&bytes).to_hex())
+}
+
+/// The entries of a write: every name whose row differs between `before` and `after` (by name),
+/// with the action from `labels` (or `updated` where only `refs`/`local_names` changed, e.g. the
+/// users of a renamed name).
+fn diff(before: &Rows, after: &Rows, labels: &[Entry]) -> Vec<Entry> {
+    let label: BTreeMap<&str, &str> = labels.iter().map(|e| (e.name.as_str(), e.action.as_str())).collect();
+    let names: std::collections::BTreeSet<&String> = before.keys().chain(after.keys()).collect();
+    let mut out = Vec::new();
+    for n in names {
+        let (b, a) = (before.get(n), after.get(n));
+        if b == a {
+            continue;
+        }
+        let action = label.get(n.as_str()).copied().unwrap_or(match (b, a) {
+            (None, _) => "added",
+            (_, None) => "deleted",
+            (Some(x), Some(y)) if x.hash == y.hash => "updated",
+            _ => "replaced",
+        });
+        out.push(Entry { name: n.clone(), old: b.map(|r| r.hash.clone()), new: a.map(|r| r.hash.clone()), action: action.into(), refs: a.map(|r| r.refs.clone()), locals: a.map(|r| r.locals.clone()) });
+    }
+    out
 }
 
 /// A member row.
@@ -169,7 +253,7 @@ pub(crate) fn require_signer(conn: &Connection, signer: Option<&Signer>) -> Resu
 /// Appends the signed record of a write to the chain inside `tx` (spec §9.1) and links the history
 /// rows of this transaction to it. Refuses (and so rolls back the write) if the signer may not
 /// make this record. Returns its sequence number.
-pub(crate) fn append(tx: &Transaction, signer: &Signer, op: &str, args: Value, before: &BTreeMap<String, String>, after: &BTreeMap<String, String>) -> Result<i64, Vec<Diagnostic>> {
+pub(crate) fn append(tx: &Transaction, signer: &Signer, op: &str, args: Value, before: &Rows, after: &Rows) -> Result<i64, Vec<Diagnostic>> {
     let m = member(tx, &signer.member)?.ok_or_else(|| one(no_session(format!("`{}` is not a member of this team", signer.member))))?;
     if m.revoked_at.is_some() {
         return Err(one(no_session(format!("the member `{}` was revoked", m.id))));
@@ -190,7 +274,8 @@ pub(crate) fn append(tx: &Transaction, signer: &Signer, op: &str, args: Value, b
     };
     let body = json!({
         "v": 1, "seq": seq, "prev": prev, "at": now_ms(), "member": m.id, "key": m.key_id, "session": signer.session,
-        "op": op, "space": "main", "args": args, "root_before": root(before), "root_after": root(after),
+        "op": op, "space": "main", "args": args, "root_before": root_of(before), "root_after": root_of(after),
+        "names_after": names_digest(tx, after)?,
     });
     let bytes = record_bytes(&body).map_err(|e| one(Diagnostic::store_error(e)))?;
     if bytes.len() > MAX_RECORD_BYTES {
@@ -210,17 +295,19 @@ pub fn record_bytes(body: &Value) -> Result<Vec<u8>, String> {
     Ok([RECORD_PREFIX.as_bytes(), text.as_bytes()].concat())
 }
 
-/// The record of a code write (`define`, `rename`, `delete`, `import`) whose changes are `entries`,
-/// written after them in `tx` (only in a team store; `signer` was required before).
-pub(crate) fn record_write(tx: &Transaction, signer: Option<&Signer>, op: &str, entries: &[Entry]) -> Result<(), Vec<Diagnostic>> {
+/// The record of a code write (`define`, `rename`, `delete`, `import`), written after it in `tx`
+/// (only in a team store; `signer` was required before). `before` is the state the write started
+/// from (in the same transaction); `labels` name the action per name; `extra` are more arguments.
+pub(crate) fn record_write(tx: &Transaction, signer: Option<&Signer>, op: &str, before: &Rows, labels: &[Entry], extra: serde_json::Map<String, Value>) -> Result<(), Vec<Diagnostic>> {
     if !is_team(tx)? {
         return Ok(());
     }
     let Some(signer) = signer else { return require_signer(tx, None).map(|_| ()) };
-    let after = main_names(tx)?;
-    let before = undo(&after, entries);
-    let entries = serde_json::to_value(entries).map_err(|e| one(Diagnostic::store_error(format!("cannot serialize a record: {e}"))))?;
-    append(tx, signer, op, json!({ "entries": entries }), &before, &after).map(|_| ())
+    let after = main_rows(tx)?;
+    let entries = diff(before, &after, labels);
+    let mut args = extra;
+    args.insert("entries".into(), serde_json::to_value(&entries).map_err(|e| one(Diagnostic::store_error(format!("cannot serialize a record: {e}"))))?);
+    append(tx, signer, op, Value::Object(args), before, &after).map(|_| ())
 }
 
 /// An agent's identity, resolved from its session.
@@ -291,50 +378,37 @@ pub fn notify_once(conn: &Connection, member: &str, kind: &str, body: &Value) ->
     Ok(())
 }
 
-/// The oldest unseen notices of `member` (at most `max`), marked seen, and how many unseen remain.
-pub fn take_notices(conn: &Connection, member: &str, max: usize) -> Result<(Vec<Notice>, usize), Vec<Diagnostic>> {
-    let mut stmt = conn.prepare("SELECT id, kind, body, at FROM notices WHERE member = ?1 AND seen = 0 ORDER BY id LIMIT ?2").map_err(sql)?;
-    let rows = stmt.query_map(params![member, max as i64], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, i64>(3)?))).map_err(sql)?;
+/// The oldest notices of `member` it was not given yet (at most `max`), and how many more there
+/// are. Reads `store.db` only; the seen-mark is the cursor in the team log ([`TeamLog`]), moved
+/// past what is returned (best effort: if the log cannot be written, they may come again).
+pub fn take_notices(conn: &Connection, log: &TeamLog, member: &str, max: usize) -> Result<(Vec<Notice>, usize), Vec<Diagnostic>> {
+    let cursor = log.cursor(member)?;
     let mut out = Vec::new();
-    for row in rows {
-        let (id, kind, body, at) = row.map_err(sql)?;
-        let body = match serde_json::from_str::<Value>(&body) {
-            Ok(Value::Object(m)) => m,
-            _ => serde_json::Map::new(),
-        };
-        out.push(Notice { id, kind, at, body });
+    {
+        let mut stmt = conn.prepare("SELECT id, kind, body, at FROM notices WHERE member = ?1 AND id > ?2 ORDER BY id LIMIT ?3").map_err(sql)?;
+        let rows = stmt.query_map(params![member, cursor, max as i64], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, i64>(3)?))).map_err(sql)?;
+        for row in rows {
+            let (id, kind, body, at) = row.map_err(sql)?;
+            let body = match serde_json::from_str::<Value>(&body) {
+                Ok(Value::Object(m)) => m,
+                _ => serde_json::Map::new(),
+            };
+            out.push(Notice { id, kind, at, body });
+        }
     }
-    for n in &out {
-        conn.execute("UPDATE notices SET seen = 1 WHERE id = ?1", params![n.id]).map_err(sql)?;
+    let last = out.last().map_or(cursor, |n| n.id);
+    if last > cursor {
+        let _ = log.set_cursor(member, last);
     }
-    let more: i64 = conn.query_row("SELECT count(*) FROM notices WHERE member = ?1 AND seen = 0", params![member], |r| r.get(0)).map_err(sql)?;
+    let more: i64 = conn.query_row("SELECT count(*) FROM notices WHERE member = ?1 AND id > ?2", params![member, last], |r| r.get(0)).map_err(sql)?;
     Ok((out, usize::try_from(more).unwrap_or(0)))
 }
 
-/// True if `member` has unseen notices.
-pub fn has_notices(conn: &Connection, member: &str) -> Result<bool, Vec<Diagnostic>> {
-    let n: i64 = conn.query_row("SELECT count(*) FROM notices WHERE member = ?1 AND seen = 0", params![member], |r| r.get(0)).map_err(sql)?;
+/// True if `member` has notices it was not given yet.
+pub fn has_notices(conn: &Connection, log: &TeamLog, member: &str) -> Result<bool, Vec<Diagnostic>> {
+    let cursor = log.cursor(member)?;
+    let n: i64 = conn.query_row("SELECT count(*) FROM notices WHERE member = ?1 AND id > ?2", params![member, cursor], |r| r.get(0)).map_err(sql)?;
     Ok(n > 0)
-}
-
-/// One tool call in team mode (spec §10.4; measurement only, not signed).
-#[derive(Debug, Clone)]
-pub struct Call<'a> {
-    pub member: &'a str,
-    pub session: &'a str,
-    pub tool: &'a str,
-    pub ok: bool,
-    pub code: Option<&'a str>,
-    pub ms: i64,
-}
-
-pub fn log_call(conn: &Connection, c: &Call) -> Result<(), Vec<Diagnostic>> {
-    conn.execute(
-        "INSERT INTO calls (member, session, tool, ok, code, ms, at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-        params![c.member, c.session, c.tool, c.ok, c.code, c.ms, now_ms()],
-    )
-    .map(|_| ())
-    .map_err(sql)
 }
 
 /// The effects agents may grant (`meta.team_allow`, comma-separated).
@@ -447,24 +521,32 @@ impl Store {
         let project = self.project_dir()?.to_path_buf();
         let key_dir = keys.ready(&project, true).map_err(one)?;
         let key = keys.generate(&project).map_err(one)?;
-        let tx = self.conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(sql)?;
-        if is_team(&tx)? {
-            return Err(one(state("this store is already a team store")));
+        let key_id = key.key_id().to_string();
+        // A key whose record is not committed is removed again (no orphan key files).
+        let result = (|| {
+            let tx = self.conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(sql)?;
+            if is_team(&tx)? {
+                return Err(one(state("this store is already a team store")));
+            }
+            let now = now_ms();
+            let public = keys::public_hex(&key.public());
+            tx.execute("INSERT INTO members (id, role, key, key_id, added_at) VALUES (?1, ?2, ?3, ?4, ?5)", params![owner, OWNER, public, key.key_id(), now]).map_err(sql)?;
+            let history: i64 = tx.query_row("SELECT coalesce(max(id), 0) FROM history", [], |r| r.get(0)).map_err(sql)?;
+            crate::package::set_meta(&tx, META_TEAM, "1")?;
+            crate::package::set_meta(&tx, META_TEAM_ALLOW, DEFAULT_ALLOW)?;
+            crate::package::set_meta(&tx, META_OWNER, owner)?;
+            crate::package::set_meta(&tx, META_TEAM_HISTORY, &history.to_string())?;
+            let names = main_rows(&tx)?;
+            let main: Vec<Value> = names.iter().map(|(n, r)| json!([n, r.hash, r.refs, r.locals])).collect();
+            let signer = Signer { member: owner.to_string(), session: CLI_SESSION.into(), key };
+            let record = append(&tx, &signer, "genesis", json!({"owner": owner, "owner_key": public, "team_allow": DEFAULT_ALLOW, "main": main}), &names, &names)?;
+            tx.commit().map_err(sql)?;
+            Ok(Initialized { owner: owner.into(), key_id: signer.key.key_id().into(), record, root: root_of(&names), key_dir: key_dir.display().to_string() })
+        })();
+        if result.is_err() {
+            keys.discard(&key_id);
         }
-        let now = now_ms();
-        let public = keys::public_hex(&key.public());
-        tx.execute("INSERT INTO members (id, role, key, key_id, added_at) VALUES (?1, ?2, ?3, ?4, ?5)", params![owner, OWNER, public, key.key_id(), now]).map_err(sql)?;
-        let history: i64 = tx.query_row("SELECT coalesce(max(id), 0) FROM history", [], |r| r.get(0)).map_err(sql)?;
-        crate::package::set_meta(&tx, META_TEAM, "1")?;
-        crate::package::set_meta(&tx, META_TEAM_ALLOW, DEFAULT_ALLOW)?;
-        crate::package::set_meta(&tx, META_OWNER, owner)?;
-        crate::package::set_meta(&tx, META_TEAM_HISTORY, &history.to_string())?;
-        let names = main_names(&tx)?;
-        let main: Vec<Value> = names.iter().map(|(n, h)| json!([n, h])).collect();
-        let signer = Signer { member: owner.to_string(), session: CLI_SESSION.into(), key };
-        let record = append(&tx, &signer, "genesis", json!({"owner": owner, "owner_key": public, "main": main}), &names, &names)?;
-        tx.commit().map_err(sql)?;
-        Ok(Initialized { owner: owner.into(), key_id: signer.key.key_id().into(), record, root: root(&names), key_dir: key_dir.display().to_string() })
+        result
     }
 
     /// `qal team add`: a new member with a new key (record `member_add`, signed by the owner).
@@ -481,16 +563,24 @@ impl Store {
             return Err(one(team_limit(format!("a team has at most {MAX_MEMBERS} members (owner included)"))));
         }
         let key = keys.generate(self.project_dir()?).map_err(one)?;
-        let public = keys::public_hex(&key.public());
-        let tx = self.conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(sql)?;
-        if member(&tx, id)?.is_some() {
-            return Err(one(state(format!("`{id}` is already a member"))));
+        let key_id = key.key_id().to_string();
+        // A key whose record is not committed is removed again (no orphan key files).
+        let result = (|| {
+            let public = keys::public_hex(&key.public());
+            let tx = self.conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(sql)?;
+            if member(&tx, id)?.is_some() {
+                return Err(one(state(format!("`{id}` is already a member"))));
+            }
+            tx.execute("INSERT INTO members (id, role, key, key_id, added_at) VALUES (?1, ?2, ?3, ?4, ?5)", params![id, role.as_str(), public, key.key_id(), now_ms()]).map_err(sql)?;
+            let names = main_rows(&tx)?;
+            let record = append(&tx, owner, "member_add", json!({"id": id, "role": role.as_str(), "key": public}), &names, &names)?;
+            tx.commit().map_err(sql)?;
+            Ok(MemberInfo { id: id.into(), role: role.as_str().into(), key_id: key.key_id().into(), record: Some(record) })
+        })();
+        if result.is_err() {
+            keys.discard(&key_id);
         }
-        tx.execute("INSERT INTO members (id, role, key, key_id, added_at) VALUES (?1, ?2, ?3, ?4, ?5)", params![id, role.as_str(), public, key.key_id(), now_ms()]).map_err(sql)?;
-        let names = main_names(&tx)?;
-        let record = append(&tx, owner, "member_add", json!({"id": id, "role": role.as_str(), "key": public}), &names, &names)?;
-        tx.commit().map_err(sql)?;
-        Ok(MemberInfo { id: id.into(), role: role.as_str().into(), key_id: key.key_id().into(), record: Some(record) })
+        result
     }
 
     fn agent_member(&self, id: &str) -> Result<Member, Vec<Diagnostic>> {
@@ -510,13 +600,21 @@ impl Store {
         self.require_team("`qal team rekey`")?;
         let m = self.agent_member(id)?;
         let key = keys.generate(self.project_dir()?).map_err(one)?;
-        let public = keys::public_hex(&key.public());
-        let tx = self.conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(sql)?;
-        tx.execute("UPDATE members SET key = ?1, key_id = ?2 WHERE id = ?3", params![public, key.key_id(), id]).map_err(sql)?;
-        let names = main_names(&tx)?;
-        let record = append(&tx, owner, "member_key", json!({"id": id, "role": m.role, "key": public}), &names, &names)?;
-        tx.commit().map_err(sql)?;
-        Ok(MemberInfo { id: id.into(), role: m.role, key_id: key.key_id().into(), record: Some(record) })
+        let key_id = key.key_id().to_string();
+        // A key whose record is not committed is removed again (no orphan key files).
+        let result = (|| {
+            let public = keys::public_hex(&key.public());
+            let tx = self.conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(sql)?;
+            tx.execute("UPDATE members SET key = ?1, key_id = ?2 WHERE id = ?3", params![public, key.key_id(), id]).map_err(sql)?;
+            let names = main_rows(&tx)?;
+            let record = append(&tx, owner, "member_key", json!({"id": id, "role": m.role, "key": public}), &names, &names)?;
+            tx.commit().map_err(sql)?;
+            Ok(MemberInfo { id: id.into(), role: m.role, key_id: key.key_id().into(), record: Some(record) })
+        })();
+        if result.is_err() {
+            keys.discard(&key_id);
+        }
+        result
     }
 
     /// `qal team revoke`: ends the membership and all its sessions (record `member_revoke`).
@@ -527,7 +625,7 @@ impl Store {
         let now = now_ms();
         tx.execute("UPDATE members SET revoked_at = ?1 WHERE id = ?2", params![now, id]).map_err(sql)?;
         tx.execute("UPDATE sessions SET revoked_at = ?1 WHERE member = ?2 AND revoked_at IS NULL", params![now, id]).map_err(sql)?;
-        let names = main_names(&tx)?;
+        let names = main_rows(&tx)?;
         let record = append(&tx, owner, "member_revoke", json!({"id": id}), &names, &names)?;
         tx.commit().map_err(sql)?;
         Ok(MemberInfo { id: id.into(), role: m.role, key_id: m.key_id, record: Some(record) })
@@ -540,7 +638,10 @@ impl Store {
             return Err(one(team_limit(format!("a session lasts 1 minute to 7 days, not {} s", ttl_ms / 1000))));
         }
         self.agent_member(id)?;
-        let token = Zeroizing::new(format!("qs_{}", hex(keys::random32().map_err(one)?.as_slice())));
+        // Reserved up front: the token's buffer never reallocates.
+        let mut token = Zeroizing::new(String::with_capacity(67));
+        token.push_str("qs_");
+        canonical::hex_into(keys::random32().map_err(one)?.as_slice(), &mut token);
         let sid = format!("s{}", &hex(keys::random32().map_err(one)?.as_slice())[..12]);
         let now = now_ms();
         let tx = self.conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(sql)?;
@@ -607,8 +708,7 @@ impl Store {
     /// `qal team stats`: the call log summed up per member and tool (spec §10.4).
     pub fn team_stats(&self) -> Result<Value, Vec<Diagnostic>> {
         self.require_team("`qal team stats`")?;
-        let mut stmt = self.conn.prepare("SELECT member, tool, ok, code, ms FROM calls ORDER BY id").map_err(sql)?;
-        let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, bool>(2)?, r.get::<_, Option<String>>(3)?, r.get::<_, i64>(4)?))).map_err(sql)?;
+        let rows = self.team_log()?.calls()?;
         #[derive(Default)]
         struct Sum {
             calls: i64,
@@ -619,8 +719,7 @@ impl Store {
         }
         let mut by: BTreeMap<String, Sum> = BTreeMap::new();
         let mut total = Sum::default();
-        for row in rows {
-            let (member, tool, ok, code, ms) = row.map_err(sql)?;
+        for (member, tool, ok, code, ms) in rows {
             for s in [by.entry(member).or_default(), &mut total] {
                 s.calls += 1;
                 s.ms += ms;
@@ -649,27 +748,37 @@ impl Store {
         notify_once(&self.conn, member, kind, body)
     }
 
-    pub fn take_notices(&self, member: &str, max: usize) -> Result<(Vec<Notice>, usize), Vec<Diagnostic>> {
-        take_notices(&self.conn, member, max)
+    pub fn take_notices(&self, log: &TeamLog, member: &str, max: usize) -> Result<(Vec<Notice>, usize), Vec<Diagnostic>> {
+        take_notices(&self.conn, log, member, max)
     }
 
-    pub fn has_notices(&self, member: &str) -> Result<bool, Vec<Diagnostic>> {
-        has_notices(&self.conn, member)
+    pub fn has_notices(&self, log: &TeamLog, member: &str) -> Result<bool, Vec<Diagnostic>> {
+        has_notices(&self.conn, log, member)
     }
 
-    pub fn log_call(&self, call: &Call) -> Result<(), Vec<Diagnostic>> {
-        log_call(&self.conn, call)
+    /// The bookkeeping file of this team store (`.qal/team-log.db`, see [`log`]).
+    pub fn team_log(&self) -> Result<TeamLog, Vec<Diagnostic>> {
+        TeamLog::open(&self.path)
     }
 
     pub fn team_allow(&self) -> Result<Vec<String>, Vec<Diagnostic>> {
         team_allow(&self.conn)
     }
 
-    /// `qal verify`: checks the record chain (spec §9.2) against `trust` (or the genesis record).
-    pub fn verify(&mut self, trust: Option<&verify::Trust>, from: i64) -> Result<verify::Outcome, Vec<Diagnostic>> {
-        self.require_team("`qal verify`")?;
+    /// `qal verify`: checks the record chain (spec §9.2) against `trust` (or the genesis record);
+    /// signatures from record `from` on; `head`: a record hash the chain must contain (pinned by
+    /// the owner earlier, so a cut-off tail is found).
+    pub fn verify(&mut self, trust: Option<&verify::Trust>, from: i64, head: Option<&str>) -> Result<verify::Outcome, Vec<Diagnostic>> {
+        if !is_team(&self.conn)? {
+            // Records without `meta.team`: the mark was removed, not a store that never was a team.
+            let records: i64 = self.conn.query_row("SELECT count(*) FROM records", [], |r| r.get(0)).map_err(sql)?;
+            if records > 0 {
+                return Ok(verify::Outcome::tampered(format!("the store has {records} records but is not marked as a team store (meta.team was removed)")));
+            }
+            return Err(one(not_a_team("`qal verify`")));
+        }
         let tx = self.conn.transaction().map_err(sql)?;
-        verify::verify(&tx, trust, from)
+        verify::verify(&tx, trust, from, head)
     }
 }
 

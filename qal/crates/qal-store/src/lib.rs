@@ -172,7 +172,7 @@ impl Store {
         team::require_signer(&self.conn, signer)?;
         let agent = signer.map_or(agent, |s| s.member.as_str());
         let rules = define::Rules { std: StdNames::Refuse, release: self.release.as_ref(), breaking: self.breaking };
-        let record = |out: &[Defined], tx: &rusqlite::Transaction| team::record_write(tx, signer, "define", &team::Entry::of_defined(out));
+        let record = |out: &[Defined], tx: &rusqlite::Transaction, before: &team::Rows| team::record_write(tx, signer, "define", before, &team::Entry::of_defined(out), serde_json::Map::new());
         define::define_checked(&mut self.conn, src, agent, &rules, verify, &record)
     }
 
@@ -182,7 +182,7 @@ impl Store {
         team::require_signer(&self.conn, signer)?;
         let agent = signer.map_or(agent, |s| s.member.as_str());
         let rules = define::Rules { std: StdNames::Refuse, release: self.release.as_ref(), breaking: self.breaking };
-        let record = |tx: &rusqlite::Transaction, entries: &[team::Entry]| team::record_write(tx, signer, "rename", entries);
+        let record = |tx: &rusqlite::Transaction, labels: &[team::Entry], before: &team::Rows| team::record_write(tx, signer, "rename", before, labels, serde_json::Map::new());
         ops::rename(&mut self.conn, old, new, agent, &rules, &record)
     }
 
@@ -192,7 +192,7 @@ impl Store {
         team::require_signer(&self.conn, signer)?;
         let agent = signer.map_or(agent, |s| s.member.as_str());
         let rules = define::Rules { std: StdNames::Refuse, release: self.release.as_ref(), breaking: self.breaking };
-        let record = |tx: &rusqlite::Transaction, entries: &[team::Entry]| team::record_write(tx, signer, "delete", entries);
+        let record = |tx: &rusqlite::Transaction, labels: &[team::Entry], before: &team::Rows| team::record_write(tx, signer, "delete", before, labels, serde_json::Map::new());
         ops::delete(&mut self.conn, names, agent, &rules, &record)
     }
 
@@ -255,8 +255,19 @@ impl Store {
 
     fn import_with(&mut self, file: &str, verify: Option<&mut Verify>) -> Result<Imported, Vec<Diagnostic>> {
         let signer = self.signer.as_deref();
-        team::require_signer(&self.conn, signer)?;
-        let record = |out: &[Defined], tx: &rusqlite::Transaction| team::record_write(tx, signer, "import", &team::Entry::of_defined(out));
+        let team = team::require_signer(&self.conn, signer)?;
+        let pkg = package::parse(file)?;
+        // A team store imports only the standard library (`qal team sync-std`), and its record
+        // says which package it was.
+        if team && pkg.name != package::STD_PACKAGE_NAME {
+            let mut d = Diagnostic::new("E0903", "role_forbidden", "", "", format!("a team store imports only the standard library, not package `{}`", pkg.name));
+            d.expected = Some("architect".into());
+            return Err(vec![d.hint("agents write the code over MCP; the owner imports std with `qal team sync-std`")]);
+        }
+        let mut extra = serde_json::Map::new();
+        extra.insert("package".into(), serde_json::Value::from(pkg.name.clone()));
+        extra.insert("hash".into(), serde_json::Value::from(pkg.hash.clone()));
+        let record = |out: &[Defined], tx: &rusqlite::Transaction, before: &team::Rows| team::record_write(tx, signer, "import", before, &team::Entry::of_defined(out), extra.clone());
         package::import(&mut self.conn, file, verify, self.release.as_ref(), &record)
     }
 
@@ -315,7 +326,7 @@ impl Store {
             return Ok(None);
         }
         self.release = Some(release);
-        package::import(&mut self.conn, file, verify, self.release.as_ref(), &|_, _| Ok(())).map(Some)
+        package::import(&mut self.conn, file, verify, self.release.as_ref(), &|_, _, _| Ok(())).map(Some)
     }
 
     /// A value of the store's `meta` table.

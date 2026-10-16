@@ -171,6 +171,8 @@ fn upgrade_v6(tx: &rusqlite::Transaction) -> Result<(), Vec<Diagnostic>> {
     if !columns.iter().any(|c| c == "record") {
         tx.execute_batch("ALTER TABLE history ADD COLUMN record INTEGER NULL;").map_err(sql)?;
     }
+    // The rows a team write links to its record (`record IS NULL AND id > ...`) without a scan.
+    tx.execute_batch("CREATE INDEX IF NOT EXISTS history_unrecorded ON history(id) WHERE record IS NULL;").map_err(sql)?;
     Ok(())
 }
 

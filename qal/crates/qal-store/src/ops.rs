@@ -230,14 +230,14 @@ pub fn delete(conn: &mut Connection, names: &[String], agent: &str, rules: &crat
         )
         .map_err(sql)?;
     }
-    let entries: Vec<Change> = out.iter().map(|d| Change { name: d.name.clone(), old: Some(d.hash.clone()), new: None, action: "deleted".into() }).collect();
-    post(&tx, &entries)?;
+    let entries: Vec<Change> = out.iter().map(|d| Change::label(&d.name, Some(&d.hash), None, "deleted")).collect();
+    post(&tx, &entries, &crate::team::rows_of(&snap))?;
     tx.commit().map_err(sql)?;
     Ok(out)
 }
 
 /// A step run last inside the write transaction of `rename`/`delete`, with the name changes.
-pub type Post<'c> = dyn Fn(&rusqlite::Transaction, &[Change]) -> Result<(), Vec<Diagnostic>> + 'c;
+pub type Post<'c> = dyn Fn(&rusqlite::Transaction, &[Change], &crate::team::Rows) -> Result<(), Vec<Diagnostic>> + 'c;
 
 /// `post` runs last inside the transaction (the signed record of a team store): the old name goes
 /// (`renamed`), the new one comes (`added`), with the same hash.
@@ -306,7 +306,7 @@ pub fn rename(conn: &mut Connection, old: &str, new: &str, agent: &str, rules: &
     )
     .map_err(sql)?;
     let h = hash.to_hex();
-    post(&tx, &[Change { name: old.into(), old: Some(h.clone()), new: None, action: "renamed".into() }, Change { name: new.into(), old: None, new: Some(h), action: "added".into() }])?;
+    post(&tx, &[Change::label(old, Some(&h), None, "renamed"), Change::label(new, None, Some(&h), "added")], &crate::team::rows_of(&snap))?;
     tx.commit().map_err(sql)?;
     Ok(Renamed { name: new.to_string(), kind: kind.as_str(), hash: hash.to_hex() })
 }

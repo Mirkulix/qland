@@ -49,7 +49,7 @@ fn as_member(s: &mut Store, signer: Signer) {
 }
 
 fn verified(s: &mut Store, trust: Option<&Trust>) -> Outcome {
-    s.verify(trust, 1).unwrap()
+    s.verify(trust, 1, None).unwrap()
 }
 
 fn code(o: &Outcome) -> &'static str {
@@ -60,11 +60,11 @@ fn code(o: &Outcome) -> &'static str {
 fn canonical_json_sorts_keys_and_has_no_whitespace() {
     // The golden bytes of a record body (spec §9.1): pinned so the signed format cannot drift.
     let body = json!({"v": 1, "seq": 2, "prev": ZERO_HASH, "at": 1_792_000_000_000_i64, "member": "impl-1", "key": "0123456789abcdef", "session": "s3f0000000000",
-                      "op": "define", "space": "main", "args": {"entries": [{"name": "f", "old": null, "new": "ab", "action": "added"}]}, "root_before": "r0", "root_after": "r1"});
+                      "op": "define", "space": "main", "args": {"entries": [{"name": "f", "old": null, "new": "ab", "action": "added", "refs": ["g"], "locals": ["x"]}]}, "root_before": "r0", "root_after": "r1", "names_after": "d1"});
     let bytes = record_bytes(&body).unwrap();
     let golden = concat!(
         "qal-record-v1\n",
-        r#"{"args":{"entries":[{"action":"added","name":"f","new":"ab","old":null}]},"at":1792000000000,"key":"0123456789abcdef","member":"impl-1","op":"define","prev":"0000000000000000000000000000000000000000000000000000000000000000","root_after":"r1","root_before":"r0","seq":2,"session":"s3f0000000000","space":"main","v":1}"#
+        r#"{"args":{"entries":[{"action":"added","locals":["x"],"name":"f","new":"ab","old":null,"refs":["g"]}]},"at":1792000000000,"key":"0123456789abcdef","member":"impl-1","names_after":"d1","op":"define","prev":"0000000000000000000000000000000000000000000000000000000000000000","root_after":"r1","root_before":"r0","seq":2,"session":"s3f0000000000","space":"main","v":1}"#
     );
     assert_eq!(String::from_utf8(bytes).unwrap(), golden);
     // `preserve_order` is not active: insertion order does not matter.
@@ -193,7 +193,8 @@ fn a_team_store_signs_every_write_and_verifies() {
     let o = verified(&mut s, Some(&trust));
     assert!(o.ok, "{o:?}");
     assert_eq!((o.records, o.members, o.trust), (Some(3), Some(3), Some("file")));
-    assert!(o.warnings.is_empty());
+    assert!(!o.warnings.iter().any(|w| w.contains("--trust")), "{o:?}");
+    assert!(o.warnings.iter().any(|w| w.contains("--head")));
     let o = verified(&mut s, None);
     assert_eq!(o.trust, Some("store"));
     assert!(o.warnings[0].contains("--trust"));
@@ -230,7 +231,10 @@ fn a_team_store_signs_every_write_and_verifies() {
     assert_eq!((v["op"].as_str(), v["member"].as_str(), v["space"].as_str()), (Some("rename"), Some("arch-1"), Some("main")));
     assert_eq!(v["args"]["entries"][0]["action"], "renamed");
     assert_eq!(v["args"]["entries"][0]["new"], Value::Null);
-    assert_eq!(v["args"]["entries"][1]["name"], "g");
+    // The users of the renamed name now refer to the new name: an `updated` entry with its refs.
+    assert_eq!((v["args"]["entries"][1]["name"].as_str(), v["args"]["entries"][1]["action"].as_str()), (Some("f_works"), Some("updated")));
+    assert_eq!(v["args"]["entries"][1]["refs"], json!(["g"]));
+    assert_eq!((v["args"]["entries"][2]["name"].as_str(), v["args"]["entries"][2]["action"].as_str()), (Some("g"), Some("added")));
 
     // A foreign owner key in the trust file.
     let other = Trust { owner: "boss".into(), owner_key: keys::public_hex(&KeyDir::at(temp("k2").join("k")).generate(s.project_dir().unwrap()).unwrap().public()) };
@@ -377,7 +381,7 @@ fn records_of_revoked_members_are_unauthorized() {
     let (seq, prev): (i64, String) = c.query_row("SELECT seq, hash FROM records ORDER BY seq DESC LIMIT 1", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
     let names = main_names(&c).unwrap();
     let body = json!({"v": 1, "seq": seq + 1, "prev": prev, "at": 1, "member": "arch-1", "key": arch.key.key_id(), "session": "s1", "op": "define", "space": "main",
-                      "args": {"entries": []}, "root_before": root(&names), "root_after": root(&names)});
+                      "args": {"entries": []}, "root_before": root(&names), "root_after": root(&names), "names_after": names_digest(&c, &main_rows(&c).unwrap()).unwrap()});
     let bytes = record_bytes(&body).unwrap();
     c.execute("INSERT INTO records (seq, hash, body, sig) VALUES (?1, ?2, ?3, ?4)", rusqlite::params![seq + 1, Hash::of(&bytes).to_hex(), bytes, arch.key.sign_hex(&bytes)]).unwrap();
     drop(c);
@@ -431,21 +435,22 @@ fn contains(hay: &[u8], needle: &[u8]) -> bool {
 #[test]
 fn notices_are_capped_and_taken_once() {
     let (s, _keys, _owner, _arch, _imp) = team();
-    assert!(!s.has_notices("impl-1").unwrap());
+    let log = s.team_log().unwrap();
+    assert!(!s.has_notices(&log, "impl-1").unwrap());
     for i in 0..1005 {
         s.notify("impl-1", "merged", &json!({"n": i})).unwrap();
     }
     assert_eq!(count(&s, "notices"), 1000);
-    let (first, more) = s.take_notices("impl-1", NOTICES_PER_REPLY).unwrap();
+    let (first, more) = s.take_notices(&log, "impl-1", NOTICES_PER_REPLY).unwrap();
     assert_eq!((first.len(), more), (10, 990));
     assert_eq!(first[0].body["n"], 5, "the oldest went");
     assert_eq!(serde_json::to_value(&first[0]).unwrap()["kind"], "merged");
-    let (next, _) = s.take_notices("impl-1", 1).unwrap();
+    let (next, _) = s.take_notices(&log, "impl-1", 1).unwrap();
     assert_eq!(next[0].body["n"], 15);
     s.notify_once("arch-1", "std_outdated", &json!({"embedded": "x"})).unwrap();
     s.notify_once("arch-1", "std_outdated", &json!({"embedded": "x"})).unwrap();
-    assert_eq!(s.take_notices("arch-1", 10).unwrap().0.len(), 1);
-    assert!(!s.has_notices("arch-1").unwrap());
+    assert_eq!(s.take_notices(&log, "arch-1", 10).unwrap().0.len(), 1);
+    assert!(!s.has_notices(&log, "arch-1").unwrap());
 }
 
 #[test]
@@ -467,7 +472,7 @@ fn stores_without_team_mode_write_no_records() {
     s.delete(&["g".into()], "a").unwrap();
     assert_eq!(count(&s, "records"), 0);
     assert!(!s.is_team().unwrap());
-    assert_eq!(s.verify(None, 1).unwrap_err()[0].code, "E0900");
+    assert_eq!(s.verify(None, 1, None).unwrap_err()[0].code, "E0900");
     let r: Option<i64> = raw(&s).query_row("SELECT max(record) FROM history", [], |r| r.get(0)).unwrap();
     assert_eq!(r, None);
 }
@@ -506,23 +511,175 @@ fn version_5_stores_are_upgraded_to_6() {
 }
 
 #[test]
-fn imports_are_signed_by_the_owner_only() {
-    // A package from another project.
+fn a_team_store_imports_only_std_signed_by_the_owner() {
+    // Another project's package: refused in a team store, even for the owner.
     let (mut lib, _) = setup();
     lib.define("fn lib_one() -> Int = 1", "lib").unwrap();
     let pkg = lib.export("lib_", "lib").unwrap().file;
+    // A standard library package (from a std store).
+    let std_dir = temp("std");
+    let mut stdlib = Store::init_std(&std_dir).unwrap();
+    stdlib.define("fn std.a.one() -> Int = 1", "std-a").unwrap();
+    let std_pkg = stdlib.export("std.", "std").unwrap().file;
     let (mut s, _keys, owner, arch, _imp) = team();
+    s.set_release(&std_pkg).unwrap();
     as_member(&mut s, arch);
-    assert_eq!(s.import(&pkg).unwrap_err()[0].code, "E0903", "architects make no import records");
+    assert_eq!(s.import(&std_pkg).unwrap_err()[0].code, "E0903", "architects make no import records");
     as_member(&mut s, owner);
-    let i = s.import(&pkg).unwrap();
+    assert!(s.import(&pkg).unwrap_err()[0].message.contains("only the standard library"));
+    let i = s.import(&std_pkg).unwrap();
     assert_eq!(i.defined.len(), 1);
     let o = verified(&mut s, None);
     assert!(o.ok && o.records == Some(4), "{o:?}");
     let body: Vec<u8> = raw(&s).query_row("SELECT body FROM records WHERE seq = 4", [], |r| r.get(0)).unwrap();
     let v: Value = serde_json::from_slice(&body[RECORD_PREFIX.len()..]).unwrap();
     assert_eq!((v["op"].as_str(), v["member"].as_str(), v["session"].as_str()), (Some("import"), Some("boss"), Some(CLI_SESSION)));
-    assert_eq!(v["args"]["entries"][0]["name"], "lib_one");
+    assert_eq!((v["args"]["package"].as_str(), v["args"]["hash"].as_str()), (Some("std"), Some(i.hash.as_str())));
+    assert_eq!(v["args"]["entries"][0]["name"], "std.a.one");
     // The history keeps the package's agent (later imports of the same package may replace it).
-    assert!(s.history("lib_one").unwrap()[0].agent.starts_with("qal-lib@"));
+    assert!(s.history("std.a.one").unwrap()[0].agent.starts_with("qal-std@"));
+}
+
+/// A signed store with a plain function, a user of it and a mutually recursive group.
+fn group_store() -> (Store, Trust, Signer, Signer) {
+    let (mut s, trust, arch, owner) = signed_store();
+    s.define("fn is_even(n: Int) -> Bool = if n == 0 then true else is_odd(n - 1)\nfn is_odd(n: Int) -> Bool = if n == 0 then false else is_even(n - 1)", "x").unwrap();
+    s.define("fn twice(x: Int) -> Int = f() + x + x", "x").unwrap();
+    assert!(verified(&mut s, Some(&trust)).ok);
+    (s, trust, arch, owner)
+}
+
+/// Review I1: every column that carries code or how it reads is bound by `qal verify`.
+#[test]
+fn tampering_with_any_code_bearing_column_is_detected() {
+    let probes: &[(&str, &str)] = &[
+        ("names.refs", "UPDATE names SET refs = '[]' WHERE name = 'twice'"),
+        ("names.refs of a group member", "UPDATE names SET refs = '[\"is_even\",\"is_odd\"]' WHERE name = 'is_odd'"),
+        ("names.local_names", "UPDATE names SET local_names = '[\"y\"]' WHERE name = 'twice'"),
+        ("defs.signature", "UPDATE defs SET signature = 'fn(Int) -> Str' WHERE hash = (SELECT hash FROM names WHERE name = 'twice')"),
+        ("defs.effects", "UPDATE defs SET effects = '[\"io\"]' WHERE hash = (SELECT hash FROM names WHERE name = 'twice')"),
+        ("defs.kind", "UPDATE defs SET kind = 'test' WHERE hash = (SELECT hash FROM names WHERE name = 'twice')"),
+        ("defs.local_names", "UPDATE defs SET local_names = '[\"z\"]' WHERE hash = (SELECT hash FROM names WHERE name = 'twice')"),
+        ("groups.form", "UPDATE groups SET form = CAST(form AS BLOB) || x'00'"),
+        ("groups deleted", "DELETE FROM groups"),
+        ("deps deleted", "DELETE FROM deps"),
+        ("one deps row deleted", "DELETE FROM deps WHERE hash = (SELECT hash FROM names WHERE name = 'twice')"),
+        ("a deps row added", "INSERT INTO deps (hash, dep_hash) SELECT n.hash, b.hash FROM names n, names b WHERE n.name = 'f' AND b.name = 'twice'"),
+        ("meta.team_allow", "UPDATE meta SET value = 'io,time,rand,db:mem,fs:.' WHERE key = 'team_allow'"),
+        ("meta.owner", "UPDATE meta SET value = 'arch-1' WHERE key = 'owner'"),
+    ];
+    for (what, sql) in probes {
+        let (mut s, trust, _, _) = group_store();
+        let c = raw(&s);
+        c.execute_batch(&format!("PRAGMA foreign_keys = OFF; {sql};")).unwrap();
+        drop(c);
+        let o = verified(&mut s, Some(&trust));
+        assert!(!o.ok, "{what}: not detected");
+        assert_eq!(code(&o), "E0923", "{what}: {o:?}");
+    }
+    // `meta.team` removed: still reported as tampering, not as "not a team store".
+    let (mut s, trust, _, _) = group_store();
+    raw(&s).execute("DELETE FROM meta WHERE key = 'team'", []).unwrap();
+    let o = verified(&mut s, Some(&trust));
+    assert_eq!(code(&o), "E0923", "{o:?}");
+}
+
+#[test]
+fn signatures_have_one_spelling_and_from_says_what_it_skipped() {
+    let (mut s, trust, _, _) = signed_store();
+    raw(&s).execute("UPDATE records SET sig = upper(sig) WHERE seq = 2", []).unwrap();
+    let o = verified(&mut s, Some(&trust));
+    assert_eq!((code(&o), o.error.as_ref().unwrap().seq), ("E0921", 2), "{o:?}");
+    let (mut s, trust, _, _) = signed_store();
+    let o = s.verify(Some(&trust), 4, None).unwrap();
+    assert!(o.ok && o.signatures_from == Some(4), "{o:?}");
+    assert!(o.warnings.iter().any(|w| w.contains("only from record 4")));
+    assert_eq!(verified(&mut s, Some(&trust)).signatures_from, None);
+    // A bad signature before `from` is not checked (and the result says so).
+    flip(&s, "records", "sig", "seq = 2", 9);
+    assert!(s.verify(Some(&trust), 3, None).unwrap().ok);
+    assert_eq!(code(&verified(&mut s, Some(&trust))), "E0921");
+}
+
+#[test]
+fn a_pinned_head_finds_a_cut_off_tail() {
+    let (mut s, trust, _, _) = signed_store();
+    let head = verified(&mut s, Some(&trust)).head.unwrap();
+    assert!(s.verify(Some(&trust), 1, Some(&head)).unwrap().ok);
+    // The last record and its change removed together: consistent without the pin.
+    let c = raw(&s);
+    c.execute_batch("PRAGMA foreign_keys = OFF; DELETE FROM records WHERE seq = (SELECT max(seq) FROM records); DELETE FROM names WHERE name = 'g';").unwrap();
+    drop(c);
+    let o = verified(&mut s, Some(&trust));
+    assert!(o.ok && o.warnings.iter().any(|w| w.contains("--head")), "{o:?}");
+    let o = s.verify(Some(&trust), 1, Some(&head)).unwrap();
+    assert_eq!(code(&o), "E0922", "{o:?}");
+}
+
+#[test]
+fn a_record_over_one_mib_is_refused_and_nothing_is_written() {
+    let (mut s, _keys, _owner, arch, _imp) = team();
+    as_member(&mut s, arch);
+    let src: String = (0..8000).map(|i| format!("fn generated_function_number_{i}() -> Int = {i}\n")).collect();
+    let before = count(&s, "names");
+    let e = s.define(&src, "x").unwrap_err();
+    assert_eq!((e[0].code, e[0].kind), ("E0914", "team_limit"), "{e:?}");
+    assert_eq!((count(&s, "names"), count(&s, "records")), (before, 3));
+    assert!(verified(&mut s, None).ok);
+}
+
+/// Review I2: `qal verify` over 100 000 records (spec §14: ≤ 10 s in release). Run with
+/// `cargo test --release -p qal-store verify_100k -- --ignored --nocapture`.
+#[test]
+#[ignore]
+fn verify_100k_records() {
+    let (mut s, _keys, _owner, arch, _imp) = team();
+    let src: String = (0..300).map(|i| format!("fn n{i}() -> Int = {i}\n")).collect();
+    as_member(&mut s, arch);
+    s.define(&src, "x").unwrap();
+    s.define("fn x() -> Int = 2", "x").unwrap();
+    let h2 = main_names(&raw(&s)).unwrap()["x"].clone();
+    s.define("fn x() -> Int = 1", "x").unwrap();
+    let c = raw(&s);
+    let rows1 = main_rows(&c).unwrap();
+    let h1 = rows1["x"].hash.clone();
+    let mut rows2 = rows1.clone();
+    rows2.get_mut("x").unwrap().hash = h2.clone();
+    let (r1, r2) = (root_of(&rows1), root_of(&rows2));
+    let (d1, d2) = (names_digest(&c, &rows1).unwrap(), names_digest(&c, &rows2).unwrap());
+    let signer = match &s.signer {
+        Some(sg) => sg.clone(),
+        None => panic!("no signer"),
+    };
+    let (mut seq, mut prev): (i64, String) = c.query_row("SELECT seq, hash FROM records ORDER BY seq DESC LIMIT 1", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
+    let start_seq = seq;
+    let total = 100_000 - start_seq;
+    // Pairs of records flipping `x` to h2 and back: the store ends as it is now.
+    c.execute_batch("BEGIN").unwrap();
+    for i in 0..total {
+        seq += 1;
+        let (old, new, rb, ra, d) = if i % 2 == 0 { (&h1, &h2, &r1, &r2, &d2) } else { (&h2, &h1, &r2, &r1, &d1) };
+        let entry = json!({"name": "x", "old": old, "new": new, "action": "replaced", "refs": [], "locals": []});
+        let body = json!({"v": 1, "seq": seq, "prev": prev, "at": 1, "member": "arch-1", "key": signer.key.key_id(), "session": "s1", "op": "define", "space": "main",
+                          "args": {"entries": [entry]}, "root_before": rb, "root_after": ra, "names_after": d});
+        let bytes = record_bytes(&body).unwrap();
+        let hash = Hash::of(&bytes).to_hex();
+        c.execute("INSERT INTO records (seq, hash, body, sig) VALUES (?1, ?2, ?3, ?4)", rusqlite::params![seq, hash, bytes, signer.key.sign_hex(&bytes)]).unwrap();
+        prev = hash;
+    }
+    c.execute_batch("COMMIT").unwrap();
+    assert_eq!(total % 2, 0, "an odd number of flips would end on h2");
+    drop(c);
+    let t = std::time::Instant::now();
+    let o = verified(&mut s, None);
+    let full = t.elapsed();
+    let t = std::time::Instant::now();
+    let skipped = s.verify(None, i64::MAX, None).unwrap();
+    let without = t.elapsed();
+    eprintln!("verify of {:?} records: {full:?} (signatures skipped: {without:?})", o.records);
+    assert!(o.ok && skipped.ok, "{o:?}");
+    assert_eq!(o.records, Some(100_000));
+    if !cfg!(debug_assertions) {
+        assert!(full < std::time::Duration::from_secs(10), "{full:?}");
+    }
 }

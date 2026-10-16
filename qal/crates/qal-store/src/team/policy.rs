@@ -199,7 +199,7 @@ pub fn forbidden(tool: &str, action: Option<&str>, role: Role, space: Space) -> 
     d.expected = Some(if names.is_empty() { "nobody".into() } else { names.join(", ") });
     d.found = Some(role.as_str().into());
     let hint = if space == Space::Main && rule(tool, action, role).is_some_and(|r| r == Rule::Own || r == Rule::OwnOrContribution) {
-        format!("{} write only in their own change set (qal_change, coming with Phase 4b); until then only architects write on main", role.as_str())
+        format!("{}s write only in their own change set (qal_change, coming with Phase 4b); until then only architects write on main", role.as_str())
     } else if names.is_empty() && anywhere.is_empty() {
         "no agent role may do this; the owner can, on the command line".to_string()
     } else if names.is_empty() {

@@ -231,7 +231,7 @@ pub fn import(conn: &mut Connection, file: &str, verify: Option<&mut Verify>, re
     }
     let agent = format!("qal-{}@{}", pkg.name, &pkg.hash[..12]);
     let expected: BTreeMap<&str, &str> = pkg.defs.iter().map(|d| (d.name.as_str(), d.hash.as_str())).collect();
-    let check = |defined: &[Defined], tx: &rusqlite::Transaction| -> Result<(), Vec<Diagnostic>> {
+    let check = |defined: &[Defined], tx: &rusqlite::Transaction, before: &crate::team::Rows| -> Result<(), Vec<Diagnostic>> {
         // Every listed name is defined by the text (not only already stored).
         let given: BTreeSet<&str> = defined.iter().filter(|d| d.status != "relinked").map(|d| d.name.as_str()).collect();
         if let Some(missing) = expected.keys().find(|n| !given.contains(*n)) {
@@ -277,7 +277,7 @@ pub fn import(conn: &mut Connection, file: &str, verify: Option<&mut Verify>, re
                 .map_err(sql)?;
             }
         }
-        post(defined, tx)
+        post(defined, tx, before)
     };
     let rules = Rules { std: if is_std { StdNames::Package } else { StdNames::Unchanged }, release, breaking: false };
     let ours = meta(conn, META_STD_PACKAGE)?;
