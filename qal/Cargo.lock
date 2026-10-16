@@ -968,6 +968,7 @@ dependencies = [
  "qal-core",
  "qal-text",
  "qal-wasm",
+ "serde_json",
 ]
 
 [[package]]

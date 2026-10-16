@@ -174,48 +174,75 @@ pub fn put_int(out: &mut Vec<u8>, mut n: i64) {
     }
 }
 
-struct Enc {
-    out: Vec<u8>,
+/// The encoder; also used by the `QALQ`/`QALR` protocol for its AST, type and module fields.
+#[derive(Default)]
+pub struct Writer {
+    pub out: Vec<u8>,
 }
 
-impl Enc {
-    fn byte(&mut self, b: u8) {
+impl Writer {
+    /// `len bytes`.
+    pub fn bytes(&mut self, b: &[u8]) {
+        self.len(b.len());
+        self.out.extend_from_slice(b);
+    }
+
+    /// A definition: 0 typedef | 1 fndef | 2 name expr (test).
+    pub fn def(&mut self, d: &Def) {
+        match d {
+            Def::Type(t) => {
+                self.byte(0);
+                self.typedef(t);
+            }
+            Def::Fn(f) => {
+                self.byte(1);
+                self.fndef(f);
+            }
+            Def::Test(t) => {
+                self.byte(2);
+                self.str(&t.name);
+                self.expr(&t.body);
+            }
+        }
+    }
+
+    pub fn byte(&mut self, b: u8) {
         self.out.push(b);
     }
 
-    fn uint(&mut self, n: u64) {
+    pub fn uint(&mut self, n: u64) {
         put_uint(&mut self.out, n);
     }
 
-    fn len(&mut self, n: usize) {
+    pub fn len(&mut self, n: usize) {
         self.uint(n as u64);
     }
 
-    fn int(&mut self, n: i64) {
+    pub fn int(&mut self, n: i64) {
         put_int(&mut self.out, n);
     }
 
-    fn float(&mut self, x: f64) {
+    pub fn float(&mut self, x: f64) {
         self.out.extend_from_slice(&x.to_bits().to_le_bytes());
     }
 
-    fn bool(&mut self, b: bool) {
+    pub fn bool(&mut self, b: bool) {
         self.byte(b as u8);
     }
 
-    fn str(&mut self, s: &str) {
+    pub fn str(&mut self, s: &str) {
         self.len(s.len());
         self.out.extend_from_slice(s.as_bytes());
     }
 
-    fn strs(&mut self, xs: &[String]) {
+    pub fn strs(&mut self, xs: &[String]) {
         self.len(xs.len());
         for x in xs {
             self.str(x);
         }
     }
 
-    fn ty(&mut self, t: &Type) {
+    pub fn ty(&mut self, t: &Type) {
         match t {
             Type::Int => self.byte(T_INT),
             Type::Float => self.byte(T_FLOAT),
@@ -267,14 +294,14 @@ impl Enc {
         }
     }
 
-    fn types(&mut self, ts: &[Type]) {
+    pub fn types(&mut self, ts: &[Type]) {
         self.len(ts.len());
         for t in ts {
             self.ty(t);
         }
     }
 
-    fn opt_ty(&mut self, t: &Option<Type>) {
+    pub fn opt_ty(&mut self, t: &Option<Type>) {
         match t {
             Some(t) => {
                 self.byte(1);
@@ -284,7 +311,7 @@ impl Enc {
         }
     }
 
-    fn expr(&mut self, e: &Expr) {
+    pub fn expr(&mut self, e: &Expr) {
         match e {
             Expr::Int(n) => {
                 self.byte(E_INT);
@@ -386,14 +413,14 @@ impl Enc {
         }
     }
 
-    fn exprs(&mut self, xs: &[Expr]) {
+    pub fn exprs(&mut self, xs: &[Expr]) {
         self.len(xs.len());
         for x in xs {
             self.expr(x);
         }
     }
 
-    fn pat(&mut self, p: &Pat) {
+    pub fn pat(&mut self, p: &Pat) {
         match p {
             Pat::Wild => self.byte(P_WILD),
             Pat::Bind(n) => {
@@ -433,7 +460,7 @@ impl Enc {
         }
     }
 
-    fn fndef(&mut self, f: &FnDef) {
+    pub fn fndef(&mut self, f: &FnDef) {
         self.str(&f.name);
         self.strs(&f.tparams);
         self.len(f.params.len());
@@ -448,7 +475,7 @@ impl Enc {
         self.expr(&f.body);
     }
 
-    fn texpr(&mut self, e: &TExpr) {
+    pub fn texpr(&mut self, e: &TExpr) {
         self.ty(&e.ty);
         match &e.kind {
             TKind::Int(n) => {
@@ -579,21 +606,21 @@ impl Enc {
         }
     }
 
-    fn texprs(&mut self, xs: &[TExpr]) {
+    pub fn texprs(&mut self, xs: &[TExpr]) {
         self.len(xs.len());
         for x in xs {
             self.texpr(x);
         }
     }
 
-    fn ids(&mut self, ids: &[u32]) {
+    pub fn ids(&mut self, ids: &[u32]) {
         self.len(ids.len());
         for i in ids {
             self.uint(*i as u64);
         }
     }
 
-    fn tpat(&mut self, p: &TPat) {
+    pub fn tpat(&mut self, p: &TPat) {
         match p {
             TPat::Wild => self.byte(P_WILD),
             TPat::Bind(id) => {
@@ -632,7 +659,7 @@ impl Enc {
         }
     }
 
-    fn typedef(&mut self, t: &TypeDef) {
+    pub fn typedef(&mut self, t: &TypeDef) {
         self.str(&t.name);
         self.strs(&t.params);
         match &t.body {
@@ -655,7 +682,7 @@ impl Enc {
         }
     }
 
-    fn tfn(&mut self, f: &TFn) {
+    pub fn tfn(&mut self, f: &TFn) {
         self.fndef(&f.def);
         self.types(&f.locals);
         self.texprs(&f.req);
@@ -693,7 +720,7 @@ pub fn builtin_index(b: Builtin) -> usize {
 
 /// The `QALT` bytes of a typed program.
 pub fn encode(p: &TProgram) -> Vec<u8> {
-    let mut e = Enc { out: Vec::new() };
+    let mut e = Writer::default();
     e.out.extend_from_slice(MAGIC);
     e.byte(VERSION);
     e.len(p.types.len());
@@ -870,7 +897,7 @@ impl<'b> Reader<'b> {
         self.depth -= 1;
     }
 
-    fn ty(&mut self) -> R<Type> {
+    pub fn ty(&mut self) -> R<Type> {
         self.enter()?;
         let t = self.ty_inner();
         self.leave();
@@ -911,12 +938,12 @@ impl<'b> Reader<'b> {
         })
     }
 
-    fn types(&mut self) -> R<Vec<Type>> {
+    pub fn types(&mut self) -> R<Vec<Type>> {
         let n = self.count()?;
         (0..n).map(|_| self.ty()).collect()
     }
 
-    fn opt_ty(&mut self) -> R<Option<Type>> {
+    pub fn opt_ty(&mut self) -> R<Option<Type>> {
         Ok(if self.bool()? { Some(self.ty()?) } else { None })
     }
 
@@ -933,7 +960,7 @@ impl<'b> Reader<'b> {
         }
     }
 
-    fn expr(&mut self) -> R<Expr> {
+    pub fn expr(&mut self) -> R<Expr> {
         self.enter()?;
         let e = self.expr_inner();
         self.leave();
@@ -1012,12 +1039,12 @@ impl<'b> Reader<'b> {
         })
     }
 
-    fn exprs(&mut self) -> R<Vec<Expr>> {
+    pub fn exprs(&mut self) -> R<Vec<Expr>> {
         let n = self.count()?;
         (0..n).map(|_| self.expr()).collect()
     }
 
-    fn pat(&mut self) -> R<Pat> {
+    pub fn pat(&mut self) -> R<Pat> {
         self.enter()?;
         let p = self.pat_inner();
         self.leave();
@@ -1051,7 +1078,7 @@ impl<'b> Reader<'b> {
         })
     }
 
-    fn fndef(&mut self) -> R<FnDef> {
+    pub fn fndef(&mut self) -> R<FnDef> {
         let name = self.str()?;
         let tparams = self.strs()?;
         let k = self.count()?;
@@ -1067,7 +1094,7 @@ impl<'b> Reader<'b> {
         Ok(FnDef { name, tparams, params, ret, effects, req, ens, body: self.expr()? })
     }
 
-    fn texpr(&mut self) -> R<TExpr> {
+    pub fn texpr(&mut self) -> R<TExpr> {
         self.enter()?;
         let e = self.texpr_inner();
         self.leave();
@@ -1169,7 +1196,7 @@ impl<'b> Reader<'b> {
         Ok(TExpr { ty, kind })
     }
 
-    fn texprs(&mut self) -> R<Vec<TExpr>> {
+    pub fn texprs(&mut self) -> R<Vec<TExpr>> {
         let n = self.count()?;
         (0..n).map(|_| self.texpr()).collect()
     }
@@ -1179,7 +1206,7 @@ impl<'b> Reader<'b> {
         (0..n).map(|_| self.u32()).collect()
     }
 
-    fn tpat(&mut self) -> R<TPat> {
+    pub fn tpat(&mut self) -> R<TPat> {
         self.enter()?;
         let p = self.tpat_inner();
         self.leave();
@@ -1212,7 +1239,20 @@ impl<'b> Reader<'b> {
         })
     }
 
-    fn typedef(&mut self) -> R<TypeDef> {
+    /// A definition (see [`Writer::def`]).
+    pub fn def(&mut self) -> R<Def> {
+        Ok(match self.byte()? {
+            0 => Def::Type(self.typedef()?),
+            1 => Def::Fn(self.fndef()?),
+            2 => {
+                let name = self.str()?;
+                Def::Test(TestDef { name, body: self.expr()? })
+            }
+            t => return Err(bad_tag("definition", t, self.pos)),
+        })
+    }
+
+    pub fn typedef(&mut self) -> R<TypeDef> {
         let name = self.str()?;
         let params = self.strs()?;
         let body = match self.byte()? {
@@ -1239,7 +1279,7 @@ impl<'b> Reader<'b> {
         Ok(TypeDef { name, params, body })
     }
 
-    fn tfn(&mut self) -> R<TFn> {
+    pub fn tfn(&mut self) -> R<TFn> {
         let def = self.fndef()?;
         let locals = self.types()?;
         let req = self.texprs()?;

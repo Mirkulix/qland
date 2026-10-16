@@ -9,3 +9,4 @@ qal-core = { workspace = true }
 qal-text = { workspace = true }
 qal-check = { workspace = true }
 qal-wasm = { workspace = true }
+serde_json = { workspace = true }
