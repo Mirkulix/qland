@@ -501,6 +501,9 @@ impl<'p> Enc<'p> {
             | B::Reverse | B::SortInt | B::SortStr | B::IntToFloat | B::FloatToInt | B::ToUpper | B::ToLower | B::IndexOf | B::MapNew | B::MapGet | B::MapPut | B::MapDel | B::MapHas | B::MapSize
             | B::MapKeys | B::MapValues | B::ToBytes | B::BytesLen | B::BytesGet | B::BytesToList | B::BytesToStr | B::Compare | B::BitAnd | B::BitOr | B::BitXor | B::BitNot | B::FloatBits
             | B::FloatOfBits | B::AccList | B::BytesJoin | B::Sha256 => Vec::new(),
+            // todo() never returns (Phase 4 §11): it always traps. A stub's own obligations are
+            // reported unknown anyway; a contract that reaches todo() is never proven.
+            B::Todo => vec![Bool::from_bool(false)],
             // Exact where the distance is modelled.
             B::Shl | B::Shr | B::Ushr => match int(1) {
                 Some(n) => vec![n.ge(&zero), n.lt(Int::from_i64(64))],

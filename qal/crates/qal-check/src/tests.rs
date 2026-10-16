@@ -839,3 +839,15 @@ fn builtin_arity_matches_the_checker() {
         assert_eq!(crate::builtins::arity(b.name()), Some(b.arity()), "{b:?}");
     }
 }
+
+#[test]
+fn todo_takes_the_expected_type() {
+    // Phase 4 §11: `todo[T]() -> T`, T from the context; a stub calls it itself.
+    let tp = typed("type Order = { id: Int }\nfn a() -> Order = todo()\nfn b(x: Int) -> Result[Order, Str] = if x > 0 then todo() else Err(\"no\")\nfn c() -> Int = a().id\ntest t = todo()");
+    assert_eq!(tp.stubs(), vec!["a".to_string(), "b".to_string(), "t".to_string()]);
+    let c = tp.fn_index("c").unwrap();
+    assert_eq!(tp.reachable_stubs(&[c]), vec!["a".to_string()]);
+    assert!(!kinds("fn a() -> Int = todo(1)").is_empty(), "todo takes no arguments");
+    assert_eq!(one("fn todo() -> Int = 1").kind, "duplicate_name");
+    assert_eq!(kinds("fn a() -> Int = todo() + \"x\"").first().map(|k| k.0), Some("type_mismatch"));
+}

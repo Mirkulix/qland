@@ -3,7 +3,7 @@
 use crate::asm::{from_slot, m32, m64, to_slot, val, Asm, Repr};
 use crate::module::{Arg, Mb};
 use crate::rt::{Rt, Shift};
-use crate::{host, Site, FAIL_ENS, FAIL_REQ};
+use crate::{host, Site, FAIL_ENS, FAIL_REQ, FAIL_TODO};
 use qal_core::ast::{BinOp, Type, UnOp, RESULT_VAR};
 use qal_core::tast::*;
 use wasm_encoder::{BlockType, Function, Instruction as I, ValType};
@@ -413,6 +413,12 @@ impl<'g, 'p> FnGen<'g, 'p> {
         if self.map_builtin(b, args) {
             return;
         }
+        if b == B::Todo {
+            // Never returns: the stack is polymorphic after `unreachable`, so no value is needed.
+            let site = self.site(path, "todo()", &[], None);
+            self.m.emit_fail(&mut self.a, FAIL_TODO, Arg::Const(self.meta), Arg::Const(site), &[]);
+            return;
+        }
         if b == B::Compare {
             // The total order of map keys, on slots: -1, 0 or 1.
             let Some(t) = args.first().map(|a| a.ty.clone()) else {
@@ -508,7 +514,7 @@ impl<'g, 'p> FnGen<'g, 'p> {
                 self.call_rt(Rt::ResultUnitFrom);
             }
             B::NowMs => self.a.i(I::Call(self.m.import(host::NOW_MS))),
-            B::MapGet | B::MapPut | B::MapDel | B::MapHas | B::Compare => self.m.bug("built-in not handled before its arguments"),
+            B::MapGet | B::MapPut | B::MapDel | B::MapHas | B::Compare | B::Todo => self.m.bug("built-in not handled before its arguments"),
             // The empty map is the null tree.
             B::MapNew => self.a.i(I::I32Const(0)),
             B::MapSize => self.call_rt(Rt::MapSize),

@@ -42,6 +42,8 @@ pub const FAIL_INDEX: i32 = 5;
 pub const FAIL_BUILTIN: i32 = 6;
 /// Memory limit exceeded; `func` and `site` are -1, the requested size (i64) is at `OOM_SCRATCH`.
 pub const FAIL_OOM: i32 = 7;
+/// `todo()` was evaluated (a stub, Phase 4 §11).
+pub const FAIL_TODO: i32 = 8;
 
 /// Byte address of the slot holding the size of a failed allocation.
 pub const OOM_SCRATCH: u32 = 0;

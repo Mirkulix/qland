@@ -20,7 +20,7 @@ use host::{Failure, HostState, FAIL_BUDGET, FAIL_DENIED, FAIL_TIMEOUT};
 use qal_core::ast::Type;
 use qal_core::tast::TProgram;
 use qal_compiler::print_expr;
-use qal_compiler::{CompiledModule, FuncMeta, FAIL_BUILTIN, FAIL_DIV_ZERO, FAIL_ENS, FAIL_INDEX, FAIL_OOM, FAIL_OVERFLOW, FAIL_REQ, OOM_SCRATCH};
+use qal_compiler::{CompiledModule, FuncMeta, FAIL_BUILTIN, FAIL_DIV_ZERO, FAIL_ENS, FAIL_INDEX, FAIL_OOM, FAIL_OVERFLOW, FAIL_REQ, FAIL_TODO, OOM_SCRATCH};
 use serde::Serialize;
 use std::io::Cursor;
 use std::sync::mpsc;
@@ -38,7 +38,7 @@ pub struct RunError {
     pub code: &'static str,
     /// contract_violation | int_overflow | div_by_zero | out_of_memory | index | stack_overflow | timeout
     /// | permission_denied | bad_args | unknown_function | compile_error | bad_entry | bad_response
-    /// | budget_exceeded | db_open | init_failed | trap; services also log request_rejected | overloaded
+    /// | budget_exceeded | db_open | init_failed | todo_reached | trap; services also log request_rejected | overloaded
     /// | listen_failed | internal
     pub kind: &'static str,
     /// Name of the definition where the failure happened (never an export name like `test:x`).
@@ -73,6 +73,7 @@ impl RunError {
             "budget_exceeded" => "E0522",
             "db_open" => "E0523",
             "init_failed" => "E0524",
+            "todo_reached" => "E0540",
             "request_rejected" => "E0800",
             "overloaded" => "E0801",
             "listen_failed" => "E0802",
@@ -688,6 +689,8 @@ impl Runner {
                 e.contract = Some(site.label.clone());
                 e
             }
+            FAIL_TODO => RunError::new("todo_reached", def, format!("`todo()` reached in `{def}` (at `{}`): `{def}` is a stub", if site.path.is_empty() { "body" } else { site.path.as_str() }))
+                .hint(format!("`{def}` is not implemented yet: replace its `todo()` with the real code (same signature, so its users relink automatically)")),
             other => RunError::new("trap", def, format!("unknown failure kind {other}")),
         };
         e.values = values;

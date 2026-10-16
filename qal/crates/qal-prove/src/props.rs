@@ -100,7 +100,8 @@ pub fn candidates(tp: &TProgram) -> Vec<usize> {
     (0..tp.fns.len())
         .filter(|&i| {
             let f = &tp.fns[i];
-            f.def.effects.is_empty() && f.def.params.iter().all(|p| generatable(tp, &p.ty)) && has_obligations(tp, f)
+            // A stub (`todo()`) has no behaviour to test yet.
+            f.def.effects.is_empty() && f.def.params.iter().all(|p| generatable(tp, &p.ty)) && has_obligations(tp, f) && !f.is_stub()
         })
         .collect()
 }

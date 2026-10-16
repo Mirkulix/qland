@@ -129,12 +129,19 @@ impl Report {
             Status::Refuted => Diagnostic::new("E0801", "contract_refuted", &self.def, &self.path, format!("`{}` ({}) does not hold: running `{}` violates it", self.contract, self.obligation, self.def))
                 .hint("running it violates the contract: fix the code or the contract"),
             Status::Unknown => Diagnostic::new("E0802", "contract_unproven", &self.def, &self.path, format!("`{}` ({}) could not be proven: {}", self.contract, self.obligation, self.reason.as_deref().unwrap_or("unknown")))
-                .hint("the contract stays checked at runtime; a simpler or stronger `req`/`ens` (Int and Bool facts) may make it provable"),
+                .hint(if self.reason.as_deref().is_some_and(|r| r.starts_with(STUB)) {
+                    "replace the `todo()` with the implementation; its contracts are proven then"
+                } else {
+                    "the contract stays checked at runtime; a simpler or stronger `req`/`ens` (Int and Bool facts) may make it provable"
+                }),
         };
         d.counterexample = self.counterexample.clone();
         Some(d)
     }
 }
+
+/// The start of the reason of a stub's obligations.
+const STUB: &str = "this definition is a stub (it calls todo())";
 
 /// Why an obligation is `unknown`, without names (they are rendered from the current program).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -152,6 +159,8 @@ enum Why {
     Internal,
     /// Running the candidate hit its wall-clock limit (depends on the machine): not stored.
     RunTimedOut,
+    /// The definition is a stub (it calls `todo()`): nothing about it is proven (Phase 4 §11).
+    Stub,
 }
 
 impl Why {
@@ -222,6 +231,15 @@ fn targets(tp: &TProgram, only: Option<&[String]>) -> Vec<(String, Which)> {
     out
 }
 
+/// True if the definition calls `todo()` (a stub): its obligations are never proven.
+fn is_stub(tp: &TProgram, which: Which) -> bool {
+    match which {
+        Which::Fn(i) => tp.fns.get(i).is_some_and(|f| f.is_stub()),
+        Which::Generic(i) => tp.generics.get(i).is_some_and(|f| f.is_stub()),
+        Which::Test(i) => tp.tests.get(i).is_some_and(|t| t.is_stub()),
+    }
+}
+
 fn encode(tp: &TProgram, which: Which, deadline: Instant) -> Option<Vc> {
     Some(match which {
         Which::Fn(i) => vc::function(tp, tp.fns.get(i)?, Some(deadline)),
@@ -287,6 +305,7 @@ impl Shape {
             }
             Why::Internal => INTERNAL.to_string(),
             Why::RunTimedOut => format!("{TIMED_OUT_RUN}{}", ignores()),
+            Why::Stub => format!("{STUB}: its contracts are not proven until it is implemented, and are checked at run time"),
         }
     }
 
@@ -357,7 +376,11 @@ fn prove_one(tp: &TProgram, name: &str, which: Which, start: Instant, opts: &Opt
         let vc = encode(tp, which, deadline)?;
         let shape = Shape::of(&vc);
         let mut out = Vec::new();
-        if !(shape.too_large || shape.out_of_time) {
+        if is_stub(tp, which) && !(shape.too_large || shape.out_of_time) {
+            // A stub never returns a value: every obligation would hold vacuously. It is reported
+            // `unknown` instead, so a stub is never shown as proven (sound, and stable per hash).
+            out = shape.metas.iter().map(|_| Outcome { why: Some(Why::Stub), ..Outcome::new(Status::Unknown) }).collect();
+        } else if !(shape.too_large || shape.out_of_time) {
             // Every obligation is asserted once, behind its own guard; each check assumes exactly
             // one guard (so the formula is internalized once, not once per obligation).
             let s = Solver::new();

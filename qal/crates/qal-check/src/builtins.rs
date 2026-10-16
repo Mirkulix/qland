@@ -180,6 +180,8 @@ fn signature(name: &str, a: Type, b: Type) -> Option<(Builtin, Vec<Type>, Type)>
         "acc_list" => (B::AccList, vec![Type::App(qal_core::prelude::ACCUM.into(), vec![a.clone()])], list(a)),
         "bytes_join" => (B::BytesJoin, vec![list(Type::Bytes)], Type::Bytes),
         "sha256" => (B::Sha256, vec![Type::Bytes], Type::Bytes),
+        // A stub (Phase 4 §11): any type, from the expected type; traps with `todo_reached` (E0540).
+        "todo" => (B::Todo, vec![], a),
         _ => return None,
     })
 }

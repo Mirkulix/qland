@@ -108,6 +108,7 @@ builtins! {
     AccList => "acc_list",
     BytesJoin => "bytes_join",
     Sha256 => "sha256",
+    Todo => "todo",
 }
 
 impl Builtin {
@@ -128,7 +129,7 @@ impl Builtin {
     pub fn arity(self) -> usize {
         use Builtin as B;
         match self {
-            B::ReadLine | B::NowMs | B::ReadAll | B::MapNew => 0,
+            B::ReadLine | B::NowMs | B::ReadAll | B::MapNew | B::Todo => 0,
             B::StrLen | B::ListLen | B::Trim | B::ToInt | B::ToFloat | B::FromInt | B::FromFloat | B::Chars | B::Reverse | B::SortInt | B::IntToFloat | B::FloatToInt | B::Print | B::ReadFile | B::SortStr
             | B::CharCode | B::FromCharCode | B::ToUpper | B::ToLower | B::MapSize | B::MapKeys | B::MapValues | B::ToBytes | B::BytesLen | B::BytesFrom | B::BytesToList | B::BytesToStr | B::Http
             | B::BitNot | B::FloatBits | B::FloatOfBits | B::AccList | B::BytesJoin | B::Sha256 => 1,
@@ -147,7 +148,7 @@ impl Builtin {
         "map_del", "map_has", "map_size", "map_keys", "map_values", "to_bytes", "bytes_len", "bytes_get", "bytes_slice",
         "bytes_from", "bytes_to_list", "bytes_to_str", "compare", "http", "db_exec", "db_query", "bit_and", "bit_or",
         "bit_xor", "bit_not", "shl", "shr", "ushr", "float_bits", "float_of_bits", "list_at", "bytes_at", "acc_list",
-        "bytes_join", "sha256",
+        "bytes_join", "sha256", "todo",
     ];
 }
 
@@ -325,6 +326,87 @@ impl TProgram {
     }
 }
 
+impl TExpr {
+    /// The direct sub-expressions, in evaluation order.
+    pub fn children(&self) -> Vec<&TExpr> {
+        match &self.kind {
+            TKind::Int(_) | TKind::Float(_) | TKind::Bool(_) | TKind::Str(_) | TKind::Unit | TKind::Local(_) | TKind::FnRef(_) | TKind::FnRefG(..) => Vec::new(),
+            TKind::Bin(_, l, r, _) => vec![l, r],
+            TKind::Un(_, x, _) | TKind::Field(x, _) => vec![x],
+            TKind::If(c, t, f) => vec![c, t, f],
+            TKind::Let(_, v, b) => vec![v, b],
+            TKind::Call(_, args) | TKind::CallG(_, _, args) | TKind::Builtin(_, args, _) | TKind::List(args) | TKind::Variant(_, args) | TKind::Seq(args) => args.iter().collect(),
+            TKind::Lambda(l) => vec![&l.body],
+            TKind::CallIndirect(f, args) => std::iter::once(&**f).chain(args.iter()).collect(),
+            TKind::Record(fs) => fs.iter().map(|(_, e)| e).collect(),
+            TKind::Match(s, arms) => std::iter::once(&**s).chain(arms.iter().flat_map(|a| a.guard.iter().chain(std::iter::once(&a.body)))).collect(),
+        }
+    }
+
+    /// True if this expression (or one inside it) calls the built-in `b`.
+    pub fn calls_builtin(&self, b: Builtin) -> bool {
+        let mut stack = vec![self];
+        while let Some(e) = stack.pop() {
+            if matches!(&e.kind, TKind::Builtin(x, _, _) if *x == b) {
+                return true;
+            }
+            stack.extend(e.children());
+        }
+        false
+    }
+}
+
+impl TFn {
+    /// A stub (Phase 4 §11): its body or a contract calls `todo()`.
+    pub fn is_stub(&self) -> bool {
+        self.req.iter().chain(&self.ens).chain([&self.body]).any(|e| e.calls_builtin(Builtin::Todo))
+    }
+}
+
+impl TTest {
+    /// A stub: its body calls `todo()`.
+    pub fn is_stub(&self) -> bool {
+        self.body.calls_builtin(Builtin::Todo)
+    }
+}
+
+impl TProgram {
+    /// The names of the functions and tests that are stubs (call `todo()` themselves), sorted.
+    pub fn stubs(&self) -> Vec<String> {
+        let fns = self.fns.iter().filter(|f| f.instance.is_none()).chain(&self.generics).filter(|f| f.is_stub()).map(|f| f.def.name.clone());
+        let mut out: Vec<String> = fns.chain(self.tests.iter().filter(|t| t.is_stub()).map(|t| t.name.clone())).collect();
+        out.sort();
+        out.dedup();
+        out
+    }
+
+    /// The stub functions reachable from the functions `roots` (indices into `fns`) by calls and
+    /// function values, by name (instances of a generic stub under the generic's name), sorted.
+    pub fn reachable_stubs(&self, roots: &[usize]) -> Vec<String> {
+        let mut seen = std::collections::BTreeSet::new();
+        let mut stack: Vec<usize> = roots.to_vec();
+        let mut out = std::collections::BTreeSet::new();
+        while let Some(i) = stack.pop() {
+            let Some(f) = self.fns.get(i) else { continue };
+            if !seen.insert(i) {
+                continue;
+            }
+            if f.is_stub() {
+                let name = f.instance.as_ref().and_then(|(g, _)| self.generics.get(*g)).map_or(&f.def.name, |g| &g.def.name);
+                out.insert(name.clone());
+            }
+            let mut exprs: Vec<&TExpr> = f.req.iter().chain(&f.ens).chain([&f.body]).collect();
+            while let Some(e) = exprs.pop() {
+                if let TKind::Call(j, _) | TKind::FnRef(j) = &e.kind {
+                    stack.push(*j);
+                }
+                exprs.extend(e.children());
+            }
+        }
+        out.into_iter().collect()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -365,9 +447,9 @@ mod tests {
         names.sort_unstable();
         assert_eq!(names.len(), Builtin::NAMES.len(), "Builtin::NAMES has duplicates");
         assert_eq!(names, from_variants);
-        // 57 up to Phase 4, plus the 14 self-hosting built-ins of Phase 5a (appended, so the
+        // 57 up to Phase 4, plus the 14 self-hosting built-ins of Phase 5a and `todo` of Phase 4b (appended, so the
         // order of the earlier ones, which fixes import order in modules, is unchanged).
-        assert_eq!(Builtin::ALL.len(), 71);
+        assert_eq!(Builtin::ALL.len(), 72);
         assert_eq!(Builtin::ALL[57], Builtin::BitAnd);
         assert_eq!(Builtin::ALL[0], Builtin::StrLen);
         assert_eq!(Builtin::ReadAll.effect(), Some("io"));

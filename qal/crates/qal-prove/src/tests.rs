@@ -653,3 +653,20 @@ fn contracts_that_call_user_functions_or_closures_are_never_proven() {
     let rs = reports("fn sq(x: Int) -> Int req x >= 0 = x * x\nfn f(x: Int) -> Int req x >= 0 ens r >= 0 = if sq(x) > 0 then x else 0");
     assert!(rs.iter().all(|r| r.status == Status::Proven), "{rs:#?}");
 }
+
+#[test]
+fn a_stub_is_never_proven() {
+    // A `todo()` never returns, so its obligations would hold vacuously: they are `unknown` instead.
+    let src = "fn make(q: Int) -> Int req q > 0 ens r == q ens r > 0 = todo()\nfn use_it(q: Int) -> Int req q > 0 = make(q)\ntest t = make(1) == 1";
+    let st = statuses(src);
+    assert_eq!(st, vec![s("make", "ens[0]", Status::Unknown), s("make", "ens[1]", Status::Unknown), s("use_it", "req[0] of make", Status::Proven), s("t", "req[0] of make", Status::Proven)]);
+    let r = one("fn make(q: Int) -> Int ens r == q = todo()", "make");
+    assert!(r.reason.as_deref().is_some_and(|x| x.starts_with("this definition is a stub")), "{r:?}");
+    assert!(r.diagnostic().unwrap().hints[0].contains("todo()"));
+    // A body that only reaches `todo()` on some paths is a stub too.
+    assert_eq!(one("fn f(x: Int) -> Int ens r >= 0 = if x >= 0 then x else todo()", "f").status, Status::Unknown);
+    // Stubs get no generated property tests.
+    let tp = typed("fn make(q: Int) -> Int ens r == q = todo()\nfn real(q: Int) -> Int ens r == q = q");
+    let names: Vec<&str> = props::candidates(&tp).into_iter().map(|i| tp.fns[i].def.name.as_str()).collect();
+    assert_eq!(names, vec!["real"]);
+}

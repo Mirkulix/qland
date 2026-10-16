@@ -1108,3 +1108,16 @@ fn compare_orders_every_comparable_type() {
          test maps = compare(map_put(map_new(), 1, \"a\"), map_put(map_new(), 1, \"b\")) == -1",
     );
 }
+
+#[test]
+fn todo_traps_with_todo_reached() {
+    // Phase 4 §11: a stub has any type and traps when it is reached; code around it runs.
+    let r = runner("type Order = { id: Int }\nfn make(id: Int) -> Order = todo()\nfn pick(x: Int) -> Int = if x > 0 then x else todo()\ntest t = make(1).id == 1");
+    let e = r.call("make", &[Value::Int(1)]).unwrap_err();
+    assert_eq!((e.code, e.kind, e.def.as_str(), e.path.as_str()), ("E0540", "todo_reached", "make", "body"));
+    assert!(e.hints[0].contains("replace its `todo()`"), "{e:?}");
+    assert_eq!(r.call("pick", &[Value::Int(5)]), Ok(Value::Int(5)));
+    assert_eq!(r.call("pick", &[Value::Int(0)]).unwrap_err().path, "body.else");
+    let t = r.run_test("test:t");
+    assert_eq!((t.passed, t.error.map(|e| e.kind)), (false, Some("todo_reached")));
+}

@@ -20,7 +20,7 @@ use qal_core::tast::TProgram;
 
 pub use qal_check::{KNOWN_EFFECTS, MAX_INSTANCES};
 pub use qal_wasm::{
-    host, CompileOptions, CompiledModule, Entry, FuncMeta, Site, COMPILER_MAX_PAGES, FAIL_BUILTIN, FAIL_DIV_ZERO, FAIL_ENS, FAIL_INDEX, FAIL_OOM, FAIL_OVERFLOW, FAIL_REQ, HOST_MODULE, MAX_MEMORY_PAGES,
+    host, CompileOptions, CompiledModule, Entry, FuncMeta, Site, COMPILER_MAX_PAGES, FAIL_BUILTIN, FAIL_DIV_ZERO, FAIL_ENS, FAIL_INDEX, FAIL_OOM, FAIL_OVERFLOW, FAIL_REQ, FAIL_TODO, HOST_MODULE, MAX_MEMORY_PAGES,
     MAX_PAGES, OOM_SCRATCH,
 };
 
