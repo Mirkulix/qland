@@ -49,6 +49,8 @@ pub struct Mb<'p> {
     table: Vec<u32>,
     /// Static closure (address) of each top-level function used as a value, by its function index.
     fn_values: HashMap<u32, i32>,
+    /// Maximum size of the module's memory in 64 KiB pages ([`crate::CompileOptions`]).
+    pub max_pages: u64,
 }
 
 impl<'p> Mb<'p> {
@@ -67,6 +69,7 @@ impl<'p> Mb<'p> {
             bug: RefCell::new(None),
             table: Vec::new(),
             fn_values: HashMap::new(),
+            max_pages: MAX_PAGES,
         };
         for name in imports {
             let Some((params, results)) = host::signature(name) else {
@@ -499,7 +502,11 @@ impl<'p> Mb<'p> {
         }
         let heap_start = self.data.len() as u64;
         let mut memories = wasm_encoder::MemorySection::new();
-        memories.memory(MemoryType { minimum: heap_start / 65536 + 1, maximum: Some(MAX_PAGES), memory64: false, shared: false, page_size_log2: None });
+        let minimum = heap_start / 65536 + 1;
+        if minimum > self.max_pages {
+            return Err(format!("the module's static data needs {minimum} memory pages, more than its maximum of {}", self.max_pages));
+        }
+        memories.memory(MemoryType { minimum, maximum: Some(self.max_pages), memory64: false, shared: false, page_size_log2: None });
         let mut globals = GlobalSection::new();
         globals.global(GlobalType { val_type: ValType::I32, mutable: true, shared: false }, &ConstExpr::i32_const(heap_start as i32));
         let mut export = ExportSection::new();

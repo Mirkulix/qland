@@ -6,7 +6,8 @@
 //!   functions user fns reachable from the entry, then tests, then runtime/equality helpers
 //!             (all indices computed by the module builder)
 //!   table     closure bodies and wrappers of fns used as values, for `call_indirect`
-//!   memory    exported as `memory`, at most 4096 pages (256 MiB); bump allocator exported as `qal_alloc(size: i64) -> i32`
+//!   memory    exported as `memory`, at most 4096 pages (256 MiB; compiler runs: 16 384 pages = 1 GiB,
+//!             `CompileOptions::memory_max_pages`); bump allocator exported as `qal_alloc(size: i64) -> i32`
 //!   data      0..8 OOM scratch slot, 8.. one block per variant tag (shared payload-free variants), then string literals
 //!
 //! Values: Int = i64, Float = f64, Bool/Unit = i32, everything else = i32 pointer.
@@ -48,8 +49,36 @@ pub const OOM_SCRATCH: u32 = 0;
 pub const TAG_TABLE: u32 = 8;
 /// Global index of the heap pointer.
 pub const HEAP_GLOBAL: u32 = 0;
-/// Maximum memory: 4096 pages of 64 KiB = 256 MiB.
+/// Maximum memory of user programs: 4096 pages of 64 KiB = 256 MiB.
 pub const MAX_PAGES: u64 = 4096;
+/// Maximum memory of compiler runs (self-hosting spec §6.3): 16 384 pages = 1 GiB.
+pub const COMPILER_MAX_PAGES: u64 = 16384;
+/// The largest `memory_max_pages` a module may declare. The runtime helpers compare pointers and
+/// lengths as signed i32 in places (`-1` sentinels, `i32.lt_s` on lengths, sums of two lengths);
+/// all of that stays correct while every address is below 2^31, i.e. up to 32 768 pages. The
+/// limit is kept at the compiler maximum, which leaves a factor of two of headroom (Phase 5a audit).
+pub const MAX_MEMORY_PAGES: u64 = COMPILER_MAX_PAGES;
+
+/// Options of [`compile_with`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CompileOptions {
+    /// The module's memory maximum in 64 KiB pages: [`MAX_PAGES`] for user programs,
+    /// [`COMPILER_MAX_PAGES`] for compiler runs; at most [`MAX_MEMORY_PAGES`].
+    pub memory_max_pages: u64,
+}
+
+impl Default for CompileOptions {
+    fn default() -> CompileOptions {
+        CompileOptions { memory_max_pages: MAX_PAGES }
+    }
+}
+
+impl CompileOptions {
+    /// The options of compiler runs (`Limits::compiler()` in `qal-run`).
+    pub fn compiler() -> CompileOptions {
+        CompileOptions { memory_max_pages: COMPILER_MAX_PAGES }
+    }
+}
 
 pub const HOST_MODULE: &str = "qal_host";
 
@@ -179,6 +208,15 @@ pub enum Entry {
 /// Compiles the code reachable from `entry`. `p` must have passed the checker; an `Err` is an
 /// internal compiler error (a broken invariant), never a property of the program.
 pub fn compile(p: &TProgram, entry: &Entry) -> Result<CompiledModule, String> {
+    compile_with(p, entry, &CompileOptions::default())
+}
+
+/// [`compile`] with options (the memory maximum). An `Err` is an internal compiler error or an
+/// option out of range.
+pub fn compile_with(p: &TProgram, entry: &Entry, opts: &CompileOptions) -> Result<CompiledModule, String> {
+    if opts.memory_max_pages == 0 || opts.memory_max_pages > MAX_MEMORY_PAGES {
+        return Err(format!("memory_max_pages must be between 1 and {MAX_MEMORY_PAGES}, not {}", opts.memory_max_pages));
+    }
     let (fn_roots, with_tests): (Vec<usize>, bool) = match entry {
         Entry::Fn(name) => (p.fn_index(name).into_iter().collect(), false),
         Entry::Fns(names) => (names.iter().filter_map(|n| p.fn_index(n)).collect(), false),
@@ -226,6 +264,7 @@ pub fn compile(p: &TProgram, entry: &Entry) -> Result<CompiledModule, String> {
     }
 
     let mut mb = Mb::new(p, &imports);
+    mb.max_pages = opts.memory_max_pages;
     let mut fn_index = vec![None; p.fns.len()];
     let mut metas = Vec::new();
     let mut exports = Vec::new();
