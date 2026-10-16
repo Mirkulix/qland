@@ -191,7 +191,7 @@ fn results_are_deterministic_and_limited() {
     assert!(!slow[0].is_stable());
     let only = prove(&typed(src), Some(&["bad".to_string()]), &Options::default());
     assert_eq!(only.iter().map(|r| r.def.as_str()).collect::<Vec<_>>(), vec!["bad"]);
-    assert!(Options::default().key().starts_with("qal-prove/3 z3-"));
+    assert!(Options::default().key().starts_with("qal-prove/4 z3-"));
 }
 
 #[test]
@@ -624,4 +624,32 @@ fn contracts_that_can_trap_in_any_builtin_are_never_proven() {
         let rs = reports(src);
         assert!(!rs.is_empty() && rs.iter().all(|r| r.status == Status::Proven), "{src}: {rs:#?}");
     }
+}
+
+#[test]
+fn contracts_that_call_user_functions_or_closures_are_never_proven() {
+    // Re-review of I1: calls are abstracted by contracts, so whether a callee's body (or a
+    // function value's `req`) traps is not modelled; a contract that calls one is not proven.
+    for src in [
+        // a callee whose body overflows
+        "fn g(x: Int) -> Str = from_int(x * 1000000000000)\nfn f(x: Int) -> Int ens let s = g(x) in true = 0",
+        // a closure whose body divides by zero
+        "fn f(x: Int) -> Int ens let g = fn(y) => [10 / y] in let z = g(0) in true = 0",
+        // a higher-order callee calling its argument
+        "fn h(k: fn(Int) -> Str) -> Str = k(0)\nfn f(x: Int) -> Int ens let s = h(fn(y) => from_int(10 / y)) in true = 0",
+        // I-A: a function value with a `req` that fails
+        "fn d(n: Int) -> Str req n > 0 = \"d\"\nfn f(x: Int) -> Int ens let h = d in let z = h(0) in true = 0",
+        // I-B: the failing `req` sits beyond the depth cut
+        "fn d(n: Int) -> Str req n > 0 = \"d\"\nfn c(n: Int) -> Str ens let z = d(0) in true = \"c\"\n\
+         fn b(n: Int) -> Str ens let z = c(n) in true = \"b\"\nfn a(n: Int) -> Str ens let z = b(n) in true = \"a\"\n\
+         fn f(n: Int) -> Str ens let z = a(n) in true = \"f\"",
+    ] {
+        let rs = reports(src);
+        assert!(rs.iter().any(|r| r.def == "f"), "{src}: {rs:#?}");
+        assert!(rs.iter().filter(|r| r.def == "f").all(|r| r.status != Status::Proven), "{src}: {rs:#?}");
+    }
+    // In a body a call only adds an assumption: callee `req` obligations and `ens` over the
+    // body's arithmetic are proven as before.
+    let rs = reports("fn sq(x: Int) -> Int req x >= 0 = x * x\nfn f(x: Int) -> Int req x >= 0 ens r >= 0 = if sq(x) > 0 then x else 0");
+    assert!(rs.iter().all(|r| r.status == Status::Proven), "{rs:#?}");
 }

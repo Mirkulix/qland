@@ -432,7 +432,9 @@ impl<'p> Enc<'p> {
                 let fok = self.enc(f, env, pc, path).1;
                 let (_, aok) = self.seq(args, env, &and(&[pc.clone(), fok.clone()]), path, "args");
                 let (h, facts) = self.unknown(&e.ty, "calls of function values");
-                (h, and(&[fok, aok, facts]))
+                // The function value's own `req` and body are not known here: they may trap.
+                let traps = self.untracked_note("whether a call of a function value traps".into());
+                (h, and(&[fok, aok, facts, traps]))
             }
             TKind::Builtin(b, args, _) => {
                 let (vals, ok) = self.seq(args, env, pc, path, "args");
@@ -543,7 +545,12 @@ impl<'p> Enc<'p> {
 
     /// A fresh condition standing for a precondition of built-in `b` the encoding does not model.
     fn untracked(&mut self, b: Builtin) -> Bool {
-        self.approx.insert(format!("the precondition of built-in `{}`", b.name()));
+        self.untracked_note(format!("the precondition of built-in `{}`", b.name()))
+    }
+
+    /// A fresh condition for something that may trap and is not modelled (noted as `what`).
+    fn untracked_note(&mut self, what: String) -> Bool {
+        self.approx.insert(what);
         Bool::fresh_const("pre")
     }
 
@@ -621,15 +628,23 @@ impl<'p> Enc<'p> {
         let callee = if generic { tp.generics.get(i) } else { tp.fns.get(i) };
         let Some(callee) = callee else {
             let (h, f) = self.unknown(ty, "a call the prover cannot resolve");
-            return (h, and(&[args_ok, f]));
+            let traps = self.untracked_note("a call the prover cannot resolve".into());
+            return (h, and(&[args_ok, f, traps]));
         };
         let (v, range) = havoc(ty);
-        let mut facts = vec![args_ok.clone(), range];
+        // Strict rule (re-review I1): a call of a user function returns only if its body does not
+        // trap, which the encoding does not model (calls are abstracted by contracts). So every
+        // call contributes a fresh condition to `ok`: a contract that calls a user function is
+        // never proven, a body only gains an assumption. The callee's `req`, checked at run time,
+        // is still an obligation at each call site of a body.
+        let traps = self.untracked_note(format!("whether `{}` traps (calls are abstracted by contracts)", callee.def.name));
+        let mut facts = vec![args_ok.clone(), range, traps];
         if self.depth >= MAX_INLINE {
-            if callee.req.is_empty() && callee.ens.is_empty() {
-                return (v, and(&facts));
+            // Beyond the depth cut the callee's `req` is not encoded; the fresh condition above
+            // stands for it too (re-review I-B: it was dropped).
+            if !(callee.req.is_empty() && callee.ens.is_empty()) {
+                self.approx.insert("contracts nested more than 3 calls deep".into());
             }
-            self.approx.insert("contracts nested more than 3 calls deep".into());
             return (v, and(&facts));
         }
         if callee.ens.is_empty() && matches!(ty, Type::Int | Type::Bool) {
