@@ -31,7 +31,7 @@ pub struct Row {
 }
 
 impl Row {
-    fn decode(&self, name: &str, locals: &[String], name_of: &mut dyn FnMut(&Hash) -> String) -> Result<Def, String> {
+    pub(crate) fn decode(&self, name: &str, locals: &[String], name_of: &mut dyn FnMut(&Hash) -> String) -> Result<Def, String> {
         match &self.group {
             None => canon::decode(canon::Form::new(&self.canonical, None), name, locals, name_of),
             Some((g, i)) => g.index.decode(&g.form, *i, name, locals, name_of),

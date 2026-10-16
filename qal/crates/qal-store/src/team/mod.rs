@@ -11,6 +11,7 @@ pub mod canonical;
 pub mod change;
 pub mod keys;
 pub mod log;
+pub mod merge;
 pub mod policy;
 pub mod verify;
 
@@ -210,7 +211,7 @@ pub fn names_digest(conn: &Connection, rows: &Rows) -> Result<String, Vec<Diagno
 /// The entries of a write: every name whose row differs between `before` and `after` (by name),
 /// with the action from `labels` (or `updated` where only `refs`/`local_names` changed, e.g. the
 /// users of a renamed name).
-fn diff(before: &Rows, after: &Rows, labels: &[Entry]) -> Vec<Entry> {
+pub(crate) fn diff(before: &Rows, after: &Rows, labels: &[Entry]) -> Vec<Entry> {
     let label: BTreeMap<&str, &str> = labels.iter().map(|e| (e.name.as_str(), e.action.as_str())).collect();
     let names: std::collections::BTreeSet<&String> = before.keys().chain(after.keys()).collect();
     let mut out = Vec::new();
@@ -286,7 +287,8 @@ pub(crate) fn append_in(tx: &Transaction, signer: &Signer, op: &str, args: Value
     if let (Space::Change(c), Value::Object(map)) = (space, &mut args) {
         map.insert("meta_after".into(), Value::from(change::meta_digest(tx, c)?));
     }
-    let action = args.get("action").and_then(Value::as_str);
+    // A review's `action` for the matrix is its verdict.
+    let action = args.get("action").or_else(|| args.get("verdict")).and_then(Value::as_str);
     if !policy::record_allowed(op, action, &m.role, kind) {
         let mut d = Diagnostic::new("E0903", "role_forbidden", "", "", format!("the role {} may not make `{op}` records {}", m.role, if space.is_main() { "on main".to_string() } else { format!("in change set {space}") }));
         d.expected = Some(if op.starts_with("member") || op == "import" || op == "genesis" { OWNER.to_string() } else { "architect".to_string() });

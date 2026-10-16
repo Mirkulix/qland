@@ -187,7 +187,7 @@ pub(crate) fn hash(p: &Program) -> Result<Hashed, Vec<Diagnostic>> {
 }
 
 /// How often `define` verifies on a snapshot, outside the write lock, before it verifies inside it.
-const ATTEMPTS: usize = 3;
+pub(crate) const ATTEMPTS: usize = 3;
 
 /// A check of a `define` before it is committed, inside the write transaction that would commit it
 /// (it can also write more in the same transaction; used by package imports and the signed records
@@ -350,7 +350,7 @@ fn prepare(tx: &Transaction, input: &Program, rules: &Rules, space: &Space) -> R
 
 /// The (name, hash) of the definitions to verify: the functions and tests that are new, got a new
 /// hash, or have no stored result for `key`.
-fn to_verify(tx: &Transaction, out: &[Defined], key: &str) -> Result<Vec<(String, String)>, Vec<Diagnostic>> {
+pub(crate) fn to_verify(tx: &Transaction, out: &[Defined], key: &str) -> Result<Vec<(String, String)>, Vec<Diagnostic>> {
     let mut todo = Vec::new();
     for d in out.iter().filter(|d| d.kind != "type") {
         let stored: Option<i64> = tx.query_row("SELECT 1 FROM proofs WHERE hash = ?1 AND prover = ?2", params![d.hash, key], |r| r.get(0)).optional().map_err(sql)?;
@@ -362,7 +362,7 @@ fn to_verify(tx: &Transaction, out: &[Defined], key: &str) -> Result<Vec<(String
 }
 
 /// Stores verification results (hash, JSON) for `key`.
-fn store_results(tx: &Transaction, key: &str, rows: impl Iterator<Item = (String, String)>) -> Result<(), Vec<Diagnostic>> {
+pub(crate) fn store_results(tx: &Transaction, key: &str, rows: impl Iterator<Item = (String, String)>) -> Result<(), Vec<Diagnostic>> {
     let now = now_ms();
     for (hash, results) in rows {
         tx.execute(
@@ -373,6 +373,90 @@ fn store_results(tx: &Transaction, key: &str, rows: impl Iterator<Item = (String
         .map_err(sql)?;
     }
     Ok(())
+}
+
+/// The result of replaying definitions on top of a space (the merge and the rebase of a change set,
+/// Phase 4 spec §7.2, §7.3): the checked and hashed codebase, nothing written yet.
+pub(crate) struct Replayed {
+    pub program: Program,
+    pub typed: TProgram,
+    pub hashed: Hashed,
+    /// The full row of every name after the replay.
+    pub rows: crate::team::Rows,
+    /// Every name whose row differs from the snapshot, with its status like `define`'s result
+    /// (`added`/`replaced` for inputs, `relinked` for dependents; `unchanged` for an input whose
+    /// hash stays), inputs first in input order, then the rest by name.
+    pub defined: Vec<Defined>,
+}
+
+/// Replays `input` (definitions decoded from a change set, written against its names) on `snap`
+/// with the names in `removed` gone, as one `define` would: the replacement rule (a changed
+/// signature needs its other dependents in the same replay), the full check, hashing and the
+/// store invariants. Nothing is written (see [`store_defs`]).
+pub(crate) fn replay(tx: &Transaction, snap: &Snapshot, input: &Program, removed: &std::collections::BTreeSet<String>) -> Result<Replayed, Vec<Diagnostic>> {
+    let input_names: HashSet<&str> = input.defs.iter().map(|d| d.name()).collect();
+    let mut diags = Vec::new();
+    for d in &input.defs {
+        if !snap.names.contains_key(d.name()) {
+            continue;
+        }
+        let old = snap.decode_name(tx, d.name())?;
+        let (before, after) = (signature(&old), signature(d));
+        if before == after {
+            continue;
+        }
+        if before.0 != after.0 {
+            diags.push(Diagnostic::kind_change(d.name(), before.0.as_str(), after.0.as_str()));
+            continue;
+        }
+        let dependents: Vec<String> = snap.dependents(d.name()).into_iter().filter(|n| !input_names.contains(n.as_str()) && !removed.contains(n)).collect();
+        if !dependents.is_empty() {
+            diags.push(Diagnostic::signature_change(d.name(), &show(&before), &show(&after), &dependents));
+        }
+    }
+    if !diags.is_empty() {
+        return Err(diags);
+    }
+    let stored = snap.program(tx, &|n| input_names.contains(n) || removed.contains(n))?;
+    let mut combined = stored;
+    combined.defs.extend(input.defs.iter().cloned());
+    let typed = qal_compiler::check_stored(&combined, &|n| input_names.contains(n))?;
+    let hashed = hash(&combined)?;
+    identical_types(&hashed.defs)?;
+    group_aliases(&hashed.defs)?;
+    alias_references(&hashed.defs, &input_names)?;
+    canonical_check(snap, &input_names, &hashed.defs)?;
+    let hash_of: HashMap<&str, Hash> = hashed.defs.iter().map(|c| (c.name.as_str(), c.hash)).collect();
+    let mut rows = crate::team::Rows::new();
+    let mut by_name: HashMap<&str, Defined> = HashMap::new();
+    for c in &hashed.defs {
+        let refs = ref_names(c, &hash_of);
+        let row = crate::team::NameRow { hash: c.hash.to_hex(), refs, locals: c.local_names.clone() };
+        let old = snap.names.get(&c.name);
+        let is_input = input_names.contains(c.name.as_str());
+        let differs = old.is_none_or(|e| e.hash != c.hash || e.refs != row.refs || e.locals != row.locals);
+        let status = match old {
+            None => "added",
+            Some(e) if e.hash == c.hash => "unchanged",
+            Some(_) if is_input => "replaced",
+            Some(_) => "relinked",
+        };
+        if is_input || differs {
+            let old_hash = old.map(|e| e.hash.to_hex()).filter(|_| matches!(status, "replaced" | "relinked"));
+            by_name.insert(&c.name, Defined { name: c.name.clone(), kind: c.kind.as_str(), hash: c.hash.to_hex(), status, old_hash });
+        }
+        rows.insert(c.name.clone(), row);
+    }
+    let mut defined = Vec::new();
+    for d in &input.defs {
+        if let Some(r) = by_name.remove(d.name()) {
+            defined.push(r);
+        }
+    }
+    let mut rest: Vec<Defined> = by_name.into_values().collect();
+    rest.sort_by(|a, b| a.name.cmp(&b.name));
+    defined.extend(rest);
+    Ok(Replayed { program: combined, typed, hashed, rows, defined })
 }
 
 /// A stored definition records one name per referenced definition, so a definition that refers to
@@ -582,7 +666,7 @@ fn write(tx: &Transaction, snap: &Snapshot, input: &Program, hashed: &Hashed, ag
 }
 
 /// Stores the groups, definitions and dependencies of a hashed program (those already stored stay).
-fn store_defs(tx: &Transaction, hashed: &Hashed) -> Result<(), Vec<Diagnostic>> {
+pub(crate) fn store_defs(tx: &Transaction, hashed: &Hashed) -> Result<(), Vec<Diagnostic>> {
     let now = now_ms();
     let canons = &hashed.defs;
     for (h, form) in &hashed.groups {

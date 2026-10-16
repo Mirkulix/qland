@@ -90,8 +90,8 @@ impl Rule {
 }
 
 /// One row: a tool, optionally one of its actions, and the rule per role (architect,
-/// implementer, verifier, reviewer). `available`: the tool exists in this build (the others come
-/// with Phase 4c and are part of the table already).
+/// implementer, verifier, reviewer). `available`: the tool exists in this build (all of them since
+/// Phase 4c).
 #[derive(Debug, Clone, Copy)]
 pub struct Row {
     pub tool: &'static str,
@@ -134,17 +134,17 @@ pub const POLICY: &[Row] = &[
     row("qal_change", Some("submit"), [Own, Own, Own, No], true),
     row("qal_change", Some("abandon"), [AnyChange, Own, Own, No], true),
     row("qal_change", Some("scope"), [Yes, No, No, No], true),
-    row("qal_rebase", None, [Own, Own, Own, No], false),
-    row("qal_review", Some("comment"), [Yes, No, No, No], false),
-    row("qal_review", Some("verified"), [No, No, Yes, No], false),
-    row("qal_review", Some("failed"), [No, No, Yes, No], false),
-    row("qal_review", Some("approve"), [No, No, No, Yes], false),
-    row("qal_review", Some("changes"), [No, No, No, Yes], false),
-    row("qal_merge", None, [Yes, No, No, Yes], false),
+    row("qal_rebase", None, [Own, Own, Own, No], true),
+    row("qal_review", Some("comment"), [Yes, No, No, No], true),
+    row("qal_review", Some("verified"), [No, No, Yes, No], true),
+    row("qal_review", Some("failed"), [No, No, Yes, No], true),
+    row("qal_review", Some("approve"), [No, No, No, Yes], true),
+    row("qal_review", Some("changes"), [No, No, No, Yes], true),
+    row("qal_merge", None, [Yes, No, No, Yes], true),
 ];
 
 /// The tools that write code (and therefore need a signing key).
-pub const WRITE_TOOLS: [&str; 3] = ["qal_define", "qal_rename", "qal_delete"];
+pub const WRITE_TOOLS: [&str; 6] = ["qal_define", "qal_rename", "qal_delete", "qal_review", "qal_merge", "qal_rebase"];
 
 /// The rows of `tool` (with any action).
 fn rows(tool: &str) -> impl Iterator<Item = &'static Row> + '_ {
@@ -213,8 +213,13 @@ pub fn record_allowed(op: &str, action: Option<&str>, role: &str, space: Space) 
     match op {
         "genesis" | "member_add" | "member_key" | "member_revoke" | "import" => role == OWNER,
         "define" | "rename" | "delete" => agent(&format!("qal_{op}"), None),
+        // The end of a merged change set and the flag on the ones it affects are part of the merge.
+        "change" if matches!(action, Some("merged" | "needs_rebase")) => agent("qal_merge", None),
         "change" => action.is_some_and(|a| a != "list" && a != "show" && a != "diff" && agent("qal_change", Some(a))),
         "lease_break" => agent("qal_lease", Some("break")),
+        "review" => action.is_some_and(|v| agent("qal_review", Some(v))),
+        "rebase" => agent("qal_rebase", None),
+        "merge" => space == Space::Main && agent("qal_merge", None),
         _ => false,
     }
 }

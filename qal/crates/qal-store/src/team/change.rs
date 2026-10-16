@@ -97,15 +97,15 @@ pub fn not_owner(c: &ChangeRow, what: &str) -> Diagnostic {
     Diagnostic::new("E0909", "not_owner", "", "change", format!("{what} is only for the owner of change set {} (`{}`)", c.id, c.owner)).hint("work in your own change set (qal_whoami shows your current one; qal_change list with \"mine\": true)")
 }
 
-fn not_live(c: &ChangeRow) -> Diagnostic {
+pub(crate) fn not_live(c: &ChangeRow) -> Diagnostic {
     state(format!("change set {} is {}: it cannot change any more", c.id, c.status)).hint("open a new change set (qal_change {\"action\": \"open\"})")
 }
 
-fn json_list(s: &str) -> Vec<String> {
+pub(crate) fn json_list(s: &str) -> Vec<String> {
     serde_json::from_str(s).unwrap_or_default()
 }
 
-fn list_json(xs: &[String]) -> String {
+pub(crate) fn list_json(xs: &[String]) -> String {
     Value::from(xs.to_vec()).to_string()
 }
 
@@ -161,11 +161,11 @@ pub(crate) fn role_of(conn: &Connection, member: &str) -> Result<Role, Vec<Diagn
 }
 
 /// A name as `scope` and `qal_lease` take it.
-fn valid_name(n: &str) -> bool {
+pub(crate) fn valid_name(n: &str) -> bool {
     !n.is_empty() && n.len() <= MAX_NAME_LEN && n.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'.')
 }
 
-fn check_names(names: &[String], what: &str, max: usize) -> Result<(), Vec<Diagnostic>> {
+pub(crate) fn check_names(names: &[String], what: &str, max: usize) -> Result<(), Vec<Diagnostic>> {
     if let Some(n) = names.iter().find(|n| !valid_name(n)) {
         return Err(one(bad(format!("`{n}` in `{what}` is not a definition name"))));
     }
@@ -178,7 +178,7 @@ fn check_names(names: &[String], what: &str, max: usize) -> Result<(), Vec<Diagn
 // --- Leases -------------------------------------------------------------------------------
 
 /// The lease on `name`, expired or not.
-fn lease_of(conn: &Connection, name: &str) -> Result<Option<Lease>, Vec<Diagnostic>> {
+pub(crate) fn lease_of(conn: &Connection, name: &str) -> Result<Option<Lease>, Vec<Diagnostic>> {
     conn.query_row("SELECT name, change, member, expires_at FROM leases WHERE name = ?1", params![name], |r| Ok(Lease { name: r.get(0)?, change: r.get(1)?, member: r.get(2)?, expires_at: r.get(3)? }))
         .optional()
         .map_err(sql)
@@ -278,7 +278,7 @@ fn delta_check(conn: &Connection, change: &str, names: &[&str]) -> Result<(), Ve
 // --- The rules of a write in a change set ---------------------------------------------------
 
 /// What an implementer changed about the interface of a stored definition (None: nothing).
-fn interface_change(old: &Def, new: &Def) -> Option<&'static str> {
+pub(crate) fn interface_change(old: &Def, new: &Def) -> Option<&'static str> {
     let (before, after) = (crate::define::signature(old), crate::define::signature(new));
     if before.0 != after.0 {
         return Some("kind");
@@ -610,6 +610,9 @@ pub struct MetaHead {
     pub claimed: bool,
     pub base_seq: i64,
     pub base_root: String,
+    /// Set by a lease break or a merge that touched what the change set builds on; cleared by a
+    /// rebase (review N6: bound and replayed like the rest).
+    pub needs_rebase: bool,
 }
 
 /// A `change_names` row (the list columns as their stored JSON text).
@@ -624,8 +627,9 @@ pub struct MetaRow {
 }
 
 /// Everything a change set's decisions rest on: its `changes` row and every `change_names` row,
-/// rows without a hash included (review I4). Not included: times, `needs_rebase` (a hint others
-/// set), leases and seen-marks (unsigned coordination, spec §9.1).
+/// rows without a hash included (review I4), `needs_rebase` included (review N6: whoever sets it
+/// writes a record in the change set's space). Not included: times, leases and seen-marks
+/// (unsigned coordination, spec §9.1).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Meta {
     pub head: Option<MetaHead>,
@@ -634,13 +638,13 @@ pub struct Meta {
 
 impl Meta {
     /// SHA-256 of the canonical JSON `[head, rows]`: `head` is `[id, title, description, scope,
-    /// owner, assignee, status, claimed, base_seq, base_root]` or null, `rows` the list of
+    /// owner, assignee, status, claimed, base_seq, base_root, needs_rebase]` or null, `rows` the list of
     /// `[name, hash, local_names, refs, origin, base_hash, conflict]` in name order; absent values
     /// are null, never "" (review N2). Every record about a change set signs it (`meta_after`).
     pub fn digest(&self) -> String {
         let opt = |v: &Option<String>| v.as_ref().map_or(Value::Null, |s| Value::from(s.as_str()));
         let head = self.head.as_ref().map_or(Value::Null, |h| {
-            json!([h.id, h.title, h.description, h.scope, h.owner, opt(&h.assignee), h.status, h.claimed, h.base_seq, h.base_root])
+            json!([h.id, h.title, h.description, h.scope, h.owner, opt(&h.assignee), h.status, h.claimed, h.base_seq, h.base_root, h.needs_rebase])
         });
         let rows: Vec<Value> = self.rows.iter().map(|(n, r)| json!([n, opt(&r.hash), r.locals, r.refs, r.origin, opt(&r.base_hash), opt(&r.conflict)])).collect();
         let text = super::canonical::to_string(&json!([head, rows])).unwrap_or_default();
@@ -686,8 +690,20 @@ impl Meta {
 /// The stored metadata of change set `change`.
 pub fn load_meta(conn: &Connection, change: &str) -> Result<Meta, Vec<Diagnostic>> {
     let head = conn
-        .query_row("SELECT id, title, description, scope, owner, assignee, status, claimed, base_seq, base_root FROM changes WHERE id = ?1", params![change], |r| {
-            Ok(MetaHead { id: r.get(0)?, title: r.get(1)?, description: r.get(2)?, scope: r.get(3)?, owner: r.get(4)?, assignee: r.get(5)?, status: r.get(6)?, claimed: r.get::<_, i64>(7)? != 0, base_seq: r.get(8)?, base_root: r.get(9)? })
+        .query_row("SELECT id, title, description, scope, owner, assignee, status, claimed, base_seq, base_root, needs_rebase FROM changes WHERE id = ?1", params![change], |r| {
+            Ok(MetaHead {
+                id: r.get(0)?,
+                title: r.get(1)?,
+                description: r.get(2)?,
+                scope: r.get(3)?,
+                owner: r.get(4)?,
+                assignee: r.get(5)?,
+                status: r.get(6)?,
+                claimed: r.get::<_, i64>(7)? != 0,
+                base_seq: r.get(8)?,
+                base_root: r.get(9)?,
+                needs_rebase: r.get::<_, i64>(10)? != 0,
+            })
         })
         .optional()
         .map_err(sql)?;
@@ -722,7 +738,7 @@ pub struct OpenArgs {
 }
 
 /// Notices `kind` with `body` for every active member with one of `roles`, except `except`.
-fn notify_roles(tx: &Transaction, roles: &[&str], except: &str, kind: &str, body: &Value) -> Result<(), Vec<Diagnostic>> {
+pub(crate) fn notify_roles(tx: &Transaction, roles: &[&str], except: &str, kind: &str, body: &Value) -> Result<(), Vec<Diagnostic>> {
     for m in members_of(tx)?.into_iter().filter(|m| m.revoked_at.is_none() && roles.contains(&m.role.as_str()) && m.id != except) {
         notify(tx, &m.id, kind, body)?;
     }
@@ -730,18 +746,18 @@ fn notify_roles(tx: &Transaction, roles: &[&str], except: &str, kind: &str, body
 }
 
 /// Appends the `change` record of `action` on `row` (its space's names do not change).
-fn record_change(tx: &Transaction, signer: &Signer, id: &str, action: &str, fields: Value) -> Result<i64, Vec<Diagnostic>> {
+pub(crate) fn record_change(tx: &Transaction, signer: &Signer, id: &str, action: &str, fields: Value) -> Result<i64, Vec<Diagnostic>> {
     let space = Space::Change(id.to_string());
     let names = space_rows(tx, &space)?;
     append_in(tx, signer, "change", json!({"id": id, "action": action, "fields": fields}), &space, &names, &names)
 }
 
-fn set_current(tx: &Transaction, session: &str, change: Option<&str>) -> Result<(), Vec<Diagnostic>> {
+pub(crate) fn set_current(tx: &Transaction, session: &str, change: Option<&str>) -> Result<(), Vec<Diagnostic>> {
     tx.execute("UPDATE sessions SET current_change = ?1 WHERE id = ?2", params![change, session]).map(|_| ()).map_err(sql)
 }
 
 /// The JSON of a change set in lists (`root` = its current root).
-fn summary(conn: &Connection, row: &ChangeRow) -> Result<Value, Vec<Diagnostic>> {
+pub(crate) fn summary(conn: &Connection, row: &ChangeRow) -> Result<Value, Vec<Diagnostic>> {
     let count = |origins: &str| -> Result<i64, Vec<Diagnostic>> {
         conn.query_row(&format!("SELECT count(*) FROM change_names WHERE change = ?1 AND origin IN ({origins})"), params![row.id], |r| r.get(0)).map_err(sql)
     };
@@ -765,7 +781,7 @@ fn summary(conn: &Connection, row: &ChangeRow) -> Result<Value, Vec<Diagnostic>>
 }
 
 impl Store {
-    fn team_tx(&mut self, what: &str) -> Result<Transaction<'_>, Vec<Diagnostic>> {
+    pub(crate) fn team_tx(&mut self, what: &str) -> Result<Transaction<'_>, Vec<Diagnostic>> {
         if !super::is_team(&self.conn)? {
             return Err(one(super::not_a_team(what)));
         }
@@ -1132,8 +1148,9 @@ impl Store {
             }
             let space = Space::Change(l.change.clone());
             let held = space_rows(&tx, &space)?;
-            let record = append_in(&tx, signer, "lease_break", json!({"name": n, "change": l.change, "holder": l.member}), &space, &held, &held)?;
+            // The flag is part of the change set's signed metadata: set before its record (N6).
             tx.execute("UPDATE changes SET needs_rebase = 1, updated_at = ?2 WHERE id = ?1", params![l.change, now]).map_err(sql)?;
+            let record = append_in(&tx, signer, "lease_break", json!({"name": n, "change": l.change, "holder": l.member}), &space, &held, &held)?;
             notify(&tx, &l.member, "lease_broken", &json!({"name": n, "change": l.change, "by": signer.member, "record": record}))?;
             broken.push(json!({"name": n, "change": l.change, "holder": l.member, "record": record}));
         }

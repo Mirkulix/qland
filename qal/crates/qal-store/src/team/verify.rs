@@ -13,8 +13,11 @@
 //!    table and the team's `meta` as recorded (E0923);
 //! 5. every definition the names and records refer to is stored and self-verifying: its canonical
 //!    form (and group form) match their hashes, its `deps` rows are exactly its references (E0923).
-//! Rights in change sets are checked as far as the records decide them (role, owner, status of the
-//! change set); scope and interface rules and merge gates come with Phase 4c; leases are not signed.
+//! Rights in change sets are checked as far as the records decide them: role, owner and status of
+//! the change set, an implementer's scope (E0905) and interface (E0906) rules (decided from the
+//! replayed metadata and the definitions in `defs`), a verifier's tests-only rule, reviews (verdict
+//! by role, for the change set's root at that point), and every merge's gate (§7.4) from the review
+//! records it names, with the same function the merge used. Leases are not signed.
 //!
 //! Signatures are checked in parallel, in batches, alongside the sequential replay; the first
 //! failure by sequence number is reported either way.
@@ -141,6 +144,29 @@ struct Change {
     status: String,
     claimed: bool,
     scope: BTreeSet<String>,
+    needs_rebase: bool,
+}
+
+/// A review record as replayed: what its `reviews` row must say.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ReviewRow {
+    seq: i64,
+    change: String,
+    member: String,
+    verdict: String,
+    root: String,
+    comments_sha256: String,
+}
+
+/// An implementer's replacement of an existing name: its interface must stay (checked against the
+/// definitions at the end). The name maps give the names each version was written against.
+struct Interface {
+    seq: i64,
+    name: String,
+    old: String,
+    old_names: BTreeMap<String, String>,
+    new: String,
+    new_names: BTreeMap<String, String>,
 }
 
 /// The replayed state.
@@ -159,6 +185,18 @@ struct State {
     meta: BTreeMap<String, super::change::Meta>,
     /// The seq of the record that opened each change set.
     opened: BTreeMap<String, i64>,
+    /// The reviews of each change set, as the merge gate reads them.
+    reviews: BTreeMap<String, Vec<super::merge::ReviewRec>>,
+    /// Every review record, for the `reviews` table.
+    review_rows: Vec<ReviewRow>,
+    /// A merge record whose change set's `merged` record has not come yet: (seq, change).
+    merge_open: Option<(i64, String)>,
+    /// The merge whose `merged`/`needs_rebase` records may follow now.
+    merge_group: Option<i64>,
+    /// Who first added a name in a change set (seq, member): an architect's names are interface.
+    first_adder: BTreeMap<(String, String), (i64, String)>,
+    /// Implementers' replacements of existing names, checked against `defs` at the end.
+    interfaces: Vec<Interface>,
     /// (seq, hash) of what verifiers defined: must be tests (checked against `defs` at the end).
     verifier_defs: Vec<(i64, String)>,
     /// Every hash a record names.
@@ -232,6 +270,12 @@ pub fn verify(conn: &Connection, trust: Option<&Trust>, from: i64, head: Option<
         metas: BTreeMap::new(),
         meta: BTreeMap::new(),
         opened: BTreeMap::new(),
+        reviews: BTreeMap::new(),
+        review_rows: Vec::new(),
+        merge_open: None,
+        merge_group: None,
+        first_adder: BTreeMap::new(),
+        interfaces: Vec::new(),
         verifier_defs: Vec::new(),
         hashes: BTreeSet::new(),
         owner: String::new(),
@@ -397,7 +441,19 @@ fn after_signature(st: &mut State, p: &Parsed) -> Result<(), Bad> {
     let (before, after) = (text(body, "root_before")?, text(body, "root_after")?);
     // Rights: the matrix for the space as the record found it.
     let space = text(body, "space")?.to_string();
-    let action = args.get("action").and_then(Value::as_str);
+    // A review's `action` for the matrix is its verdict.
+    let action = args.get("action").or_else(|| args.get("verdict")).and_then(Value::as_str);
+    // A merge is one transaction: its record, then the merged change set's `merged` record, then
+    // the `needs_rebase` records of the change sets it affects.
+    let merge_step = op == "change" && matches!(action, Some("merged" | "needs_rebase"));
+    if let Some((m, c)) = &st.merge_open {
+        if !(op == "change" && action == Some("merged") && space == *c) {
+            return Err(unauthorized(format!("record {seq} follows the merge record {m} of change set {c}, which its `merged` record must follow")));
+        }
+    }
+    if !merge_step {
+        st.merge_group = None;
+    }
     let opening = op == "change" && action == Some("open");
     if space != "main" && !opening && !st.changes.contains_key(&space) {
         return Err(unauthorized(format!("record {seq} is about change set {space}, which no record opened")));
@@ -469,6 +525,26 @@ fn after_signature(st: &mut State, p: &Parsed) -> Result<(), Bad> {
             }
             let entries: Vec<Entry> = args.get("entries").cloned().map(serde_json::from_value).transpose().ok().flatten().ok_or_else(|| chain(format!("record {seq} has no valid `entries`")))?;
             let mut rows = st.rows(&space);
+            let before_rows = rows.clone();
+            if role == "implementer" && op == "define" && space != "main" {
+                implementer_rules(st, seq, member, &space, &entries, &before_rows)?;
+            }
+            if op == "define" && space != "main" {
+                for e in entries.iter().filter(|e| e.action == "added") {
+                    st.first_adder.entry((space.clone(), e.name.clone())).or_insert((seq, member.to_string()));
+                }
+            }
+            if op == "rename" && space != "main" {
+                // The history of the old name moves to the new one (ops::rename), so does its adder.
+                if let (Some(from), Some(to)) = (entries.iter().find(|e| e.action == "renamed"), entries.iter().find(|e| e.action == "added")) {
+                    if let Some(a) = st.first_adder.get(&(space.clone(), from.name.clone())).cloned() {
+                        let slot = st.first_adder.entry((space.clone(), to.name.clone())).or_insert(a.clone());
+                        if a.0 < slot.0 {
+                            *slot = a;
+                        }
+                    }
+                }
+            }
             if role == "verifier" {
                 st.verifier_defs.extend(entries.iter().filter(|e| matches!(e.action.as_str(), "added" | "replaced")).filter_map(|e| e.new.clone()).map(|h| (seq, h)));
             }
@@ -517,7 +593,13 @@ fn after_signature(st: &mut State, p: &Parsed) -> Result<(), Bad> {
             if args.get("name").and_then(Value::as_str).is_none() || args.get("change").and_then(Value::as_str) != Some(space.as_str()) {
                 return Err(chain(format!("record {seq} is not a valid lease break")));
             }
+            if let Some(c) = st.changes.get_mut(&space) {
+                c.needs_rebase = true;
+            }
         }
+        "review" => review_op(st, seq, member, role, &space, args)?,
+        "merge" => merge_op(st, seq, member, args)?,
+        "rebase" => rebase_op(st, seq, &space, args)?,
         other => return Err(unauthorized(format!("record {seq} has the unknown operation `{other}`"))),
     }
     if st.root(&space) != after {
@@ -532,6 +614,7 @@ fn after_signature(st: &mut State, p: &Parsed) -> Result<(), Bad> {
                 h.status = c.status.clone();
                 h.claimed = c.claimed;
                 h.scope = Value::from(c.scope.iter().cloned().collect::<Vec<String>>()).to_string();
+                h.needs_rebase = c.needs_rebase;
             }
             if m.digest() != meta {
                 return Err(replay(format!("record {seq}: the metadata of change set {space} it signed differs from the metadata replayed from the records (changed without a record?)")));
@@ -582,6 +665,7 @@ fn change_op(st: &mut State, seq: i64, member: &str, space: &str, action: &str, 
             claimed: !package,
             base_seq: seq - 1,
             base_root: text("base_root"),
+            needs_rebase: false,
         };
         let rows = main
             .iter()
@@ -589,7 +673,25 @@ fn change_op(st: &mut State, seq: i64, member: &str, space: &str, action: &str, 
             .collect();
         st.meta.insert(space.to_string(), super::change::Meta { head: Some(head), rows });
         st.set(space, main);
-        st.changes.insert(space.to_string(), Change { owner: member.to_string(), assignee, status: "open".into(), claimed: !package, scope });
+        st.changes.insert(space.to_string(), Change { owner: member.to_string(), assignee, status: "open".into(), claimed: !package, scope, needs_rebase: false });
+        return Ok(());
+    }
+    if action == "merged" {
+        let ok = st.merge_open.as_ref().is_some_and(|(m, x)| x == space && fields.get("merge").and_then(Value::as_i64) == Some(*m));
+        let c = st.changes.get_mut(space).ok_or_else(|| unauthorized(format!("record {seq}: no change set {space}")))?;
+        if !ok || c.status != "submitted" {
+            return Err(unauthorized(format!("record {seq} ends change set {space} as merged without its merge record before it")));
+        }
+        c.status = "merged".into();
+        st.merge_open = None;
+        return Ok(());
+    }
+    if action == "needs_rebase" {
+        if st.merge_group.is_none() || fields.get("merge").and_then(Value::as_i64) != st.merge_group || st.merge_open.is_some() {
+            return Err(unauthorized(format!("record {seq} flags change set {space} outside of a merge")));
+        }
+        let c = st.changes.get_mut(space).ok_or_else(|| unauthorized(format!("record {seq}: no change set {space}")))?;
+        c.needs_rebase = true;
         return Ok(());
     }
     let c = st.changes.get_mut(space).ok_or_else(|| unauthorized(format!("record {seq}: no change set {space}")))?;
@@ -682,8 +784,9 @@ fn final_state(conn: &Connection, st: &State) -> Result<(), Bad> {
             return Err(replay(format!("the metadata of change set {c} (change_names origin/base_hash/conflict, rows without a hash, or its changes row) differs from the records")));
         }
         let base_seq: i64 = conn.query_row("SELECT base_seq FROM changes WHERE id = ?1", params![c], |r| r.get(0)).map_err(sqlerr)?;
-        if st.opened.get(c).map(|s| s - 1) != Some(base_seq) {
-            return Err(replay(format!("change set {c}'s base_seq is not the record before the one that opened it")));
+        let replayed_base = st.meta.get(c).and_then(|m| m.head.as_ref()).map(|h| h.base_seq);
+        if !st.opened.contains_key(c) || replayed_base != Some(base_seq) {
+            return Err(replay(format!("change set {c}'s base_seq is not the record before the one that opened (or last rebased) it")));
         }
         if st.digests.get(c).is_some_and(|d| *d != names_digest(conn, &replayed).unwrap_or_default()) {
             return Err(replay(format!("the stored definitions of change set {c}'s names differ from what its last record signed")));
@@ -720,6 +823,34 @@ fn final_state(conn: &Connection, st: &State) -> Result<(), Bad> {
     if seen != st.members.len() {
         return Err(replay("the members table lacks members the records added".into()));
     }
+    if let Some((m, c)) = &st.merge_open {
+        return Err(replay(format!("the merge record {m} of change set {c} is the last record: its `merged` record is missing")));
+    }
+    // The reviews table says what the review records say (the merge gate reads both).
+    {
+        let mut stmt = conn.prepare("SELECT record, change, member, verdict, root, comments FROM reviews ORDER BY record").map_err(sqlerr)?;
+        let rows = stmt.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, String>(3)?, r.get::<_, String>(4)?, r.get::<_, String>(5)?))).map_err(sqlerr)?;
+        let mut stored = Vec::new();
+        for row in rows {
+            let (seq, change, member, verdict, root, comments) = row.map_err(sqlerr)?;
+            stored.push(ReviewRow { seq, change, member, verdict, root, comments_sha256: Hash::of(comments.as_bytes()).to_hex() });
+        }
+        if stored != st.review_rows {
+            let at = stored.iter().zip(&st.review_rows).find(|(a, b)| a != b).map_or_else(|| "a row is missing or extra".to_string(), |(a, _)| format!("the review of record {}", a.seq));
+            return Err(replay(format!("the reviews table differs from the review records ({at})")));
+        }
+    }
+    // An implementer kept the interface of every existing name it replaced (§8, E0906).
+    if !st.interfaces.is_empty() {
+        let snap = Snapshot::load(conn, &Space::Main).map_err(db)?;
+        for i in &st.interfaces {
+            let old = decode_named(&snap, conn, &i.old, &i.name, &i.old_names)?;
+            let new = decode_named(&snap, conn, &i.new, &i.name, &i.new_names)?;
+            if let Some(what) = super::change::interface_change(&old, &new) {
+                return Err(unauthorized(format!("record {}: an implementer changed the {what} of `{}`, which is interface", i.seq, i.name)));
+            }
+        }
+    }
     // Verifiers write only tests (§8), decided by the kind of what their records defined.
     for (seq, h) in &st.verifier_defs {
         let kind: Option<String> = conn.query_row("SELECT kind FROM defs WHERE hash = ?1", params![h], |r| r.get(0)).optional().map_err(sqlerr)?;
@@ -739,6 +870,176 @@ fn final_state(conn: &Connection, st: &State) -> Result<(), Bad> {
         expected.sort();
         if stored != expected {
             return Err(replay(format!("the dependencies stored for #{h} are not the ones its definition refers to")));
+        }
+    }
+    Ok(())
+}
+
+/// Applies the `entries` of a record to the rows of `space` (each `old` must be what the name had).
+fn apply_entries(st: &mut State, seq: i64, space: &str, entries: &[Entry]) -> Result<(), Bad> {
+    let mut rows = st.rows(space);
+    for e in entries {
+        let had = rows.get(&e.name).map(|r| &r.hash);
+        if had != e.old.as_ref() {
+            return Err(replay(format!("record {seq}: `{}` had {} before it, the record says {}", e.name, had.map_or("no definition", |s| s.as_str()), e.old.as_deref().unwrap_or("none"))));
+        }
+        st.hashes.extend(e.old.iter().chain(e.new.iter()).cloned());
+        match (&e.new, &e.refs, &e.locals) {
+            (Some(h), Some(refs), Some(locals)) => {
+                rows.insert(e.name.clone(), NameRow { hash: h.clone(), refs: refs.clone(), locals: locals.clone() });
+            }
+            (None, _, _) => {
+                rows.remove(&e.name);
+            }
+            _ => return Err(chain(format!("record {seq}: the entry of `{}` has no refs or local names", e.name))),
+        }
+    }
+    if !entries.is_empty() {
+        st.set(space, rows);
+    }
+    Ok(())
+}
+
+fn entries_of(args: &Value, seq: i64) -> Result<Vec<Entry>, Bad> {
+    args.get("entries").cloned().map(serde_json::from_value).transpose().ok().flatten().ok_or_else(|| chain(format!("record {seq} has no valid `entries`")))
+}
+
+/// An implementer's define in a change set (§8): an existing name (in the base, or added there by
+/// an architect) only inside the scope (E0905), and with its interface kept (E0906, checked at the end).
+fn implementer_rules(st: &mut State, seq: i64, member: &str, space: &str, entries: &[Entry], before: &Rows) -> Result<(), Bad> {
+    let Some(c) = st.changes.get(space) else { return Ok(()) };
+    let meta = st.meta.get(space);
+    let mut after = before.clone();
+    for e in entries {
+        match (&e.new, &e.refs, &e.locals) {
+            (Some(h), Some(refs), Some(locals)) => {
+                after.insert(e.name.clone(), NameRow { hash: h.clone(), refs: refs.clone(), locals: locals.clone() });
+            }
+            _ => {
+                after.remove(&e.name);
+            }
+        }
+    }
+    let names_of = |rows: &Rows, refs: &[String]| -> BTreeMap<String, String> { refs.iter().filter_map(|r| rows.get(r).map(|x| (x.hash.clone(), r.clone()))).collect() };
+    let mut found = Vec::new();
+    for e in entries.iter().filter(|e| matches!(e.action.as_str(), "added" | "replaced")) {
+        let Some(old) = before.get(&e.name) else { continue };
+        let in_base = meta.and_then(|m| m.rows.get(&e.name)).is_some_and(|r| r.base_hash.is_some());
+        let by_architect = st.first_adder.get(&(space.to_string(), e.name.clone())).is_some_and(|(_, who)| who != member && st.members.get(who).is_some_and(|m| m.role == "architect"));
+        if !in_base && !by_architect {
+            continue;
+        }
+        if !c.scope.contains(&e.name) {
+            return Err(unauthorized(format!("record {seq}: the implementer `{member}` changed `{}`, which exists and is not in the scope of change set {space}", e.name)));
+        }
+        if let (Some(new), Some(refs)) = (&e.new, &e.refs) {
+            found.push(Interface { seq, name: e.name.clone(), old: old.hash.clone(), old_names: names_of(before, &old.refs), new: new.clone(), new_names: names_of(&after, refs) });
+        }
+    }
+    st.interfaces.extend(found);
+    Ok(())
+}
+
+/// Decodes the definition `hash` as `name`, naming each reference by `names` (hash -> name).
+fn decode_named(snap: &Snapshot, conn: &Connection, hash: &str, name: &str, names: &BTreeMap<String, String>) -> Result<qal_core::ast::Def, Bad> {
+    let h = Hash::from_hex(hash).ok_or_else(|| replay(format!("`{hash}` is not a hash")))?;
+    let row = snap.row(conn, &h).map_err(|d| replay(d.into_iter().next().map_or_else(String::new, |d| d.message)))?.ok_or_else(|| replay(format!("the definition #{hash} is not stored")))?;
+    let locals = row.local_names.clone();
+    row.decode(name, &locals, &mut |r| names.get(&r.to_hex()).cloned().unwrap_or_else(|| format!("#{}", r.short()))).map_err(|e| replay(format!("#{hash}: {e}")))
+}
+
+/// A `review` record (§9.1): a verdict the matrix allows the role, by a member for the root the
+/// change set had then; every verdict but `comment` needs it submitted; `changes` reopens it.
+fn review_op(st: &mut State, seq: i64, member: &str, role: &str, space: &str, args: &Value) -> Result<(), Bad> {
+    let verdict = args.get("verdict").and_then(Value::as_str).filter(|v| super::merge::VERDICTS.contains(v)).ok_or_else(|| chain(format!("record {seq} has no valid verdict")))?;
+    let root = args.get("root").and_then(Value::as_str).ok_or_else(|| chain(format!("record {seq} names no root")))?;
+    let sha = args.get("comments_sha256").and_then(Value::as_str).filter(|h| canonical::is_hex64(h)).ok_or_else(|| chain(format!("record {seq} has no comments digest")))?;
+    if args.get("change").and_then(Value::as_str) != Some(space) {
+        return Err(chain(format!("record {seq} reviews another change set than its space")));
+    }
+    if root != st.root(space) {
+        return Err(replay(format!("record {seq} reviews change set {space} at a root it did not have then")));
+    }
+    let c = st.changes.get_mut(space).ok_or_else(|| unauthorized(format!("record {seq}: no change set {space}")))?;
+    if verdict != "comment" && c.status != "submitted" {
+        return Err(unauthorized(format!("record {seq} gives the verdict `{verdict}` to change set {space}, which is {}", c.status)));
+    }
+    if verdict == "changes" {
+        c.status = "open".into();
+    }
+    st.reviews.entry(space.to_string()).or_default().push(super::merge::ReviewRec { seq, member: member.into(), role: role.into(), verdict: verdict.into(), root: root.into() });
+    st.review_rows.push(ReviewRow { seq, change: space.into(), member: member.into(), verdict: verdict.into(), root: root.into(), comments_sha256: sha.into() });
+    Ok(())
+}
+
+/// A `merge` record (on main): the change set was submitted, had no conflict marks, its root is
+/// the one recorded, the gate held with exactly the reviews named (the same rule as at merge time,
+/// with the roles and revocations then), and a fast-forward is one exactly when main had not
+/// moved; its entries replay on main (a fast-forward's give exactly the change set's names).
+fn merge_op(st: &mut State, seq: i64, member: &str, args: &Value) -> Result<(), Bad> {
+    let c = args.get("change").and_then(Value::as_str).ok_or_else(|| chain(format!("record {seq} names no change set")))?.to_string();
+    let ch = st.changes.get(&c).cloned().ok_or_else(|| unauthorized(format!("record {seq} merges change set {c}, which no record opened")))?;
+    if ch.status != "submitted" {
+        return Err(unauthorized(format!("record {seq} merges change set {c}, which is {}", ch.status)));
+    }
+    let root = args.get("change_root").and_then(Value::as_str).ok_or_else(|| chain(format!("record {seq} has no change_root")))?;
+    if root != st.root(&c) {
+        return Err(replay(format!("record {seq} merges change set {c} at a root it did not have")));
+    }
+    let meta = st.meta.get(&c).cloned().unwrap_or_default();
+    if meta.rows.values().any(|r| r.conflict.is_some()) {
+        return Err(unauthorized(format!("record {seq} merges change set {c} with conflict marks")));
+    }
+    let reviews: Vec<super::merge::ReviewRec> = st.reviews.get(&c).cloned().unwrap_or_default().into_iter().filter(|r| st.members.get(&r.member).is_some_and(|m| !m.revoked)).collect();
+    let (a, v) = super::merge::gate(&reviews, &ch.owner, root).map_err(|m| unauthorized(format!("record {seq}: `{member}` merged change set {c} without its gate: it needed {m}")))?;
+    let named: Vec<i64> = args.get("reviews").and_then(Value::as_array).map(|xs| xs.iter().filter_map(Value::as_i64).collect()).unwrap_or_default();
+    if named != [a, v] {
+        return Err(unauthorized(format!("record {seq} names the reviews {named:?}, but the gate of change set {c} rests on records {a} and {v}")));
+    }
+    let base_root = meta.head.as_ref().map(|h| h.base_root.clone()).unwrap_or_default();
+    let fast_forward = st.root("main") == base_root;
+    let kind = args.get("kind").and_then(Value::as_str);
+    if kind != Some(if fast_forward { "fast_forward" } else { "replayed" }) {
+        return Err(replay(format!("record {seq} says it is a {} merge, but main {} since the base of change set {c}", kind.unwrap_or("?"), if fast_forward { "had not moved" } else { "had moved" })));
+    }
+    let entries = entries_of(args, seq)?;
+    apply_entries(st, seq, "main", &entries)?;
+    if fast_forward && st.rows("main") != st.rows(&c) {
+        return Err(replay(format!("record {seq}: the fast-forward of change set {c} does not give exactly its names")));
+    }
+    st.merge_open = Some((seq, c));
+    st.merge_group = Some(seq);
+    Ok(())
+}
+
+/// A `rebase` record (§7.3, in the change set's space): its entries replay on the change set, its
+/// base becomes main as it is now, and its metadata follows [`super::merge::rebase_meta`].
+fn rebase_op(st: &mut State, seq: i64, space: &str, args: &Value) -> Result<(), Bad> {
+    let base_root = args.get("base_root").and_then(Value::as_str).ok_or_else(|| chain(format!("record {seq} has no base_root")))?.to_string();
+    if base_root != st.root("main") {
+        return Err(replay(format!("record {seq} rebases change set {space} onto a root main did not have")));
+    }
+    let mut marks = BTreeMap::new();
+    for c in args.get("conflicts").and_then(Value::as_array).ok_or_else(|| chain(format!("record {seq} has no conflict list")))? {
+        let name = c.get("name").and_then(Value::as_str).ok_or_else(|| chain(format!("record {seq} has a conflict without a name")))?;
+        marks.insert(name.to_string(), super::merge::conflict_mark(c.get("base").and_then(Value::as_str), c.get("theirs").and_then(Value::as_str)));
+    }
+    let root_before = st.root(space);
+    let entries = entries_of(args, seq)?;
+    apply_entries(st, seq, space, &entries)?;
+    let changed_root = st.root(space) != root_before;
+    let (main, after) = (st.rows("main"), st.rows(space));
+    if let Some(m) = st.meta.get_mut(space) {
+        m.rows = super::merge::rebase_meta(m, &main, &after, &marks);
+        if let Some(h) = m.head.as_mut() {
+            h.base_seq = seq - 1;
+            h.base_root = base_root;
+        }
+    }
+    if let Some(c) = st.changes.get_mut(space) {
+        c.needs_rebase = false;
+        if c.status == "submitted" && changed_root {
+            c.status = "open".into();
         }
     }
     Ok(())

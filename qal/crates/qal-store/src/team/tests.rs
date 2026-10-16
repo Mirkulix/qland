@@ -178,9 +178,10 @@ fn the_policy_matrix() {
     assert_eq!(policy::allowed_roles("qal_lease", Some("break"), Space::Main), [Architect]);
     assert!(policy::rule("qal_lease", None, Architect).is_none(), "lease needs an action");
     // tools/list: only available tools; reviewers do not see writes.
-    assert_eq!(policy::tools_for(Reviewer), ["qal_view", "qal_query", "qal_history", "qal_whoami", "qal_verify", "qal_test", "qal_prove", "qal_run", "qal_call", "qal_request", "qal_build", "qal_change"]);
+    assert_eq!(policy::tools_for(Reviewer), ["qal_view", "qal_query", "qal_history", "qal_whoami", "qal_verify", "qal_test", "qal_prove", "qal_run", "qal_call", "qal_request", "qal_build", "qal_change", "qal_review", "qal_merge"]);
     assert!(policy::tools_for(Implementer).contains(&"qal_define") && !policy::tools_for(Implementer).contains(&"qal_rename"));
-    assert_eq!(policy::tools_for(Architect).len(), 16);
+    assert_eq!(policy::tools_for(Architect).len(), 19);
+    assert!(!policy::tools_for(Implementer).contains(&"qal_review") && policy::tools_for(Implementer).contains(&"qal_rebase"));
     // E0903 names the roles that may.
     let d = policy::forbidden("qal_define", None, Implementer, Space::Main);
     assert_eq!((d.code, d.kind, d.expected.as_deref(), d.found.as_deref()), ("E0903", "role_forbidden", Some("nobody"), Some("implementer")));
@@ -196,6 +197,12 @@ fn the_policy_matrix() {
     assert!(ok("lease_break", None, "architect", Space::ForeignOther) && !ok("lease_break", None, "implementer", Space::ForeignOther));
     assert!(ok("member_add", None, OWNER, Space::Main) && !ok("member_add", None, "architect", Space::Main));
     assert!(!ok("frobnicate", None, OWNER, Space::Main));
+    // Phase 4c: reviews by verdict, merges on main only, rebases by the owner, the merge's own records.
+    assert!(ok("review", Some("approve"), "reviewer", Space::ForeignSubmitted) && !ok("review", Some("approve"), "verifier", Space::ForeignSubmitted) && !ok("review", None, "reviewer", Space::ForeignSubmitted));
+    assert!(ok("review", Some("verified"), "verifier", Space::ForeignSubmitted) && ok("review", Some("comment"), "architect", Space::ForeignOther));
+    assert!(ok("merge", None, "reviewer", Space::Main) && ok("merge", None, "architect", Space::Main) && !ok("merge", None, "reviewer", Space::Own) && !ok("merge", None, "implementer", Space::Main));
+    assert!(ok("rebase", None, "implementer", Space::Own) && !ok("rebase", None, "implementer", Space::ForeignSubmitted) && !ok("rebase", None, "reviewer", Space::Own));
+    assert!(ok("change", Some("merged"), "reviewer", Space::ForeignSubmitted) && ok("change", Some("needs_rebase"), "architect", Space::ForeignOther) && !ok("change", Some("merged"), "implementer", Space::Own));
 }
 
 #[test]
@@ -1053,4 +1060,390 @@ fn tampered_metadata_is_found_after_later_writes() {
     raw(&s).execute("UPDATE changes SET base_root = 'aa'", []).unwrap();
     write_in(&mut s, &keys, &imp, &c, "fn x() -> Int = 1").unwrap();
     assert_eq!(code(&verified(&mut s, None)), "E0923");
+}
+
+// --- Phase 4c: review, merge, rebase ------------------------------------------------------------
+
+/// [`full_team`] plus a reviewer `rev-1`: (store, keys, owner, arch, imp, ver, rev).
+fn merge_team() -> (Store, KeyDir, Signer, Signer, Signer, Signer, Signer) {
+    let (mut s, keys, owner, arch, imp, ver, _imp2) = full_team();
+    let r = s.team_add(&owner, "rev-1", Role::Reviewer, &keys).unwrap();
+    let rev = Signer { member: "rev-1".into(), session: "s000000000005".into(), key: keys.load(s.project_dir().unwrap(), &r.key_id).unwrap() };
+    (s, keys, owner, arch, imp, ver, rev)
+}
+
+/// A merge whose check accepts (the store has no prover or runtime: the command line's check, with
+/// fresh proofs and the tests, is tested over MCP).
+fn merge_as(s: &mut Store, keys: &KeyDir, who: &Signer, c: &str) -> Result<Value, Vec<qal_core::diag::Diagnostic>> {
+    let signer = again(keys, s, who);
+    let mut run = |_: &qal_core::ast::Program, _: &qal_core::tast::TProgram, _: &[(String, String)]| Ok(merge::MergeChecked::default());
+    let mut check = merge::MergeCheck { key: "test".into(), run: &mut run };
+    s.merge(&signer, c, &mut check)
+}
+
+/// Submits `c` (by its owner `who`), then a verifier's `verified` and a reviewer's `approve`.
+fn pass_gate(s: &mut Store, who: &Signer, ver: &Signer, rev: &Signer, c: &str) {
+    if s.change(c).unwrap().unwrap().status == "open" {
+        s.change_submit(who, c).unwrap();
+    }
+    s.review(ver, c, "verified", &[]).unwrap();
+    s.review(rev, c, "approve", &[merge::Comment { name: None, text: "fine".into() }]).unwrap();
+}
+
+fn main_hash(s: &Store, n: &str) -> Option<String> {
+    raw(s).query_row("SELECT hash FROM names WHERE name = ?1", [n], |r| r.get(0)).ok()
+}
+
+fn change_hash(s: &Store, c: &str, n: &str) -> Option<String> {
+    raw(s).query_row("SELECT hash FROM change_names WHERE change = ?1 AND name = ?2", [c, n], |r| r.get::<_, Option<String>>(0)).ok().flatten()
+}
+
+fn ok_verify(s: &mut Store) {
+    let trust = Trust::parse(&s.team_trust().unwrap().to_string()).unwrap();
+    let o = verified(s, Some(&trust));
+    assert!(o.ok, "{o:?}");
+}
+
+/// §7.2 row 1, the gate (§7.4) and the end of a merged change set.
+#[test]
+fn a_fast_forward_takes_the_change_set_as_it_is() {
+    let (mut s, keys, _owner, arch, _imp, ver, rev) = merge_team();
+    let c = open(&mut s, &arch, "skeleton", &[], None);
+    write_in(&mut s, &keys, &arch, &c, "fn f() -> Int = base() + 1\ntest f_two = f() == 2").unwrap();
+    // The gate: submitted, then verified and approved by non-owners for the current root.
+    assert_eq!(merge_as(&mut s, &keys, &rev, &c).unwrap_err()[0].code, "E0913", "open");
+    s.change_submit(&arch, &c).unwrap();
+    assert_eq!(s.review(&rev, &c, "verified", &[]).unwrap_err()[0].code, "E0903", "a reviewer does not verify");
+    assert_eq!(s.review(&ver, &c, "approve", &[]).unwrap_err()[0].code, "E0903", "a verifier does not approve");
+    s.review(&ver, &c, "verified", &[]).unwrap();
+    let e = merge_as(&mut s, &keys, &rev, &c).unwrap_err();
+    assert!(e[0].code == "E0913" && e[0].message.contains("approve"), "{e:?}");
+    assert_eq!(merge_as(&mut s, &keys, &ver, &c).unwrap_err()[0].code, "E0903", "a verifier does not merge");
+    let r = s.review(&rev, &c, "approve", &[]).unwrap();
+    assert_eq!(r["verdict"], "approve");
+    let root = r["root"].as_str().unwrap().to_string();
+    let f = change_hash(&s, &c, "f");
+    let m = merge_as(&mut s, &keys, &rev, &c).unwrap();
+    assert_eq!((m["kind"].as_str(), m["rehashed"].as_array().map(Vec::len)), (Some("fast_forward"), Some(0)), "{m}");
+    // Main is the change set's view, hash for hash; the change set ends, its leases are free.
+    assert_eq!(main_hash(&s, "f"), f);
+    assert!(main_hash(&s, "f_two").is_some());
+    let row = s.change(&c).unwrap().unwrap();
+    assert_eq!(row.status, "merged");
+    assert!(s.leases(&c).unwrap().is_empty());
+    assert_eq!(s.root_of_space(&crate::Space::Main).unwrap(), root);
+    // A merged change set takes nothing more.
+    assert_eq!(merge_as(&mut s, &keys, &rev, &c).unwrap_err()[0].code, "E0908");
+    assert_eq!(s.review(&rev, &c, "approve", &[]).unwrap_err()[0].code, "E0908");
+    // Everyone else hears of it.
+    let (n, _) = s.take_notices(&s.team_log().unwrap(), "impl-1", 50).unwrap();
+    assert!(n.iter().any(|n| n.kind == "merged"), "{n:?}");
+    let (n, _) = s.take_notices(&s.team_log().unwrap(), "arch-1", 50).unwrap();
+    assert!(n.iter().filter(|n| n.kind == "review").count() >= 2, "the owner hears of reviews: {n:?}");
+    ok_verify(&mut s);
+}
+
+/// §7.2 rows 2, 3 and 4: main moved since the base; clean names are replayed (and rehashed), a
+/// definition both reached is converged, a name main only relinked takes the change set's text.
+#[test]
+fn a_merge_replays_onto_a_moved_main() {
+    let (mut s, keys, _owner, arch, _imp, ver, rev) = seeded();
+    // Two change sets from the same base (leases: b writes the shared names after a's merge).
+    let a = open(&mut s, &arch, "a", &[], None);
+    let b = open(&mut s, &arch, "b", &[], None);
+    write_in(&mut s, &keys, &arch, &a, "fn base() -> Int = 2\nfn same() -> Int = 7").unwrap();
+    write_in(&mut s, &keys, &arch, &b, "fn g() -> Int = base() + uses()\nfn uses() -> Int = base() * 100").unwrap();
+    pass_gate(&mut s, &arch, &ver, &rev, &a);
+    assert_eq!(merge_as(&mut s, &keys, &rev, &a).unwrap()["kind"], "fast_forward");
+    write_in(&mut s, &keys, &arch, &b, "fn same() -> Int = 7").unwrap();
+    // `uses` was only relinked in main (row 4), `g` is new (row 2), `same` converged (row 3).
+    pass_gate(&mut s, &arch, &ver, &rev, &b);
+    let ours_g = change_hash(&s, &b, "g");
+    let m = merge_as(&mut s, &keys, &rev, &b).unwrap();
+    assert_eq!(m["kind"], "replayed", "{m}");
+    let rehashed: Vec<&str> = m["rehashed"].as_array().unwrap().iter().map(|x| x.as_str().unwrap()).collect();
+    assert!(rehashed.contains(&"g") && rehashed.contains(&"uses"), "{m}");
+    assert_ne!(main_hash(&s, "g"), ours_g, "g refers to the new base");
+    // The merged main has both changes: base from a, uses from b (against a's base).
+    s.set_space(crate::Space::Main);
+    let text = s.view(&["uses".into(), "base".into()]).unwrap();
+    assert!(text[0].text.contains("100") && text[1].text.contains("= 2"), "{text:?}");
+    let entries = m["entries"].as_array().unwrap();
+    assert!(!entries.iter().any(|e| e["name"] == "same"), "converged: nothing to do");
+    ok_verify(&mut s);
+}
+
+/// [`merge_team`] whose main also has `spare` and `uses` (merged by a first change set).
+fn seeded() -> (Store, KeyDir, Signer, Signer, Signer, Signer, Signer) {
+    let (mut s, keys, owner, arch, imp, ver, rev) = merge_team();
+    let c0 = open(&mut s, &arch, "seed", &[], None);
+    write_in(&mut s, &keys, &arch, &c0, "fn spare() -> Int = 2\nfn uses() -> Int = base() * 10").unwrap();
+    pass_gate(&mut s, &arch, &ver, &rev, &c0);
+    merge_as(&mut s, &keys, &rev, &c0).unwrap();
+    (s, keys, owner, arch, imp, ver, rev)
+}
+
+/// The open change sets `a` and `b` (both from the current main) for the conflict tests.
+fn two_from_one_base(s: &mut Store, arch: &Signer) -> (String, String) {
+    (open(s, arch, "a", &[], None), open(s, arch, "b", &[], None))
+}
+
+/// §7.2 rows 5, 6 and 7: edit/edit, add/add and rename conflicts are E0910 with their detail.
+#[test]
+fn real_conflicts_are_refused_with_what_main_did() {
+    let (mut s, keys, _owner, arch, _imp, ver, rev) = seeded();
+    let (a, b) = two_from_one_base(&mut s, &arch);
+    write_in(&mut s, &keys, &arch, &a, "fn spare() -> Int = 5\nfn twin() -> Int = 1").unwrap();
+    s.set_space(crate::Space::Change(a.clone()));
+    s.rename("base", "base1", "x").unwrap();
+    pass_gate(&mut s, &arch, &ver, &rev, &a);
+    merge_as(&mut s, &keys, &rev, &a).unwrap();
+    assert!(main_hash(&s, "base").is_none() && main_hash(&s, "base1").is_some(), "the rename reached main");
+    // b (from the old base) edits `spare`, adds another `twin` and edits `base`.
+    write_in(&mut s, &keys, &arch, &b, "fn spare() -> Int = 6\nfn twin() -> Int = 2\nfn base() -> Int = 3").unwrap();
+    pass_gate(&mut s, &arch, &ver, &rev, &b);
+    let e = merge_as(&mut s, &keys, &rev, &b).unwrap_err();
+    let kinds: BTreeMap<String, String> = e.iter().map(|d| (d.def.clone(), d.detail.as_ref().unwrap()["conflict"].as_str().unwrap().to_string())).collect();
+    assert_eq!(kinds, [("base".to_string(), "rename".to_string()), ("spare".into(), "edit_edit".into()), ("twin".into(), "add_add".into())].into(), "{e:?}");
+    assert!(e.iter().all(|d| d.code == "E0910" && d.kind == "merge_conflict"));
+    let spare = e.iter().find(|d| d.def == "spare").unwrap().detail.clone().unwrap();
+    assert_eq!(spare["theirs_by"], "rev-1", "the merging member wrote main");
+    assert!(spare["record"].as_i64().is_some() && spare["base"].is_string() && spare["ours"].is_string() && spare["theirs"].is_string(), "{spare}");
+    assert_eq!(s.change(&b).unwrap().unwrap().status, "submitted", "nothing changed");
+    ok_verify(&mut s);
+}
+
+/// §7.2 semantic conflicts: a signature b uses changed in main; a signature b changes got new
+/// dependents in main. Both E0911 with the inner diagnostics; nothing is written.
+#[test]
+fn semantic_conflicts_fail_the_check() {
+    let (mut s, keys, _owner, arch, _imp, ver, rev) = seeded();
+    let (a, b) = two_from_one_base(&mut s, &arch);
+    write_in(&mut s, &keys, &arch, &a, "fn spare(x: Int) -> Int = x").unwrap();
+    pass_gate(&mut s, &arch, &ver, &rev, &a);
+    merge_as(&mut s, &keys, &rev, &a).unwrap();
+    write_in(&mut s, &keys, &arch, &b, "fn user() -> Int = spare() + 1").unwrap();
+    pass_gate(&mut s, &arch, &ver, &rev, &b);
+    let records = count(&s, "records");
+    let e = merge_as(&mut s, &keys, &rev, &b).unwrap_err();
+    assert_eq!((e[0].code, e[0].kind), ("E0911", "merge_check_failed"), "{e:?}");
+    assert!(e.len() > 1 && e[1..].iter().any(|d| d.def == "user"), "the inner diagnostics follow: {e:?}");
+    assert_eq!(count(&s, "records"), records, "nothing written");
+    // A signature the change set changes got a new dependent in main.
+    let (c, d) = two_from_one_base(&mut s, &arch);
+    write_in(&mut s, &keys, &arch, &c, "fn newuser() -> Int = base() + 1").unwrap();
+    pass_gate(&mut s, &arch, &ver, &rev, &c);
+    merge_as(&mut s, &keys, &rev, &c).unwrap();
+    write_in(&mut s, &keys, &arch, &d, "fn base(x: Int) -> Int = x\nfn uses() -> Int = base(1) * 10").unwrap();
+    pass_gate(&mut s, &arch, &ver, &rev, &d);
+    let e = merge_as(&mut s, &keys, &rev, &d).unwrap_err();
+    assert_eq!(e[0].code, "E0911", "{e:?}");
+    assert!(e.iter().any(|x| x.kind == "signature_change" && x.dependents.contains(&"newuser".to_string())), "{e:?}");
+    ok_verify(&mut s);
+}
+
+/// §7.3: a rebase marks conflicts and keeps the change set's version; a merge refuses marks
+/// (E0908); a define of the name resolves it; then the merge goes through. needs_rebase is set by
+/// the merge that caused it (with a record in the flagged change set's space, review N6) and
+/// cleared by the rebase.
+#[test]
+fn a_rebase_marks_conflicts_and_their_resolution_merges() {
+    let (mut s, keys, _owner, arch, _imp, ver, rev) = seeded();
+    let (a, b) = two_from_one_base(&mut s, &arch);
+    write_in(&mut s, &keys, &arch, &b, "fn mine() -> Int = spare()").unwrap();
+    write_in(&mut s, &keys, &arch, &a, "fn spare(x: Int) -> Int = x + 5").unwrap();
+    pass_gate(&mut s, &arch, &ver, &rev, &a);
+    let m = merge_as(&mut s, &keys, &rev, &a).unwrap();
+    assert_eq!(m["needs_rebase"][0]["change"], b.as_str(), "{m}");
+    assert!(s.change(&b).unwrap().unwrap().needs_rebase);
+    let (n, _) = s.take_notices(&s.team_log().unwrap(), "arch-1", 50).unwrap();
+    assert!(n.iter().any(|n| n.kind == "needs_rebase"), "{n:?}");
+    ok_verify(&mut s);
+    // b changes `spare` too (a's lease is free since its merge): a conflict to mark.
+    write_in(&mut s, &keys, &arch, &b, "fn spare() -> Int = 6").unwrap();
+    // Rebase: `spare` keeps b's version with a mark; `mine` is replayed.
+    let ours = change_hash(&s, &b, "spare");
+    let r = s.rebase(&again(&keys, &s, &arch), &b, None).unwrap();
+    assert_eq!(r["conflicts"][0]["name"], "spare", "{r}");
+    assert_eq!(r["conflicts"][0]["theirs"].as_str(), main_hash(&s, "spare").as_deref());
+    assert_eq!(change_hash(&s, &b, "spare"), ours);
+    let row = s.change(&b).unwrap().unwrap();
+    assert!(!row.needs_rebase && row.base_root == s.root_of_space(&crate::Space::Main).unwrap());
+    ok_verify(&mut s);
+    pass_gate(&mut s, &arch, &ver, &rev, &b);
+    assert_eq!(merge_as(&mut s, &keys, &rev, &b).unwrap_err()[0].code, "E0908", "conflict marks");
+    // Resolve: define it again (the mark goes), submit, reviews again, merge.
+    write_in(&mut s, &keys, &arch, &b, "fn spare() -> Int = 7").unwrap();
+    let marks: i64 = raw(&s).query_row("SELECT count(*) FROM change_names WHERE change = ?1 AND conflict IS NOT NULL", [&b], |r| r.get(0)).unwrap();
+    assert_eq!(marks, 0);
+    pass_gate(&mut s, &arch, &ver, &rev, &b);
+    let m = merge_as(&mut s, &keys, &rev, &b).unwrap();
+    assert_eq!(m["kind"], "fast_forward", "rebased onto main: {m}");
+    s.set_space(crate::Space::Main);
+    assert!(s.view(&["spare".into()]).unwrap()[0].text.contains("7"));
+    // A rebase with nothing to do changes nothing.
+    let c = open(&mut s, &arch, "c", &[], None);
+    let records = count(&s, "records");
+    assert_eq!(s.rebase(&again(&keys, &s, &arch), &c, None).unwrap()["unchanged"], true);
+    assert_eq!(count(&s, "records"), records);
+    ok_verify(&mut s);
+}
+
+/// §7.3: a rebase whose replay does not check changes nothing and names what to adapt.
+#[test]
+fn a_rebase_that_does_not_check_changes_nothing() {
+    let (mut s, keys, _owner, arch, _imp, ver, rev) = seeded();
+    let (a, b) = two_from_one_base(&mut s, &arch);
+    write_in(&mut s, &keys, &arch, &a, "fn spare(x: Int) -> Int = x").unwrap();
+    write_in(&mut s, &keys, &arch, &b, "fn user() -> Int = spare() + 1").unwrap();
+    pass_gate(&mut s, &arch, &ver, &rev, &a);
+    merge_as(&mut s, &keys, &rev, &a).unwrap();
+    let records = count(&s, "records");
+    let before = s.change(&b).unwrap().unwrap();
+    let e = s.rebase(&again(&keys, &s, &arch), &b, None).unwrap_err();
+    assert_eq!(e[0].code, "E0911", "{e:?}");
+    assert!(e[0].detail.as_ref().unwrap()["names"].as_array().unwrap().iter().any(|n| n == "user"), "{e:?}");
+    assert_eq!((count(&s, "records"), s.change(&b).unwrap().unwrap().base_root), (records, before.base_root));
+    // Others may not rebase it.
+    assert_eq!(s.rebase(&again(&keys, &s, &rev), &b, None).unwrap_err()[0].code, "E0903");
+    ok_verify(&mut s);
+}
+
+/// §7.4: the gate is not undermined by self-approval, stale reviews, `changes` or `failed`.
+#[test]
+fn the_merge_gate_needs_current_reviews_by_others() {
+    let (mut s, keys, _owner, _arch, _imp, ver, rev) = merge_team();
+    // A verifier's own change set: its own `verified` does not count.
+    let c = open(&mut s, &ver, "tests", &[], None);
+    write_in(&mut s, &keys, &ver, &c, "test base_one = base() == 1").unwrap();
+    s.change_submit(&ver, &c).unwrap();
+    s.review(&ver, &c, "verified", &[]).unwrap();
+    s.review(&rev, &c, "approve", &[]).unwrap();
+    let e = merge_as(&mut s, &keys, &rev, &c).unwrap_err();
+    assert!(e[0].code == "E0913" && e[0].message.contains("verified"), "self-approval: {e:?}");
+    // Another verifier... there is none: the owner adds one.
+    let (mut s, keys, owner, arch, _imp, ver, rev) = merge_team();
+    let c = open(&mut s, &arch, "work", &[], None);
+    write_in(&mut s, &keys, &arch, &c, "fn f() -> Int = 1").unwrap();
+    pass_gate(&mut s, &arch, &ver, &rev, &c);
+    // A later write makes the reviews stale (and reopens the change set).
+    write_in(&mut s, &keys, &arch, &c, "fn f() -> Int = 2").unwrap();
+    s.change_submit(&arch, &c).unwrap();
+    let e = merge_as(&mut s, &keys, &rev, &c).unwrap_err();
+    assert!(e[0].code == "E0913", "stale reviews: {e:?}");
+    // A verifier's contribution changes the root too: verified first, then approve.
+    s.review(&ver, &c, "verified", &[]).unwrap();
+    write_in(&mut s, &keys, &ver, &c, "test f_two = f() == 2").unwrap();
+    s.review(&rev, &c, "approve", &[]).unwrap();
+    assert_eq!(merge_as(&mut s, &keys, &rev, &c).unwrap_err()[0].code, "E0913", "the verified is for the old root");
+    // `failed` and `changes` block until answered again.
+    s.review(&ver, &c, "failed", &[merge::Comment { name: Some("f".into()), text: "wrong".into() }]).unwrap();
+    let e = merge_as(&mut s, &keys, &rev, &c).unwrap_err();
+    assert!(e[0].code == "E0913" && e[0].message.contains("failed"), "{e:?}");
+    s.review(&ver, &c, "verified", &[]).unwrap();
+    s.review(&rev, &c, "changes", &[]).unwrap();
+    assert_eq!(s.change(&c).unwrap().unwrap().status, "open", "changes sends it back");
+    assert_eq!(s.review(&rev, &c, "approve", &[]).unwrap_err()[0].code, "E0908", "only submitted");
+    s.change_submit(&arch, &c).unwrap();
+    s.review(&rev, &c, "approve", &[]).unwrap();
+    // A revoked reviewer's approval no longer counts.
+    s.team_revoke(&owner, "rev-1").unwrap();
+    assert_eq!(merge_as(&mut s, &keys, &arch, &c).unwrap_err()[0].code, "E0913");
+    // Comments are bounded; the architect only comments.
+    let many: Vec<merge::Comment> = (0..33).map(|i| merge::Comment { name: None, text: format!("{i}") }).collect();
+    assert_eq!(s.review(&arch, &c, "comment", &many).unwrap_err()[0].code, "E0914");
+    assert_eq!(s.review(&arch, &c, "approve", &[]).unwrap_err()[0].code, "E0903");
+    s.review(&arch, &c, "comment", &[merge::Comment { name: None, text: "ok".into() }]).unwrap();
+    assert_eq!(s.reviews(&c).unwrap().len(), 9);
+    ok_verify(&mut s);
+}
+
+/// Deletes and renames of a change set reach main by a merge, as a fast-forward and as a replay;
+/// main's users of a renamed name follow it.
+#[test]
+fn deletes_and_renames_are_merged() {
+    let (mut s, keys, _owner, arch, _imp, ver, rev) = merge_team();
+    let c0 = open(&mut s, &arch, "users", &[], None);
+    write_in(&mut s, &keys, &arch, &c0, "fn twice() -> Int = base() * 2\nfn tmp() -> Int = 0").unwrap();
+    pass_gate(&mut s, &arch, &ver, &rev, &c0);
+    merge_as(&mut s, &keys, &rev, &c0).unwrap();
+    let (a, b) = two_from_one_base(&mut s, &arch);
+    s.set_signer(Some(Arc::new(again(&keys, &s, &arch))));
+    s.set_space(crate::Space::Change(a.clone()));
+    s.rename("base", "one", "x").unwrap();
+    s.delete(&["tmp".into()], "x").unwrap();
+    write_in(&mut s, &keys, &arch, &b, "fn other() -> Int = 3").unwrap();
+    pass_gate(&mut s, &arch, &ver, &rev, &b);
+    merge_as(&mut s, &keys, &rev, &b).unwrap();
+    // a is replayed onto main (which moved): `twice` follows the rename.
+    pass_gate(&mut s, &arch, &ver, &rev, &a);
+    let m = merge_as(&mut s, &keys, &rev, &a).unwrap();
+    assert_eq!(m["kind"], "replayed", "{m}");
+    assert!(main_hash(&s, "base").is_none() && main_hash(&s, "tmp").is_none() && main_hash(&s, "one").is_some() && main_hash(&s, "other").is_some());
+    s.set_space(crate::Space::Main);
+    assert!(s.view(&["twice".into()]).unwrap()[0].text.contains("one()"));
+    assert_eq!(s.renamed_to("base").unwrap().as_deref(), Some("one"));
+    ok_verify(&mut s);
+}
+
+/// Review N6 and criterion 5: `needs_rebase` and the reviews are bound; a merge record without its
+/// gate, and an implementer's write outside its scope, are refused by verify even when signed.
+#[test]
+fn tampering_with_reviews_and_merge_gates_is_detected() {
+    let store = || {
+        let (mut s, keys, owner, arch, imp, ver, rev) = seeded();
+        let (a, b) = two_from_one_base(&mut s, &arch);
+        write_in(&mut s, &keys, &arch, &b, "fn mine() -> Int = spare()").unwrap();
+        write_in(&mut s, &keys, &arch, &a, "fn spare(x: Int) -> Int = x").unwrap();
+        pass_gate(&mut s, &arch, &ver, &rev, &a);
+        merge_as(&mut s, &keys, &rev, &a).unwrap();
+        ok_verify(&mut s);
+        (s, keys, owner, arch, imp, ver, rev, b)
+    };
+    for (what, sql) in [
+        ("needs_rebase", "UPDATE changes SET needs_rebase = 0 WHERE needs_rebase = 1"),
+        ("a review's verdict", "UPDATE reviews SET verdict = 'changes' WHERE verdict = 'approve'"),
+        ("a review's root", "UPDATE reviews SET root = 'aa' WHERE verdict = 'approve'"),
+        ("a review's comments", "UPDATE reviews SET comments = '[]' WHERE verdict = 'approve'"),
+        ("a forged review row", "INSERT INTO reviews (change, member, verdict, root, comments, at, record) SELECT change, 'rev-1', 'approve', root, '[]', 0, 2 FROM reviews LIMIT 1"),
+        ("a status set to merged", "UPDATE changes SET status = 'merged' WHERE needs_rebase = 1"),
+    ] {
+        let (mut s, ..) = store();
+        raw(&s).execute_batch(&format!("PRAGMA foreign_keys = OFF; {sql};")).unwrap();
+        let trust = Trust::parse(&s.team_trust().unwrap().to_string()).unwrap();
+        let o = verified(&mut s, Some(&trust));
+        assert_eq!(code(&o), "E0923", "{what}: {o:?}");
+    }
+    // Hand-signed records that the store would have refused: E0924.
+    let forge = |s: &Store, who: &Signer, op: &str, space: &str, args: Value| {
+        let c = raw(s);
+        let (seq, prev): (i64, String) = c.query_row("SELECT seq, hash FROM records ORDER BY seq DESC LIMIT 1", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
+        let sp = crate::Space::parse(space);
+        let rows = space_rows(&c, &sp).unwrap();
+        let mut args = args;
+        if !sp.is_main() {
+            args["meta_after"] = json!(change::meta_digest(&c, space).unwrap());
+        }
+        let body = json!({"v": 1, "seq": seq + 1, "prev": prev, "at": 1, "member": who.member, "key": who.key.key_id(), "session": who.session, "op": op, "space": space,
+                          "args": args, "root_before": root_of(&rows), "root_after": root_of(&rows), "names_after": names_digest(&c, &rows).unwrap()});
+        let bytes = record_bytes(&body).unwrap();
+        c.execute("INSERT INTO records (seq, hash, body, sig) VALUES (?1, ?2, ?3, ?4)", rusqlite::params![seq + 1, Hash::of(&bytes).to_hex(), bytes, who.key.sign_hex(&bytes)]).unwrap();
+        seq + 1
+    };
+    // A merge of b (not submitted, no reviews) by the reviewer.
+    let (mut s, _keys, _owner, _arch, _imp, _ver, rev, b) = store();
+    let root = root_of(&space_rows(&raw(&s), &crate::Space::Change(b.clone())).unwrap());
+    let seq = forge(&s, &rev, "merge", "main", json!({"change": b, "change_root": root, "kind": "replayed", "reviews": [], "entries": []}));
+    let o = verified(&mut s, None);
+    assert_eq!((code(&o), o.error.as_ref().map(|e| e.seq)), ("E0924", Some(seq)), "{o:?}");
+    // An implementer's define outside its scope (base name `spare`), signed with its key.
+    let (mut s, keys, _owner, _arch, imp, _ver, _rev, _b) = store();
+    let c = open(&mut s, &imp, "own", &[], None);
+    let h = main_hash(&s, "base").unwrap();
+    let spare = main_hash(&s, "spare").unwrap();
+    let _ = keys;
+    // `spare` is replaced by `base`'s definition (a valid stored hash), outside the empty scope.
+    let seq = forge(&s, &imp, "define", &c, json!({"entries": [{"name": "spare", "old": spare, "new": h, "action": "replaced", "refs": [], "locals": []}]}));
+    let o = verified(&mut s, None);
+    assert_eq!((code(&o), o.error.as_ref().map(|e| e.seq)), ("E0924", Some(seq)), "{o:?}");
 }
