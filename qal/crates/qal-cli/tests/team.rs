@@ -291,15 +291,15 @@ fn team_commands_need_a_team_store_and_keys_outside_the_project() {
 #[test]
 fn sessions_decide_identity_and_roles_decide_tools() {
     let t = Team::new();
-    let all = ["qal_define", "qal_test", "qal_prove", "qal_run", "qal_call", "qal_request", "qal_view", "qal_query", "qal_rename", "qal_delete", "qal_history", "qal_build", "qal_change", "qal_lease", "qal_whoami", "qal_verify"];
+    let all = ["qal_define", "qal_test", "qal_prove", "qal_run", "qal_call", "qal_request", "qal_view", "qal_query", "qal_rename", "qal_delete", "qal_history", "qal_build", "qal_change", "qal_lease", "qal_review", "qal_merge", "qal_rebase", "qal_whoami", "qal_verify"];
     let reads = ["qal_test", "qal_prove", "qal_run", "qal_call", "qal_request", "qal_view", "qal_query", "qal_history", "qal_build"];
     let mut arch = t.agent("arch-1");
     assert_eq!(arch.tools(), all);
     let mut imp = t.agent("impl-1");
-    let with_define: Vec<&str> = std::iter::once("qal_define").chain(reads).chain(["qal_change", "qal_lease", "qal_whoami", "qal_verify"]).collect();
+    let with_define: Vec<&str> = std::iter::once("qal_define").chain(reads).chain(["qal_change", "qal_lease", "qal_rebase", "qal_whoami", "qal_verify"]).collect();
     assert_eq!(imp.tools(), with_define);
     let mut rev = t.agent("rev-1");
-    let rev_tools: Vec<&str> = reads.into_iter().chain(["qal_change", "qal_whoami", "qal_verify"]).collect();
+    let rev_tools: Vec<&str> = reads.into_iter().chain(["qal_change", "qal_review", "qal_merge", "qal_whoami", "qal_verify"]).collect();
     assert_eq!(rev.tools(), rev_tools);
     // Every space tool takes `change` in a team store.
     let listed = arch.request("tools/list", json!({}));
@@ -383,9 +383,9 @@ fn sessions_decide_identity_and_roles_decide_tools() {
     assert_eq!(stats["stats"]["members"]["arch-1"]["tools"]["qal_define"], 1);
 }
 
-/// Criterion 2 for the tools of 4a and 4b: every tool (with each of its actions) with every agent
-/// role, compared with the matrix. Each role works in an own change set (the reviewer, who opens
-/// none, on main); work packages exist for claims.
+/// Criterion 2: every tool (with each of its actions) with every agent role, compared with the
+/// matrix. Each role works in an own change set (the reviewer, who opens none, on main); work
+/// packages exist for claims, and a submitted change set of the architect for reviews and merges.
 #[test]
 fn every_tool_with_every_role_follows_the_matrix() {
     use qal_store::team::policy::{self, Role, Space};
@@ -397,8 +397,14 @@ fn every_tool_with_every_role_follows_the_matrix() {
         assert!(!err, "{v}");
         packages.insert(who, v["change"].as_str().unwrap().to_string());
     }
+    let submitted = arch0.open("to review");
+    assert_eq!(arch0.code("qal_define", json!({"source": "fn reviewed() -> Int = 1"})), "ok");
+    assert_eq!(arch0.code("qal_change", json!({"action": "submit"})), "ok");
     let args = |tool: &str, action: Option<&str>, role: &str, package: &str| -> Value {
         match (tool, action) {
+            ("qal_review", Some(v)) => json!({"change": submitted, "verdict": v}),
+            ("qal_merge", _) => json!({"change": submitted}),
+            ("qal_rebase", _) => json!({}),
             // A verifier writes only tests.
             ("qal_define", _) if role == "verifier" => json!({"source": "test by_verifier = base() == 1"}),
             ("qal_define", _) => json!({"source": format!("fn by_{}() -> Int = 1", role)}),
@@ -443,7 +449,9 @@ fn every_tool_with_every_role_follows_the_matrix() {
             let code = v["diagnostics"][0]["code"].as_str().unwrap_or("ok");
             assert_eq!(code == "E0903", !allowed, "{role} {} {:?}: {v}", row.tool, row.action);
             if allowed {
-                assert_eq!(code, "ok", "{role} {} {:?}: {v}", row.tool, row.action);
+                // A merge is allowed but its gate is not met (no reviews of that root yet): E0913.
+                let expected = if row.tool == "qal_merge" { "E0913" } else { "ok" };
+                assert_eq!(code, expected, "{role} {} {:?}: {v}", row.tool, row.action);
                 assert!(listed.contains(&row.tool.to_string()), "{role} {} is allowed but not listed", row.tool);
             }
             if policy::tools_for(r).contains(&row.tool) != listed.contains(&row.tool.to_string()) {
@@ -749,4 +757,101 @@ fn session_files_stay_out_of_the_project_and_heads_can_be_pinned() {
     assert_eq!((code, v["error"]["code"].as_str()), (1, Some("E0922")), "{v}");
     let (code, v) = t.qal(&["verify", "--from", "3"]);
     assert_eq!((code, v["signatures_from"].as_i64()), (0, Some(3)), "{v}");
+}
+
+/// Phase 4c over MCP: review, merge (fast-forward and replay), the merge's own check with fresh
+/// proofs and the tests (E0912 for a contract a dependency's new `req` refutes, and for a test that
+/// fails only on the merged main), rebase, and `qal verify --trust` over all of it.
+#[test]
+fn a_team_reviews_and_merges_over_mcp() {
+    let t = Team::new();
+    let mut arch = t.agent("arch-1");
+    let mut imp = t.agent("impl-1");
+    let mut ver = t.agent("ver-1");
+    let mut rev = t.agent("rev-1");
+    let gate = |ver: &mut Client, rev: &mut Client, c: &str| {
+        let (err, v) = ver.call("qal_test", json!({"change": c}));
+        assert!(!err, "{v}");
+        let (err, v) = ver.call("qal_review", json!({"change": c, "verdict": "verified"}));
+        assert!(!err, "{v}");
+        let (err, v) = rev.call("qal_review", json!({"change": c, "verdict": "approve", "comments": [{"name": "price", "text": "ok"}]}));
+        assert!(!err, "{v}");
+    };
+    // A skeleton, reviewed and merged as a fast-forward.
+    let c1 = arch.open("price");
+    assert_eq!(arch.code("qal_define", json!({"source": "fn price(q: Int) -> Int req q > 0 = q * 2\ntest price_two = price(1) == 2"})), "ok");
+    assert_eq!(rev.code("qal_merge", json!({"change": c1})), "E0913", "not submitted");
+    assert_eq!(arch.code("qal_change", json!({"action": "submit"})), "ok");
+    gate(&mut ver, &mut rev, &c1);
+    assert_eq!(imp.code("qal_merge", json!({"change": c1})), "E0903");
+    let (err, m) = rev.call("qal_merge", json!({"change": c1}));
+    assert!(!err, "{m}");
+    assert_eq!((m["merged"].as_bool(), m["kind"].as_str()), (Some(true), Some("fast_forward")), "{m}");
+    assert!(m["tests"]["passed"].as_u64().unwrap() >= 2 && m["proofs"]["fresh"] == true, "{m}");
+    let (_, v) = imp.call("qal_view", json!({"names": ["price@main"]}));
+    assert!(v["views"][0]["text"].as_str().unwrap().contains("q * 2"), "{v}");
+    // The implementer starts from that main; meanwhile the architect sharpens price's contract.
+    let c2 = imp.open("buy");
+    assert_eq!(imp.code("qal_define", json!({"source": "fn buy() -> Int = price(1)\ntest spare_two = spare() == 2"})), "ok");
+    let c3 = arch.open("contract");
+    assert_eq!(arch.code("qal_define", json!({"source": "fn price(q: Int) -> Int req q > 5 = q * 2\ntest price_two = price(6) == 12\nfn spare() -> Int = 3"})), "ok");
+    assert_eq!(arch.code("qal_change", json!({"action": "submit"})), "ok");
+    gate(&mut ver, &mut rev, &c3);
+    let (err, m) = arch.call("qal_merge", json!({"change": c3}));
+    assert!(!err && m["kind"] == "fast_forward", "{m}");
+    // c2 is replayed onto the new main: `buy` now violates price's `req` (refuted, proven afresh).
+    assert_eq!(imp.code("qal_change", json!({"action": "submit"})), "ok");
+    gate(&mut ver, &mut rev, &c2);
+    let (err, m) = rev.call("qal_merge", json!({"change": c2}));
+    assert!(err, "{m}");
+    assert_eq!((m["diagnostics"][0]["code"].as_str(), m["diagnostics"][0]["kind"].as_str()), (Some("E0912"), Some("merge_tests_failed")), "{m}");
+    assert!(m["diagnostics"][0]["detail"]["refuted"].as_array().unwrap().iter().any(|n| n == "buy"), "{m}");
+    assert!(m["diagnostics"].as_array().unwrap().iter().any(|d| d["code"] == "E0801"), "the refutation follows: {m}");
+    // Fixed in the change set: now only the test fails on main as it would be (spare is 3 there).
+    assert_eq!(imp.code("qal_define", json!({"source": "fn buy() -> Int = price(6)"})), "ok");
+    assert_eq!(imp.code("qal_change", json!({"action": "submit"})), "ok");
+    gate(&mut ver, &mut rev, &c2);
+    let (err, m) = rev.call("qal_merge", json!({"change": c2}));
+    assert!(err, "{m}");
+    assert_eq!(m["diagnostics"][0]["code"], "E0912", "{m}");
+    assert_eq!(m["diagnostics"][0]["detail"]["failed"][0]["name"], "spare_two", "{m}");
+    // Rebase onto main, fix the test there, and merge as a fast-forward.
+    let (err, r) = imp.call("qal_rebase", json!({}));
+    assert!(!err && r["conflicts"].as_array().unwrap().is_empty(), "{r}");
+    assert_eq!(imp.code("qal_define", json!({"source": "test spare_two = spare() == 3"})), "ok");
+    assert_eq!(imp.code("qal_change", json!({"action": "submit"})), "ok");
+    gate(&mut ver, &mut rev, &c2);
+    let (err, m) = rev.call("qal_merge", json!({"change": c2}));
+    assert!(!err && m["kind"] == "fast_forward", "{m}");
+    // The board shows it merged; every record verifies against the trust file.
+    let (_, v) = imp.call("qal_change", json!({"action": "list", "status": ["merged"]}));
+    assert_eq!(v["changes"].as_array().unwrap().len(), 3, "{v}");
+    let trust = t.home.join("team.json");
+    assert_eq!(t.qal(&["team", "export-trust", "--out", trust.to_str().unwrap()]).0, 0);
+    let (code, v) = t.qal(&["verify", "--trust", trust.to_str().unwrap()]);
+    assert_eq!((code, v["ok"].as_bool()), (0, Some(true)), "{v}");
+    // Everyone was told of the merges (notices ride along with every result).
+    let told = t.transcript.lock().unwrap().iter().filter(|l| l.contains("\"kind\":\"merged\"")).count();
+    assert!(told >= 3, "{told}");
+}
+
+/// Spec §8: the section „Team“ of `qal_define`'s reference (in reference.md) has at most 12 lines
+/// per role, with exactly that role's rules; the language reference itself is unchanged by it.
+#[test]
+fn the_team_reference_has_each_roles_rules_in_twelve_lines() {
+    use qal_store::team::policy::{Role, ROLES};
+    assert!(!qal_cli::mcp::REFERENCE.contains("## Team") && qal_cli::mcp::REFERENCE.ends_with("qal_query and qal_view.\n"));
+    assert!(qal_cli::mcp::TEAM_REFERENCE.starts_with("## Team\n"));
+    for r in ROLES {
+        let t = qal_cli::mcp::team_reference(r);
+        assert!(t.lines().count() <= 12 && t.len() <= 3000, "{r:?}: {} lines, {} bytes", t.lines().count(), t.len());
+        assert!(t.starts_with("## Team\n") && t.contains(&format!("You are a{} {}", if r == Role::Architect || r == Role::Implementer { "n" } else { "" }, r.as_str())), "{t}");
+        assert!(!t.contains('@') || t.contains("name@main"), "no other role's line: {t}");
+        for other in ROLES.into_iter().filter(|o| *o != r) {
+            assert!(!t.contains(&format!("You are a {}", other.as_str())) && !t.contains(&format!("You are an {}", other.as_str())), "{r:?} sees {other:?}");
+        }
+        for code in ["E0901", "E0904", "E0908", "E0910", "E0911", "E0912", "E0913", "qal_rebase"] {
+            assert!(t.contains(code), "{r:?}: {code}");
+        }
+    }
 }

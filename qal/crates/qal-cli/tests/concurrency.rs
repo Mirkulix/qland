@@ -1,6 +1,7 @@
 //! Phase 4 spec §17 (Nebenläufigkeit), done criterion 3: several real `qal mcp` processes on one
-//! team store. (a) 8 processes x 200 random operations on 20 names end without a hang, every
-//! confirmed change is in the store and in the records, and `qal verify` is ok; (b) two processes
+//! team store. (a) 8 processes x 200 random `define`/`lease`/`review`/`merge` operations on 20
+//! names end without a hang, every confirmed change is in the store and in the records, and
+//! `qal verify` is ok; (b) two processes
 //! acquire overlapping name sets 1 000 times: never both; (c) a process killed with SIGKILL in the
 //! middle of a `define` leaves a consistent store, and its leases expire.
 
@@ -173,61 +174,109 @@ fn recorded_entries(store: &Path) -> Vec<(String, String, Option<String>)> {
     out
 }
 
+/// What one process of (a) did: per change set it owned, the last confirmed hash per name; every
+/// confirmed define (change set, name, hash); the results by code; the merges it made by kind.
+type Outcome = (BTreeMap<String, BTreeMap<String, String>>, Vec<(String, String, String)>, BTreeMap<&'static str, usize>, BTreeMap<String, usize>);
+
 #[test]
 fn eight_processes_with_random_operations_lose_nothing() {
-    let seed: u64 = 0x5eed_4b;
+    let seed: u64 = 0x5eed_4c;
     eprintln!("seed {seed:#x}");
-    let members: Vec<(String, Role)> = (0..8).map(|i| (format!("agent-{i}"), if i < 2 { Role::Architect } else { Role::Implementer })).collect();
+    // 2 architects and 4 implementers write; a verifier and a reviewer review, and the reviewer and
+    // the architects merge (Phase 4c: merge is part of the mix, criterion 3).
+    let roles = [Role::Architect, Role::Architect, Role::Implementer, Role::Implementer, Role::Implementer, Role::Implementer, Role::Verifier, Role::Reviewer];
+    let members: Vec<(String, Role)> = roles.iter().enumerate().map(|(i, r)| (format!("agent-{i}"), *r)).collect();
     let refs: Vec<(&str, Role)> = members.iter().map(|(m, r)| (m.as_str(), *r)).collect();
     let t = Team::new("a", &refs);
     let started = Instant::now();
-    let results: Vec<(String, BTreeMap<String, String>, Vec<(String, String)>, BTreeMap<&'static str, usize>)> = std::thread::scope(|s| {
+    let results: Vec<Outcome> = std::thread::scope(|s| {
         let handles: Vec<_> = members
             .iter()
             .enumerate()
             .map(|(i, (member, role))| {
                 let t = &t;
-                let architect = *role == Role::Architect;
+                let role = *role;
                 s.spawn(move || {
                     let mut rng = Rng(seed ^ (i as u64 + 1).wrapping_mul(0x9e37_79b9_7f4a_7c15));
                     let mut c = t.agent(member);
-                    let change = c.open(&format!("work of {member}"));
-                    // The last confirmed hash per name in this change set; every confirmed define.
-                    let mut last: BTreeMap<String, String> = BTreeMap::new();
-                    let mut confirmed: Vec<(String, String)> = Vec::new();
+                    let writes = matches!(role, Role::Architect | Role::Implementer);
+                    let mut change = if writes { c.open(&format!("work of {member}")) } else { String::new() };
+                    let mut last: BTreeMap<String, BTreeMap<String, String>> = BTreeMap::new();
+                    let mut confirmed: Vec<(String, String, String)> = Vec::new();
                     let mut codes: BTreeMap<&'static str, usize> = BTreeMap::new();
+                    let mut merges: BTreeMap<String, usize> = BTreeMap::new();
+                    // A submitted change set of someone else, from the board (or none).
+                    let pick = |c: &mut Client, rng: &mut Rng| -> Option<String> {
+                        let (_, v) = c.call("qal_change", json!({"action": "list", "status": ["submitted"]}));
+                        let ids: Vec<String> = v["changes"].as_array()?.iter().filter(|x| x["owner"] != member.as_str()).filter_map(|x| x["change"].as_str().map(str::to_string)).collect();
+                        (!ids.is_empty()).then(|| ids[rng.below(ids.len() as u64) as usize].clone())
+                    };
                     for _ in 0..200 {
                         let name = format!("n{}", rng.below(20));
                         let op = rng.below(100);
-                        let (err, v) = if op < 50 {
-                            let r = c.call("qal_define", json!({"source": format!("fn {name}() -> Int = {}", rng.below(1000))}));
+                        let (err, v) = if !writes {
+                            match pick(&mut c, &mut rng) {
+                                None => c.call("qal_view", json!({"names": ["base"]})),
+                                Some(x) if role == Role::Verifier => c.call("qal_review", json!({"change": x, "verdict": "verified"})),
+                                Some(x) if op < 50 => c.call("qal_review", json!({"change": x, "verdict": "approve"})),
+                                Some(x) => {
+                                    let r = c.call("qal_merge", json!({"change": x}));
+                                    if !r.0 {
+                                        *merges.entry(r.1["kind"].as_str().unwrap_or("?").to_string()).or_default() += 1;
+                                    }
+                                    r
+                                }
+                            }
+                        } else if op < 50 {
+                            let r = c.call("qal_define", json!({"source": format!("fn {name}() -> Int = {}", rng.below(1000)), "change": change}));
                             if !r.0 {
                                 let d = &r.1["defined"][0];
-                                last.insert(name.clone(), d["hash"].as_str().unwrap().to_string());
-                                confirmed.push((name.clone(), d["hash"].as_str().unwrap().to_string()));
+                                last.entry(change.clone()).or_default().insert(name.clone(), d["hash"].as_str().unwrap().to_string());
+                                confirmed.push((change.clone(), name.clone(), d["hash"].as_str().unwrap().to_string()));
+                            } else if code(&r.1) == "E0908" {
+                                // Merged (or abandoned) meanwhile: go on in a new change set.
+                                change = c.open(&format!("more work of {member}"));
                             }
                             r
-                        } else if op < 65 {
-                            c.call("qal_lease", json!({"action": "acquire", "names": [name, format!("n{}", rng.below(20))], "ttl_s": 120}))
+                        } else if op < 62 {
+                            c.call("qal_lease", json!({"action": "acquire", "names": [name, format!("n{}", rng.below(20))], "ttl_s": 120, "change": change}))
+                        } else if op < 72 {
+                            c.call("qal_lease", json!({"action": "release", "names": [name], "change": change}))
                         } else if op < 80 {
-                            c.call("qal_lease", json!({"action": "release", "names": [name]}))
-                        } else if op < 90 {
                             c.call("qal_view", json!({"names": [name]}))
-                        } else if op < 95 || !architect {
-                            c.call("qal_change", json!({"action": if rng.below(2) == 0 { "submit" } else { "show" }, "change": change}))
-                        } else {
+                        } else if op < 90 {
+                            c.call("qal_change", json!({"action": if rng.below(3) == 0 { "show" } else { "submit" }, "change": change}))
+                        } else if role == Role::Architect && op < 95 {
+                            match pick(&mut c, &mut rng) {
+                                Some(x) => {
+                                    let r = c.call("qal_merge", json!({"change": x}));
+                                    if !r.0 {
+                                        *merges.entry(r.1["kind"].as_str().unwrap_or("?").to_string()).or_default() += 1;
+                                    }
+                                    r
+                                }
+                                None => c.call("qal_view", json!({"names": [name]})),
+                            }
+                        } else if role == Role::Architect {
                             c.call("qal_lease", json!({"action": "break", "names": [name]}))
+                        } else {
+                            c.call("qal_rebase", json!({"change": change}))
                         };
                         let k = match code(&v) {
                             "ok" if !err => "ok",
                             "E0901" => "E0901",
                             "E0201" => "E0201",
                             "E0908" => "E0908",
+                            "E0909" => "E0909",
+                            // A merged name exists in later bases: outside an implementer's (empty) scope.
+                            "E0905" => "E0905",
+                            "E0910" => "E0910",
+                            "E0913" => "E0913",
                             other => panic!("{member}: unexpected {other}: {v}"),
                         };
                         *codes.entry(k).or_default() += 1;
                     }
-                    (change, last, confirmed, codes)
+                    (last, confirmed, codes, merges)
                 })
             })
             .collect();
@@ -237,30 +286,40 @@ fn eight_processes_with_random_operations_lose_nothing() {
     eprintln!("8 x 200 operations in {elapsed:?}");
     assert!(elapsed < Duration::from_secs(120), "took {elapsed:?}");
     let mut total: BTreeMap<&str, usize> = BTreeMap::new();
-    for (_, _, _, codes) in &results {
+    let mut merged: BTreeMap<String, usize> = BTreeMap::new();
+    for (_, _, codes, merges) in &results {
         for (k, n) in codes {
             *total.entry(k).or_default() += n;
         }
+        for (k, n) in merges {
+            *merged.entry(k.clone()).or_default() += n;
+        }
     }
-    eprintln!("results by code: {total:?}");
-    // Names stay leased after a define (15 min), so most later writes of them by others conflict.
+    eprintln!("results by code: {total:?}; merges by kind: {merged:?}");
     assert!(total.get("ok").copied().unwrap_or(0) > 400, "{total:?}");
-    let defines: usize = results.iter().map(|r| r.2.len()).sum();
+    let defines: usize = results.iter().map(|r| r.1.len()).sum();
     eprintln!("{defines} confirmed defines");
     assert!(defines > 50, "{defines}");
     assert!(total.get("E0901").copied().unwrap_or(0) > 0, "leases conflicted at least once: {total:?}");
+    assert!(merged.values().sum::<usize>() >= 3, "merges happened: {merged:?}");
     // Every confirmed define is in the records; each change set ends with its last confirmed version.
     let entries = recorded_entries(&t.store_path());
     let c = rusqlite::Connection::open(t.store_path()).unwrap();
-    for (change, last, confirmed, _) in &results {
-        for (name, hash) in confirmed {
+    for (last, confirmed, _, _) in &results {
+        for (change, name, hash) in confirmed {
             assert!(entries.iter().any(|(s, n, h)| s == change && n == name && h.as_deref() == Some(hash.as_str())), "{change} {name} {hash} has no record");
         }
-        for (name, hash) in last {
-            let stored: String = c.query_row("SELECT hash FROM change_names WHERE change = ?1 AND name = ?2", [change, name], |r| r.get(0)).unwrap();
-            assert_eq!(&stored, hash, "{change} {name}: a confirmed change was lost");
+        for (change, names) in last {
+            for (name, hash) in names {
+                let stored: String = c.query_row("SELECT hash FROM change_names WHERE change = ?1 AND name = ?2", [change, name], |r| r.get(0)).unwrap();
+                assert_eq!(&stored, hash, "{change} {name}: a confirmed change was lost");
+            }
         }
     }
+    // Every merge put its change set's names into main (as merged, possibly rehashed): each merged
+    // change set's own names are in main unless a later merge replaced them.
+    let n_merged: i64 = c.query_row("SELECT count(*) FROM changes WHERE status = 'merged'", [], |r| r.get(0)).unwrap();
+    assert_eq!(usize::try_from(n_merged).unwrap(), merged.values().sum::<usize>());
     let v = t.qal(&["verify"]);
     assert_eq!(v["ok"], true, "{v}");
 }

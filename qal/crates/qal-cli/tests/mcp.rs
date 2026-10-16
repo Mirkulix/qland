@@ -19,6 +19,8 @@ struct Client {
     stdout: BufReader<ChildStdout>,
     root: PathBuf,
     next_id: i64,
+    /// Team mode (Phase 4 §17 regression): the architect's own change set the tools work in.
+    change: Option<String>,
 }
 
 impl Client {
@@ -46,7 +48,59 @@ impl Client {
             .unwrap();
         let stdin = child.stdin.take();
         let stdout = BufReader::new(child.stdout.take().unwrap());
-        Client { child, stdin, stdout, root, next_id: 0 }
+        Client { child, stdin, stdout, root, next_id: 0, change: None }
+    }
+
+    /// Phase 4 §17: a server on a fresh team store (`qal team init`), as the architect `arch-1`
+    /// (keys and session outside the project), initialized and working in its own change set.
+    fn architect() -> Client {
+        let root = Client::fresh_root();
+        let home = root.with_extension("home");
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).unwrap();
+        let keys = home.join("keys");
+        let qal = |args: &[&str]| {
+            let out = Command::new(env!("CARGO_BIN_EXE_qal")).args(args).current_dir(&root).env("QAL_KEY_DIR", &keys).env_remove("QAL_SESSION_FILE").stdin(Stdio::null()).output().unwrap();
+            assert!(out.status.success(), "{args:?}: {}", String::from_utf8_lossy(&out.stdout));
+        };
+        let session = home.join("arch.session");
+        qal(&["init"]);
+        qal(&["team", "init", "--owner", "boss"]);
+        qal(&["team", "add", "arch-1", "--role", "architect"]);
+        qal(&["team", "session", "arch-1", "--out", session.to_str().unwrap()]);
+        let mut child = Command::new(env!("CARGO_BIN_EXE_qal"))
+            .args(["mcp", "--root"])
+            .arg(&root)
+            .arg("--session-file")
+            .arg(&session)
+            .env("QAL_KEY_DIR", &keys)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let stdin = child.stdin.take();
+        let stdout = BufReader::new(child.stdout.take().unwrap());
+        let mut c = Client { child, stdin, stdout, root, next_id: 0, change: None };
+        c.initialize();
+        let (err, v) = c.call("qal_change", json!({"action": "open", "title": "the MCP tests, as an architect"}));
+        assert!(!err, "{v}");
+        c.change = v["change"].as_str().map(str::to_string);
+        c
+    }
+
+    /// The agent name the history shows for this client's writes.
+    fn agent(&self, given: &str) -> String {
+        if self.change.is_some() { "arch-1".into() } else { given.into() }
+    }
+
+    /// Where `qal_build` writes module `name`.
+    fn build_path(&self, name: &str) -> PathBuf {
+        let dir = self.root.join(".qal/build");
+        match &self.change {
+            Some(c) => dir.join(c).join(format!("{name}.wasm")),
+            None => dir.join(format!("{name}.wasm")),
+        }
     }
 
     fn send_raw(&mut self, line: &[u8]) {
@@ -86,7 +140,16 @@ impl Client {
         assert_eq!(result["content"][0]["type"], "text", "{r}");
         let text: Value = serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
         assert_eq!(text, result["structuredContent"]);
-        (result["isError"].as_bool().unwrap(), result["structuredContent"].clone())
+        let mut out = result["structuredContent"].clone();
+        if let (Some(c), Value::Object(m)) = (&self.change, &mut out) {
+            // Team mode adds the space and the notices to every result (Phase 4 §10.2).
+            if tool != "qal_change" {
+                assert_eq!(m.remove("space").as_ref().and_then(Value::as_str), Some(c.as_str()), "team results name their space");
+            }
+            m.remove("notices");
+            m.remove("notices_more");
+        }
+        (result["isError"].as_bool().unwrap(), out)
     }
 
     /// Closes stdin and waits for the server to exit.
@@ -142,8 +205,10 @@ fn handshake_lists_the_tools_with_the_language_reference() {
 
 #[test]
 fn an_agent_defines_tests_runs_and_inspects_code() {
-    let mut c = Client::start();
-    c.initialize();
+    both(defines_tests_runs_and_inspects_code_in);
+}
+
+fn defines_tests_runs_and_inspects_code_in(c: &mut Client) {
     let (err, v) = c.call("qal_define", json!({"source": example("age.qal")}));
     assert!(!err, "{v}");
     assert_eq!(v["defined"].as_array().unwrap().len(), 5);
@@ -170,11 +235,11 @@ fn an_agent_defines_tests_runs_and_inspects_code() {
     let (err, v) = c.call("qal_rename", json!({"old": "parse_age", "new": "parse_years"}));
     assert!(!err, "{v}");
     let (_, v) = c.call("qal_history", json!({"name": "parse_years"}));
-    assert_eq!(v["history"][0]["agent"], "mcp:test-client", "the client's name is the default agent");
+    assert_eq!(v["history"][0]["agent"], c.agent("mcp:test-client"), "the client's name is the default agent (the member in a team)");
     assert_eq!(v["history"][1]["action"], "renamed");
     let (err, v) = c.call("qal_build", json!({"entry": "main"}));
     assert!(!err, "{v}");
-    assert!(c.root.join(".qal/build/main.wasm").is_file());
+    assert!(c.build_path("main").is_file());
     // Diagnostics are data.
     let (err, v) = c.call("qal_define", json!({"source": "fn f(x: Int) -> Bool = x + 1", "agent": "me"}));
     assert_eq!((err, v["diagnostics"][0]["kind"].as_str(), v["diagnostics"][0]["path"].as_str()), (true, Some("type_mismatch"), Some("body")));
@@ -193,7 +258,7 @@ fn an_agent_defines_tests_runs_and_inspects_code() {
     assert!(v["diagnostics"][0]["hints"][0].as_str().unwrap().contains("qal_define"), "{v}");
     let (err, v) = c.call("qal_view", json!({"names": ["parse_age"]}));
     assert_eq!((err, v["diagnostics"][0]["hints"][0].as_str()), (true, Some("`parse_age` was renamed to `parse_years`")));
-    assert_eq!(c.finish(), Some(0));
+
 }
 
 #[test]
@@ -467,10 +532,12 @@ fn reference_and_launcher_are_precise() {
 
 #[test]
 fn a_committed_define_is_never_reported_as_too_large() {
+    both(a_committed_define_is_never_reported_as_too_large_in);
+}
+
+fn a_committed_define_is_never_reported_as_too_large_in(c: &mut Client) {
     // Review finding I3: one proof report and one warning per call site made the result of a
     // committed `qal_define` exceed the result limit, so it was reported as an error.
-    let mut c = Client::start();
-    c.initialize();
     let req = format!("len(s) > 0 || s == \"{}\"", "a".repeat(4000));
     let src = format!("fn g(s: Str) -> Int req {req} = 1\nfn f(s: Str) -> Int = len([{}])", vec!["g(s)"; 300].join(", "));
     let (err, v) = c.call("qal_define", json!({"source": src}));
@@ -479,13 +546,15 @@ fn a_committed_define_is_never_reported_as_too_large() {
     assert!(v["warnings_omitted"].as_u64().unwrap() > 0, "{}", v.to_string().chars().take(500).collect::<String>());
     assert!(v.to_string().len() < 3 << 20);
     assert_eq!(c.call("qal_view", json!({"names": ["f"]})).0, false);
-    assert_eq!(c.finish(), Some(0));
+
 }
 
 #[test]
 fn agents_get_proofs_counterexamples_and_property_tests() {
-    let mut c = Client::start();
-    c.initialize();
+    both(get_proofs_counterexamples_and_property_tests_in);
+}
+
+fn get_proofs_counterexamples_and_property_tests_in(c: &mut Client) {
     let src = "fn abs(x: Int) -> Int ens r >= 0 = if x < 0 then -x else x\n\
                fn pos(x: Int) -> Int req x > 0 = x\n\
                fn head(xs: List[Int]) -> Int ens r >= 0 = match get(sort_int(xs), 0) { Some(x) => x, None => 0 }\n\
@@ -523,7 +592,7 @@ fn agents_get_proofs_counterexamples_and_property_tests() {
     assert_eq!((err, &v["ok"]), (false, &json!(18)), "{v}");
     let (err, v) = c.call("qal_call", json!({"fn": "total", "args": [[], [300], "None"]}));
     assert_eq!((err, v["error"]["message"].as_str()), (true, Some("`b`: expected a byte (0..=255), got 300")));
-    assert_eq!(c.finish(), Some(0));
+
 }
 
 #[test]
@@ -557,8 +626,10 @@ fn fixture_app() -> String {
 
 #[test]
 fn agents_test_services_with_qal_request() {
-    let mut c = Client::start();
-    c.initialize();
+    both(test_services_with_qal_request_in);
+}
+
+fn test_services_with_qal_request_in(c: &mut Client) {
     let (err, v) = c.call("qal_define", json!({"source": fixture_app()}));
     assert!(!err, "{v}");
     let requests = json!([
@@ -609,7 +680,7 @@ fn agents_test_services_with_qal_request() {
     for needle in ["fn handle(rq: HttpRequest) -> HttpResponse", "string literal with `?` placeholders", "committed only for status 200-399", "\"db:mem\"", "qal_query name \"std.\""] {
         assert!(reference.contains(needle), "{needle}");
     }
-    assert_eq!(c.finish(), Some(0));
+
 }
 
 #[test]
@@ -657,8 +728,10 @@ fn a_projects_first_write_imports_the_std_package() {
 
 #[test]
 fn agents_delete_names_nothing_refers_to() {
-    let mut c = Client::start();
-    c.initialize();
+    both(delete_names_nothing_refers_to_in);
+}
+
+fn delete_names_nothing_refers_to_in(c: &mut Client) {
     assert!(!c.call("qal_define", json!({"source": "fn f(x: Int) -> Int = g(x)\nfn g(x: Int) -> Int = if x <= 0 then 0 else f(x - 1)\nfn h() -> Int = f(1)"})).0);
     let (err, v) = c.call("qal_delete", json!({"name": "f"}));
     assert!(err && v["diagnostics"][0]["kind"] == "has_dependents", "{v}");
@@ -668,10 +741,10 @@ fn agents_delete_names_nothing_refers_to() {
     let (err, v) = c.call("qal_delete", json!({"name": "f", "with": ["g"]}));
     assert!(!err && v["deleted"].as_array().map(Vec::len) == Some(2), "{v}");
     let (_, v) = c.call("qal_history", json!({"name": "h"}));
-    assert_eq!((v["history"][1]["action"].as_str(), v["history"][1]["agent"].as_str()), (Some("deleted"), Some("cleaner")));
+    assert_eq!((v["history"][1]["action"].as_str(), v["history"][1]["agent"].as_str()), (Some("deleted"), Some(c.agent("cleaner").as_str())));
     let (err, v) = c.call("qal_delete", json!({"name": "std.json.parse"}));
     assert!(err && v["diagnostics"][0]["code"] == "E0240", "{v}");
-    assert_eq!(c.finish(), Some(0));
+
 }
 
 #[test]
@@ -692,5 +765,17 @@ fn std_agents_cannot_rename_released_names() {
     assert!(!c.call("qal_define", json!({"source": "fn std.zz.a() -> Int = 1", "agent": "std-zz-1"})).0);
     let (err, v) = c.call("qal_rename", json!({"old": "std.zz.a", "new": "std.zz.b"}));
     assert!(!err, "{v}");
+    assert_eq!(c.finish(), Some(0));
+}
+
+/// Runs `body` on a fresh project, and again (Phase 4 §17) as the architect of a team store in its
+/// own change set: the same calls give the same results there.
+fn both(body: fn(&mut Client)) {
+    let mut c = Client::start();
+    c.initialize();
+    body(&mut c);
+    assert_eq!(c.finish(), Some(0));
+    let mut c = Client::architect();
+    body(&mut c);
     assert_eq!(c.finish(), Some(0));
 }

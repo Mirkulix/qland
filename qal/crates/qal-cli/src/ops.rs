@@ -563,6 +563,62 @@ pub(crate) fn proving<T>(write: impl FnOnce(&mut Verify) -> Result<T, Vec<Diagno
     (result, reports)
 }
 
+/// Runs a merge (`write`) with its check (Phase 4 §7.2): the contracts of every function and test
+/// whose hash is new to main are proven afresh (never from the `proofs` cache, 4a review N4) and
+/// every test of the project runs (std's are std's own), within `budget` (30 s over MCP). A refuted
+/// contract, a failed test or a used-up budget rejects the merge with E0912.
+pub(crate) fn merging<T>(change: &str, budget: Duration, timeout: Option<Duration>, write: impl FnOnce(&mut qal_store::team::merge::MergeCheck) -> Result<T, Vec<Diagnostic>>) -> Result<T, Vec<Diagnostic>> {
+    use qal_store::team::merge::{tests_failed, MergeChecked};
+    let opts = qal_prove::Options::default();
+    let mut run = |program: &qal_core::ast::Program, tp: &TProgram, changed: &[(String, String)]| -> Result<MergeChecked, Vec<Diagnostic>> {
+        let start = Instant::now();
+        let names: Vec<String> = changed.iter().map(|(n, _)| n.clone()).collect();
+        let proofs = if names.is_empty() { Vec::new() } else { qal_prove::prove_defs(tp, Some(&names), &opts) };
+        let is_test = |n: &str| tp.tests.iter().any(|t| t.name == n);
+        let refuted: Vec<Diagnostic> = proofs.iter().flat_map(|p| &p.reports).filter(|r| r.status == Status::Refuted && !is_test(&r.def)).filter_map(Report::diagnostic).collect();
+        if !refuted.is_empty() {
+            let defs: std::collections::BTreeSet<&str> = refuted.iter().map(|d| d.def.as_str()).collect();
+            let mut out = vec![tests_failed(change, format!("{} contract obligation(s) are refuted on main as it would be", refuted.len()), serde_json::json!({"refuted": defs}))];
+            out.extend(listed(refuted).0);
+            return Err(out);
+        }
+        let count = |st: Status| proofs.iter().flat_map(|p| &p.reports).filter(|r| r.status == st).count();
+        let (proven, unknown) = (count(Status::Proven), count(Status::Unknown));
+        let rows: Vec<(String, String)> = changed.iter().filter_map(|(n, h)| proofs.iter().find(|p| p.def == *n)?.record.as_ref().map(|r| (h.clone(), record_json(r)))).collect();
+        // Every test of the new main view (the project's own; std tests itself).
+        let loaded = Loaded { program: program.clone(), typed: tp.clone() };
+        let mut runner = loaded.runner(&Entry::Tests, Permissions::default()).map_err(|e| vec![tests_failed(change, format!("the tests cannot run: {}", e.message), serde_json::json!({"error": e.kind}))])?;
+        if let Some(t) = timeout {
+            runner = runner.with_timeout(t);
+        }
+        let mut failed = Vec::new();
+        let mut skipped = Vec::new();
+        let mut passed = 0usize;
+        for t in tp.tests.iter().filter(|t| !is_std_name(&t.name)) {
+            if start.elapsed() > budget {
+                skipped.push(t.name.clone());
+                continue;
+            }
+            let r = runner.run_test(&format!("test:{}", t.name));
+            if r.passed {
+                passed += 1;
+            } else {
+                failed.push(serde_json::json!({"name": r.name, "error": r.error.map(|e| e.message)}));
+            }
+        }
+        if !failed.is_empty() || !skipped.is_empty() {
+            let what = if failed.is_empty() { format!("the test budget of {} s was used up before {} test(s) ran", budget.as_secs(), skipped.len()) } else { format!("{} test(s) fail on main as it would be", failed.len()) };
+            return Err(vec![tests_failed(change, what, serde_json::json!({"failed": failed, "skipped": skipped, "passed": passed}))]);
+        }
+        let mut report = serde_json::Map::new();
+        report.insert("tests".into(), serde_json::json!({"passed": passed}));
+        report.insert("proofs".into(), serde_json::json!({"proven": proven, "unknown": unknown, "fresh": true}));
+        Ok(MergeChecked { proofs: rows, report })
+    };
+    let mut check = qal_store::team::merge::MergeCheck { key: opts.key(), run: &mut run };
+    write(&mut check)
+}
+
 /// The reports of the definitions as they were stored: a retried write may have verified an older
 /// version first (review finding N4).
 fn current_reports(defined: &[Defined], reports: Vec<(String, Report)>) -> Vec<Report> {

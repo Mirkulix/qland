@@ -62,8 +62,44 @@ const INVALID_PARAMS: i64 = -32602;
 const INTERNAL_ERROR: i64 = -32603;
 const UNSUPPORTED_VERSION: i64 = -32022;
 
+/// `reference.md`: the language reference, then the section „Team“ (Phase 4 §8) that team stores
+/// add to `qal_define`'s description, per role.
+const REFERENCE_FILE: &str = include_str!("reference.md");
+
+/// Where the section „Team“ starts in `text` (a line `## Team`), else its end.
+const fn team_at(text: &str) -> usize {
+    let b = text.as_bytes();
+    let marker = b"## Team\n";
+    let mut i = 0;
+    while i + marker.len() <= b.len() {
+        if i == 0 || b[i - 1] == b'\n' {
+            let mut j = 0;
+            while j < marker.len() && b[i + j] == marker[j] {
+                j += 1;
+            }
+            if j == marker.len() {
+                return i;
+            }
+        }
+        i += 1;
+    }
+    b.len()
+}
+
+/// `text` up to byte `at` (`from`: from it on), or all of it if that is not a character boundary.
+const fn cut(text: &str, at: usize, from: bool) -> &str {
+    let (head, tail) = text.as_bytes().split_at(at);
+    match std::str::from_utf8(if from { tail } else { head }) {
+        Ok(s) => s,
+        Err(_) => text,
+    }
+}
+
 /// The compact language reference (≤ 1 page), part of `qal_define`'s description.
-pub const REFERENCE: &str = include_str!("reference.md");
+pub const REFERENCE: &str = cut(REFERENCE_FILE, team_at(REFERENCE_FILE), false);
+
+/// The section „Team“: lines `@<role> ...` for one role each, the other lines for every role.
+pub const TEAM_REFERENCE: &str = cut(REFERENCE_FILE, team_at(REFERENCE_FILE), true);
 
 const INSTRUCTIONS: &str = "QAL is a programming language for AI agents. Code lives in a checked, content-addressed store in this project \
 (.qal/store.db), not in files: write it with qal_define (its description is the language reference), test it with qal_test, prove its contracts with qal_prove, run it with \
@@ -111,7 +147,7 @@ pub const MAX_WAIT_S: u64 = 45;
 const POLL: Duration = Duration::from_millis(200);
 
 /// The tools only a team store has.
-const TEAM_TOOLS: [&str; 4] = ["qal_whoami", "qal_verify", "qal_change", "qal_lease"];
+const TEAM_TOOLS: [&str; 7] = ["qal_whoami", "qal_verify", "qal_change", "qal_lease", "qal_review", "qal_merge", "qal_rebase"];
 
 /// The tools that work in a space (`change` argument, Phase 4 §10.2).
 const SPACE_TOOLS: [&str; 12] = ["qal_define", "qal_rename", "qal_delete", "qal_view", "qal_query", "qal_history", "qal_test", "qal_prove", "qal_run", "qal_call", "qal_request", "qal_build"];
@@ -518,7 +554,7 @@ impl Server {
         }
         match name {
             "qal_whoami" => return whoami(store, log, who, &a, pending.take()),
-            "qal_change" | "qal_lease" => return Ok(team_action(store, who, name, &a)),
+            "qal_change" | "qal_lease" | "qal_review" | "qal_merge" | "qal_rebase" => return Ok(team_action(store, who, name, &a)),
             "qal_verify" => {
                 let a = Args::new(name, args)?;
                 let from = match a.get("from") {
@@ -758,7 +794,7 @@ struct TeamCall {
 }
 
 /// The tools whose rights depend on their action and change set (checked by the store).
-const TEAM_ACTION_TOOLS: [&str; 2] = ["qal_change", "qal_lease"];
+const TEAM_ACTION_TOOLS: [&str; 5] = ["qal_change", "qal_lease", "qal_review", "qal_merge", "qal_rebase"];
 
 /// The signer of the session's member (its key from the key directory; E0920 without one).
 fn signer_of(store: &Store, who: &Identity) -> Result<Signer, Vec<Diagnostic>> {
@@ -788,6 +824,9 @@ fn team_action(store: &Store, who: &Identity, tool: &str, a: &Args) -> Reply {
 type Answer = Result<J, Vec<Diagnostic>>;
 
 fn team_action_inner(store: &mut Store, who: &Identity, tool: &str, a: &Args) -> Result<Answer, String> {
+    if matches!(tool, "qal_review" | "qal_merge" | "qal_rebase") {
+        return review_merge_rebase(store, who, tool, a);
+    }
     let action = a.required("action")?;
     // A role that may do this action nowhere is refused before anything else (E0903).
     if let Some(role) = Role::parse(&who.role) {
@@ -863,6 +902,39 @@ fn team_action_inner(store: &mut Store, who: &Identity, tool: &str, a: &Args) ->
             }
         }
         other => return Err(format!("`action` must be open, list, show, diff, claim, submit, abandon or scope, not `{other}`")),
+    })
+}
+
+/// `qal_review`, `qal_merge` and `qal_rebase` (Phase 4 §7, §10.1) on `change` (default: the
+/// session's current change set). The store checks the rights per change set; a role that may do
+/// this nowhere is refused first (E0903).
+fn review_merge_rebase(store: &mut Store, who: &Identity, tool: &str, a: &Args) -> Result<Answer, String> {
+    let verdict = if tool == "qal_review" { Some(a.required("verdict")?) } else { None };
+    if let Some(role) = Role::parse(&who.role) {
+        let act = verdict.as_deref();
+        if policy::rule(tool, act, role).is_some() && !policy::SPACES.into_iter().any(|sp| policy::allows(tool, act, role, sp)) {
+            return Ok(Err(vec![policy::forbidden(tool, act, role, Space::Main)]));
+        }
+    }
+    let comments = match a.get("comments") {
+        None => Vec::new(),
+        Some(J::Array(xs)) => xs
+            .iter()
+            .map(|c| serde_json::from_value::<qal_store::team::merge::Comment>(c.clone()).map_err(|_| "each of `comments` must be {\"name\"?: string, \"text\": string}".to_string()))
+            .collect::<Result<Vec<_>, _>>()?,
+        Some(_) => return Err("`comments` must be an array of {\"name\"?, \"text\"}".into()),
+    };
+    let Some(change) = a.string("change")?.or_else(|| who.change.clone()) else {
+        return Ok(Err(vec![Diagnostic::new("E0701", "bad_arguments", "", "change", format!("`{tool}` needs `change` (this session has no current change set)")).hint("qal_change {\"action\": \"list\", \"status\": [\"submitted\"]} shows the change sets to review or merge")]));
+    };
+    let signer = match signer_of(store, who) {
+        Ok(s) => s,
+        Err(d) => return Ok(Err(d)),
+    };
+    Ok(match tool {
+        "qal_review" => store.review(&signer, &change, verdict.as_deref().unwrap_or(""), &comments),
+        "qal_merge" => ops::merging(&change, TEST_BUDGET, Some(RUN_TIMEOUT), |check| store.merge(&signer, &change, check)),
+        _ => ops::proving(|v| store.rebase(&signer, &change, Some(v))).0,
     })
 }
 
@@ -990,17 +1062,18 @@ fn whoami(store: &Store, log: Option<&TeamLog>, who: &Identity, a: &Args, pendin
     Ok(Reply { out, code: 0 })
 }
 
-/// The ≤ 12-line „Team“ section of `qal_define`'s reference for a role (spec §8).
-fn team_reference(role: Role) -> String {
-    let rule = match role {
-        Role::Architect => "You are an architect: you own the interfaces (types, signatures, contracts). Write them, with `todo()` bodies, in your own change set; open work packages for others with qal_change open {title, scope, assignee}.",
-        Role::Implementer => "You are an implementer: claim a work package (qal_change claim) or open your own; replace bodies there. Existing names: only those in the scope (E0905), never their type, signature, contracts or kind (E0906); new names are free.",
-        Role::Verifier => "You are a verifier: add `test` definitions to your own and to submitted change sets (pass `change`), and run qal_test, qal_prove, qal_request with \"db:mem\".",
-        Role::Reviewer => "You are a reviewer: you read, test and review change sets (qal_change list/show/diff, `change` on the read tools, `name@<change>` in qal_view); you do not write code.",
-    };
-    format!(
-        "## Team\n{rule}\nCode is written only in change sets; main changes only by merge. Tools work in your current change set (from open or claim), or in `change`; `name@main` views main.\nqal_define takes leases on the names it writes; a name another change set holds is E0901 (with the holder); view a name another session changed before you replace it (E0904).\nYour identity is the server's session, not an argument (`agent` is ignored). Every write is an Ed25519-signed record (qal_verify checks the chain).\nqal_whoami {{\"wait_s\": 30}} shows your role, change set and leases and waits for notices instead of polling; every result carries unseen `notices`.\n`allow` is limited to the team's grants (default io, time, rand, db:mem; more is E0915). A refusal names the role that may (E0903)."
-    )
+/// The ≤ 12-line „Team“ section of `qal_define`'s reference for a role (spec §8): from
+/// `reference.md`, the role's own line and the lines for everyone.
+pub fn team_reference(role: Role) -> String {
+    let own = format!("@{} ", role.as_str());
+    TEAM_REFERENCE
+        .lines()
+        .filter_map(|l| match l.strip_prefix('@') {
+            None => Some(l),
+            Some(_) => l.strip_prefix(own.as_str()),
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// The tool list including the team tools (`qal_whoami`, `qal_verify`, `qal_change`, `qal_lease`),
@@ -1038,6 +1111,19 @@ fn tools_with_team() -> Vec<J> {
             "action": {"type": "string", "enum": ["acquire", "renew", "release", "break"]}, "names": list("Definition names (up to 64)."),
             "ttl_s": {"type": "integer", "minimum": 60, "maximum": 7200, "description": "Lease time in seconds (default 900)."}, "change": text("Your change set (default: your current one).")},
           "required": ["action", "names"], "additionalProperties": false}}));
+    all.push(json!({"name": "qal_review", "title": "Review a change set (team)", "annotations": writes,
+        "description": "A signed verdict on a change set, bound to its current root (any later write makes it stale). Reviewers: approve or changes (changes sends it back to its owner, status open); verifiers: verified or failed (after qal_test/qal_prove/qal_request with `change`); architects: comment. Every verdict but comment needs the change set submitted. A merge needs a current approve and a current verified by members who do not own the change set.",
+        "inputSchema": {"type": "object", "properties": {
+            "change": text("Change set id (default: your current one)."),
+            "verdict": {"type": "string", "enum": ["approve", "changes", "verified", "failed", "comment"]},
+            "comments": {"type": "array", "maxItems": 32, "items": {"type": "object", "properties": {"name": text("The definition it is about."), "text": text("At most 2 KiB.")}, "required": ["text"], "additionalProperties": false}}},
+          "required": ["verdict"], "additionalProperties": false}}));
+    all.push(json!({"name": "qal_merge", "title": "Merge a change set into main (team)", "annotations": writes,
+        "description": "Merges a submitted change set into main (reviewers and architects). Gate: a current approve and verified by non-owners, no conflict marks (else E0913/E0908). If main did not move since its base: fast_forward. Else each changed name is classified: changed in main too is a conflict (E0910: edit_edit, add_add, rename; then the owner runs qal_rebase); the rest is replayed onto main as one define (E0911 if it does not check, e.g. a signature it uses changed), its contracts are proven afresh and every test runs (E0912 if one fails). Result: kind, entries, rehashed (names whose hash in main differs from the change set's), tests, proofs; other change sets it affects get needs_rebase.",
+        "inputSchema": {"type": "object", "properties": {"change": text("The submitted change set to merge.")}, "required": ["change"], "additionalProperties": false}}));
+    all.push(json!({"name": "qal_rebase", "title": "Rebase a change set onto main (team)", "annotations": writes,
+        "description": "Moves your change set's base to main as it is now: your definitions are replayed onto it in the change set. A name changed on both sides keeps your version and gets a conflict mark {base, theirs} (compare with qal_view [\"n\", \"n@main\"]; define n again to resolve it); a merge refuses marks. If your definitions do not check against the new main, nothing changes and the diagnostics name what to adapt. Clears needs_rebase.",
+        "inputSchema": {"type": "object", "properties": {"change": text("Your change set (default: your current one).")}, "additionalProperties": false}}));
     all.push(json!({"name": "qal_whoami", "title": "Who am I (team)", "annotations": read_only,
         "description": "Your member id, role, session and unseen notices (change sets opened for you, merges, ...), marked seen once returned. With `wait_s` (up to 45) it waits for the first new notice instead of returning at once: use it to wait for work instead of polling.",
         "inputSchema": {"type": "object", "properties": {"wait_s": {"type": "integer", "minimum": 0, "maximum": MAX_WAIT_S, "description": "Seconds to wait for a new notice (default 0)."}}, "additionalProperties": false}}));
@@ -1067,6 +1153,9 @@ fn tool_params(tool: &str) -> &'static [&'static str] {
         "qal_verify" => &["from", "head"],
         "qal_change" => &["action", "change", "title", "description", "scope", "assignee", "package", "status", "mine", "limit", "add", "remove"],
         "qal_lease" => &["action", "names", "ttl_s", "change"],
+        "qal_review" => &["change", "verdict", "comments"],
+        "qal_merge" => &["change"],
+        "qal_rebase" => &["change"],
         _ => &[],
     }
 }

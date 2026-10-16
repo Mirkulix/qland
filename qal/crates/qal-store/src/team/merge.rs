@@ -518,7 +518,7 @@ fn write_merge(tx: &Transaction, signer: &Signer, p: &Plan, checked: &MergeCheck
         flagged.push(json!({"change": d, "names": why}));
     }
     for m in super::members_of(tx)?.into_iter().filter(|m| m.revoked_at.is_none() && m.id != signer.member && m.role != policy::OWNER) {
-        notify(tx, &m.id, "merged", &json!({"change": id, "title": p.row.title, "by": signer.member, "kind": kind, "record": seq}))?;
+        notify(tx, &m.id, "merged", &json!({"change": id, "title": p.row.title, "by": signer.member, "merge_kind": kind, "record": seq}))?;
     }
     let mut out = json!({"merged": true, "change": id, "kind": kind, "record": seq, "entries": entries, "rehashed": p.rehashed, "reviews": [p.reviews.0, p.reviews.1]});
     if let Value::Object(m) = &mut out {
