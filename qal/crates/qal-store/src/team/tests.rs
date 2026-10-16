@@ -974,6 +974,10 @@ fn tampering_with_change_set_metadata_is_detected() {
         ("changes.claimed", "UPDATE changes SET claimed = 0"),
         ("changes.assignee", "UPDATE changes SET assignee = 'impl-2'"),
         ("changes.title", "UPDATE changes SET title = 'other'"),
+        // Review N2: absent is not empty.
+        ("base_hash = ''", "UPDATE change_names SET base_hash = '' WHERE name = 'added'"),
+        ("conflict = ''", "UPDATE change_names SET conflict = '' WHERE name = 'added'"),
+        ("assignee = ''", "UPDATE changes SET assignee = '' WHERE assignee IS NULL"),
     ];
     for (what, sql) in probes {
         let (mut s, trust) = store();
@@ -996,4 +1000,57 @@ fn claims_count_toward_the_limit_and_own_leases_are_not_broken() {
     let r = s.lease_break(&arch, &["mine".into()]).unwrap();
     assert_eq!((r["broken"].as_array().unwrap().len(), r["skipped"].as_array().unwrap().len()), (0, 1));
     assert!(!s.change(&p).unwrap().unwrap().needs_rebase);
+}
+
+/// Review N1, N4: renaming (or deleting) another session's unseen version and then writing the
+/// name is E0904, like overwriting it directly.
+#[test]
+fn rename_and_delete_do_not_launder_an_unseen_version() {
+    let (mut s, keys, _owner, arch, _imp, ver, _imp2) = full_team();
+    let c = open(&mut s, &arch, "work", &[], None);
+    write_in(&mut s, &keys, &arch, &c, "fn f() -> Int = 1").unwrap();
+    s.change_submit(&arch, &c).unwrap();
+    write_in(&mut s, &keys, &ver, &c, "test f_one = f() == 1\ntest f_two = f() >= 1").unwrap();
+    assert_eq!(write_in(&mut s, &keys, &arch, &c, "test f_one = f() == 2").unwrap_err()[0].code, "E0904");
+    // Rename (and rename back): refused before it can give the architect a mark.
+    let e = s.rename("f_one", "f_three", "x").unwrap_err();
+    assert_eq!(e[0].code, "E0904", "{e:?}");
+    // Delete, then define afresh: refused too.
+    let e = s.delete(&["f_two".into()], "x").unwrap_err();
+    assert_eq!(e[0].code, "E0904", "{e:?}");
+    // After a view, rename works; the mark moves with it, and the overwrite of the new name goes through.
+    let h = s.view(&["f_one".into()]).unwrap()[0].hash.clone();
+    s.mark_seen(&arch.session, &crate::Space::Change(c.clone()), &[("f_one".into(), h)]).unwrap();
+    s.rename("f_one", "f_three", "x").unwrap();
+    write_in(&mut s, &keys, &arch, &c, "test f_three = f() == 1").unwrap();
+    // The architect's own names it renames freely, and a rename never creates a mark it had not.
+    write_in(&mut s, &keys, &arch, &c, "fn g() -> Int = 2").unwrap();
+    s.rename("g", "g2", "x").unwrap();
+    s.rename("g2", "g", "x").unwrap();
+    let trust = Trust::parse(&s.team_trust().unwrap().to_string()).unwrap();
+    assert!(verified(&mut s, Some(&trust)).ok);
+}
+
+/// Review N3: change-set metadata is replayed from the records, so a tamper is found even after
+/// later honest writes signed the tampered state.
+#[test]
+fn tampered_metadata_is_found_after_later_writes() {
+    let (mut s, keys, _owner, _arch, imp, _ver, _imp2) = full_team();
+    let trust = Trust::parse(&s.team_trust().unwrap().to_string()).unwrap();
+    let c = open(&mut s, &imp, "work", &[], None);
+    write_in(&mut s, &keys, &imp, &c, "fn added() -> Int = 1").unwrap();
+    assert!(verified(&mut s, Some(&trust)).ok);
+    // An added name made to look like one of the base (so it would be interface for implementers).
+    raw(&s).execute("UPDATE change_names SET origin = 'edited', base_hash = hash WHERE name = 'added'", []).unwrap();
+    assert_eq!(code(&verified(&mut s, Some(&trust))), "E0923");
+    write_in(&mut s, &keys, &imp, &c, "fn more() -> Int = 2").unwrap();
+    let o = verified(&mut s, Some(&trust));
+    assert_eq!(code(&o), "E0923", "{o:?}");
+    assert!(o.error.unwrap().message.contains("replayed"));
+    // A changes column, then a write.
+    let (mut s, keys, _owner, _arch, imp, _ver, _imp2) = full_team();
+    let c = open(&mut s, &imp, "work", &[], None);
+    raw(&s).execute("UPDATE changes SET base_root = 'aa'", []).unwrap();
+    write_in(&mut s, &keys, &imp, &c, "fn x() -> Int = 1").unwrap();
+    assert_eq!(code(&verified(&mut s, None)), "E0923");
 }

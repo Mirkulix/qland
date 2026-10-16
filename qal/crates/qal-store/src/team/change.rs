@@ -370,6 +370,65 @@ fn stale(tx: &Transaction, log: Option<&super::TeamLog>, signer: &Signer, c: &st
     }
 }
 
+/// E0904 for replacing (renaming, deleting) `name`, now at `hash`, when the last edit that led to
+/// `hash` (through relinks) came from another session this session has not seen it from. The
+/// history is searched by hash among `names` (a rename moved it to the new name already).
+fn stale_version(tx: &Transaction, log: Option<&super::TeamLog>, signer: &Signer, c: &str, name: &str, hash: &str, names: &[&str]) -> Result<(), Vec<Diagnostic>> {
+    let mut versions: BTreeSet<String> = [hash.to_string()].into();
+    let mut h = hash.to_string();
+    let mut edit = None;
+    for _ in 0..256 {
+        let mut found = None;
+        for n in names {
+            let row: Option<(i64, String, Option<String>, String, Option<Vec<u8>>)> = tx
+                .query_row(
+                    "SELECT h.id, h.action, h.old_hash, h.agent, r.body FROM history h LEFT JOIN records r ON r.seq = h.record WHERE h.space = ?1 AND h.name = ?2 AND h.new_hash = ?3 AND h.action IN ('added', 'replaced', 'relinked') ORDER BY h.id DESC LIMIT 1",
+                    params![c, n, h],
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+                )
+                .optional()
+                .map_err(sql)?;
+            if let Some(r) = row {
+                if found.as_ref().is_none_or(|f: &(i64, String, Option<String>, String, Option<Vec<u8>>)| r.0 > f.0) {
+                    found = Some(r);
+                }
+            }
+        }
+        let Some((_, action, old, by, body)) = found else { break };
+        if action == "relinked" {
+            let Some(o) = old else { break };
+            versions.insert(o.clone());
+            h = o;
+            continue;
+        }
+        edit = Some((by, body));
+        break;
+    }
+    // A name of the base (no edit in this change set), or this session's own edit: nothing to see.
+    let Some((by, body)) = edit else { return Ok(()) };
+    if body.as_deref().and_then(record_session).as_deref() == Some(signer.session.as_str()) {
+        return Ok(());
+    }
+    let wrote = seen_hash(tx, &signer.session, c, name)?;
+    if wrote.as_ref().is_some_and(|m| versions.contains(m)) {
+        return Ok(());
+    }
+    let viewed = log.and_then(|l| l.seen(&signer.session, c, name).ok().flatten());
+    if let Some(m) = viewed.filter(|m| versions.contains(m)) {
+        // The view counts: this write notes it, so a rename can carry it to the new name.
+        tx.execute(
+            "INSERT INTO seen (session, space, name, hash) VALUES (?1, ?2, ?3, ?4) ON CONFLICT(session, space, name) DO UPDATE SET hash = excluded.hash",
+            params![signer.session, c, name, m],
+        )
+        .map_err(sql)?;
+        return Ok(());
+    }
+    let mut d = Diagnostic::new("E0904", "stale_base", name, "", format!("`{name}` was last changed in change set {c} by `{by}` (another session), and this session has not seen that version"))
+        .hint(format!("look at it first (qal_view {{\"names\": [\"{name}\"]}}), then rename or delete it"));
+    d.found = Some(hash.to_string());
+    Err(one(d))
+}
+
 /// The change set of a write in `space`, checked to be live and writable for the signer with `tool`
 /// (E0903 on main or by the matrix, E0908 if merged or abandoned).
 fn writable(tx: &Transaction, signer: &Signer, space: &Space, tool: &str) -> Result<(Role, ChangeRow), Vec<Diagnostic>> {
@@ -463,12 +522,20 @@ pub(crate) fn guard_define(tx: &Transaction, log: Option<&super::TeamLog>, signe
 
 /// The team rules of `rename`/`delete` (`tool`) in `space`, run after the change inside its
 /// transaction: the matrix, the change set's state and the leases of the names it changes.
-pub(crate) fn guard_names(tx: &Transaction, signer: Option<&Signer>, space: &Space, tool: &str, entries: &[super::Entry]) -> Result<(), Vec<Diagnostic>> {
+pub(crate) fn guard_names(tx: &Transaction, log: Option<&super::TeamLog>, signer: Option<&Signer>, space: &Space, tool: &str, entries: &[super::Entry]) -> Result<(), Vec<Diagnostic>> {
     let Some(signer) = signer else { return Ok(()) };
     if !super::is_team(tx)? {
         return Ok(());
     }
     let (_, row) = writable(tx, signer, space, tool)?;
+    // Renaming or deleting another session's version needs a view of it first (§5.3, review
+    // N1/N4): otherwise rename-then-overwrite or delete-then-redefine would lose its update.
+    let names: Vec<&str> = entries.iter().map(|e| e.name.as_str()).collect();
+    for e in entries.iter().filter(|e| matches!(e.action.as_str(), "renamed" | "deleted")) {
+        if let Some(h) = &e.old {
+            stale_version(tx, log, signer, &row.id, &e.name, h, &names)?;
+        }
+    }
     let names: Vec<&str> = entries.iter().map(|e| e.name.as_str()).collect();
     lease_write(tx, signer, &row, &names, false).map(|_| ())
 }
@@ -480,7 +547,23 @@ pub(crate) fn after_write(tx: &Transaction, signer: &Signer, space: &Space, entr
     // The writer has seen what it wrote. A relinked dependent (or a user whose refs follow a
     // rename) it did not look at: its seen-mark moves to the new hash only if it had seen the old
     // one, so a relink never counts as a view (review I1).
-    for e in entries {
+    // A rename moves the old name's mark to the new name, and only a mark of that very version:
+    // it never creates one (review N1).
+    let renamed: Vec<(&str, &str)> = entries.iter().filter(|e| e.action == "renamed").filter_map(|e| Some((e.name.as_str(), e.old.as_deref()?))).collect();
+    let mut moved = BTreeSet::new();
+    for e in entries.iter().filter(|e| e.action == "added" && e.old.is_none()) {
+        let Some(h) = e.new.as_deref() else { continue };
+        if let Some((from, _)) = renamed.iter().find(|(_, old)| *old == h) {
+            tx.execute("DELETE FROM seen WHERE session = ?1 AND space = ?2 AND name = ?3", params![signer.session, space.id(), e.name]).map_err(sql)?;
+            tx.execute(
+                "INSERT INTO seen (session, space, name, hash) SELECT session, space, ?3, hash FROM seen WHERE session = ?1 AND space = ?2 AND name = ?4 AND hash = ?5",
+                params![signer.session, space.id(), e.name, from, h],
+            )
+            .map_err(sql)?;
+            moved.insert(e.name.as_str());
+        }
+    }
+    for e in entries.iter().filter(|e| !moved.contains(e.name.as_str())) {
         let carried = matches!(e.action.as_str(), "relinked" | "updated");
         match (&e.new, carried) {
             (Some(h), false) => tx.execute(
@@ -513,37 +596,116 @@ pub(crate) fn after_write(tx: &Transaction, signer: &Signer, space: &Space, entr
 
 // --- The signed metadata of a change set (review I4) -----------------------------------------
 
-/// SHA-256 over everything a change set's decisions rest on, as stored: its `changes` row (title,
-/// description, scope, owner, assignee, status, claimed, base_seq, base_root, created_at) and every
-/// `change_names` row with its raw columns (name, hash, local_names, refs, origin, base_hash,
-/// conflict), rows without a hash included. Every record about a change set signs this digest
-/// (`args.meta_after`), and `qal verify` recomputes it, so any byte change of these columns is
-/// found. Not included: times of the last change, `needs_rebase` (a hint others set), leases and
-/// seen-marks (unsigned coordination, spec §9.1).
-pub fn meta_digest(conn: &Connection, change: &str) -> Result<String, Vec<Diagnostic>> {
-    let head: Option<[String; 10]> = conn
-        .query_row(
-            "SELECT id, title, description, scope, owner, coalesce(assignee, ''), status, CAST(claimed AS TEXT), CAST(base_seq AS TEXT), base_root || char(0) || CAST(created_at AS TEXT) FROM changes WHERE id = ?1",
-            params![change],
-            |r| Ok([r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?, r.get(8)?, r.get(9)?]),
-        )
+/// The `changes` row of a change set as its decisions read it (stored text kept as stored).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MetaHead {
+    pub id: String,
+    pub title: String,
+    pub description: String,
+    /// The stored JSON text of the scope.
+    pub scope: String,
+    pub owner: String,
+    pub assignee: Option<String>,
+    pub status: String,
+    pub claimed: bool,
+    pub base_seq: i64,
+    pub base_root: String,
+}
+
+/// A `change_names` row (the list columns as their stored JSON text).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MetaRow {
+    pub hash: Option<String>,
+    pub locals: String,
+    pub refs: String,
+    pub origin: String,
+    pub base_hash: Option<String>,
+    pub conflict: Option<String>,
+}
+
+/// Everything a change set's decisions rest on: its `changes` row and every `change_names` row,
+/// rows without a hash included (review I4). Not included: times, `needs_rebase` (a hint others
+/// set), leases and seen-marks (unsigned coordination, spec §9.1).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Meta {
+    pub head: Option<MetaHead>,
+    pub rows: std::collections::BTreeMap<String, MetaRow>,
+}
+
+impl Meta {
+    /// SHA-256 of the canonical JSON `[head, rows]`: `head` is `[id, title, description, scope,
+    /// owner, assignee, status, claimed, base_seq, base_root]` or null, `rows` the list of
+    /// `[name, hash, local_names, refs, origin, base_hash, conflict]` in name order; absent values
+    /// are null, never "" (review N2). Every record about a change set signs it (`meta_after`).
+    pub fn digest(&self) -> String {
+        let opt = |v: &Option<String>| v.as_ref().map_or(Value::Null, |s| Value::from(s.as_str()));
+        let head = self.head.as_ref().map_or(Value::Null, |h| {
+            json!([h.id, h.title, h.description, h.scope, h.owner, opt(&h.assignee), h.status, h.claimed, h.base_seq, h.base_root])
+        });
+        let rows: Vec<Value> = self.rows.iter().map(|(n, r)| json!([n, opt(&r.hash), r.locals, r.refs, r.origin, opt(&r.base_hash), opt(&r.conflict)])).collect();
+        let text = super::canonical::to_string(&json!([head, rows])).unwrap_or_default();
+        qal_core::canon::Hash::of(text.as_bytes()).to_hex()
+    }
+
+    /// `put` of `space::put`: a name written (`input`) or relinked/updated.
+    pub fn put(&mut self, name: &str, hash: &str, locals: String, refs: String, input: bool) {
+        match self.rows.get_mut(name) {
+            None => {
+                self.rows.insert(name.to_string(), MetaRow { hash: Some(hash.into()), locals, refs, origin: "added".into(), base_hash: None, conflict: None });
+            }
+            Some(r) => {
+                r.hash = Some(hash.into());
+                r.locals = locals;
+                r.refs = refs;
+                if input {
+                    r.origin = if r.base_hash.is_some() { "edited".into() } else { "added".into() };
+                    r.conflict = None;
+                } else if r.origin == "base" {
+                    r.origin = "relinked".into();
+                }
+            }
+        }
+    }
+
+    /// `remove` of `space::remove`: a name of the base keeps a row without a hash.
+    pub fn remove(&mut self, name: &str, origin: &str) {
+        match self.rows.get(name).map(|r| r.base_hash.is_some()) {
+            Some(true) => {
+                if let Some(r) = self.rows.get_mut(name) {
+                    *r = MetaRow { hash: None, locals: "[]".into(), refs: "[]".into(), origin: origin.into(), base_hash: r.base_hash.clone(), conflict: None };
+                }
+            }
+            Some(false) => {
+                self.rows.remove(name);
+            }
+            None => {}
+        }
+    }
+}
+
+/// The stored metadata of change set `change`.
+pub fn load_meta(conn: &Connection, change: &str) -> Result<Meta, Vec<Diagnostic>> {
+    let head = conn
+        .query_row("SELECT id, title, description, scope, owner, assignee, status, claimed, base_seq, base_root FROM changes WHERE id = ?1", params![change], |r| {
+            Ok(MetaHead { id: r.get(0)?, title: r.get(1)?, description: r.get(2)?, scope: r.get(3)?, owner: r.get(4)?, assignee: r.get(5)?, status: r.get(6)?, claimed: r.get::<_, i64>(7)? != 0, base_seq: r.get(8)?, base_root: r.get(9)? })
+        })
         .optional()
         .map_err(sql)?;
-    let mut bytes = Vec::new();
-    match head {
-        Some(cols) => bytes.extend_from_slice(cols.join("\0").as_bytes()),
-        None => bytes.extend_from_slice(b"no change set"),
-    }
-    bytes.push(b'\n');
-    let mut stmt = conn
-        .prepare_cached("SELECT name, coalesce(hash, ''), local_names, refs, origin, coalesce(base_hash, ''), coalesce(conflict, '') FROM change_names WHERE change = ?1 ORDER BY CAST(name AS BLOB)")
+    let mut rows = std::collections::BTreeMap::new();
+    let mut stmt = conn.prepare_cached("SELECT name, hash, local_names, refs, origin, base_hash, conflict FROM change_names WHERE change = ?1").map_err(sql)?;
+    let it = stmt
+        .query_map(params![change], |r| Ok((r.get::<_, String>(0)?, MetaRow { hash: r.get(1)?, locals: r.get(2)?, refs: r.get(3)?, origin: r.get(4)?, base_hash: r.get(5)?, conflict: r.get(6)? })))
         .map_err(sql)?;
-    let rows = stmt.query_map(params![change], |r| Ok([r.get::<_, String>(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?])).map_err(sql)?;
-    for row in rows {
-        bytes.extend_from_slice(row.map_err(sql)?.join("\0").as_bytes());
-        bytes.push(b'\n');
+    for row in it {
+        let (n, r) = row.map_err(sql)?;
+        rows.insert(n, r);
     }
-    Ok(qal_core::canon::Hash::of(&bytes).to_hex())
+    Ok(Meta { head, rows })
+}
+
+/// The digest of change set `change` as stored (see [`Meta::digest`]).
+pub fn meta_digest(conn: &Connection, change: &str) -> Result<String, Vec<Diagnostic>> {
+    Ok(load_meta(conn, change)?.digest())
 }
 
 // --- Change set operations --------------------------------------------------------------------

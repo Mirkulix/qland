@@ -227,8 +227,9 @@ impl Store {
         let agent = signer.map_or(agent, |s| s.member.as_str());
         let rules = define::Rules { std: StdNames::Refuse, release: self.release.as_ref(), breaking: self.breaking };
         let space = self.space.clone();
+        let log = if team::is_team(&self.conn)? { self.team_log().ok() } else { None };
         let record = |tx: &rusqlite::Transaction, labels: &[team::Entry], before: &team::Rows| {
-            team::guard_names(tx, signer, &space, "qal_rename", labels)?;
+            team::guard_names(tx, log.as_ref(), signer, &space, "qal_rename", labels)?;
             team::record_write(tx, signer, "rename", &space, before, labels, serde_json::Map::new())
         };
         ops::rename(&mut self.conn, &self.space, old, new, agent, &rules, &record)
@@ -241,8 +242,9 @@ impl Store {
         let agent = signer.map_or(agent, |s| s.member.as_str());
         let rules = define::Rules { std: StdNames::Refuse, release: self.release.as_ref(), breaking: self.breaking };
         let space = self.space.clone();
+        let log = if team::is_team(&self.conn)? { self.team_log().ok() } else { None };
         let record = |tx: &rusqlite::Transaction, labels: &[team::Entry], before: &team::Rows| {
-            team::guard_names(tx, signer, &space, "qal_delete", labels)?;
+            team::guard_names(tx, log.as_ref(), signer, &space, "qal_delete", labels)?;
             team::record_write(tx, signer, "delete", &space, before, labels, serde_json::Map::new())
         };
         ops::delete(&mut self.conn, &self.space, names, agent, &rules, &record)

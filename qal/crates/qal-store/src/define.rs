@@ -555,7 +555,9 @@ fn write(tx: &Transaction, snap: &Snapshot, input: &Program, hashed: &Hashed, ag
         let old_hash = old.map(|e| e.hash.to_hex());
         if !dry {
             if status != "unchanged" || old.is_some_and(|e| e.locals != c.local_names || e.refs != refs) {
-                crate::space::put(tx, space, &c.name, &c.hash.to_hex(), &json(&c.local_names), &json(&refs), is_input, now)?;
+                // An input whose hash did not change (only its local names or refs) counts like a
+                // relink in a change set: verify replays it from an `updated` entry.
+                crate::space::put(tx, space, &c.name, &c.hash.to_hex(), &json(&c.local_names), &json(&refs), is_input && status != "unchanged", now)?;
             }
             if status != "unchanged" {
                 tx.execute(

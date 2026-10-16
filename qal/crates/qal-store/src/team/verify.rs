@@ -155,6 +155,8 @@ struct State {
     digests: BTreeMap<String, String>,
     /// The `meta_after` of the last record about each change set (its signed metadata).
     metas: BTreeMap<String, String>,
+    /// The replayed metadata of each change set (review N3).
+    meta: BTreeMap<String, super::change::Meta>,
     /// The seq of the record that opened each change set.
     opened: BTreeMap<String, i64>,
     /// (seq, hash) of what verifiers defined: must be tests (checked against `defs` at the end).
@@ -228,6 +230,7 @@ pub fn verify(conn: &Connection, trust: Option<&Trust>, from: i64, head: Option<
         changes: BTreeMap::new(),
         digests: BTreeMap::new(),
         metas: BTreeMap::new(),
+        meta: BTreeMap::new(),
         opened: BTreeMap::new(),
         verifier_defs: Vec::new(),
         hashes: BTreeSet::new(),
@@ -494,6 +497,20 @@ fn after_signature(st: &mut State, p: &Parsed) -> Result<(), Bad> {
                     c.status = "open".into();
                 }
             }
+            if let Some(m) = st.meta.get_mut(&space) {
+                for e in &entries {
+                    let list = |v: &Option<Vec<String>>| Value::from(v.clone().unwrap_or_default()).to_string();
+                    match (&e.new, e.action.as_str()) {
+                        (Some(h), "relinked" | "updated") => m.put(&e.name, h, list(&e.locals), list(&e.refs), false),
+                        (Some(h), _) => m.put(&e.name, h, list(&e.locals), list(&e.refs), true),
+                        (None, "renamed") => m.remove(&e.name, "renamed"),
+                        (None, _) => m.remove(&e.name, "edited"),
+                    }
+                }
+                if let (Some(h), Some(c)) = (m.head.as_mut(), st.changes.get(&space)) {
+                    h.status = c.status.clone();
+                }
+            }
         }
         "change" => change_op(st, seq, member, &space, action.unwrap_or(""), args)?,
         "lease_break" => {
@@ -508,6 +525,18 @@ fn after_signature(st: &mut State, p: &Parsed) -> Result<(), Bad> {
     }
     if space != "main" {
         let meta = args.get("meta_after").and_then(Value::as_str).ok_or_else(|| chain(format!("record {seq} about change set {space} does not sign its metadata (`meta_after`)")))?;
+        // The metadata replayed from the records so far must be what this record signed.
+        if let Some(m) = st.meta.get_mut(&space) {
+            if let (Some(h), Some(c)) = (m.head.as_mut(), st.changes.get(&space)) {
+                h.owner = c.owner.clone();
+                h.status = c.status.clone();
+                h.claimed = c.claimed;
+                h.scope = Value::from(c.scope.iter().cloned().collect::<Vec<String>>()).to_string();
+            }
+            if m.digest() != meta {
+                return Err(replay(format!("record {seq}: the metadata of change set {space} it signed differs from the metadata replayed from the records (changed without a record?)")));
+            }
+        }
         st.metas.insert(space.clone(), meta.to_string());
         if opening {
             st.opened.insert(space.clone(), seq);
@@ -540,8 +569,27 @@ fn change_op(st: &mut State, seq: i64, member: &str, space: &str, action: &str, 
         if fields.get("base_root").and_then(Value::as_str) != Some(super::root_of(&main).as_str()) {
             return Err(replay(format!("record {seq}: the base of change set {space} is not main at that point")));
         }
+        let scope: BTreeSet<String> = names_of("scope").into_iter().collect();
+        let text = |k: &str| fields.get(k).and_then(Value::as_str).unwrap_or_default().to_string();
+        let head = super::change::MetaHead {
+            id: space.to_string(),
+            title: text("title"),
+            description: text("description"),
+            scope: Value::from(scope.iter().cloned().collect::<Vec<String>>()).to_string(),
+            owner: member.to_string(),
+            assignee: assignee.clone(),
+            status: "open".into(),
+            claimed: !package,
+            base_seq: seq - 1,
+            base_root: text("base_root"),
+        };
+        let rows = main
+            .iter()
+            .map(|(n, r)| (n.clone(), super::change::MetaRow { hash: Some(r.hash.clone()), locals: Value::from(r.locals.clone()).to_string(), refs: Value::from(r.refs.clone()).to_string(), origin: "base".into(), base_hash: Some(r.hash.clone()), conflict: None }))
+            .collect();
+        st.meta.insert(space.to_string(), super::change::Meta { head: Some(head), rows });
         st.set(space, main);
-        st.changes.insert(space.to_string(), Change { owner: member.to_string(), assignee, status: "open".into(), claimed: !package, scope: names_of("scope").into_iter().collect() });
+        st.changes.insert(space.to_string(), Change { owner: member.to_string(), assignee, status: "open".into(), claimed: !package, scope });
         return Ok(());
     }
     let c = st.changes.get_mut(space).ok_or_else(|| unauthorized(format!("record {seq}: no change set {space}")))?;
@@ -630,8 +678,8 @@ fn final_state(conn: &Connection, st: &State) -> Result<(), Bad> {
         // Everything else the change set's decisions rest on (origins, base hashes, conflict marks,
         // rows without a hash, its row in `changes`), as its last record signed it.
         let meta = super::change::meta_digest(conn, c).map_err(db)?;
-        if st.metas.get(c) != Some(&meta) {
-            return Err(replay(format!("the metadata of change set {c} (change_names origin/base_hash/conflict, or its changes row) differs from what its last record signed")));
+        if st.metas.get(c) != Some(&meta) || st.meta.get(c).map(super::change::Meta::digest) != Some(meta) {
+            return Err(replay(format!("the metadata of change set {c} (change_names origin/base_hash/conflict, rows without a hash, or its changes row) differs from the records")));
         }
         let base_seq: i64 = conn.query_row("SELECT base_seq FROM changes WHERE id = ?1", params![c], |r| r.get(0)).map_err(sqlerr)?;
         if st.opened.get(c).map(|s| s - 1) != Some(base_seq) {
