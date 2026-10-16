@@ -96,13 +96,13 @@ op   := 1 PARSE      text                                        → Programm-AS
 store-state := n entry{n} m group{m}
 entry       := name hash[32] kind:u8 canonical local_names refs   (sortiert nach Name)
 group       := hash[32] form
-options     := memory_max_pages entry_kind tparams-limits …       (feste Feldliste, versioniert)
+options     := memory_max_pages                                  (feste Feldliste von Version 1, §16)
 
 res  := "QALR" ver:u8(1) status:u8 payload
 status := 0 DONE payload | 1 DIAGNOSTICS diag* | 2 FORK continuation item* | 3 INTERNAL message
 ```
 
-- `DIAGNOSTICS`: dieselben Felder wie `qal_core::diag::Diagnostic` (`code`, `kind`, `def`, `path`, `message`, `expected?`, `found?`, `hints`, `dependents`, `counterexample?`) als Strings; der Host dekodiert sie in `Diagnostic` (dafür werden `code`/`kind` in 5a von `&'static str` auf `Cow<'static, str>` umgestellt).
+- `DIAGNOSTICS`: dieselben Felder wie `qal_core::diag::Diagnostic` (`code`, `kind`, `def`, `path`, `message`, `expected?`, `found?`, `hints`, `dependents`, `counterexample?`) als Strings; der Host dekodiert sie in `Diagnostic`, indem er `code`/`kind` gegen das Register `qal_core::diag::KNOWN` abbildet (5a: statt `Cow`, §16; ein unbekanntes Paar ist E0952).
 - `INTERNAL`: der Compiler hat einen eigenen Fehler erkannt (Invariante verletzt) → Host meldet E0951.
 - Trap des Compilers (`out_of_memory`, `timeout`, `contract_violation`, …) → Host meldet E0951 `compiler_failed` mit Stage, Operation, Arbeitspaket und dem Laufzeitfehler; der Host läuft weiter.
 
@@ -156,8 +156,8 @@ sig_old  := name kind signature_text_with_current_names        (für die Ersetzu
 |---|---|---|
 | Bit-Operationen | LEB128/SLEB128, IEEE-Bits, Flags; `/`/`%` runden zur Null und sind für negative Werte falsch und langsam | `bit_and(a, b) bit_or(a, b) bit_xor(a, b) bit_not(a) shl(a, n) shr(a, n)` (arithmetisch) `ushr(a, n)` (logisch), `req 0 <= n && n < 64` (sonst Built-in-Vorbedingung) |
 | Float-Bits | `f64.const` braucht die IEEE-Bytes; kanonische Form kodiert Bitmuster | `float_bits(x: Float) -> Int`, `float_of_bits(i: Int) -> Float` |
-| Allokationsfreier Index | `get`/`bytes_get`/`map_get` liefern `Option` = eine Heap-Allokation je Zugriff; der Lexer liest jedes Byte | `at[T](xs: List[T], i: Int) -> T`, `bytes_at(b: Bytes, i: Int) -> Int` (außerhalb → Trap `index`) |
-| Listen aufbauen | `push`/`++` kopieren (O(n) je Schritt, mit Bump-Allocator O(n²) Speicher — 20 000 Definitionen ≈ 1,6 GB) | Prelude-Typ `type Acc[T] = AccEnd \| AccPush(Acc[T], T)` (O(1) je Anhängen) und `acc_list[T](a: Acc[T]) -> List[T]` (O(n), in Anhänge-Reihenfolge) |
+| Allokationsfreier Index | `get`/`bytes_get`/`map_get` liefern `Option` = eine Heap-Allokation je Zugriff; der Lexer liest jedes Byte | `list_at[T](xs: List[T], i: Int) -> T` (5a: statt `at`, §16), `bytes_at(b: Bytes, i: Int) -> Int` (außerhalb → Trap `index`) |
+| Listen aufbauen | `push`/`++` kopieren (O(n) je Schritt, mit Bump-Allocator O(n²) Speicher — 20 000 Definitionen ≈ 1,6 GB) | Prelude-Typ `type Accum[T] = AccEnd \| AccPush(Accum[T], T)` (5a: statt `Acc`, §16; O(1) je Anhängen) und `acc_list[T](a: Accum[T]) -> List[T]` (O(n), in Anhänge-Reihenfolge) |
 | Bytes zusammenfügen | Modulbytes entstehen aus ≈ 10⁵ Stücken | `bytes_join(bs: List[Bytes]) -> Bytes` (eine Kopie, O(Summe)) |
 | SHA-256 | Hash-Bildung; in QAL mit `Option`-Zugriffen speicherhungrig und langsam | `sha256(b: Bytes) -> Bytes` als **reine Host-Hilfe** (wie `float_to_str`, `utf8_valid` seit Phase 1) |
 
@@ -245,7 +245,7 @@ Prüfung  sha256(qalc1) == sha256(qalc2) == sha256(qalc3) und byteweiser Verglei
 2. alle QAL-Quelltexte aus Rust-Tests, extrahiert per Skript `qal/selfhost/tools/extract_corpus.py` (String-Literale, die an `parse_program`, `define`, `qal_define` usw. gehen), dedupliziert nach SHA-256, als Dateien `qal/selfhost/corpus/<sha-präfix>.qal` versioniert; sie decken die Diagnosepfade ab;
 3. generierte Programme: Generator `qal/selfhost/tools/gen` (Rust, nur Test) erzeugt pro CI-Lauf 10 000 zufällige Programme (Seed im Log) — wohltypisierte aus einer Grammatik mit Typen und ill-typisierte durch Mutation (Token löschen/tauschen, Namen ersetzen, Typen vertauschen) von Korpusprogrammen.
 
-Die Zahl der Programme aus (1) und (2) wird in 5a festgeschrieben (erwartet ≥ 1 000).
+Die Zahl der Programme aus (1) und (2) wird in 5a festgeschrieben (erwartet ≥ 1 000; festgeschrieben: 27 + 669 = 696, §16).
 
 ### 10.2 Ebenen des Differenztests
 
@@ -341,3 +341,23 @@ Abbruchsignale für den Wechsel auf die nächste Stufe: Messgate 5a verfehlt auc
 - **5e — Bootstrap und Umschalten:** `qal selfhost bootstrap`, Saat `qalc.wasm` mit Prüfsumme und Fixpunkt-Test, Standard-Backend `qal`, Feature `reference` aus dem Standard-Build, `--no-default-features`-Konfiguration in CI, Leistungsmessung §0.5, Rückfallentscheidung §14.2, Roadmap Zeile 5 mit Nachweisen, Abschluss-Review. **Fertig:** Kriterien 1–6 (bzw. die erreichte Stufe benannt).
 
 Abhängigkeiten: Phase 3 (Prelude, SQL-Prüfung, Pakete) und Phase 4 (Team-Verfahren, `todo()`) vor 5b; `5a → 5b → 5c → 5d → 5e`; 5c kann nach 5b parallel zu den ersten 5d-Paketen laufen (getrennte Arbeitspakete im Team).
+
+---
+
+## 16. Entscheidungen aus 5a (nachgetragen)
+
+Abweichungen von dieser Spezifikation, die 5a getroffen hat; 5b–5e bauen auf ihnen auf (Bericht `.superpowers/sdd/phase5/5a-report.md`).
+
+| Thema | Spezifikation | 5a |
+|---|---|---|
+| Index-Built-in | `at` | `list_at` — `bench/solutions/qal/07-tokenizer.qal` definiert `at` |
+| Akkumulator | `Acc[T]` | `Accum[T]` mit `AccEnd`/`AccPush` und `acc_list` — `03-csv-sum.qal` definiert `type Acc`; kodiert als `T_APP R_PRELUDE "Accum"` |
+| Diagnosen über `QALR` | `code`/`kind` als `Cow` | `&'static str` bleibt; Dekodieren gegen das Register `diag::KNOWN` (E0950–E0954 eingeschlossen), unbekannt → E0952 |
+| Abhängigkeit Fassade | — | `qal-run` → `qal-compiler`; das Backend `Qal` (5b) bekommt den Ausführer injiziert (`qal_run::selfhost::Invoke`/`Compiler`), weil `qal-compiler` nicht von `qal-run` abhängen kann |
+| `options` von `QALQ` v1 | `memory_max_pages entry_kind tparams-limits …` | nur `memory_max_pages`; Prüfergrenzen (z. B. `MAX_INSTANCES`) sind Konstanten der Sprache |
+| `--jobs`, `--compiler` | CLI-Optionen | `jobs` ist Parameter von `selfhost::drive` (`default_jobs()`); die CLI-Optionen kommen mit `qal selfhost bootstrap` (5e) bzw. dem Backend `Qal` (5b) |
+| Feature `reference` | in 5a angelegt | noch nicht: `CompiledModule`, `FuncMeta`, `host`, `FAIL_*` müssen dafür erst nach `qal-core` |
+| Korpus | ≥ 1 000 erwartet | 27 Dateien + 669 extrahierte = 696 (646 parsen, 456 prüfen); `extract_corpus.py --check` ist ein Test |
+| Messgate | — | Speicher eines Ganzprogramm-Pakets hochgerechnet 0,4–1,7 GB → Teilen in Arbeitspakete ist ab 5b verbindlich; Zeit nur für das Lexen gemessen (QAL/Rust ≈ 37×) |
+| Beweiser | — | jedes Built-in, das trappen kann, trägt seine Bedingung zu `ok` bei (`PROVER_VERSION` `qal-prove/3`) |
+
