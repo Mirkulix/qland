@@ -50,7 +50,19 @@
 //!   qal request [<handler>] [--allow <spec>] [--init <fn>] <requests.json>
 //!                                                    -> {"responses":[{status,headers,body,json?,db,stdout?,error?}]}
 //! For agents:
-//!   qal mcp [--root <dir>]                           MCP server on stdin/stdout (JSON-RPC 2.0); the store is <dir>/.qal/store.db
+//!   qal mcp [--root <dir>] [--session-file <file>]   MCP server on stdin/stdout (JSON-RPC 2.0); the store is <dir>/.qal/store.db
+//!                                                       (a team store needs a session: --session-file or QAL_SESSION_FILE)
+//! Teams (Phase 4a; the owner, on the command line; keys in $QAL_KEY_DIR, else ~/.config/qal/keys, never in the project):
+//!   qal team init [--owner <id>]                     -> {"team":{owner,key_id,record,root,key_dir},"note":..} (genesis record)
+//!   qal team add <id> --role <architect|implementer|verifier|reviewer>   -> {"member":{id,role,key_id,record}}
+//!   qal team rekey <id> | qal team revoke <id>       -> {"member":{...}} | {"revoked":{...}}
+//!   qal team session <id> [--ttl 24h] --out <file>   -> {"session":{id,member,expires_at,file}} (the token only in <file>, 0600)
+//!   qal team export-trust --out <file>               -> {"trust":{file,owner,members}} (public keys only)
+//!   qal team status | qal team stats [--json]        -> {"status":{...}} | {"stats":{...}} (never tokens)
+//!   qal team sync-std                                -> {"std":{hash,status}} (signed import of the embedded std)
+//!   qal verify [--trust <team.json>] [--from <seq>]  -> {"ok":true,"records":n,"members":m,"trust":"file"|"store","head":..}
+//!                                                       | {"ok":false,"error":{code,kind,seq,message},"checked":n} (exit 1)
+//! In a team store the command line does not write code (define, rename, delete, import: E0903); agents do, over MCP.
 //!
 //! `<spec>` grants effects: `io`, `time`, `rand`, `fs:<dir>`, `net:<host>[:port]`, `db`, `db:<name>`, `db:mem`
 //! (comma-separated, `--allow` repeatable; `db` is <project>/.qal/db/main.sqlite).
@@ -74,7 +86,9 @@ const USAGE: &str = "usage: qal <check|fmt> <file>\n       \
                      qal run <file|name> [--allow <spec>] [--] [args...]\n       \
                      qal serve [<handler>] [--listen <addr>] [--allow <spec>] [--init <fn>] [--workers <n>] [... see `qal serve --help`]\n       \
                      qal request [<handler>] [--allow <spec>] [--init <fn>] <requests.json>\n       \
-                     qal mcp [--root <dir>]";
+                     qal mcp [--root <dir>] [--session-file <file>]\n       \
+                     qal team <init [--owner <id>] | add <id> --role <role> | rekey <id> | revoke <id> | session <id> [--ttl 24h] --out <file> | export-trust --out <file> | status | stats | sync-std>\n       \
+                     qal verify [--trust <team.json>] [--from <seq>]";
 
 fn usage() -> ExitCode {
     bad_usage(USAGE)
@@ -107,6 +121,8 @@ fn main() -> ExitCode {
         "call" | "test" | "run" => run_command(cmd, rest),
         "prove" => prove_command(rest),
         "mcp" => mcp(rest),
+        "team" => team(rest),
+        "verify" => verify(rest),
         "serve" => serve(rest),
         "request" => request(rest),
         _ => usage(),
@@ -311,7 +327,7 @@ fn prove_command(args: &[String]) -> ExitCode {
 }
 
 fn mcp(args: &[String]) -> ExitCode {
-    let s = match split(args, &["root"], &[], &all) {
+    let s = match split(args, &["root", "session-file"], &[], &all) {
         Ok(s) if s.targets.is_empty() => s,
         Ok(_) => return usage(),
         Err(code) => return code,
@@ -323,10 +339,76 @@ fn mcp(args: &[String]) -> ExitCode {
             Err(e) => return bad_usage(&format!("no current directory: {e}")),
         },
     };
-    match qal_cli::mcp::serve_stdio(&root) {
+    let session = s.one("session-file").map(std::path::PathBuf::from).or_else(|| std::env::var_os("QAL_SESSION_FILE").filter(|v| !v.is_empty()).map(std::path::PathBuf::from));
+    match qal_cli::mcp::serve_stdio(&root, session) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => bad_usage(&format!("qal mcp: {e}")),
     }
+}
+
+const TEAM_USAGE: &str = "usage: qal team init [--owner <id>] | add <id> --role <architect|implementer|verifier|reviewer> | rekey <id> | revoke <id>\n       \
+                          qal team session <id> [--ttl 24h] --out <file> | export-trust --out <file> | status | stats [--json] | sync-std";
+
+fn team(args: &[String]) -> ExitCode {
+    let Some(sub) = args.first() else {
+        return bad_usage(TEAM_USAGE);
+    };
+    let rest: Vec<String> = args[1..].iter().filter(|a| !(sub == "stats" && *a == "--json")).cloned().collect();
+    let options: &[&str] = match sub.as_str() {
+        "init" => &["owner"],
+        "add" => &["role"],
+        "session" => &["ttl", "out"],
+        "export-trust" => &["out"],
+        _ => &[],
+    };
+    let s = match split(&rest, options, &[], &all) {
+        Ok(s) => s,
+        Err(_) => return bad_usage(TEAM_USAGE),
+    };
+    let c = match ctx() {
+        Ok(c) => c,
+        Err(code) => return code,
+    };
+    let out = s.one("out").map(std::path::Path::new);
+    emit(match (sub.as_str(), s.targets.as_slice()) {
+        ("init", []) => qal_cli::team::init(&c, s.one("owner").unwrap_or("owner")),
+        ("add", [id]) => match s.one("role") {
+            Some(role) => qal_cli::team::add(&c, id, role),
+            None => return bad_usage("`qal team add` needs `--role <architect|implementer|verifier|reviewer>`"),
+        },
+        ("rekey", [id]) => qal_cli::team::rekey(&c, id),
+        ("revoke", [id]) => qal_cli::team::revoke(&c, id),
+        ("session", [id]) => match out {
+            Some(out) => qal_cli::team::session(&c, id, s.one("ttl"), out),
+            None => return bad_usage("`qal team session` needs `--out <file>` (the token is written only there)"),
+        },
+        ("export-trust", []) => match out {
+            Some(out) => qal_cli::team::export_trust(&c, out),
+            None => return bad_usage("`qal team export-trust` needs `--out <file>`"),
+        },
+        ("status", []) => qal_cli::team::status(&c),
+        ("stats", []) => qal_cli::team::stats(&c),
+        ("sync-std", []) => qal_cli::team::sync_std(&c),
+        _ => return bad_usage(TEAM_USAGE),
+    })
+}
+
+fn verify(args: &[String]) -> ExitCode {
+    let s = match split(args, &["trust", "from"], &[], &all) {
+        Ok(s) if s.targets.is_empty() => s,
+        _ => return bad_usage("usage: qal verify [--trust <team.json>] [--from <seq>]"),
+    };
+    let from = match s.one("from").map(str::parse::<i64>) {
+        None => 1,
+        Some(Ok(n)) if n >= 1 => n,
+        Some(_) => return bad_usage("--from takes a record number (1 or more)"),
+    };
+    let trust = match s.one("trust").map(read) {
+        None => None,
+        Some(Ok(t)) => Some(t),
+        Some(Err(code)) => return code,
+    };
+    with_ctx(|c| qal_cli::team::verify(c, trust.as_deref(), from))
 }
 
 /// The options of `qal serve` with their defaults (spec Phase 3 §7.1).

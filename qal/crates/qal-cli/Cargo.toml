@@ -19,3 +19,4 @@ qal-prove = { workspace = true }
 qal-serve = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+zeroize = { workspace = true }

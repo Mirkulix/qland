@@ -117,6 +117,8 @@ fn text<'a>(body: &'a Value, key: &str) -> Result<&'a str, Bad> {
 struct State {
     members: BTreeMap<String, Known>,
     names: BTreeMap<String, String>,
+    /// `root(names)`, kept up to date (records that change no name do not recompute it).
+    root: String,
     /// Every hash a record names.
     hashes: BTreeSet<String>,
 }
@@ -130,7 +132,7 @@ pub fn verify(conn: &Connection, trust: Option<&Trust>, from: i64) -> Result<Out
             rows.push(r.map_err(sql)?);
         }
     }
-    let mut st = State { members: BTreeMap::new(), names: BTreeMap::new(), hashes: BTreeSet::new() };
+    let mut st = State { members: BTreeMap::new(), names: BTreeMap::new(), root: root(&BTreeMap::new()), hashes: BTreeSet::new() };
     let mut prev = ZERO_HASH.to_string();
     let mut checked = 0i64;
     for (i, (seq, hash, body, sig)) in rows.iter().enumerate() {
@@ -239,7 +241,7 @@ fn check_record(st: &mut State, prev: &mut String, expected: i64, seq: i64, hash
     }
 
     // 4. Replay.
-    if op != "genesis" && root(&st.names) != before {
+    if op != "genesis" && st.root != before {
         return Err(replay(format!("record {seq}: the names before it do not have the recorded root (changed without a record?)")));
     }
     let id = || args.get("id").and_then(Value::as_str).filter(|i| valid_member_id(i)).ok_or_else(|| unauthorized(format!("record {seq} names no valid member")));
@@ -253,7 +255,8 @@ fn check_record(st: &mut State, prev: &mut String, expected: i64, seq: i64, hash
                 st.hashes.insert(h.to_string());
                 st.names.insert(n.to_string(), h.to_string());
             }
-            if root(&st.names) != before {
+            st.root = root(&st.names);
+            if st.root != before {
                 return Err(replay("the genesis record's names do not have its root".into()));
             }
         }
@@ -290,10 +293,11 @@ fn check_record(st: &mut State, prev: &mut String, expected: i64, seq: i64, hash
                     None => st.names.remove(&e.name),
                 };
             }
+            st.root = root(&st.names);
         }
         other => return Err(unauthorized(format!("record {seq} has the unknown operation `{other}`"))),
     }
-    if root(&st.names) != after {
+    if st.root != after {
         return Err(replay(format!("record {seq}: replaying it does not give its recorded root")));
     }
     Ok(())

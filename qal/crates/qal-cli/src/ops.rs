@@ -98,6 +98,12 @@ pub struct Output {
     /// The results of `request`, one per request, in order.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub responses: Option<Vec<RequestResult>>,
+    /// Fields of the team commands and of team mode (`notices`, `space`, `qal verify`'s result, ...).
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
+    /// The operation failed without diagnostics (a failed `qal verify`).
+    #[serde(skip)]
+    pub failure: bool,
 }
 
 /// One request of `request` / `qal_request` (spec Phase 3 §7.2).
@@ -233,7 +239,7 @@ pub struct Reply {
 }
 
 impl Reply {
-    fn new(out: Output, code: u8) -> Reply {
+    pub(crate) fn new(out: Output, code: u8) -> Reply {
         Reply { out, code }
     }
 
@@ -250,7 +256,7 @@ impl Reply {
     /// True if the operation failed: diagnostics, a runtime error, or failed tests (a program
     /// that runs and returns a non-zero exit code did not fail).
     pub fn is_error(&self) -> bool {
-        self.out.diagnostics.is_some() || self.out.error.is_some() || self.out.failed.is_some_and(|n| n > 0) || self.out.failed_properties.is_some() || self.out.refuted.is_some_and(|n| n > 0)
+        self.out.failure || self.out.diagnostics.is_some() || self.out.error.is_some() || self.out.failed.is_some_and(|n| n > 0) || self.out.failed_properties.is_some() || self.out.refuted.is_some_and(|n| n > 0)
     }
 }
 
@@ -267,6 +273,11 @@ pub struct Ctx {
     pub test_budget: Option<Duration>,
     /// Captured stdout longer than this is cut (at a character boundary).
     pub max_stdout: Option<usize>,
+    /// Team mode: who signs the records of writes (an agent's session over MCP).
+    pub signer: Option<std::sync::Arc<qal_store::team::Signer>>,
+    /// Team mode: the space the operations work in (`main` until Phase 4b); `build` writes to
+    /// `.qal/build/<space>/`.
+    pub space: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -295,7 +306,7 @@ impl Ctx {
     /// The CLI context: the store around the current directory, no limits beyond the runtime's.
     pub fn cli() -> Result<Ctx, Vec<Diagnostic>> {
         let cwd = std::env::current_dir().map_err(|e| vec![Diagnostic::store_error(format!("no current directory: {e}"))])?;
-        Ok(Ctx { store: StoreAt::Discover(cwd), stdin: None, timeout: None, test_budget: None, max_stdout: None })
+        Ok(Ctx { store: StoreAt::Discover(cwd), stdin: None, timeout: None, test_budget: None, max_stdout: None, signer: None, space: None })
     }
 
     /// The store; `create` makes it under `Root` if it does not exist yet (only `define` does,
@@ -406,7 +417,7 @@ pub fn init(dir: &Path, std: bool) -> Reply {
 
 /// What the automatic std import before a write did.
 #[derive(Debug, Default)]
-pub struct StdImport {
+pub(crate) struct StdImport {
     /// The package hash, if it imported.
     imported: Option<String>,
     /// Why it could not import (the project keeps its previous std).
@@ -414,7 +425,7 @@ pub struct StdImport {
 }
 
 impl StdImport {
-    fn report(self, out: &mut Output) {
+    pub(crate) fn report(self, out: &mut Output) {
         out.std_imported = self.imported;
         out.std_warnings = self.warnings;
     }
@@ -431,7 +442,8 @@ impl StdImport {
 /// project's store. Its contracts are proven as by any import; the proof reports are not part of
 /// the write's result. A failed import never blocks the project (review finding C1): it changed
 /// nothing, the project keeps its previous std, and the write goes ahead with a warning.
-fn with_std(store: &mut Store) -> StdImport {
+/// A team store never imports automatically (`qal team sync-std` does, signed).
+pub(crate) fn with_std(store: &mut Store) -> StdImport {
     let (result, _) = proving(|v| store.ensure_std(crate::STD_PACKAGE, Some(v)));
     match result {
         Ok(imported) => StdImport { imported: imported.map(|i| i.hash), warnings: None },
@@ -447,9 +459,11 @@ fn with_std(store: &mut Store) -> StdImport {
 
 /// The store for a write (`create`: make it if missing), with the standard library imported
 /// (or a warning why not).
+/// The writes of a team store are signed by `ctx.signer` (refused without one).
 fn open_for_write(ctx: &Ctx, create: bool) -> Result<(Store, StdImport), Vec<Diagnostic>> {
     let mut store = ctx.open_store(create)?;
     let std = with_std(&mut store);
+    store.set_signer(ctx.signer.clone());
     Ok((store, std))
 }
 
@@ -487,7 +501,7 @@ pub fn define(ctx: &Ctx, src: &str, agent: &str, breaking: bool) -> Reply {
 /// Runs a store write with the verification step of `define` (the contracts of what it defines
 /// are proven; a refuted one rejects the write) and returns its result with the proof reports.
 /// Each report comes with the hash it was proven for (see [`current_reports`]).
-fn proving<T>(write: impl FnOnce(&mut Verify) -> Result<T, Vec<Diagnostic>>) -> (Result<T, Vec<Diagnostic>>, Vec<(String, Report)>) {
+pub(crate) fn proving<T>(write: impl FnOnce(&mut Verify) -> Result<T, Vec<Diagnostic>>) -> (Result<T, Vec<Diagnostic>>, Vec<(String, Report)>) {
     let opts = qal_prove::Options::default();
     // Reports with the hash they were proven for: a retried `define` may have verified an older
     // version first (review finding N4).
@@ -981,7 +995,12 @@ pub fn build(ctx: &Ctx, name: &str) -> Reply {
     let Some(project) = store.path().parent().and_then(Path::parent) else {
         return Reply::diagnostics(vec![Diagnostic::store_error("the store has no project directory")]);
     };
-    let dir = project.join(qal_store::STORE_DIR).join("build");
+    // Team mode: one build directory per space (Phase 4 spec §10.2).
+    let rel = match &ctx.space {
+        Some(space) => format!(".qal/build/{space}"),
+        None => ".qal/build".to_string(),
+    };
+    let dir = project.join(&rel);
     let manifest = Manifest {
         format: "qal-build/1",
         name,
@@ -998,7 +1017,7 @@ pub fn build(ctx: &Ctx, name: &str) -> Reply {
         Ok(j) => j + "\n",
         Err(e) => return Reply::diagnostics(vec![Diagnostic::store_error(format!("cannot write the manifest: {e}"))]),
     };
-    let (wasm_rel, manifest_rel) = (format!(".qal/build/{name}.wasm"), format!(".qal/build/{name}.manifest.json"));
+    let (wasm_rel, manifest_rel) = (format!("{rel}/{name}.wasm"), format!("{rel}/{name}.manifest.json"));
     let written = std::fs::create_dir_all(&dir)
         .and_then(|_| write_atomic(&project.join(&wasm_rel), &module.wasm))
         .and_then(|_| write_atomic(&project.join(&manifest_rel), json.as_bytes()));

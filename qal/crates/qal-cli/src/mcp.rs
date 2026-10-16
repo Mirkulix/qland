@@ -20,7 +20,12 @@
 use crate::ops::{self, CallArgs, Ctx, Reply, Source, StoreAt};
 use qal_core::diag::Diagnostic;
 use qal_run::Permissions;
-use qal_store::Query;
+use qal_store::team::keys::KeyDir;
+use qal_store::team::policy::{self, Role, Space};
+use qal_store::team::{Identity, Signer};
+use qal_store::{Query, Store};
+use std::sync::Arc;
+use std::time::Instant;
 use serde::Serialize;
 use serde_json::{json, Map, Value as J};
 use std::io::{BufRead, Write};
@@ -86,7 +91,27 @@ pub struct Server {
     root: PathBuf,
     /// Client name from `initialize` (legacy), used as the default agent name.
     client: Option<String>,
+    /// The session of a team store (Phase 4 spec §4.3), read once at start.
+    session: Session,
 }
+
+/// What the server knows about its session: only the SHA-256 of the token is kept.
+enum Session {
+    /// No session file was given.
+    None,
+    /// The session file could not be used (why).
+    Unusable(String),
+    /// SHA-256 of the token.
+    Token(String),
+}
+
+/// Longest `wait_s` of `qal_whoami` (below the 60 s timeout of the agents' client).
+pub const MAX_WAIT_S: u64 = 45;
+/// How often a waiting `qal_whoami` looks for new notices.
+const POLL: Duration = Duration::from_millis(200);
+
+/// The tools only a team store has.
+const TEAM_TOOLS: [&str; 2] = ["qal_whoami", "qal_verify"];
 
 #[derive(Serialize)]
 struct Response<'a, R: Serialize> {
@@ -151,7 +176,59 @@ impl Server {
         if !root.is_dir() {
             return Err(std::io::Error::other(format!("{} is not a directory", root.display())));
         }
-        Ok(Server { root, client: None })
+        Ok(Server { root, client: None, session: Session::None })
+    }
+
+    /// A server whose agent uses the session in `file` (a team store; ignored by other stores).
+    pub fn with_session(root: &Path, file: Option<&Path>) -> std::io::Result<Server> {
+        let mut s = Server::new(root)?;
+        s.session = match file {
+            None => Session::None,
+            Some(f) => match crate::secret_file::read_session(f) {
+                Ok(token) => Session::Token(qal_store::team::token_hash(&token)),
+                Err(why) => Session::Unusable(why),
+            },
+        };
+        Ok(s)
+    }
+
+    /// The project's store if it is a team store.
+    fn team_store(&self) -> Option<Store> {
+        let path = self.root.join(qal_store::STORE_DIR).join(qal_store::STORE_FILE);
+        if !path.is_file() {
+            return None;
+        }
+        let store = Store::open(&path).ok()?;
+        store.is_team().ok()?.then_some(store)
+    }
+
+    /// The agent's identity in a team store (E0902 without a valid session).
+    fn identity(&self, store: &Store) -> Result<Identity, Diagnostic> {
+        match &self.session {
+            Session::None => Err(qal_store::team::no_session("this is a team store and the server has no session")),
+            Session::Unusable(why) => Err(qal_store::team::no_session(why.clone())),
+            Session::Token(h) => store.resolve_session(h),
+        }
+    }
+
+    /// `tools/list` of a team store: the tools of the session's role (only `qal_whoami` without a
+    /// valid session, which then explains why).
+    fn team_tools(&self, store: &Store) -> J {
+        let all = tools_with_team();
+        let Ok(who) = self.identity(store) else {
+            return J::Array(all.into_iter().filter(|t| t["name"] == "qal_whoami").collect());
+        };
+        let Some(role) = Role::parse(&who.role) else { return J::Array(Vec::new()) };
+        let names = policy::tools_for(role);
+        let mut out = Vec::new();
+        for mut t in all.into_iter().filter(|t| t["name"].as_str().is_some_and(|n| names.contains(&n))) {
+            if t["name"] == "qal_define" {
+                let d = format!("{}\n\n{}", t["description"].as_str().unwrap_or(""), team_reference(role));
+                t["description"] = J::from(d);
+            }
+            out.push(t);
+        }
+        J::Array(out)
     }
 
     pub fn root(&self) -> &Path {
@@ -276,7 +353,13 @@ impl Server {
                 }))))
             }
             "ping" => Ok(finish(Map::new())),
-            "tools/list" => Ok(finish(object(json!({ "tools": tools() })))),
+            "tools/list" => {
+                let list = match self.team_store() {
+                    Some(store) => self.team_tools(&store),
+                    None => tools(),
+                };
+                Ok(finish(object(json!({ "tools": list }))))
+            }
             "tools/call" => {
                 let Some(name) = params.get("name").and_then(J::as_str) else {
                     return Err(rpc(INVALID_PARAMS, "`name` must be a string"));
@@ -287,7 +370,7 @@ impl Server {
                     Some(J::Object(a)) => a,
                     Some(_) => return Err(rpc(INVALID_PARAMS, "`arguments` must be an object")),
                 };
-                if !TOOL_NAMES.contains(&name) {
+                if !TOOL_NAMES.contains(&name) && !TEAM_TOOLS.contains(&name) {
                     return Err(rpc(INVALID_PARAMS, format!("Unknown tool: {name}")));
                 }
                 let client = match era {
@@ -331,7 +414,7 @@ impl Server {
         }
     }
 
-    fn ctx(&self, stdin: Option<String>) -> Ctx {
+    fn ctx(&self, stdin: Option<String>, team: Option<&TeamCall>) -> Ctx {
         Ctx {
             store: StoreAt::Root(self.root.clone()),
             // Never the process's stdin: that is the protocol channel.
@@ -339,11 +422,28 @@ impl Server {
             timeout: Some(RUN_TIMEOUT),
             test_budget: Some(TEST_BUDGET),
             max_stdout: Some(MAX_STDOUT_BYTES),
+            signer: team.and_then(|t| t.signer.clone()),
+            space: team.map(|_| "main".to_string()),
         }
     }
 
     fn call_tool(&self, name: &str, args: &Map<String, J>, client: Option<&str>) -> Reply {
-        let mut reply = match self.tool(name, args, client) {
+        let start = Instant::now();
+        let team = self.team_store();
+        let mut who = None;
+        let result = match &team {
+            None if TEAM_TOOLS.contains(&name) => Ok(Reply::diagnostics(vec![qal_store::team::not_a_team(&format!("`{name}`"))])),
+            None => self.tool(name, args, client, None),
+            Some(store) => match self.identity(store) {
+                Err(d) => Ok(Reply::diagnostics(vec![d])),
+                Ok(id) => {
+                    let r = self.team_tool(store, &id, name, args);
+                    who = Some(id);
+                    r
+                }
+            },
+        };
+        let mut reply = match result {
             Ok(r) => r,
             Err(message) => Reply::diagnostics(vec![Diagnostic::new("E0701", "bad_arguments", "", "", message).hint(format!("see the input schema of `{name}` in tools/list"))]),
         };
@@ -364,12 +464,68 @@ impl Server {
                 shorten(s);
             }
         }
+        if let Some(store) = &team {
+            team_envelope(store, who.as_ref(), name, &mut reply, start);
+        }
         reply
     }
 
-    fn tool(&self, name: &str, args: &Map<String, J>, client: Option<&str>) -> Result<Reply, String> {
+    /// A tool call in a team store by the session's member: the matrix (E0903), the grants
+    /// (E0915), the member's key for writes (E0920), then the tool itself, signed.
+    fn team_tool(&self, store: &Store, who: &Identity, name: &str, args: &Map<String, J>) -> Result<Reply, String> {
+        let Some(role) = Role::parse(&who.role) else {
+            return Ok(Reply::diagnostics(vec![qal_store::team::no_session(format!("the member `{}` has no agent role", who.member))]));
+        };
+        if !policy::allows(name, None, role, Space::Main) {
+            return Ok(Reply::diagnostics(vec![policy::forbidden(name, None, role, Space::Main)]));
+        }
+        std_notice(store, who);
+        match name {
+            "qal_whoami" => return whoami(store, who, &Args::new(name, args)?),
+            "qal_verify" => {
+                let a = Args::new(name, args)?;
+                let from = match a.get("from") {
+                    None => 1,
+                    Some(J::Number(n)) => n.as_i64().filter(|n| *n >= 1).ok_or("`from` must be a record number (1 or more)")?,
+                    Some(_) => return Err("`from` must be a record number (1 or more)".into()),
+                };
+                return Ok(crate::team::verify(&self.ctx(None, None), None, from));
+            }
+            _ => {}
+        }
+        if matches!(name, "qal_run" | "qal_call" | "qal_request") {
+            let a = Args::new(name, args)?;
+            let wanted: Vec<String> = a.strings("allow")?.unwrap_or_default().iter().flat_map(|s| s.split(',').map(|x| x.trim().to_string()).collect::<Vec<_>>()).filter(|x| !x.is_empty()).collect();
+            let allowed = match store.team_allow() {
+                Ok(a) => a,
+                Err(d) => return Ok(Reply::diagnostics(d)),
+            };
+            if let Some(x) = wanted.iter().find(|x| !allowed.contains(x)) {
+                let d = Diagnostic::new("E0915", "grant_forbidden", "", "allow", format!("agents in this team may grant only {}, not `{x}`", allowed.join(", ")))
+                    .hint("files, the network and real databases stay with the owner on the command line (qal run, qal serve); test with \"db:mem\"");
+                return Ok(Reply::diagnostics(vec![d]));
+            }
+        }
+        let signer = if policy::WRITE_TOOLS.contains(&name) {
+            let signed = KeyDir::from_env().map_err(|d| vec![d]).and_then(|keys| store.member_signer(&keys, who));
+            match signed {
+                Ok(s) => Some(Arc::new(s)),
+                Err(d) => return Ok(Reply::diagnostics(d)),
+            }
+        } else {
+            None
+        };
+        self.tool(name, args, None, Some(&TeamCall { signer, member: who.member.clone() }))
+    }
+
+    fn tool(&self, name: &str, args: &Map<String, J>, client: Option<&str>, team: Option<&TeamCall>) -> Result<Reply, String> {
         let a = Args::new(name, args)?;
         let agent = |a: &Args| -> Result<String, String> {
+            // In a team store the member is the agent (the `agent` argument is ignored).
+            if let Some(t) = team {
+                a.string("agent")?;
+                return Ok(t.member.clone());
+            }
             Ok(match a.string("agent")? {
                 Some(s) if s.is_empty() || s.chars().count() > 64 || s.chars().any(invisible) => return Err("`agent` must be 1 to 64 characters without control or formatting characters".into()),
                 Some(s) => s,
@@ -379,7 +535,7 @@ impl Server {
                 },
             })
         };
-        let ctx = self.ctx(a.string("stdin")?);
+        let ctx = self.ctx(a.string("stdin")?, team);
         let perms = |a: &Args| -> Result<Permissions, String> { Permissions::parse_in(&a.strings("allow")?.unwrap_or_default(), &self.root) };
         Ok(match name {
             "qal_define" => {
@@ -554,6 +710,124 @@ impl<'a> Args<'a> {
     }
 }
 
+/// What a tool call in a team store adds to the context.
+struct TeamCall {
+    signer: Option<Arc<Signer>>,
+    member: String,
+}
+
+/// The first error code of a reply, for the call log.
+fn error_code(reply: &Reply) -> Option<String> {
+    if let Some(d) = reply.out.diagnostics.as_ref().and_then(|d| d.first()) {
+        return Some(d.code.to_string());
+    }
+    if let Some(e) = &reply.out.error {
+        return Some(e.kind.to_string());
+    }
+    reply.out.extra.get("error").and_then(|e| e.get("code")).and_then(J::as_str).map(str::to_string)
+}
+
+/// Team mode around every tool result: unseen notices (at most 10, `notices_more` counts the
+/// rest), the space, and the call log entry (spec §10.2-10.4).
+fn team_envelope(store: &Store, who: Option<&Identity>, tool: &str, reply: &mut Reply, start: Instant) {
+    if let Some(w) = who {
+        if tool != "qal_whoami" {
+            if let Ok((notices, more)) = store.take_notices(&w.member, qal_store::team::NOTICES_PER_REPLY) {
+                if !notices.is_empty() {
+                    reply.out.extra.insert("notices".into(), serde_json::to_value(&notices).unwrap_or(J::Null));
+                }
+                if more > 0 {
+                    reply.out.extra.insert("notices_more".into(), J::from(more));
+                }
+            }
+        }
+        reply.out.extra.insert("space".into(), J::from("main"));
+    }
+    let code = error_code(reply);
+    let call = qal_store::team::Call {
+        member: who.map_or("", |w| w.member.as_str()),
+        session: who.map_or("", |w| w.session.as_str()),
+        tool,
+        ok: !reply.is_error(),
+        code: code.as_deref(),
+        ms: i64::try_from(start.elapsed().as_millis()).unwrap_or(i64::MAX),
+    };
+    // The log is measurement only: a failure to write it does not change the answer.
+    let _ = store.log_call(&call);
+}
+
+/// The notice `std_outdated` (once per std version and member) when this qal embeds a newer
+/// standard library than the team store has: the owner imports it with `qal team sync-std`.
+fn std_notice(store: &Store, who: &Identity) {
+    let Ok(embedded) = qal_store::package::parse(crate::STD_PACKAGE).map(|p| p.hash) else { return };
+    let have = store.meta(qal_store::package::META_STD_PACKAGE).ok().flatten();
+    if have.as_deref() != Some(embedded.as_str()) && !store.is_std().unwrap_or(false) {
+        let body = json!({"embedded": embedded, "store": have, "hint": "the owner imports the standard library of this qal with `qal team sync-std`"});
+        let _ = store.notify_once(&who.member, "std_outdated", &body);
+    }
+}
+
+/// `qal_whoami {wait_s}`: who the session is, and its unseen notices; with `wait_s`, waits up to
+/// that long for a first notice (checking every 200 ms).
+fn whoami(store: &Store, who: &Identity, a: &Args) -> Result<Reply, String> {
+    let wait = match a.get("wait_s") {
+        None => 0,
+        Some(J::Number(n)) => n.as_u64().filter(|w| *w <= MAX_WAIT_S).ok_or(format!("`wait_s` must be an integer from 0 to {MAX_WAIT_S}"))?,
+        Some(_) => return Err(format!("`wait_s` must be an integer from 0 to {MAX_WAIT_S}")),
+    };
+    let deadline = Instant::now() + Duration::from_secs(wait);
+    loop {
+        match store.has_notices(&who.member) {
+            Ok(true) => break,
+            Ok(false) if Instant::now() >= deadline => break,
+            Ok(false) => std::thread::sleep(POLL),
+            Err(d) => return Ok(Reply::diagnostics(d)),
+        }
+    }
+    let (notices, more) = match store.take_notices(&who.member, qal_store::team::NOTICES_PER_REPLY) {
+        Ok(n) => n,
+        Err(d) => return Ok(Reply::diagnostics(d)),
+    };
+    let mut out = ops::Output::default();
+    let mut fields = json!({"member": who.member, "role": who.role, "session": who.session, "expires_at": who.expires_at, "change": null, "leases": [], "notices": notices});
+    if more > 0 {
+        fields["notices_more"] = J::from(more);
+    }
+    if let J::Object(m) = fields {
+        out.extra = m;
+    }
+    Ok(Reply { out, code: 0 })
+}
+
+/// The ≤ 12-line „Team“ section of `qal_define`'s reference for a role (spec §8).
+fn team_reference(role: Role) -> String {
+    let rule = match role {
+        Role::Architect => "You are an architect: you own the interfaces (types, signatures, contracts) and, until change sets exist (Phase 4b), you are the only role that writes on main (define, rename, delete).",
+        Role::Implementer => "You are an implementer: you replace bodies in your own change set (Phase 4b) and never change a type, signature, contract or kind of an existing name. On main, qal_define is refused (E0903) until then.",
+        Role::Verifier => "You are a verifier: you add `test` definitions to your own and to submitted change sets (Phase 4b), and run qal_test, qal_prove, qal_request. On main, qal_define is refused (E0903) until then.",
+        Role::Reviewer => "You are a reviewer: you read, test and review; you do not write code.",
+    };
+    format!(
+        "## Team\n{rule}\nYour identity is the server's session, not an argument (`agent` is ignored). Every write is an Ed25519-signed record (qal_verify checks the chain).\nqal_whoami {{\"wait_s\": 30}} shows your role and waits for notices instead of polling; every result carries unseen `notices`.\n`allow` is limited to the team's grants (default io, time, rand, db:mem; more is E0915). A refusal names the role that may (E0903)."
+    )
+}
+
+/// The tool list including the team tools (`qal_whoami`, `qal_verify`).
+fn tools_with_team() -> Vec<J> {
+    let mut all = match tools() {
+        J::Array(xs) => xs,
+        _ => Vec::new(),
+    };
+    let read_only = json!({"readOnlyHint": true, "openWorldHint": false});
+    all.push(json!({"name": "qal_whoami", "title": "Who am I (team)", "annotations": read_only,
+        "description": "Your member id, role, session and unseen notices (change sets opened for you, merges, ...), marked seen once returned. With `wait_s` (up to 45) it waits for the first new notice instead of returning at once: use it to wait for work instead of polling.",
+        "inputSchema": {"type": "object", "properties": {"wait_s": {"type": "integer", "minimum": 0, "maximum": MAX_WAIT_S, "description": "Seconds to wait for a new notice (default 0)."}}, "additionalProperties": false}}));
+    all.push(json!({"name": "qal_verify", "title": "Verify the team's records", "annotations": read_only,
+        "description": "Check the signed record chain of the team store: sequence and hashes, every Ed25519 signature, each record's rights, and that replaying all records gives exactly the current names. Result: {ok, records, members, trust, head} or {ok: false, error: {code, kind, seq, message}, checked}.",
+        "inputSchema": {"type": "object", "properties": {"from": {"type": "integer", "minimum": 1, "description": "Check signatures from this record on (default 1)."}}, "additionalProperties": false}}));
+    all
+}
+
 const TOOL_NAMES: [&str; 12] = ["qal_define", "qal_test", "qal_prove", "qal_run", "qal_call", "qal_request", "qal_view", "qal_query", "qal_rename", "qal_delete", "qal_history", "qal_build"];
 
 fn tool_params(tool: &str) -> &'static [&'static str] {
@@ -570,6 +844,8 @@ fn tool_params(tool: &str) -> &'static [&'static str] {
         "qal_history" => &["name"],
         "qal_delete" => &["name", "with", "agent"],
         "qal_request" => &["handler", "init", "allow", "requests"],
+        "qal_whoami" => &["wait_s"],
+        "qal_verify" => &["from"],
         _ => &[],
     }
 }
@@ -682,8 +958,12 @@ fn read_message(input: &mut impl BufRead, max: usize) -> std::io::Result<Message
 }
 
 /// Serves requests from `input` until it ends, writing one response line per request.
-pub fn serve(root: &Path, mut input: impl BufRead, mut output: impl Write) -> std::io::Result<()> {
-    let mut server = Server::new(root)?;
+pub fn serve(root: &Path, input: impl BufRead, output: impl Write) -> std::io::Result<()> {
+    serve_with(Server::new(root)?, input, output)
+}
+
+/// Serves requests with `server` (e.g. one with a session).
+pub fn serve_with(mut server: Server, mut input: impl BufRead, mut output: impl Write) -> std::io::Result<()> {
     loop {
         let reply = match read_message(&mut input, MAX_MESSAGE_BYTES)? {
             Message::Eof => return Ok(()),
@@ -701,12 +981,13 @@ pub fn serve(root: &Path, mut input: impl BufRead, mut output: impl Write) -> st
 
 /// `qal mcp`: serves stdin/stdout on a thread with a large stack (the checker and code generator
 /// recurse over expressions up to the parser's nesting limit).
-pub fn serve_stdio(root: &Path) -> std::io::Result<()> {
-    let root = root.to_path_buf();
+/// `session`: the agent's session file (a team store needs one; others ignore it).
+pub fn serve_stdio(root: &Path, session: Option<PathBuf>) -> std::io::Result<()> {
+    let server = Server::with_session(root, session.as_deref())?;
     let worker = std::thread::Builder::new().name("qal-mcp".into()).stack_size(256 << 20).spawn(move || {
         let stdin = std::io::stdin();
         let stdout = std::io::stdout();
-        serve(&root, stdin.lock(), stdout.lock())
+        serve_with(server, stdin.lock(), stdout.lock())
     })?;
     match worker.join() {
         Ok(r) => r,

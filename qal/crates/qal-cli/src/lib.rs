@@ -3,6 +3,8 @@
 
 pub mod mcp;
 pub mod ops;
+pub mod secret_file;
+pub mod team;
 
 /// The standard library package (spec Phase 3 §4.3), embedded in the binary: `qal init` and every
 /// write to a project store import it when the project does not have this version yet
