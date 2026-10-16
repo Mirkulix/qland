@@ -35,7 +35,7 @@ use qal_core::ast::Type;
 use qal_core::diag::Diagnostic;
 use qal_core::tast::{TExpr, TKind, TProgram};
 use qal_run::{RunError, Runner, Value};
-use qal_wasm::Entry;
+use qal_compiler::Entry;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashSet};
 use std::panic::{catch_unwind, AssertUnwindSafe};
@@ -385,7 +385,7 @@ fn prove_one(tp: &TProgram, name: &str, which: Which, start: Instant, opts: &Opt
                             break;
                         }
                         let candidate: Vec<(usize, serde_json::Value)> = params.iter().enumerate().filter_map(|(k, (_, _, v))| v.as_ref().and_then(|v| serde_json::to_value(v).ok()).map(|j| (k, j))).collect();
-                        let slot = runner.get_or_insert_with(|| qal_wasm::compile(tp, &Entry::All).ok().and_then(|m| Runner::new(m).ok()).map(|r| r.with_fuel(opts.confirm_fuel)));
+                        let slot = runner.get_or_insert_with(|| qal_compiler::compile(tp, &Entry::All).ok().and_then(|m| Runner::new(m).ok()).map(|r| r.with_fuel(opts.confirm_fuel)));
                         // Running the candidate never reaches past the budget either.
                         *slot = slot.take().map(|r| r.with_timeout(CONFIRM_TIMEOUT.min(left)));
                         match confirm(tp, which, &m.goal, &params, &call, &others, slot.as_ref()) {

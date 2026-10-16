@@ -14,7 +14,7 @@ const APP: &str = include_str!("fixtures/app.qal");
 static NEXT: AtomicUsize = AtomicUsize::new(0);
 
 fn typed() -> qal_core::tast::TProgram {
-    qal_check::check(&qal_text::parse_program(APP).unwrap()).unwrap()
+    qal_compiler::check(&qal_compiler::parse_program(APP).unwrap()).unwrap()
 }
 
 fn project() -> PathBuf {
@@ -331,7 +331,7 @@ fn services_are_checked_before_they_start() {
     let e = Service::new(&typed, perms.clone(), ServiceConfig { entry: "nope".into(), ..ServiceConfig::default() }).err().unwrap();
     assert_eq!(e.kind, "bad_entry");
     // A generic function is named as such (final review M4).
-    let generic = qal_check::check(&qal_text::parse_program(&format!("{APP}\nfn gen[T](x: T) -> T = x")).unwrap()).unwrap();
+    let generic = qal_compiler::check(&qal_compiler::parse_program(&format!("{APP}\nfn gen[T](x: T) -> T = x")).unwrap()).unwrap();
     let e = Service::new(&generic, perms.clone(), ServiceConfig { entry: "gen".into(), ..ServiceConfig::default() }).err().unwrap();
     assert!(e.kind == "bad_entry" && e.message.contains("`gen` is generic"), "{}", e.message);
     let e = Service::new(&typed, perms.clone(), ServiceConfig { init: Some("list".into()), ..ServiceConfig::default() }).err().unwrap();
@@ -340,7 +340,7 @@ fn services_are_checked_before_they_start() {
     assert_eq!((e.kind, e.hints.clone()), ("permission_denied", vec!["grant them with `--allow db`".to_string()]));
     // An init function that returns Err stops the start.
     let src = format!("{APP}\nfn broken() -> Result[Unit, Str] = Err(\"no\")");
-    let typed = qal_check::check(&qal_text::parse_program(&src).unwrap()).unwrap();
+    let typed = qal_compiler::check(&qal_compiler::parse_program(&src).unwrap()).unwrap();
     let svc = Service::new(&typed, Permissions::parse("db:mem,io").unwrap(), ServiceConfig { init: Some("broken".into()), ..ServiceConfig::default() }).unwrap();
     let e = svc.init(&mut svc.worker().unwrap()).unwrap_err();
     assert_eq!((e.kind, e.code, e.message.as_str()), ("init_failed", "E0524", "`broken` returned Err: no"));
@@ -389,7 +389,7 @@ fn closure_heavy_handlers_keep_the_pooling_allocator() {
         src += &format!("let a = map(a, fn(x) => x + {k}) in ");
     }
     src += "HttpResponse { status: 200, headers: [], body: from_int(fold(a, 0, fn(s, x) => s + x)) }";
-    let typed = qal_check::check(&qal_text::parse_program(&src).unwrap()).unwrap();
+    let typed = qal_compiler::check(&qal_compiler::parse_program(&src).unwrap()).unwrap();
     let cfg = ServiceConfig { entry: "many".into(), ..ServiceConfig::default() };
     let svc = Service::new(&typed, Permissions::default(), cfg).unwrap();
     assert!(svc.runner().meta().table_len > typed.fns.len(), "more table slots than named functions");
@@ -405,7 +405,7 @@ fn closure_heavy_handlers_keep_the_pooling_allocator() {
 #[test]
 fn bodiless_responses_get_no_default_content_type() {
     let src = "fn h(rq: HttpRequest) -> HttpResponse = match to_int(rq.query) {\n  Some(s) => HttpResponse { status: s, headers: if rq.path == \"/typed\" then [HttpHeader { name: \"content-type\", value: \"application/json\" }] else [], body: \"\" },\n  None => HttpResponse { status: 400, headers: [], body: \"no status\" }\n}";
-    let typed = qal_check::check(&qal_text::parse_program(src).unwrap()).unwrap();
+    let typed = qal_compiler::check(&qal_compiler::parse_program(src).unwrap()).unwrap();
     let svc = Service::new(&typed, Permissions::default(), ServiceConfig { entry: "h".into(), ..ServiceConfig::default() }).unwrap();
     let mut w = svc.worker().unwrap();
     let mut run = |path: &str, status: u16| {

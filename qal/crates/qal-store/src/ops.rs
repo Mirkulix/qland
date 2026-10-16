@@ -7,7 +7,7 @@ use crate::{now_ms, sql};
 use qal_core::ast::{Def, Program};
 use qal_core::canon::{self, Hash, Kind};
 use qal_core::diag::Diagnostic;
-use qal_text::lexer::{is_std_name, std_parts, KEYWORDS, MAX_NAME_LEN};
+use qal_compiler::lexer::{is_std_name, std_parts, KEYWORDS, MAX_NAME_LEN};
 use rusqlite::{params, Connection, TransactionBehavior};
 use serde::Serialize;
 
@@ -96,7 +96,7 @@ fn effects(d: &Def) -> Vec<String> {
 }
 
 fn text(d: &Def) -> String {
-    qal_text::print_program(&Program { defs: vec![d.clone()] }).trim_end().to_string()
+    qal_compiler::print_program(&Program { defs: vec![d.clone()] }).trim_end().to_string()
 }
 
 fn missing_row(h: &Hash) -> Vec<Diagnostic> {
@@ -278,7 +278,7 @@ pub fn rename(conn: &mut Connection, old: &str, new: &str, agent: &str, rules: &
     // hash exactly as before.
     let renamed = snap.renamed(old, new);
     let program = renamed.program(&tx, &|_| false)?;
-    if let Err(diags) = qal_check::check_stored(&program, &|n| n == new) {
+    if let Err(diags) = qal_compiler::check_stored(&program, &|n| n == new) {
         // Other definitions named like built-ins (stored before those built-ins existed) do not
         // block the rename: they are renamed one at a time.
         let rest: Vec<Diagnostic> = diags.into_iter().filter(|d| !(d.is_builtin_name() && d.def != new)).collect();

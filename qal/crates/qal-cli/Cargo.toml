@@ -10,9 +10,7 @@ path = "src/main.rs"
 
 [dependencies]
 qal-core = { workspace = true }
-qal-text = { workspace = true }
-qal-check = { workspace = true }
-qal-wasm = { workspace = true }
+qal-compiler = { workspace = true }
 qal-run = { workspace = true }
 qal-store = { workspace = true }
 qal-prove = { workspace = true }

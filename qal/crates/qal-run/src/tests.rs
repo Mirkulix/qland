@@ -1,11 +1,11 @@
 use super::*;
-use qal_wasm::Entry;
+use qal_compiler::Entry;
 use serde_json::json;
 
 fn compile(src: &str, entry: Entry) -> CompiledModule {
-    let p = qal_text::parse_program(src).unwrap();
-    let tp = qal_check::check(&p).unwrap_or_else(|d| panic!("{d:#?}"));
-    qal_wasm::compile(&tp, &entry).unwrap()
+    let p = qal_compiler::parse_program(src).unwrap();
+    let tp = qal_compiler::check(&p).unwrap_or_else(|d| panic!("{d:#?}"));
+    qal_compiler::compile(&tp, &entry).unwrap()
 }
 
 fn runner(src: &str) -> Runner {
@@ -254,7 +254,7 @@ fn calling_an_ungranted_effect_reports_permission_denied() {
 #[test]
 fn pure_programs_import_no_effects() {
     let m = compile("fn main(args: List[Str]) -> Int = len(args)\nfn other() -> Unit !io = print(\"x\")", Entry::Fn("main".into()));
-    assert_eq!(m.imports, vec![qal_wasm::host::FAIL]);
+    assert_eq!(m.imports, vec![qal_compiler::host::FAIL]);
     let r = Runner::new(m).unwrap();
     assert_eq!(r.run_main(&["a".into()]).result, Ok(Value::Int(1)));
 }

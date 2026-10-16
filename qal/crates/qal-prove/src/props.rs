@@ -15,7 +15,7 @@ use crate::gen::{fnv, generatable, random, shrink, Rng};
 use qal_core::ast::{BinOp, FnDef, Type};
 use qal_core::tast::{TExpr, TFn, TKind, TProgram};
 use qal_run::{RunError, Runner, Value, Values};
-use qal_wasm::Entry;
+use qal_compiler::Entry;
 use serde::Serialize;
 use std::time::{Duration, Instant};
 
@@ -242,7 +242,7 @@ pub fn check_properties(tp: &TProgram, only: Option<&[String]>, opts: &PropOptio
         return Ok(Vec::new());
     }
     let program = with_req_checks(tp, &fns);
-    let module = qal_wasm::compile(&program, &Entry::All).map_err(|m| RunError::new("compile_error", "", format!("the program cannot be compiled to WebAssembly: {m}")))?;
+    let module = qal_compiler::compile(&program, &Entry::All).map_err(|m| RunError::new("compile_error", "", format!("the program cannot be compiled to WebAssembly: {m}")))?;
     let runner = Runner::new(module).map_err(|m| RunError::new("compile_error", "", m))?.with_fuel(opts.fuel).with_timeout(opts.timeout);
     Ok(run_properties(&program, &runner, &fns, opts))
 }

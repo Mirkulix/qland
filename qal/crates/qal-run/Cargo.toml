@@ -6,8 +6,7 @@ license.workspace = true
 
 [dependencies]
 qal-core = { workspace = true }
-qal-text = { workspace = true }
-qal-wasm = { workspace = true }
+qal-compiler = { workspace = true }
 rusqlite = { workspace = true, features = ["hooks", "limits"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -17,6 +16,3 @@ wasmtime = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]
 rustix = { workspace = true }
-
-[dev-dependencies]
-qal-check = { workspace = true }

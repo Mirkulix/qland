@@ -161,10 +161,10 @@ fn file_command(cmd: &str, args: &[String]) -> ExitCode {
     if cmd == "check" {
         return emit(ops::check(&src));
     }
-    match qal_text::parse_program(&src) {
+    match qal_compiler::parse_program(&src) {
         Ok(p) => {
             let mut out = std::io::stdout().lock();
-            let _ = write!(out, "{}", qal_text::print_program(&p)).and_then(|_| out.flush());
+            let _ = write!(out, "{}", qal_compiler::print_program(&p)).and_then(|_| out.flush());
             ExitCode::SUCCESS
         }
         Err(d) => emit(Reply::diagnostics(vec![d])),

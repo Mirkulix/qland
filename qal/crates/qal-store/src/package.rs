@@ -16,7 +16,7 @@
 //! carry them only unchanged (E0240). Importing into the std project keeps each `# def` agent.
 
 use crate::define::{self, Release, Rules, StdNames};
-use qal_text::lexer::is_std_name;
+use qal_compiler::lexer::is_std_name;
 use crate::snapshot::Snapshot;
 use crate::{sql, Defined, Verify};
 use qal_core::ast::Program;
@@ -203,7 +203,7 @@ pub fn export(conn: &mut Connection, prefix: &str, package: &str) -> Result<Expo
     let mut texts = Vec::new();
     for n in dependency_order(&snap, &names) {
         let d = snap.decode_name(&tx, &n)?;
-        texts.push(qal_text::print_program(&Program { defs: vec![d] }).trim_end().to_string());
+        texts.push(qal_compiler::print_program(&Program { defs: vec![d] }).trim_end().to_string());
     }
     let text = if texts.is_empty() { String::new() } else { texts.join("\n\n") + "\n" };
     let (file, hash) = assemble(package, std.as_deref(), &defs, &text);

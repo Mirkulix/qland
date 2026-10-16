@@ -257,7 +257,7 @@ pub fn function<'p>(tp: &'p TProgram, f: &'p TFn, deadline: Option<Instant>) -> 
         for (k, c) in f.ens.iter().enumerate() {
             let (v, ok) = enc.enc(c, &mut env, &hyp, &format!("ens[{k}]"));
             let holds = and(&[ok, enc.as_bool(v, "a contract over values the prover does not model")]);
-            let contract = f.def.ens.get(k).map(|e| format!("ens {}", qal_text::print_expr(e))).unwrap_or_default();
+            let contract = f.def.ens.get(k).map(|e| format!("ens {}", qal_compiler::print_expr(e))).unwrap_or_default();
             enc.obligations.push(Obligation { goal: Goal::Ens(k), label: format!("ens[{k}]"), path: format!("ens[{k}]"), contract, hyp: hyp.clone(), holds: holds.clone(), args: Vec::new() });
             hyp = conj(&hyp, &holds);
         }
@@ -616,7 +616,7 @@ impl<'p> Enc<'p> {
             let (cv, cok) = self.enc(c, &mut cenv, &held, &format!("req[{k}]"));
             let holds = and(&[cok, self.as_bool(cv, "a contract over values the prover does not model")]);
             if record {
-                let contract = callee.def.req.get(k).map(|e| format!("req {}", qal_text::print_expr(e))).unwrap_or_default();
+                let contract = callee.def.req.get(k).map(|e| format!("req {}", qal_compiler::print_expr(e))).unwrap_or_default();
                 self.obligations.push(Obligation {
                     goal: Goal::Req(callee.def.name.clone(), k),
                     label: format!("req[{k}] of {}", callee.def.name),

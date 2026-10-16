@@ -9,8 +9,8 @@ use qal_core::tast::TProgram;
 use qal_prove::{PropOptions, PropReport, PropStatus, Report, Status};
 use qal_run::{Permissions, RunError, TestResult, Value};
 use qal_store::{Defined, Deleted, Entry as QueryEntry, HistoryEntry, Query, Renamed, Store, Verify, View};
-use qal_text::lexer::is_std_name;
-use qal_wasm::Entry;
+use qal_compiler::lexer::is_std_name;
+use qal_compiler::Entry;
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -991,7 +991,7 @@ pub fn build(ctx: &Ctx, name: &str) -> Reply {
     let Some(entry) = entry else {
         return Reply::diagnostics(vec![Diagnostic::store_error(format!("`{name}` is in the codebase but has no stored entry"))]);
     };
-    let module = match qal_wasm::compile(&loaded.typed, &Entry::Fn(name.to_string())) {
+    let module = match qal_compiler::compile(&loaded.typed, &Entry::Fn(name.to_string())) {
         Ok(m) => m,
         Err(m) => return Reply::error(RunError::new("compile_error", name, format!("the program cannot be compiled to WebAssembly: {m}"))),
     };

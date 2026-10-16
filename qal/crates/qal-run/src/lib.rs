@@ -18,8 +18,8 @@ use guest::{EncodeError, Guest};
 use host::{Failure, HostState, FAIL_BUDGET, FAIL_DENIED, FAIL_TIMEOUT};
 use qal_core::ast::Type;
 use qal_core::tast::TProgram;
-use qal_text::print_expr;
-use qal_wasm::{CompiledModule, FuncMeta, FAIL_BUILTIN, FAIL_DIV_ZERO, FAIL_ENS, FAIL_INDEX, FAIL_OOM, FAIL_OVERFLOW, FAIL_REQ, OOM_SCRATCH};
+use qal_compiler::print_expr;
+use qal_compiler::{CompiledModule, FuncMeta, FAIL_BUILTIN, FAIL_DIV_ZERO, FAIL_ENS, FAIL_INDEX, FAIL_OOM, FAIL_OVERFLOW, FAIL_REQ, OOM_SCRATCH};
 use serde::Serialize;
 use std::io::Cursor;
 use std::sync::mpsc;
@@ -639,8 +639,8 @@ impl Runner {
             return e;
         }
         if f.kind == FAIL_DENIED {
-            let name = qal_wasm::host::EFFECT_FNS.get(f.func as usize).copied().unwrap_or("?");
-            let effect = qal_wasm::host::effect(name).unwrap_or("?");
+            let name = qal_compiler::host::EFFECT_FNS.get(f.func as usize).copied().unwrap_or("?");
+            let effect = qal_compiler::host::effect(name).unwrap_or("?");
             let flag = grant_flag(effect);
             return RunError::new("permission_denied", entry, format!("`{name}` needs effect {effect} which was not granted"))
                 .hint(format!("grant it with `--allow {flag}`"));

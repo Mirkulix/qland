@@ -2,16 +2,16 @@
 //! indexing, the `Accum` prelude type with `acc_list`, `bytes_join` and the host helper `sha256`.
 
 use qal_run::{Runner, Value};
-use qal_wasm::Entry;
+use qal_compiler::Entry;
 
 fn runner(src: &str) -> Runner {
-    let p = qal_text::parse_program(src).unwrap_or_else(|d| panic!("{d:?}"));
-    let tp = qal_check::check(&p).unwrap_or_else(|d| panic!("{d:#?}"));
-    Runner::new(qal_wasm::compile(&tp, &Entry::All).unwrap()).unwrap()
+    let p = qal_compiler::parse_program(src).unwrap_or_else(|d| panic!("{d:?}"));
+    let tp = qal_compiler::check(&p).unwrap_or_else(|d| panic!("{d:#?}"));
+    Runner::new(qal_compiler::compile(&tp, &Entry::All).unwrap()).unwrap()
 }
 
 fn diags(src: &str) -> Vec<qal_core::diag::Diagnostic> {
-    qal_check::check(&qal_text::parse_program(src).unwrap()).err().unwrap_or_default()
+    qal_compiler::check(&qal_compiler::parse_program(src).unwrap()).err().unwrap_or_default()
 }
 
 fn int(n: i64) -> Value {
@@ -172,9 +172,9 @@ fn sha256_is_the_standard_digest() {
     assert_eq!(r.call("hs", &[Value::Str("x".repeat(1000))]), Ok(int(32)));
     assert!(r.run_tests().iter().all(|t| t.passed));
     // Only a module that uses it imports the helper.
-    let p = qal_check::check(&qal_text::parse_program("fn f(b: Bytes) -> Bytes = sha256(b)\nfn g(x: Int) -> Int = x").unwrap()).unwrap();
-    assert!(qal_wasm::compile(&p, &Entry::Fn("f".into())).unwrap().imports.contains(&"sha256"));
-    assert!(!qal_wasm::compile(&p, &Entry::Fn("g".into())).unwrap().imports.contains(&"sha256"));
+    let p = qal_compiler::check(&qal_compiler::parse_program("fn f(b: Bytes) -> Bytes = sha256(b)\nfn g(x: Int) -> Int = x").unwrap()).unwrap();
+    assert!(qal_compiler::compile(&p, &Entry::Fn("f".into())).unwrap().imports.contains(&"sha256"));
+    assert!(!qal_compiler::compile(&p, &Entry::Fn("g".into())).unwrap().imports.contains(&"sha256"));
 }
 
 #[test]
@@ -200,10 +200,10 @@ fn new_builtins_are_typed_and_their_names_reserved() {
     assert!(diags("type T = A | B\nfn f(a: Accum[T]) -> List[T] = acc_list(AccPush(a, A))").is_empty());
     // A codebase stored before Phase 5a with its own `Accum` keeps working without the prelude,
     // and cannot use acc_list until it renames the type (like http/db_* in Phase 3).
-    let legacy = qal_text::parse_program("type Accum = Box(Int)\nfn f(a: Accum) -> Int = match a { Box(n) => n }").unwrap();
-    assert!(qal_check::check_stored(&legacy, &|_| false).is_ok());
-    let legacy = qal_text::parse_program("type Accum = Box(Int)\nfn g(xs: List[Int]) -> List[Int] = acc_list(xs)").unwrap();
-    let d = qal_check::check_stored(&legacy, &|n| n == "g").unwrap_err();
+    let legacy = qal_compiler::parse_program("type Accum = Box(Int)\nfn f(a: Accum) -> Int = match a { Box(n) => n }").unwrap();
+    assert!(qal_compiler::check_stored(&legacy, &|_| false).is_ok());
+    let legacy = qal_compiler::parse_program("type Accum = Box(Int)\nfn g(xs: List[Int]) -> List[Int] = acc_list(xs)").unwrap();
+    let d = qal_compiler::check_stored(&legacy, &|n| n == "g").unwrap_err();
     assert!(d.iter().any(|d| d.code == "E0240" && d.def == "g"), "{d:?}");
     // Built-ins are pure: no effect is needed.
     assert!(diags("fn f(b: Bytes) -> Int = bytes_at(sha256(b), 0) + shr(bit_not(0), 1)\ntest t = f(to_bytes(\"\")) > 0").is_empty());

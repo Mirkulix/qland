@@ -6,12 +6,8 @@ license.workspace = true
 
 [dependencies]
 qal-core = { workspace = true }
-qal-text = { workspace = true }
-qal-wasm = { workspace = true }
+qal-compiler = { workspace = true }
 qal-run = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 z3 = { workspace = true }
-
-[dev-dependencies]
-qal-check = { workspace = true }

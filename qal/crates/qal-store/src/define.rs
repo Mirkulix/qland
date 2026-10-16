@@ -8,7 +8,7 @@ use qal_core::canon::{self, Canon, Hash, HashError, Hashed, Kind};
 use qal_core::diag::Diagnostic;
 use qal_core::tast::TProgram;
 use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
-use qal_text::lexer::{is_std_name, std_parts};
+use qal_compiler::lexer::{is_std_name, std_parts};
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 /// Who may write `std.` names in a `define` (Phase 3 §4.1). In the std project (`meta.role = 'std'`)
@@ -41,7 +41,7 @@ impl Release {
         if pkg.name != crate::package::STD_PACKAGE_NAME {
             return Err(vec![Diagnostic::new("E0243", "package_mismatch", "", "", format!("the standard library package is named `{}`, not `std`", pkg.name))]);
         }
-        let program = qal_text::parse_program(&pkg.text).map_err(|d| vec![d])?;
+        let program = qal_compiler::parse_program(&pkg.text).map_err(|d| vec![d])?;
         Ok(Release { hash: pkg.hash, signatures: program.defs.iter().map(|d| (d.name().to_string(), signature(d))).collect() })
     }
 }
@@ -196,7 +196,7 @@ pub type Check<'c> = dyn Fn(&[Defined], &Transaction, &crate::team::Rows) -> Res
 /// `define`, committed only if `check` accepts the written result (after the verification);
 /// `rules` say who may write `std.` names.
 pub fn define_checked(conn: &mut Connection, src: &str, agent: &str, rules: &Rules, verify: Option<&mut Verify>, check: &Check) -> Result<Vec<Defined>, Vec<Diagnostic>> {
-    let input = qal_text::parse_program(src).map_err(|d| vec![d])?;
+    let input = qal_compiler::parse_program(src).map_err(|d| vec![d])?;
     let Some(v) = verify else {
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(sql)?;
         let state = prepare(&tx, &input, rules)?;
@@ -299,7 +299,7 @@ fn prepare(tx: &Transaction, input: &Program, rules: &Rules) -> Result<Prepared,
     let mut combined = stored;
     combined.defs.extend(input.defs.iter().cloned());
     // Only the definitions written now may not take prelude names (older stored ones keep working).
-    let typed = qal_check::check_stored(&combined, &|n| input_names.contains(n) && !legacy_writer())?;
+    let typed = qal_compiler::check_stored(&combined, &|n| input_names.contains(n) && !legacy_writer())?;
 
     let hashed = hash(&combined)?;
     if policy == StdNames::Unchanged && !std_store {

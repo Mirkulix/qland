@@ -16,7 +16,7 @@ use qal_core::diag::Diagnostic;
 use qal_core::tast::TProgram;
 use qal_run::{Permissions, RunError, Runner, Value};
 use qal_store::Store;
-use qal_wasm::Entry;
+use qal_compiler::Entry;
 use std::collections::HashMap;
 
 pub struct Loaded {
@@ -26,15 +26,15 @@ pub struct Loaded {
 
 /// Parses and checks `src`. Any diagnostic means nothing can be compiled.
 pub fn load(src: &str) -> Result<Loaded, Vec<Diagnostic>> {
-    let program = qal_text::parse_program(src).map_err(|d| vec![d])?;
-    let typed = qal_check::check(&program)?;
+    let program = qal_compiler::parse_program(src).map_err(|d| vec![d])?;
+    let typed = qal_compiler::check(&program)?;
     Ok(Loaded { program, typed })
 }
 
 /// Checks a stored program. Stored definitions that take a prelude name (written before Phase 3)
-/// keep working; see `qal_check::check_stored`.
+/// keep working; see `qal_compiler::check_stored`.
 pub fn load_program(program: Program) -> Result<Loaded, Vec<Diagnostic>> {
-    let typed = qal_check::check_stored(&program, &|_| false)?;
+    let typed = qal_compiler::check_stored(&program, &|_| false)?;
     Ok(Loaded { program, typed })
 }
 
@@ -42,7 +42,7 @@ pub fn load_program(program: Program) -> Result<Loaded, Vec<Diagnostic>> {
 /// (`./foo`, `dir/foo`), otherwise a name in the store (names never contain `/`; the only names
 /// with `.` are `std.<module>.<name>`, which are names even if they end in `.qal`).
 pub fn is_file(target: &str) -> bool {
-    !qal_text::lexer::is_std_name(target) && (target.ends_with(".qal") || target.contains('/') || target.contains('\\'))
+    !qal_compiler::lexer::is_std_name(target) && (target.ends_with(".qal") || target.contains('/') || target.contains('\\'))
 }
 
 /// The store of the project around the current directory.
@@ -74,7 +74,7 @@ impl Loaded {
             e.hints.push("this is a limitation of the compiler, not an error in the program; try splitting very large functions or list literals".into());
             e
         };
-        let module = qal_wasm::compile(&self.typed, entry).map_err(compile_error)?;
+        let module = qal_compiler::compile(&self.typed, entry).map_err(compile_error)?;
         Ok(Runner::new(module).map_err(compile_error)?.with_permissions(perms))
     }
 }
@@ -265,10 +265,10 @@ mod tests {
         // Checksum and `# def` lines verified by `parse`; only `std.` names, text iff definitions.
         let p = qal_store::package::parse(STD_PACKAGE).unwrap();
         assert_eq!(p.name, "std");
-        assert!(p.defs.iter().all(|d| qal_text::lexer::is_std_name(&d.name)));
+        assert!(p.defs.iter().all(|d| qal_compiler::lexer::is_std_name(&d.name)));
         assert_eq!(p.text.trim().is_empty(), p.defs.is_empty());
         assert_eq!(p.std, None, "the std package does not refer to another std");
-        let program = qal_text::parse_program(&p.text).unwrap();
+        let program = qal_compiler::parse_program(&p.text).unwrap();
         assert_eq!(program.defs.len(), p.defs.len(), "one definition per `# def` line");
     }
 

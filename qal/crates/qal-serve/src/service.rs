@@ -10,7 +10,7 @@
 use qal_core::ast::Type;
 use qal_core::tast::TProgram;
 use qal_run::{Db, ExecIn, Limits, Permissions, RunError, Runner, Value};
-use qal_wasm::Entry;
+use qal_compiler::Entry;
 use serde::Serialize;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
@@ -261,7 +261,7 @@ impl Service {
             return Err(RunError::new("permission_denied", &cfg.entry, format!("the service needs effect(s) {} which were not granted", list.join(", "))).hint(format!("grant them with `--allow {}`", flag.collect::<Vec<_>>().join(","))));
         }
         let compile_error = |m: String| RunError::new("compile_error", &cfg.entry, format!("the program cannot be compiled to WebAssembly: {m}"));
-        let module = qal_wasm::compile(typed, &Entry::Fns(entries)).map_err(compile_error)?;
+        let module = qal_compiler::compile(typed, &Entry::Fns(entries)).map_err(compile_error)?;
         let runner = Runner::prepared(module, perms, cfg.memory, cfg.slots)
             .map_err(compile_error)?
             .with_fuel(cfg.fuel)

@@ -2,7 +2,7 @@ use super::*;
 use serde_json::json;
 
 fn typed(src: &str) -> TProgram {
-    qal_check::check(&qal_text::parse_program(src).unwrap()).unwrap_or_else(|d| panic!("{d:#?}"))
+    qal_compiler::check(&qal_compiler::parse_program(src).unwrap()).unwrap_or_else(|d| panic!("{d:#?}"))
 }
 
 fn reports(src: &str) -> Vec<Report> {

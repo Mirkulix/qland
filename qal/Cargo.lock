@@ -948,18 +948,26 @@ dependencies = [
 name = "qal-cli"
 version = "0.1.0"
 dependencies = [
- "qal-check",
+ "qal-compiler",
  "qal-core",
  "qal-prove",
  "qal-run",
  "qal-serve",
  "qal-store",
- "qal-text",
- "qal-wasm",
  "rusqlite",
  "serde",
  "serde_json",
  "zeroize",
+]
+
+[[package]]
+name = "qal-compiler"
+version = "0.1.0"
+dependencies = [
+ "qal-check",
+ "qal-core",
+ "qal-text",
+ "qal-wasm",
 ]
 
 [[package]]
@@ -975,11 +983,9 @@ dependencies = [
 name = "qal-prove"
 version = "0.1.0"
 dependencies = [
- "qal-check",
+ "qal-compiler",
  "qal-core",
  "qal-run",
- "qal-text",
- "qal-wasm",
  "serde",
  "serde_json",
  "z3",
@@ -989,10 +995,8 @@ dependencies = [
 name = "qal-run"
 version = "0.1.0"
 dependencies = [
- "qal-check",
+ "qal-compiler",
  "qal-core",
- "qal-text",
- "qal-wasm",
  "rusqlite",
  "rustix",
  "serde",
@@ -1007,11 +1011,9 @@ name = "qal-serve"
 version = "0.1.0"
 dependencies = [
  "httparse",
- "qal-check",
+ "qal-compiler",
  "qal-core",
  "qal-run",
- "qal-text",
- "qal-wasm",
  "serde",
  "serde_json",
  "signal-hook",
@@ -1023,9 +1025,8 @@ version = "0.1.0"
 dependencies = [
  "ed25519-dalek",
  "getrandom 0.4.3",
- "qal-check",
+ "qal-compiler",
  "qal-core",
- "qal-text",
  "rusqlite",
  "serde",
  "serde_json",

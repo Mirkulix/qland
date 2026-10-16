@@ -10,7 +10,7 @@ use crate::net::{self, Call, Lookup, NetErr, NetGrant};
 use crate::value::{decode_exact_counted, read_str, Value};
 use qal_core::ast::Type;
 use qal_core::tast::TProgram;
-use qal_wasm::{host, FAIL_OOM, HOST_MODULE, OOM_SCRATCH};
+use qal_compiler::{host, FAIL_OOM, HOST_MODULE, OOM_SCRATCH};
 use std::fs::File;
 use std::io::{BufRead, Read, Write};
 use std::path::{Path, PathBuf};

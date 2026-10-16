@@ -636,7 +636,7 @@ fn the_checked_in_std_package_has_agent_provenance() {
     assert_eq!(pkg.name, "std");
     for d in &pkg.defs {
         assert!(!d.agent.trim().is_empty() && d.agent != "cli" && d.agent != "unknown", "`{}` has agent `{}`", d.name, d.agent);
-        assert!(qal_text::lexer::is_std_name(&d.name), "`{}` is not a std. name", d.name);
+        assert!(qal_compiler::lexer::is_std_name(&d.name), "`{}` is not a std. name", d.name);
     }
     // It imports into a fresh project with exactly the recorded hashes.
     let dir = project("std-fresh");

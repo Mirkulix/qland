@@ -298,7 +298,7 @@ fn stored_codebase_rehashes_to_the_stored_hashes() {
         // Every view is the canonical text and defines back to the same hash.
         for (name, h) in hashes(&mut s) {
             let t = text(&mut s, &name);
-            assert_eq!(qal_text::print_program(&qal_text::parse_program(&t).unwrap()).trim_end(), t);
+            assert_eq!(qal_compiler::print_program(&qal_compiler::parse_program(&t).unwrap()).trim_end(), t);
             assert_eq!(ok(&mut s, &t)[0].hash, h);
         }
     }
@@ -777,7 +777,7 @@ fn generic_and_closure_definitions_round_trip_through_the_store() {
     assert_eq!(sig("swap"), "fn[A, B](Pair[A, B]) -> Pair[B, A]");
     // The whole stored codebase rehashes to its stored hashes and checks again.
     let p = s.program().unwrap();
-    qal_check::check(&p).unwrap();
+    qal_compiler::check(&p).unwrap();
     let rehashed = hash_program(&p).unwrap();
     for c in rehashed.defs {
         assert_eq!(c.hash.to_hex(), hash(&mut s, &c.name), "{}", c.name);
@@ -806,7 +806,7 @@ fn phase1_definitions_keep_their_hashes() {
     // Hash of `fn f(x: Int) -> Int = x` under the Phase 1 canonical format (version 1).
     let mut s = store();
     ok(&mut s, "fn f(x: Int) -> Int = x");
-    let p = qal_text::parse_program("fn f(x: Int) -> Int = x").unwrap();
+    let p = qal_compiler::parse_program("fn f(x: Int) -> Int = x").unwrap();
     let c = &hash_program(&p).unwrap().defs[0];
     assert_eq!(c.canonical[4], 1);
     assert_eq!(hash(&mut s, "f"), c.hash.to_hex());
@@ -1032,9 +1032,9 @@ fn stores_with_definitions_named_like_prelude_types_keep_working_and_can_be_repa
     let before = hashes(&mut s);
     // The codebase still checks (without the prelude), so it can be run, tested and extended.
     let p = s.program().unwrap();
-    let tp = qal_check::check_stored(&p, &|_| false).unwrap();
+    let tp = qal_compiler::check_stored(&p, &|_| false).unwrap();
     assert!(tp.types.iter().all(|t| t.name != "HttpRequest"), "no prelude in a legacy codebase");
-    assert!(qal_check::check(&p).is_err(), "a fresh program may not take the names");
+    assert!(qal_compiler::check(&p).is_err(), "a fresh program may not take the names");
     ok(&mut s, "fn other() -> Int = 1");
     // Services are refused until the names are gone; so are new definitions with prelude names.
     let d = err(&mut s, "fn q() -> Result[Int, Str] !db = Ok(0)\nfn bad() -> Int !db = match db_exec(\"SELECT 1\", []) { Ok(n) => n, Err(_) => 0 }");
@@ -1160,19 +1160,19 @@ const STD_A: &str = "type std.a.T = std.a.One | std.a.Two(Int)\n\
 
 #[test]
 fn std_names_hash_and_round_trip_like_any_name() {
-    let p = qal_text::parse_program(STD_A).unwrap();
+    let p = qal_compiler::parse_program(STD_A).unwrap();
     let h1 = hash_program(&p).unwrap();
-    let again = qal_text::parse_program(&qal_text::print_program(&p)).unwrap();
+    let again = qal_compiler::parse_program(&qal_compiler::print_program(&p)).unwrap();
     assert_eq!(again, p);
     let h2 = hash_program(&again).unwrap();
     assert_eq!(h1.defs.iter().map(|c| (c.name.clone(), c.hash)).collect::<Vec<_>>(), h2.defs.iter().map(|c| (c.name.clone(), c.hash)).collect::<Vec<_>>());
     // Function names are not semantics: `std.a.f` hashes like the same function named `f`.
-    let plain = hash_program(&qal_text::parse_program("fn f(x: Int) -> Int = x + 1").unwrap()).unwrap();
+    let plain = hash_program(&qal_compiler::parse_program("fn f(x: Int) -> Int = x + 1").unwrap()).unwrap();
     let f = h1.defs.iter().find(|c| c.name == "std.a.f").unwrap();
     assert_eq!(f.hash, plain.defs[0].hash);
     // Variant names are: the std enum differs from the same enum with plain variants.
     let t = h1.defs.iter().find(|c| c.name == "std.a.T").unwrap();
-    let plain = hash_program(&qal_text::parse_program("type T = One | Two(Int)").unwrap()).unwrap();
+    let plain = hash_program(&qal_compiler::parse_program("type T = One | Two(Int)").unwrap()).unwrap();
     assert_ne!(t.hash, plain.defs[0].hash);
     // Stored, viewed and decoded: the text is the same and defines the same hashes.
     let mut s = std_store();
@@ -1460,7 +1460,7 @@ fn only_the_released_std_package_writes_std_names_into_a_project() {
     // I1: a crafted package named `std` (checksum recomputed) with a std function, an enum with
     // unqualified variants and an unqualified helper.
     let text = "fn helper() -> Int = 1\n\ntype std.evil.T = Foo | Bar\n\nfn std.evil.x() -> Int = 2\n";
-    let program = qal_text::parse_program(text).unwrap();
+    let program = qal_compiler::parse_program(text).unwrap();
     let hashed = hash_program(&program).unwrap();
     let mut lines: Vec<String> = hashed.defs.iter().map(|c| format!("# def {} {} someone", c.name, c.hash.to_hex())).collect();
     lines.sort();
