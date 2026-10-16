@@ -619,6 +619,19 @@ fn instances_at_large_types_are_bounded() {
     assert_eq!((d.len(), d[0].kind), (1, "instantiation_limit"), "{d:#?}");
 }
 
+/// The fastest of `runs` timings of `f`: load on the machine only ever makes a run slower, so the
+/// minimum is the best estimate of the work done (timing tests compare work, not wall time).
+fn best(runs: usize, f: &dyn Fn()) -> std::time::Duration {
+    (0..runs)
+        .map(|_| {
+            let start = std::time::Instant::now();
+            f();
+            start.elapsed()
+        })
+        .min()
+        .unwrap_or_default()
+}
+
 /// `B[B[...B[Int]...]]` with `depth` applications.
 fn nested_boxes(depth: usize) -> String {
     format!("{}Int{}", "B[".repeat(depth), "]".repeat(depth))
@@ -629,9 +642,11 @@ fn nested_type_applications_unify_in_linear_time() {
     // Review finding C1: invariant arguments were unified once in each direction, 2^depth in all.
     let t = nested_boxes(200);
     let src = format!("type B[T] = {{ v: T }}\nfn f(x: {t}) -> {t} = x\nfn g(x: {t}) -> {t} = let y = f(x) in if true then y else f(y)");
+    // Exponential work at depth 200 never finishes; the bound only has to catch that, so it is
+    // generous enough for a loaded machine.
     let start = std::time::Instant::now();
     assert_eq!(check_src(&src), vec![]);
-    assert!(start.elapsed() < std::time::Duration::from_secs(1), "took {:?}", start.elapsed());
+    assert!(start.elapsed() < std::time::Duration::from_secs(30), "took {:?}", start.elapsed());
 }
 
 #[test]
@@ -646,7 +661,8 @@ fn deep_instance_type_arguments_are_rejected() {
     src += "fn main(args: List[Str]) -> Int = if f0(1) && f0(\"s\") then 0 else 1";
     let start = std::time::Instant::now();
     let d = check_src(&src);
-    assert!(start.elapsed() < std::time::Duration::from_secs(2), "took {:?}", start.elapsed());
+    // Instances nested 3 900 levels deep would take minutes; a generous bound catches that.
+    assert!(start.elapsed() < std::time::Duration::from_secs(30), "took {:?}", start.elapsed());
     assert_eq!(d.len(), 1, "{d:#?}");
     assert_eq!((d[0].code, d[0].kind), ("E0214", "instantiation_limit"));
     // One wrapping level fits.
@@ -656,25 +672,28 @@ fn deep_instance_type_arguments_are_rejected() {
 #[test]
 fn long_chains_of_types_and_generic_functions_check_in_linear_time() {
     // Review finding I2: n x n reachability matrices (690 MB for 24 000 types without generics).
-    let n = 24_000;
-    let mut types: String = (0..n).map(|i| format!("type U{i} = M{i}(U{})\n", i + 1)).collect();
-    types += &format!("type U{n} = Z(Int)\n");
+    // The work is compared at n and 4n (best of 3 each, so load does not decide): linear is 4x
+    // (measured 6-7x: allocation and hashing grow a little faster), quadratic 16x; the test
+    // allows 11x. The absolute bound only catches a hang.
+    let work = |n: usize| {
+        let mut types: String = (0..n).map(|i| format!("type U{i} = M{i}(U{})\n", i + 1)).collect();
+        types += &format!("type U{n} = Z(Int)\n");
+        // The same chain with a generic type at the end (so the irregularity check runs).
+        let generic = format!("{types}type G[T] = {{ v: T }}\n").replace(&format!("type U{n} = Z(Int)"), &format!("type U{n} = Z(G[Int])"));
+        let mut fns: String = (0..n).map(|i| format!("fn g{i}[T](x: T) -> T = g{}(x)\n", i + 1)).collect();
+        fns += &format!("fn g{n}[T](x: T) -> T = x\n");
+        move || {
+            assert_eq!(check_src(&types), vec![]);
+            assert_eq!(check_src(&generic), vec![]);
+            assert_eq!(check_src(&fns), vec![]);
+        }
+    };
+    let (small, big) = (work(6_000), work(24_000));
     let start = std::time::Instant::now();
-    assert_eq!(check_src(&types), vec![]);
-    let plain = start.elapsed();
-    // The same chain with a generic type at the end (so the irregularity check runs).
-    let generic = format!("{types}type G[T] = {{ v: T }}\n").replace(&format!("type U{n} = Z(Int)"), &format!("type U{n} = Z(G[Int])"));
-    let start = std::time::Instant::now();
-    assert_eq!(check_src(&generic), vec![]);
-    let with_generic = start.elapsed();
-    let m = 24_000;
-    let mut fns: String = (0..m).map(|i| format!("fn g{i}[T](x: T) -> T = g{}(x)\n", i + 1)).collect();
-    fns += &format!("fn g{m}[T](x: T) -> T = x\n");
-    let start = std::time::Instant::now();
-    assert_eq!(check_src(&fns), vec![]);
-    let generic_fns = start.elapsed();
-    let limit = std::time::Duration::from_secs(5);
-    assert!(plain + with_generic + generic_fns < limit, "{plain:?} {with_generic:?} {generic_fns:?}");
+    let (s, b) = (best(3, &small), best(3, &big));
+    eprintln!("chains: 6 000: {s:?}, 24 000: {b:?}");
+    assert!(b.as_secs_f64() < 11.0 * s.as_secs_f64().max(0.001), "6 000: {s:?}, 24 000: {b:?}");
+    assert!(start.elapsed() < std::time::Duration::from_secs(120), "{:?}", start.elapsed());
 }
 
 #[test]
@@ -731,21 +750,28 @@ fn branches_and_list_items_join_function_effects() {
 fn joining_list_items_stays_linear_in_type_depth() {
     // Re-review N1: the effect join rebuilt shared types as trees, so each item of a list of
     // deeply nested values cost O(depth^2) (100 000 items at depth 250: 259 s instead of 5 s).
-    let deep = format!("{}1{}", "Some(".repeat(250), ")".repeat(250));
-    let items = vec!["x"; 2_000].join(", ");
-    let src = format!("fn f(c: Bool) -> Int = let x = {deep} in let ys = [{items}] in let z = if c then x else x in let w = match c {{ true => x, false => z }} in len(ys)");
-    let start = std::time::Instant::now();
-    assert_eq!(check_src(&src), vec![]);
-    let plain = start.elapsed();
+    // The work is compared at depth d and 5d (best of 5 each, so load does not decide): linear
+    // is 5x (measured 7-10x: parsing deep nesting adds a little), quadratic 25x; the test allows 18x.
+    let plain = |depth: usize| {
+        let deep = format!("{}1{}", "Some(".repeat(depth), ")".repeat(depth));
+        let items = vec!["x"; 2_000].join(", ");
+        let src = format!("fn f(c: Bool) -> Int = let x = {deep} in let ys = [{items}] in let z = if c then x else x in let w = match c {{ true => x, false => z }} in len(ys)");
+        move || assert_eq!(check_src(&src), vec![])
+    };
     // Joined closures, deeply nested: the joined type is rebuilt only where effects change.
-    let p = "fn p() -> Unit !io = print(\"x\")\n";
-    let wrap = |e: &str| format!("{}{e}{}", "Some(".repeat(200), ")".repeat(200));
-    let (pure, io) = (wrap("fn() => ()"), wrap("p"));
-    let src = format!("{p}fn f(c: Bool) -> Int !io = let a = {pure} in let b = {io} in let ys = [a, b, {}] in len(ys)", vec!["a"; 2_000].join(", "));
+    let closures = |depth: usize| {
+        let p = "fn p() -> Unit !io = print(\"x\")\n";
+        let wrap = |e: &str| format!("{}{e}{}", "Some(".repeat(depth), ")".repeat(depth));
+        let (pure, io) = (wrap("fn() => ()"), wrap("p"));
+        let src = format!("{p}fn f(c: Bool) -> Int !io = let a = {pure} in let b = {io} in let ys = [a, b, {}] in len(ys)", vec!["a"; 2_000].join(", "));
+        move || assert_eq!(check_src(&src), vec![])
+    };
     let start = std::time::Instant::now();
-    assert_eq!(check_src(&src), vec![]);
-    let closures = start.elapsed();
-    assert!(plain + closures < std::time::Duration::from_secs(3), "{plain:?} {closures:?}");
+    for (name, small, big) in [("plain", best(5, &plain(50)), best(5, &plain(250))), ("closures", best(5, &closures(40)), best(5, &closures(200)))] {
+        eprintln!("{name}: depth d {small:?}, 5d {big:?}");
+        assert!(big.as_secs_f64() < 18.0 * small.as_secs_f64().max(0.001), "{name}: depth d {small:?}, 5d {big:?}");
+    }
+    assert!(start.elapsed() < std::time::Duration::from_secs(120), "{:?}", start.elapsed());
 }
 
 #[test]

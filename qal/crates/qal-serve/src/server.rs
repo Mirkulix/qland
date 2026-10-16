@@ -212,9 +212,11 @@ fn connection(shared: &Shared, worker: &mut crate::service::Worker, stream: TcpS
         };
         let last = conn.answered + 1 >= limits.keepalive_requests;
         let keep = incoming.keep_alive && !last && !shared.shutdown.load(Ordering::SeqCst) && shared.pending.load(Ordering::SeqCst) == 0;
+        // Logged before the response goes out: a client that has the response can rely on its
+        // event being in the log (logging after sending raced with readers of the log).
+        shared.log.line(&log);
         let sent = conn.send(&resp, head_only, keep);
         shared.served.fetch_add(1, Ordering::SeqCst);
-        shared.log.line(&log);
         if sent.is_err() || !keep {
             return;
         }
