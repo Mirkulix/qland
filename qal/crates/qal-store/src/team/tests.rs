@@ -485,7 +485,7 @@ fn version_5_stores_are_upgraded_to_6() {
     let c = raw(&s);
     // The version-5 layout: no team tables, history without `space` and `record`.
     let mut drops = String::new();
-    for t in ["members", "sessions", "changes", "change_names", "reviews", "leases", "seen", "notices", "calls", "records"] {
+    for t in ["members", "sessions", "changes", "change_names", "reviews", "leases", "seen", "notices", "records"] {
         drops.push_str(&format!("DROP TABLE {t}; "));
     }
     c.execute_batch(&drops).unwrap();
@@ -555,6 +555,7 @@ fn tampering_with_any_code_bearing_column_is_detected() {
     let probes: &[(&str, &str)] = &[
         ("names.refs", "UPDATE names SET refs = '[]' WHERE name = 'twice'"),
         ("names.refs of a group member", "UPDATE names SET refs = '[\"is_even\",\"is_odd\"]' WHERE name = 'is_odd'"),
+        ("names.refs re-spelled", "UPDATE names SET refs = '[ \"f\" ]' WHERE name = 'twice'"),
         ("names.local_names", "UPDATE names SET local_names = '[\"y\"]' WHERE name = 'twice'"),
         ("defs.signature", "UPDATE defs SET signature = 'fn(Int) -> Str' WHERE hash = (SELECT hash FROM names WHERE name = 'twice')"),
         ("defs.effects", "UPDATE defs SET effects = '[\"io\"]' WHERE hash = (SELECT hash FROM names WHERE name = 'twice')"),

@@ -360,7 +360,7 @@ pub struct Notice {
 
 /// Leaves a notice for `member` (keeping at most [`MAX_NOTICES`] per member: the oldest go).
 pub fn notify(conn: &Connection, member: &str, kind: &str, body: &Value) -> Result<(), Vec<Diagnostic>> {
-    conn.execute("INSERT INTO notices (member, kind, body, at, seen) VALUES (?1, ?2, ?3, ?4, 0)", params![member, kind, body.to_string(), now_ms()]).map_err(sql)?;
+    conn.execute("INSERT INTO notices (member, kind, body, at) VALUES (?1, ?2, ?3, ?4)", params![member, kind, body.to_string(), now_ms()]).map_err(sql)?;
     conn.execute(
         "DELETE FROM notices WHERE member = ?1 AND id NOT IN (SELECT id FROM notices WHERE member = ?1 ORDER BY id DESC LIMIT ?2)",
         params![member, MAX_NOTICES],

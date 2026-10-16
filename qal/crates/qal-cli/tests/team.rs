@@ -622,6 +622,8 @@ fn team_reads_do_not_wait_for_the_write_lock() {
     let s = qal_store::Store::open(&t.project.join(".qal/store.db")).unwrap();
     s.notify("rev-1", "merged", &json!({"n": 1})).unwrap();
     drop(s);
+    // No cached proofs: `qal_prove` has to prove, and may not wait to cache the result (N1).
+    rusqlite::Connection::open(t.project.join(".qal/store.db")).unwrap().execute("DELETE FROM proofs", []).unwrap();
     // Another process holds the write lock of the store for 4 s.
     let db = t.project.join(".qal/store.db");
     let (locked_tx, locked_rx) = std::sync::mpsc::channel();
@@ -641,6 +643,8 @@ fn team_reads_do_not_wait_for_the_write_lock() {
     assert_eq!(v["notices"], json!([]), "seen once returned");
     assert_eq!(rev.code("qal_query", json!({"name": "ba"})), "ok");
     assert_eq!(rev.code("qal_verify", json!({})), "ok");
+    let (err, v) = rev.call("qal_prove", json!({"names": ["base"]}));
+    assert!(!err, "{v}");
     let took = started.elapsed();
     assert!(took < Duration::from_millis(2500), "reads waited for the lock: {took:?}");
     holder.join().unwrap();

@@ -690,11 +690,18 @@ fn stored_proofs(ctx: &Ctx, tp: &TProgram, hashes: &std::collections::HashMap<St
             None => missing.push(n.clone()),
         }
     }
+    // In a team store `qal_prove` is a read for every role (spec §5.1): the proof cache is filled
+    // only if the write lock is free at once, never waiting for (or failing on) a writer.
+    let team = store.is_team()?;
     if !missing.is_empty() {
         let left = qal_prove::Options { budget: opts.budget.saturating_sub(start.elapsed()), ..opts.clone() };
         for p in qal_prove::prove_defs(tp, Some(&missing), &left) {
             if let (Some(h), Some(rec)) = (hashes.get(&p.def), &p.record) {
-                store.save_proofs(h, &key, &record_json(rec))?;
+                if team {
+                    store.try_save_proofs(h, &key, &record_json(rec));
+                } else {
+                    store.save_proofs(h, &key, &record_json(rec))?;
+                }
             }
             cached.insert(p.def, p.reports);
         }

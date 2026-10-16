@@ -132,20 +132,11 @@ CREATE TABLE IF NOT EXISTS notices (
     member TEXT NOT NULL,
     kind   TEXT NOT NULL,
     body   TEXT NOT NULL,
-    at     INTEGER NOT NULL,
-    seen   INTEGER NOT NULL DEFAULT 0
+    at     INTEGER NOT NULL
 );
-CREATE INDEX IF NOT EXISTS notices_by_member ON notices(member, seen);
-CREATE TABLE IF NOT EXISTS calls (
-    id      INTEGER PRIMARY KEY,
-    member  TEXT NOT NULL,
-    session TEXT NOT NULL,
-    tool    TEXT NOT NULL,
-    ok      INTEGER NOT NULL,
-    code    TEXT,
-    ms      INTEGER NOT NULL,
-    at      INTEGER NOT NULL
-);
+-- Which notices a member has seen, and the call log, are in `.qal/team-log.db` (team::log): reads
+-- never write this file.
+CREATE INDEX IF NOT EXISTS notices_by_member ON notices(member, id);
 CREATE TABLE IF NOT EXISTS records (
     seq  INTEGER PRIMARY KEY,
     hash TEXT NOT NULL UNIQUE,

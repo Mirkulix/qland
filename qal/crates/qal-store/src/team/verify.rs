@@ -458,6 +458,18 @@ fn final_state(conn: &Connection, st: &State) -> Result<(), Bad> {
             .unwrap_or_default();
         return Err(replay(format!("the current names differ from the replayed records (first at `{n}`: {what})")));
     }
+    // The stored lists in their one spelling (compact JSON): no byte of a row goes unchecked.
+    {
+        let mut stmt = conn.prepare("SELECT name, refs, local_names FROM names").map_err(sqlerr)?;
+        let raw = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?))).map_err(sqlerr)?;
+        for row in raw {
+            let (name, refs, locals) = row.map_err(sqlerr)?;
+            let Some(r) = current.get(&name) else { return Err(replay(format!("`{name}` changed while it was verified"))) };
+            if refs != Value::from(r.refs.clone()).to_string() || locals != Value::from(r.locals.clone()).to_string() {
+                return Err(replay(format!("the stored lists of `{name}` are not in their canonical spelling")));
+            }
+        }
+    }
     let digest = names_digest(conn, &st.rows).map_err(db)?;
     if digest != st.names_after {
         return Err(replay("the stored definitions of the names (kind, signature, effects or local names in `defs`) differ from what the last record signed".into()));

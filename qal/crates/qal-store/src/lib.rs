@@ -237,6 +237,17 @@ impl Store {
             .map_err(sql)
     }
 
+    /// [`Store::save_proofs`] as a cache fill that never waits: if another writer holds the lock,
+    /// nothing is stored (the results are computed again next time). Returns whether it stored.
+    pub fn try_save_proofs(&mut self, hash: &str, prover: &str, results: &str) -> bool {
+        if self.conn.busy_timeout(std::time::Duration::ZERO).is_err() {
+            return false;
+        }
+        let saved = self.save_proofs(hash, prover, results).is_ok();
+        let _ = schema::configure(&self.conn);
+        saved
+    }
+
     /// Exports the names starting with `prefix` and their dependencies as package `package`
     /// (the file text is in [`Exported::file`]).
     pub fn export(&mut self, prefix: &str, package: &str) -> Result<Exported, Vec<Diagnostic>> {

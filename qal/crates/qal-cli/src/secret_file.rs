@@ -76,7 +76,8 @@ pub fn read_session(path: &Path) -> Result<Zeroizing<String>, String> {
     if meta.len() > 256 {
         return Err(format!("{} is not a session file", path.display()));
     }
-    let mut text = Zeroizing::new(String::new());
+    // Larger than any accepted file: reading never reallocates (no freed copies of the token).
+    let mut text = Zeroizing::new(String::with_capacity(512));
     std::fs::File::open(path).and_then(|mut f| f.read_to_string(&mut text)).map_err(|e| format!("cannot read the session file {}: {e}", path.display()))?;
     let token = Zeroizing::new(text.trim().to_string());
     let well_formed = token.len() == 67 && token.starts_with("qs_") && token[3..].bytes().all(|b| b.is_ascii_hexdigit());
