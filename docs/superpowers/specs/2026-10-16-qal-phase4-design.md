@@ -241,22 +241,26 @@ Tabelle `records(seq INTEGER PRIMARY KEY, hash TEXT UNIQUE, body BLOB, sig TEXT)
 "qal-record-v1\n" ++ kanonisches JSON von
 { "v": 1, "seq": n, "prev": "<hash des vorigen Records | 64 × 0>", "at": <ms>, "member": "impl-1",
   "key": "<key_id>", "session": "<sitzungs-id>", "op": "define", "space": "c1a2b3c4d5e6",
-  "args": { … je op … }, "root_before": "<hex>", "root_after": "<hex>" }
+  "args": { … je op … }, "root_before": "<hex>", "root_after": "<hex>", "names_after": "<hex>" }
 ```
+
+**Format `v: 1` (eingefroren mit 4a):** `names_after` = SHA-256 über je Name (Byte-Ordnung) die Zeile `name 0x00 hash 0x00 refs 0x00 local_names 0x00 defs.kind 0x00 defs.signature 0x00 defs.effects 0x00 defs.local_names 0x0a` (Listen als kompaktes JSON, `defs`-Spalten wie gespeichert) — bindet den vollständigen Zustand jedes Namens samt der Spalten seiner Definition, nicht nur Name → Hash (die Wurzel §3 bleibt Name/Hash). Jeder Eintrag in `entries` ist `{name, old, new, action, refs, locals}`: `refs`/`locals` sind die volle Zeile des Namens danach (`null`, wenn `new = null`); die Einträge sind die Differenz der vollständigen Zeilen vor/nach der Schreiboperation in derselben Transaktion (daher auch `updated`-Einträge, z. B. für die Benutzer eines umbenannten Namens). Genesis: `main` = `[[name, hash, refs, locals]…]`, dazu `team_allow`. `import` zusätzlich `{package, hash}`; ein Team-Store importiert nur `std`. Hex (Hashes, Schlüssel, Signaturen) nur in Kleinbuchstaben.
 
 - **Kanonisches JSON:** `serde_json::Value` mit sortierten Schlüsseln (Standard-`Map` = `BTreeMap`; Feature `preserve_order` ist im Workspace nicht aktiv und wird per Test festgenagelt), keine Leerzeichen, nur ganze Zahlen (|x| < 2⁵³), Strings wie von `serde_json` escaped. Ein Golden-Test hält die Bytes fest.
 - `hash` = SHA-256(body); `sig` = Ed25519-Signatur (128 Hex) mit dem Schlüssel des Mitglieds; Prüfung mit `verify_strict`.
-- `args` je `op`: `genesis {owner, owner_key, main: [[name, hash]…]}`, `member_add/member_key {id, role, key}`, `member_revoke {id}`, `define/rename/rebase/import {entries: [{name, old, new, action}]}`, `change {id, action, fields}`, `lease_break {name, change, holder}`, `review {change, root, verdict, comments_sha256}`, `merge {change, change_root, reviews: [seq…], entries}`, `abandon {change}`.
+- `args` je `op`: `genesis {owner, owner_key, team_allow, main: [[name, hash, refs, locals]…]}`, `member_add/member_key {id, role, key}`, `member_revoke {id}`, `define/rename/rebase/import {entries: [{name, old, new, action}]}`, `change {id, action, fields}`, `lease_break {name, change, holder}`, `review {change, root, verdict, comments_sha256}`, `merge {change, change_root, reviews: [seq…], entries}`, `abandon {change}`.
 - Leases (außer `break`), Sitzungen, Notices und `seen` sind flüchtige Koordination und **nicht** signiert; Code-Inhalte sind über die Hashes in `entries` gebunden (die `defs`-Zeilen sind selbstprüfend: SHA-256(canonical) = hash).
 - Geschrieben in derselben Transaktion wie die Änderung (§5.1). Ein Store vor `team init` hat unsignierte Historie; der Genesis-Record bindet deren Endstand (`main`-Liste).
 
 ### 9.2 `qal verify`
 
 ```
-qal verify [--trust team.json] [--from <seq>]      # CLI; MCP: qal_verify {from?}
+qal verify [--trust team.json] [--from <seq>] [--head <hash>]   # CLI; MCP: qal_verify {from?, head?}
 → {"ok": true, "records": 812, "members": 7, "trust": "file" | "store", "head": "<hash>"}
 → {"ok": false, "error": {code: "E0921", seq: 433, …}, "checked": 432}
 ```
+
+`--from n` prüft Signaturen erst ab Record n (Kette, Rechte, Wiederabspielen immer ab Genesis); das Ergebnis nennt dann `signatures_from` und warnt. `--head <hash>`: ein früher festgehaltener Record-Hash muss in der Kette liegen (sonst E0922) — findet ein abgeschnittenes Ende samt zurückgerollter Tabellen; ohne `--head` warnt `qal verify`, dass das nicht erkennbar ist. Zusätzlich zu (1)–(5): die aktuellen `names`-Zeilen (Hash, `refs`, `local_names`, in kanonischer Schreibweise) = Wiederabspielen, `names_after` des letzten Records = Digest des wiederabgespielten Zustands, `members`, `meta.owner`, `meta.team_allow` wie aufgezeichnet, jede referenzierte Definition dekodiert über verifizierte Formen (auch Gruppenformen) und ihre `deps`-Zeilen sind genau ihre Referenzen (alles E0923); Records ohne `meta.team` gelten als Manipulation (E0923).
 
 Prüft in Reihenfolge: (1) Sequenz lückenlos, `prev`-Kette, `hash` = SHA-256(body) (E0922 `chain_broken`); (2) jede Signatur mit dem zum Zeitpunkt gültigen Schlüssel des Mitglieds; Mitgliedsrecords mit dem Inhaberschlüssel; Inhaberschlüssel = `team.json` bzw. ohne `--trust` der Genesis-Record (`trust: "store"`, Warnung, weil wer den Store umschreibt, auch die Genesis umschreiben kann) (E0921 `signature_invalid`, E0925 `untrusted_key`); (3) Berechtigung jedes Records nach §8, soweit aus Records und `defs` entscheidbar (Rolle, Besitz, Merge-Tor mit den referenzierten Review-Records, Schnittstellenregel über `defs.signature` und Contracts; nicht entscheidbar und nicht geprüft: Leases) (E0924 `unauthorized_record`); (4) Wiederabspielen aller `entries` ab Genesis ergibt exakt die aktuellen Tabellen `names` und `change_names` (Wurzeln gleich; E0923 `replay_mismatch`); (5) jeder referenzierte Hash existiert in `defs` und ist selbstprüfend.
 
@@ -311,11 +315,11 @@ qal_verify  {"from": 1}
 
 ### 10.3 Notices
 
-Tabelle `notices(id, member, kind, body, at, seen)`, höchstens 1 000 je Mitglied (älteste fallen weg). Arten: `change_opened` (an `assignee` bzw. Rolle), `change_submitted` (an Verifizierer, Reviewer), `review` (an Besitzer), `merged` (an alle), `needs_rebase` (an Besitzer betroffener Change Sets), `lease_broken`, `relinked` (eine eigene gesperrte Definition wurde in `main` neu verknüpft), `std_outdated`.
+Tabelle `notices(id, member, kind, body, at)` in `store.db` (geschrieben von den verursachenden Schreiboperationen), höchstens 1 000 je Mitglied (älteste fallen weg). „Gesehen“ ist ein Cursor je Mitglied (höchste ausgelieferte Id) in `.qal/team-log.db` (§10.4), damit Lesen nie `store.db` schreibt (§5.1). `std_outdated` wird nicht gespeichert: ein Merker im Team-Log hält fest, dass es je std-Version und Mitglied einmal ausgeliefert wurde. Arten: `change_opened` (an `assignee` bzw. Rolle), `change_submitted` (an Verifizierer, Reviewer), `review` (an Besitzer), `merged` (an alle), `needs_rebase` (an Besitzer betroffener Change Sets), `lease_broken`, `relinked` (eine eigene gesperrte Definition wurde in `main` neu verknüpft), `std_outdated`.
 
 ### 10.4 Messprotokoll
 
-Tabelle `calls(id, member, session, tool, ok, code, ms, at)` — ein Eintrag pro Tool-Aufruf im Team-Modus (nicht signiert, nur Messung). `qal team stats --json` fasst zusammen (Grundlage für §16).
+Tabelle `calls(id, member, session, tool, ok, code, ms, at)` in der eigenen SQLite-Datei `.qal/team-log.db` neben dem Store (WAL, kurze Wartezeit, „best effort“; höchstens die neuesten 100 000 Aufrufe) — ein Eintrag pro Tool-Aufruf im Team-Modus. Dieselbe Datei hält die Notice-Cursor (`notice_cursor(member, seen)`) und einmalige Merker (`flags(member, flag)`). Das Team-Log ist **nicht signiert** und wird **nie** für Berechtigungen oder `qal verify` herangezogen: es ist Messung und Komfort; eine verlorene oder manipulierte Datei kostet höchstens doppelte oder fehlende Hinweise und Messwerte. `qal team stats --json` fasst zusammen (Grundlage für §16). Proof-Ergebnisse, die `qal_prove` beim Lesen berechnet, werden im Team-Modus nur gespeichert, wenn die Schreibsperre sofort frei ist (Cache, kein Warten).
 
 ---
 
@@ -329,7 +333,7 @@ Tabelle `calls(id, member, session, tool, ok, code, ms, at)` — ein Eintrag pro
 
 ## 12. Store-Schema 6
 
-Migration 5 → 6 in einer Transaktion (Schema 5 ist seit Phase 3b belegt: `history` mit Aktion `deleted`) (nur Anlegen, keine Datenänderung): `members(id PK, role, key, key_id, added_at, revoked_at)`, `sessions(token_sha256 PK, id UNIQUE, member, created_at, expires_at, revoked_at, current_change)`, `changes(id PK, title, description, scope, owner, assignee, status ∈ {open, submitted, merged, abandoned}, claimed, base_seq, base_root, needs_rebase, created_at, updated_at)`, `change_names` (§6.1, PK `(change, name)`), `reviews(id PK, change, member, verdict, root, comments, at, record)`, `leases` (§5.2), `seen` (§5.3), `notices` (§10.3), `calls` (§10.4), `records` (§9.1); `history` bekommt `space TEXT NOT NULL DEFAULT 'main'` und `record INTEGER NULL`. `meta`: `team = 1`, `team_allow`, `owner`. Ein Store ohne Team-Modus bleibt nach der Migration bitgenau so benutzbar wie vorher (Tests aus 1c–3a laufen unverändert).
+Migration 5 → 6 in einer Transaktion (Schema 5 ist seit Phase 3b belegt: `history` mit Aktion `deleted`) (nur Anlegen, keine Datenänderung): `members(id PK, role, key, key_id, added_at, revoked_at)`, `sessions(token_sha256 PK, id UNIQUE, member, created_at, expires_at, revoked_at, current_change)`, `changes(id PK, title, description, scope, owner, assignee, status ∈ {open, submitted, merged, abandoned}, claimed, base_seq, base_root, needs_rebase, created_at, updated_at)`, `change_names` (§6.1, PK `(change, name)`), `reviews(id PK, change, member, verdict, root, comments, at, record)`, `leases` (§5.2), `seen` (§5.3), `notices(id, member, kind, body, at)` mit Index `(member, id)` (§10.3), `records` (§9.1) — `calls` und der Notice-Cursor liegen in `.qal/team-log.db` (§10.4), nicht in `store.db`; `history` bekommt `space TEXT NOT NULL DEFAULT 'main'` und `record INTEGER NULL`. `meta`: `team = 1`, `team_allow`, `owner`. Ein Store ohne Team-Modus bleibt nach der Migration bitgenau so benutzbar wie vorher (Tests aus 1c–3a laufen unverändert).
 
 ---
 
