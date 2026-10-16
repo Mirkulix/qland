@@ -829,7 +829,12 @@ fn team_action_inner(store: &mut Store, who: &Identity, tool: &str, a: &Args) ->
                 Some(J::Bool(b)) => *b,
                 Some(_) => return Err("`mine` must be true or false".into()),
             };
-            store.change_list(&who.member, &statuses, mine)
+            let limit = match a.get("limit") {
+                None => None,
+                Some(J::Number(n)) => Some(n.as_u64().and_then(|n| usize::try_from(n).ok()).filter(|n| (1..=200).contains(n)).ok_or("`limit` must be an integer from 1 to 200")?),
+                Some(_) => return Err("`limit` must be an integer from 1 to 200".into()),
+            };
+            store.change_list(&who.member, &statuses, mine, limit)
         }
         "open" => {
             let package = match a.get("package") {
@@ -879,7 +884,7 @@ fn error_code(reply: &Reply) -> Option<String> {
 fn team_envelope(store: &Store, log: Option<&TeamLog>, who: Option<&Identity>, pending: Option<Notice>, tool: &str, space: &qal_store::Space, reply: &mut Reply, start: Instant) {
     // A write lock held longer than the busy timeout: E0907 `store_busy`, retry (§5.1).
     for d in reply.out.diagnostics.iter_mut().flatten() {
-        if d.kind == "store_error" && (d.message.contains("database is locked") || d.message.contains("database is busy")) {
+        if qal_store::is_busy(d) {
             *d = Diagnostic::new("E0907", "store_busy", "", "", "another agent held the store's write lock for longer than 10 s").hint("retry the call; nothing was written");
         }
     }
@@ -1023,7 +1028,8 @@ fn tools_with_team() -> Vec<J> {
             "change": text("Change set id (default: your current one)."), "title": text("open: a short title."), "description": text("open: what is to be done."),
             "scope": list("open: existing names that may be changed."), "assignee": text("open (architect): the member the work package is for."),
             "package": {"type": "boolean", "description": "open (architect): a claimable work package (default: true with an assignee)."},
-            "status": list("list: only these statuses (open, submitted, merged, abandoned)."), "mine": {"type": "boolean", "description": "list: only yours (owned or assigned)."},
+            "status": list("list: only these statuses (open, submitted, merged, abandoned; default open and submitted)."), "mine": {"type": "boolean", "description": "list: only yours (owned or assigned)."},
+            "limit": {"type": "integer", "minimum": 1, "maximum": 200, "description": "list: at most this many (default 50; `more` counts the rest)."},
             "add": list("scope: names to add."), "remove": list("scope: names to remove.")},
           "required": ["action"], "additionalProperties": false}}));
     all.push(json!({"name": "qal_lease", "title": "Leases on names (team)", "annotations": writes,
@@ -1059,7 +1065,7 @@ fn tool_params(tool: &str) -> &'static [&'static str] {
         "qal_request" => &["handler", "init", "allow", "requests", "change"],
         "qal_whoami" => &["wait_s"],
         "qal_verify" => &["from", "head"],
-        "qal_change" => &["action", "change", "title", "description", "scope", "assignee", "package", "status", "mine", "add", "remove"],
+        "qal_change" => &["action", "change", "title", "description", "scope", "assignee", "package", "status", "mine", "limit", "add", "remove"],
         "qal_lease" => &["action", "names", "ttl_s", "change"],
         _ => &[],
     }

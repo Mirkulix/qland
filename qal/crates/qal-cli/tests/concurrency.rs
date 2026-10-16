@@ -301,40 +301,62 @@ fn overlapping_acquires_never_both_succeed() {
 #[test]
 fn a_process_killed_in_a_define_leaves_a_consistent_store() {
     let t = Team::new("c", &[("victim", Role::Architect), ("other", Role::Implementer)]);
-    let big: String = (0..1500).map(|i| format!("fn big{i}(x: Int) -> Int req x >= 0 req x < 1000 ens r > x = x + 1\n")).collect();
-    let mut killed_in_flight = 0;
-    for delay_ms in [30u64, 80, 150, 300, 600, 1200] {
+    let big = |tag: usize| -> String { (0..1000).map(|i| format!("fn big{i}(x: Int) -> Int = x + {}\n", i + tag)).collect() };
+    let count = |change: &str| -> (i64, i64) {
+        let c = rusqlite::Connection::open(t.store_path()).unwrap();
+        let records: i64 = c.query_row("SELECT count(*) FROM records", [], |r| r.get(0)).unwrap();
+        let names: i64 = c.query_row("SELECT count(*) FROM change_names WHERE change = ?1 AND name LIKE 'big%' AND hash IS NOT NULL", [change], |r| r.get(0)).unwrap();
+        (records, names)
+    };
+    // The control: the same define without a kill commits (one record, 1 000 names).
+    let mut v = t.agent("victim");
+    let mut previous = v.open("control");
+    let (before, _) = count(&previous);
+    let started = Instant::now();
+    let (err, r) = v.call("qal_define", json!({"source": big(0)}));
+    let full = started.elapsed();
+    assert!(!err, "{r}");
+    assert_eq!(count(&previous), (before + 1, 1000), "the control define commits");
+    drop(v);
+    eprintln!("a 1 000-name define takes {full:?}");
+    let mut other = t.agent("other");
+    other.open("other");
+    let (mut committed, mut cut) = (0, 0);
+    // Kills spread over the define: parsing and checking, the prover, the locked write, after it.
+    for (k, f) in [0.05f64, 0.2, 0.4, 0.6, 0.75, 0.85, 0.95, 3.0].into_iter().enumerate() {
         let mut v = t.agent("victim");
-        let change = v.open("doomed");
+        // The killed agents' change sets would pile up: each new agent abandons the last one.
+        let (err, a) = v.call("qal_change", json!({"action": "abandon", "change": previous}));
+        assert!(!err, "{a}");
+        let change = v.open(&format!("doomed {k}"));
+        previous = change.clone();
         let (err, l) = v.call("qal_lease", json!({"action": "acquire", "names": ["held"], "ttl_s": 60}));
         assert!(!err, "{l}");
-        let records_before: i64 = rusqlite::Connection::open(t.store_path()).unwrap().query_row("SELECT count(*) FROM records", [], |r| r.get(0)).unwrap();
-        v.send_call("qal_define", json!({"source": big}));
-        std::thread::sleep(Duration::from_millis(delay_ms));
+        let (before, _) = count(&change);
+        v.send_call("qal_define", json!({"source": big(k + 1)}));
+        std::thread::sleep(full.mul_f64(f));
         let _ = v.child.kill();
         let _ = v.child.wait();
-        let c = rusqlite::Connection::open(t.store_path()).unwrap();
-        let records_after: i64 = c.query_row("SELECT count(*) FROM records", [], |r| r.get(0)).unwrap();
-        let names: i64 = c.query_row("SELECT count(*) FROM change_names WHERE change = ?1 AND name LIKE 'big%'", [&change], |r| r.get(0)).unwrap();
-        // All or nothing: either the define committed with its record, or neither exists.
-        assert!((records_after == records_before && names == 0) || (records_after == records_before + 1 && names == 1500), "{delay_ms} ms: {records_before} -> {records_after} records, {names} names");
-        if records_after == records_before {
-            killed_in_flight += 1;
+        drop(v);
+        // All or nothing: the define committed with its record, or neither exists.
+        match count(&change) {
+            (r, 0) if r == before => cut += 1,
+            (r, 1000) if r == before + 1 => committed += 1,
+            other => panic!("kill at {f} x {full:?}: {before} records before, then {other:?} (records, names)"),
         }
         let verify = t.qal(&["verify"]);
-        assert_eq!(verify["ok"], true, "{delay_ms} ms: {verify}");
+        assert_eq!(verify["ok"], true, "kill at {f}: {verify}");
         // The killed agent's lease stays until it expires; then it counts as free.
-        let mut o = t.agent("other");
-        o.open(&format!("after {delay_ms}"));
-        let (err, w) = o.call("qal_lease", json!({"action": "acquire", "names": ["held"]}));
+        let (err, w) = other.call("qal_lease", json!({"action": "acquire", "names": ["held"]}));
         assert!(err && code(&w) == "E0901", "{w}");
-        c.execute("UPDATE leases SET expires_at = 1 WHERE name = 'held'", []).unwrap();
-        let (err, w) = o.call("qal_lease", json!({"action": "acquire", "names": ["held"]}));
+        rusqlite::Connection::open(t.store_path()).unwrap().execute("UPDATE leases SET expires_at = 1 WHERE name = 'held'", []).unwrap();
+        let (err, w) = other.call("qal_lease", json!({"action": "acquire", "names": ["held"]}));
         assert!(!err, "an expired lease is free: {w}");
-        assert_eq!(o.call("qal_lease", json!({"action": "release", "names": ["held"]})).1["released"], json!(["held"]));
+        assert_eq!(other.call("qal_lease", json!({"action": "release", "names": ["held"]})).1["released"], json!(["held"]));
     }
-    eprintln!("killed in flight {killed_in_flight} of 6 times");
-    assert!(killed_in_flight > 0, "no kill happened during the define");
+    eprintln!("of 8 kills: {cut} before the commit, {committed} after it");
+    assert!(cut > 0, "some kill hit the define before it committed");
+    assert!(committed > 0, "the kill after the define's duration found it committed");
 }
 
 /// §5.1: a write lock held longer than the busy timeout (10 s) is E0907 `store_busy` (retry),
