@@ -1,0 +1,1 @@
+test t = match (P { x: 1 }.x + 1) { _ => (match a { _ => 1 }) + 1 }

@@ -1,0 +1,7 @@
+fn avg(a: Float, b: Float) -> Float = (a + b) / 2.0
+test arith = avg(1.0, 2.0) == 1.5 && -avg(1.0, 1.0) < 0.0 && 1.0 / 0.0 > 1e308
+test convert = int_to_float(3) == 3.0 && float_to_int(2.9) == Some(2) && float_to_int(-2.9) == Some(-2)
+test convert_range = float_to_int(1e19) == None && float_to_int(0.0 / 0.0) == None && float_to_int(-9.2e18) != None
+test text = from_float(1.5) == "1.5" && to_float("2.25") == Some(2.25) && to_float("x") == None
+test nan = 0.0 / 0.0 != 0.0 / 0.0
+test nan_in_values = (let l = [0.0 / 0.0] in l != l) && (let o = Some(0.0 / 0.0) in o != o)

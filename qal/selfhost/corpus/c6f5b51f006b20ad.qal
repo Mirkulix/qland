@@ -1,0 +1,1 @@
+type SqlValue = A | B

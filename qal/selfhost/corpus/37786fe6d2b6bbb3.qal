@@ -1,0 +1,2 @@
+fn g(n: Int) -> Int req n >= 0 = n
+fn f(xs: List[Int]) -> Int = g(list_at(xs, 0))

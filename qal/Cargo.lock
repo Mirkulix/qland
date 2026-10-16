@@ -980,6 +980,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "qal-gen"
+version = "0.1.0"
+dependencies = [
+ "qal-compiler",
+ "qal-core",
+ "qal-run",
+ "serde_json",
+]
+
+[[package]]
 name = "qal-prove"
 version = "0.1.0"
 dependencies = [

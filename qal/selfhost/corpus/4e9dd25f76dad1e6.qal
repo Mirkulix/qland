@@ -1,0 +1,3 @@
+type User = { id: Int, name: Str }
+fn mk() -> User = User { name: "a", id: 1 }
+test t = mk().name == "a" && mk() == User { id: 1, name: "a" }

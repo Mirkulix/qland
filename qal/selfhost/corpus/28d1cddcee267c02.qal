@@ -1,0 +1,6 @@
+fn ok(rq: HttpRequest) -> HttpResponse = HttpResponse { status: 200, headers: [HttpHeader { name: "x-path", value: rq.path }], body: rq.body }
+fn code(e: NetError) -> Int = match e { NetDenied(_) => 1, NetInvalid(m) => len(m), NetConnect(_) => 3, NetTimeout => 4, NetTooLarge => 5 }
+fn cell(v: SqlValue) -> Str = match v { SqlNull => "null", SqlInt(n) => from_int(n), SqlFloat(x) => from_float(x), SqlText(s) => s }
+fn rows(r: DbRows) -> Int = len(r.rows) + len(r.columns)
+fn busy(e: DbError) -> Bool = match e { DbBusy => true, _ => false }
+fn call() -> HttpCall = HttpCall { method: "GET", url: "http://127.0.0.1:9/", headers: [], body: "" }

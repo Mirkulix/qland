@@ -1,0 +1,1 @@
+fn unrelated() -> Int = 1

@@ -1,0 +1,1 @@
+fn half(n: Int, label: Str) -> Int req n % 2 == 0 = n / 2

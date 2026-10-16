@@ -1,0 +1,4 @@
+type P = { x: Int, tags: List[Str] }
+type E = A | B(P, Option[Int])
+fn mk() -> E = B(P { x: 1, tags: ["t"] }, None)
+fn parse(s: Str) -> Result[Int, Str] = match to_int(s) { Some(n) => Ok(n), None => Err(s) }

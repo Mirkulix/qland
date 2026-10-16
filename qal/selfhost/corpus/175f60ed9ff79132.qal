@@ -1,0 +1,8 @@
+type Pair[A, B] = { fst: A, snd: B }
+type Tree[T] = Leaf | Node(Tree[T], T, Tree[T])
+fn swap[A, B](p: Pair[A, B]) -> Pair[B, A] = Pair { fst: p.snd, snd: p.fst }
+fn size[T](t: Tree[T]) -> Int = match t { Leaf => 0, Node(l, _, r) => size(l) + 1 + size(r) }
+fn adder(n: Int) -> fn(Int) -> Int = fn(x) => x + n
+fn tally(ws: List[Str]) -> Map[Str, Int] = fold(ws, map_new(), fn(m, w) => map_put(m, w, 1))
+fn raw(s: Str) -> Bytes = to_bytes(s)
+test t = size(Node(Leaf, swap(Pair { fst: 1, snd: true }), Leaf)) == 1

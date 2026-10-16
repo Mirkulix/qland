@@ -1,0 +1,4 @@
+fn j(bs: List[Bytes]) -> Bytes = bytes_join(bs)
+fn pieces(n: Int, a: Accum[Bytes]) -> Accum[Bytes] = if n == 0 then a else pieces(n - 1, AccPush(a, bytes_from([n % 256, 0, 1, 2, 3, 4, 5, 6, 7, 8])))
+fn big(n: Int) -> Int = bytes_len(bytes_join(acc_list(pieces(n, AccEnd))))
+fn str_too(s: Str) -> Option[Str] = bytes_to_str(bytes_join([to_bytes(s), to_bytes("!"), to_bytes(s)]))

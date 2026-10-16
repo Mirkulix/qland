@@ -1,0 +1,1 @@
+type Other = { name: Str, value: Str, extra: Int }

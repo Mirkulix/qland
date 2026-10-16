@@ -1,0 +1,1 @@
+fn u(a: Int) -> Int ens r >= 0 = ushr(a, 1)

@@ -1,0 +1,2 @@
+fn build(n: Int, a: Accum[Int]) -> Accum[Int] = if n == 0 then a else build(n - 1, AccPush(a, n))
+fn ends(n: Int) -> List[Int] = let xs = acc_list(build(n, AccEnd)) in [len(xs), list_at(xs, 0), list_at(xs, n - 1)]

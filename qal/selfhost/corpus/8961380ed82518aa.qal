@@ -1,0 +1,3 @@
+fn pos(x: Int) -> Int req x > 0 = x
+fn e(x: Int) -> Int !io = { print("a"); pos(x) }
+fn g[T](x: T, n: Int) -> T = let k = pos(n) in x

@@ -10,6 +10,7 @@ members = [
     "crates/qal-cli",
     "crates/qal-prove",
     "crates/qal-compiler",
+    "selfhost/tools/gen",
 ]
 resolver = "2"
 

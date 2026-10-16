@@ -1,0 +1,2 @@
+fn same[T](a: T, b: T) -> Bool = a == b
+test t = same(1, 1) && !same("a", "b")

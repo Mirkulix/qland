@@ -1,0 +1,2 @@
+fn main(args: List[Str]) -> Int = len(args)
+fn other() -> Unit !io = print("x")

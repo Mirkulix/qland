@@ -1,0 +1,1 @@
+fn base(x: Int) -> Int = x

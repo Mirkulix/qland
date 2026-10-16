@@ -1,0 +1,2 @@
+type User = { id: Int, tags: List[Str] }
+type T = Leaf | Node(T, Int, T)

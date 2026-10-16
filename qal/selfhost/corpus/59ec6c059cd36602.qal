@@ -1,0 +1,4 @@
+fn main(args: List[Str]) -> Int !io = match read_line() {
+None => 1,
+Some(first) => let rest = read_all() in { print(first ++ "|" ++ rest ++ "|" ++ read_all()); len(split(rest, "\n")) },
+}

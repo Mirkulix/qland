@@ -1,0 +1,1 @@
+fn k(a: Int) -> fn() -> fn() -> Int = fn() => fn() => a

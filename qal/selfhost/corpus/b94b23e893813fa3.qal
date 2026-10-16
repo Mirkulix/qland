@@ -1,0 +1,6 @@
+fn hog(mib: Int) -> Int = len(grow("0123456789abcdef", mib * 1048576))
+fn grow(s: Str, n: Int) -> Str = if len(s) >= n then s else grow(s ++ s, n)
+fn spin(n: Int) -> Int = spin(n + 1)
+fn quick(n: Int) -> Int = n + 1
+fn text(n: Int) -> Str = slice(grow("ab", n), 0, n)
+fn rows() -> Int !db = match db_query("SELECT 1", []) { Ok(r) => len(r.rows), Err(_) => 0 }

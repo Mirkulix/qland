@@ -1,0 +1,1 @@
+test t = let std = 1 in std

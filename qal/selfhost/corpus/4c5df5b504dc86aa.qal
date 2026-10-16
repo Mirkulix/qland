@@ -1,0 +1,1 @@
+fn ok(xs: List[Str]) -> List[Unit] !io = map(xs, fn(s) => print(s))

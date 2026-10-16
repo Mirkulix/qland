@@ -1,0 +1,2 @@
+fn pong(k: Int) -> Bool = if k == 0 then false else ping(k - 1)
+fn ping(k: Int) -> Bool = if k == 0 then true else pong(k - 1)

@@ -1,0 +1,4 @@
+type Never = |
+type R = {}
+fn f(n: Never) -> Int = match n {}
+test t = (match (R {}) { R {} => 1 }) == 1

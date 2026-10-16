@@ -1,0 +1,2 @@
+fn say() -> Unit !io = ()
+fn f() -> Int !io req say() == () = 1

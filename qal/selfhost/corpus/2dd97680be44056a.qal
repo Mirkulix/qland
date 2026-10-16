@@ -1,0 +1,1 @@
+test t = map([1], fn(x: Int, y) => { print("a"); x }) == [] && f(fn(g: fn(Int) -> Int !io) => g)

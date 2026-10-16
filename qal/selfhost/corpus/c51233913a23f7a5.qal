@@ -1,0 +1,3 @@
+fn bad(x: Int) -> Bytes = bytes_from([1, x])
+fn cut(n: Int) -> Bytes = bytes_slice(to_bytes("ab"), 0, n)
+fn raw() -> Bytes = bytes_from([0, 255])

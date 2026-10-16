@@ -1,0 +1,1 @@
+fn main(args: List[Str]) -> Int !fs !io = match get(args, 0) { None => 2, Some(p) => match read_file(p) { Ok(s) => { print(s); 0 }, Err(e) => { print(e); 1 } } }

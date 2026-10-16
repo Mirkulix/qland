@@ -1,0 +1,2 @@
+type T = { a: Int }
+fn f[T](x: T) -> T = x

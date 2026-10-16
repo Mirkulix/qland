@@ -1,0 +1,2 @@
+fn a(n: Int) -> Int = if n <= 0 then 1 else b(n - 1)
+fn b(n: Int) -> Int = if n <= 1 then 0 else a(n - 2)

@@ -1,0 +1,4 @@
+fn h(cb: fn() -> Unit !io) -> Unit !io = cb()
+fn g(k: fn(fn() -> Unit) -> Unit !io) -> Unit !io = k(h2)
+fn h2() -> Unit = ()
+fn run() -> Unit !io = g(h)

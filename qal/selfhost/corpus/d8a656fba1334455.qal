@@ -1,0 +1,4 @@
+fn main(args: List[Str]) -> Int !io = match get(args, 0) {
+None => { print("usage: hello <name>"); 2 },
+Some(n) => { print("hello " ++ n); print(from_int(len(args))); 0 },
+}

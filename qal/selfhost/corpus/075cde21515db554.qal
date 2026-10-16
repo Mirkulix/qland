@@ -1,0 +1,2 @@
+fn user(x: Int) -> Int
+= g(x) * 2

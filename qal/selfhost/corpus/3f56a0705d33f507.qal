@@ -1,0 +1,2 @@
+fn avg(a: Float, b: Float) -> Float = (a + b) / 2.0
+test t = avg(1.0, 2.0) > 1.4

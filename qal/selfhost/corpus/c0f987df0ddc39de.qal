@@ -1,0 +1,1 @@
+fn run(f: fn() -> Unit !io) -> Unit = f()

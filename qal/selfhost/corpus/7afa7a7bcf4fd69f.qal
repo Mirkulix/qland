@@ -1,0 +1,1 @@
+fn m(a: Int) -> Int req a >= 0 ens r >= 0 && r < 2 = a % 2

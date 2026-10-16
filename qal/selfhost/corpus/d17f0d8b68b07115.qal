@@ -1,0 +1,3 @@
+fn l(a: Int, n: Int) -> Int = shl(a, n)
+fn sr(a: Int, n: Int) -> Int = shr(a, n)
+fn u(a: Int, n: Int) -> Int = ushr(a, n)

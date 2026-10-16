@@ -1,0 +1,1 @@
+fn n() -> Bool = std.str.ends_with("ab", "b")

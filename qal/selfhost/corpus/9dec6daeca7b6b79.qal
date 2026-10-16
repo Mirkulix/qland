@@ -1,0 +1,2 @@
+fn is_prime(n: Int) -> Bool
+= n >= 2 && has_no_divisor(n, 2)

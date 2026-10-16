@@ -1,0 +1,1 @@
+fn f(x: Option[Int]) -> Int = match x { Some(a) if a => 1, _ => 2 }

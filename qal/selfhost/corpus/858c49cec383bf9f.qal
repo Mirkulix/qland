@@ -1,0 +1,3 @@
+fn base() -> Int = 2
+fn fresh() -> Int = 3
+fn boom() -> Int = 4

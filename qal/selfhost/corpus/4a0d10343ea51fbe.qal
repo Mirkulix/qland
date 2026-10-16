@@ -1,0 +1,2 @@
+fn g(t: Str) -> Int req len(t) == 0 = 0
+fn f(t: Str) -> Int ens g("x") == 0 = if len(t) == 0 then g(t) else 0

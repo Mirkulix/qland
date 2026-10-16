@@ -1,0 +1,4 @@
+fn sum(xs: List[Int]) -> Int ens r >= 0 = fold(xs, 0, fn(a, x) => a + x)
+fn size(xs: List[Int]) -> Int ens r >= 0 = len(xs)
+fn name_len(s: Str) -> Int ens r > 0 = len(s)
+fn f(x: Float) -> Bool ens r == true = x > 0.0 || x <= 0.0

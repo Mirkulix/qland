@@ -1,0 +1,3 @@
+fn f(n: Int) -> Int = n + 1
+fn g(n: Int) -> Int = n + 1
+fn user(x: Int) -> Int = g(x) * 2

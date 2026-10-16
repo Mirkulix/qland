@@ -1,0 +1,1 @@
+fn f(xs: List[Str]) -> Bool = match get([], 0) { Some(x) => x < "a", None => false }

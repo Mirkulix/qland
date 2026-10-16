@@ -1,0 +1,3 @@
+fn pr(x: Int) -> Int !io = { print("p"); x }
+test t = let f = pr in true
+test u = 1 == 1

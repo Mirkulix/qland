@@ -1,0 +1,1 @@
+fn adder(n: Int) -> fn(Int) -> Int = fn(x) => x + n

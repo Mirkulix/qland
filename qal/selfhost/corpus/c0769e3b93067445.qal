@@ -1,0 +1,2 @@
+fn f(n: Int) -> Int = g(n)
+fn g(n: Int) -> Int = f(n)

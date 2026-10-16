@@ -1,0 +1,2 @@
+type Box[T] = { v: T }
+fn f(b: Box[Int, Int]) -> Int = 1

@@ -1,0 +1,2 @@
+fn g(n: Int) -> Int = n + 1
+fn f(n: Int) -> Int = n + 3

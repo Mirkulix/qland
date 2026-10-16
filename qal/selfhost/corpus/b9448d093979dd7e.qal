@@ -1,0 +1,1 @@
+fn main(args: List[Str]) -> Int !io = match read_line() { Some(l) => len(l), None => 0 }

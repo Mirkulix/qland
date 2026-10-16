@@ -1,0 +1,4 @@
+fn fact(n: Int) -> Int req n >= 0 ens r >= 1 = if n <= 1 then 1 else n * fact(n - 1)
+test fact_5 = fact(5) == 120
+fn noop() -> Unit = ()
+test unit_eq = noop() == ()

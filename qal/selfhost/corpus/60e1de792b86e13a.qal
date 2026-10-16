@@ -1,0 +1,7 @@
+fn pos(x: Int) -> Int req x > 0 = x
+fn plain(x: Int) -> Int = x
+fn io(x: Int) -> Int !io ens r == x = { print("x"); x }
+fn higher(f: fn(Int) -> Int) -> Int ens r == r = f(1)
+fn calls(x: Int) -> Int req x > 10 = pos(x)
+fn id[T](x: T) -> T ens r == x = x
+test t = id(1) == 1

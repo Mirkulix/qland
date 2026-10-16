@@ -1,0 +1,2 @@
+fn pr(x: Int) -> Int !io = { print("p"); x }
+fn main(args: List[Str]) -> Int = let f = pr in 0

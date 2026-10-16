@@ -1,0 +1,1 @@
+fn f[std.a.T](x: Int) -> Int = 1

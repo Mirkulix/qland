@@ -1,0 +1,1 @@
+fn sign(a: Int, b: Int) -> Int ens r >= -1 && r <= 1 && (r == 0) == (a == b) = compare(a, b)

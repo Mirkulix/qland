@@ -1,0 +1,1 @@
+fn f(a: Int) -> Int req a >= 0 ens r >= a = shl(a, 1)

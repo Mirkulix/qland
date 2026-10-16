@@ -1,0 +1,3 @@
+fn code() -> Int = char_code("")
+fn bad(n: Int) -> Str = from_char_code(n)
+fn rep() -> Str = replace("abc", "", "x")

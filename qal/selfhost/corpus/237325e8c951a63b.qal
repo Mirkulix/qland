@@ -1,0 +1,2 @@
+fn spin(n: Int, acc: Int) -> Int = if n == 0 then acc else spin(n - 1, acc + 1)
+fn f(x: Int) -> Int ens r >= 0 = spin(300000, 0) + 0 * x

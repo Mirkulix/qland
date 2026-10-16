@@ -1,0 +1,1 @@
+fn f(c: HttpCall) -> Bool = match http(c) { Ok(_) => true, Err(_) => false }

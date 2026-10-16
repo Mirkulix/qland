@@ -1,0 +1,1 @@
+type std.b.E = std.b.X | Y

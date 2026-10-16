@@ -1,0 +1,2 @@
+type T[A] = L | N(T[List[A]])
+fn f(x: T[Int]) -> Bool = x == x

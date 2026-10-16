@@ -1,0 +1,1 @@
+test t = compare("a", "b") == -1 && compare([1], [2]) < 0

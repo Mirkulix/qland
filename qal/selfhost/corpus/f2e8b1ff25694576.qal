@@ -1,0 +1,6 @@
+type std.a.T = std.a.One | std.a.Two(Int)
+type std.a.Box[A] = { item: A }
+fn std.a.f(x: Int) -> Int = x + 1
+fn std.a.unbox[A](b: std.a.Box[A]) -> A = b.item
+fn std.a.g(t: std.a.T) -> Int = match t { std.a.One => std.a.f(0), std.a.Two(n) => n }
+test std.a.t = std.a.g(std.a.Two(2)) == 2 && std.a.unbox(std.a.Box { item: 3 }) == 3

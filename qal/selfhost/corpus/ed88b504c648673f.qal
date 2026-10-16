@@ -1,0 +1,13 @@
+fn adder(n: Int) -> fn(Int) -> Int = fn(x) => x + n
+fn compose(f: fn(Int) -> Int, g: fn(Int) -> Int) -> fn(Int) -> Int = fn(x) => g(f(x))
+fn twice(f: fn(Int) -> Int, x: Int) -> Int = f(f(x))
+fn inc(x: Int) -> Int = x + 1
+type Op = { name: Str, run: fn(Float) -> Float }
+fn scale(k: Float) -> Op = Op { name: "scale", run: fn(x) => x * k }
+test adds = let a = adder(10) in a(5) == 15 && twice(a, 1) == 21
+test composes = let h = compose(adder(1), fn(x) => x * 3) in h(2) == 9 && twice(inc, 0) == 2
+test nested = let k = 7 in let outer = fn(a: Int) => fn(b: Int) => a + b + k in let f = outer(1) in f(2) == 10
+test in_records = let op = scale(2.5) in let f = op.run in f(2.0) == 5.0 && op.name == "scale"
+test with_builtins = let k = 3 in map([1, 2], fn(x) => x * k) == [3, 6] && filter([1, 2, 3, 4], fn(x) => x % 2 == 0) == [2, 4] && fold(["a", "b"], "", fn(acc, s) => acc ++ s ++ from_int(k)) == "a3b3"
+test fn_refs_still_work = map([1, 2], inc) == [2, 3]
+test captures_strings_and_lists = let xs = ["x", "y"] in let s = "!" in let f = fn(i: Int) => match get(xs, i) { Some(v) => v ++ s, None => s } in f(1) == "y!" && f(5) == "!"
