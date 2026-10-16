@@ -136,19 +136,39 @@ fn local(a: SocketAddr) -> SocketAddr {
 
 fn accept(listener: &TcpListener, shared: &Arc<Shared>, tx: &SyncSender<TcpStream>) {
     for conn in listener.incoming() {
-        if shared.shutdown.load(Ordering::SeqCst) {
+        let stop = shared.shutdown.load(Ordering::SeqCst);
+        // A connection accepted after the signal was still established before it (or is the
+        // waker's, which reads as closed): it is answered, not dropped.
+        if let Ok(stream) = conn {
+            if !enqueue(shared, tx, stream) {
+                return;
+            }
+        }
+        if stop {
+            // The connections the kernel queued before the signal are answered too.
+            if listener.set_nonblocking(true).is_ok() {
+                while let Ok((stream, _)) = listener.accept() {
+                    if stream.set_nonblocking(false).is_err() || !enqueue(shared, tx, stream) {
+                        break;
+                    }
+                }
+            }
             return;
         }
-        let Ok(stream) = conn else { continue };
-        shared.pending.fetch_add(1, Ordering::SeqCst);
-        match tx.try_send(stream) {
-            Ok(()) => {}
-            Err(TrySendError::Full(stream)) => {
-                shared.pending.fetch_sub(1, Ordering::SeqCst);
-                overloaded(shared, stream)
-            }
-            Err(TrySendError::Disconnected(_)) => return,
+    }
+}
+
+/// Hands a connection to the workers (503 if the queue is full); false once they are gone.
+fn enqueue(shared: &Shared, tx: &SyncSender<TcpStream>, stream: TcpStream) -> bool {
+    shared.pending.fetch_add(1, Ordering::SeqCst);
+    match tx.try_send(stream) {
+        Ok(()) => true,
+        Err(TrySendError::Full(stream)) => {
+            shared.pending.fetch_sub(1, Ordering::SeqCst);
+            overloaded(shared, stream);
+            true
         }
+        Err(TrySendError::Disconnected(_)) => false,
     }
 }
 

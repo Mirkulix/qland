@@ -521,7 +521,7 @@ fn team_report(w: &qal_store::team::WriteReport, out: &mut Output) {
     out.extra.insert("stubs".into(), serde_json::Value::from(w.stubs.clone()));
     let warnings = out.warnings.get_or_insert_with(Vec::new);
     // One E0930 per stub stands for all its unproven obligations (E0802 "this definition is a stub").
-    warnings.retain(|d| !(d.code == "E0802" && w.stubs.contains(&d.def) && d.message.contains("is a stub")));
+    warnings.retain(|d| !(d.code == "E0802" && w.stubs.contains(&d.def)));
     for n in &w.stubs {
         warnings.push(Diagnostic::new("E0930", "stub_present", n, "body", format!("`{n}` is a stub: calling it reaches `todo()` (runtime error todo_reached)")).hint(format!("replace the `todo()` in `{n}` with its implementation (keep the signature, and its users relink)")));
     }

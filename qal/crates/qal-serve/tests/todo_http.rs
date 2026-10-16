@@ -393,19 +393,29 @@ fn sigterm_during_a_slow_request_answers_it_and_exits_0() {
         }
         n *= 8;
     }
+    // About 4 s of work: even if the load drops after calibrating, it still runs when SIGTERM comes.
+    n *= 2;
+    let (sent_tx, sent_rx) = std::sync::mpsc::channel();
     let slow = std::thread::spawn(move || {
-        let t = Instant::now();
-        let r = req(addr, "GET", &format!("/iso/slow?{n}"), None);
-        (r, t.elapsed())
+        let mut s = connect(addr);
+        s.write_all(&request_bytes("GET", &format!("/iso/slow?{n}"), None)).unwrap();
+        let _ = sent_tx.send(());
+        let mut rest = Vec::new();
+        let r = read_resp(&mut s, &mut rest, false);
+        (r, Instant::now())
     });
-    std::thread::sleep(Duration::from_millis(500));
+    sent_rx.recv().unwrap();
+    std::thread::sleep(Duration::from_millis(300));
+    let signalled = Instant::now();
     let (code, events) = server.terminate();
-    let (r, took) = slow.join().unwrap();
+    let (r, answered) = slow.join().unwrap();
+    let r = r.expect("the running request is answered");
     assert_eq!((r.status, r.body), (200, n.to_string()));
-    assert!(took >= Duration::from_millis(1000), "the request really was running: {took:?}");
+    assert!(answered > signalled, "the request was still running when SIGTERM came");
+    let took = answered - signalled;
     assert_eq!(code, Some(0));
     assert_eq!(events.last().unwrap()["event"], "stopped");
-    println!("shutdown: slow request ({n} steps) answered after {took:?}");
+    println!("shutdown: slow request ({n} steps) answered {took:?} after SIGTERM");
 }
 
 /// 10 000 `GET /todos` over kept-alive connections: the RSS may grow at most 10 % after the
