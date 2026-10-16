@@ -805,3 +805,11 @@ fn db_builtins_as_values_get_a_hint_that_keeps_the_sql_literal() {
     assert!(d.hints[0].contains("call it directly with the SQL literal"), "{:?}", d.hints);
     assert!(one("fn f() -> Int = let g = trim in 0").hints[0].contains("fn(x) => trim(x)"));
 }
+
+#[test]
+fn builtin_arity_matches_the_checker() {
+    // `Builtin::arity` (qal-core, used to validate decoded typed forms) agrees with the signatures.
+    for b in Builtin::ALL {
+        assert_eq!(crate::builtins::arity(b.name()), Some(b.arity()), "{b:?}");
+    }
+}

@@ -1361,7 +1361,58 @@ fn validate(p: &TProgram) -> Result<(), String> {
             }
         }
 
+        /// Variant tags, payload arity and record field indices agree with the declared types.
+        fn shape(&self, e: &TExpr) -> R<()> {
+            let bad = |m: String| Err(format!("{}: {m}", self.what));
+            match &e.kind {
+                TKind::Variant(tag, args) => {
+                    let names = self.p.variant_names(&e.ty);
+                    if *tag as usize >= names.len() {
+                        return bad(format!("variant {tag} of `{}` out of range", e.ty));
+                    }
+                    if self.p.variant_fields(&e.ty, *tag).len() != args.len() {
+                        return bad(format!("variant {tag} of `{}` with {} values", e.ty, args.len()));
+                    }
+                }
+                TKind::Record(fs) => {
+                    let n = self.p.record_fields(&e.ty).len();
+                    if fs.len() != n || fs.iter().any(|(i, _)| *i as usize >= n) {
+                        return bad(format!("record `{}` with fields out of range", e.ty));
+                    }
+                }
+                TKind::Field(x, i) if *i as usize >= self.p.record_fields(&x.ty).len() => return bad(format!("field {i} of `{}` out of range", x.ty)),
+                TKind::Builtin(b, args, _) if args.len() != b.arity() => return bad(format!("`{}` with {} arguments", b.name(), args.len())),
+                _ => {}
+            }
+            Ok(())
+        }
+
+        /// A pattern against the type of the value it matches.
+        fn pat_shape(&self, p: &TPat, ty: &Type) -> R<()> {
+            match p {
+                TPat::Variant(tag, ps) => {
+                    let fields = self.p.variant_fields(ty, *tag);
+                    if *tag as usize >= self.p.variant_names(ty).len() || fields.len() != ps.len() {
+                        return Err(format!("{}: pattern variant {tag} does not fit `{ty}`", self.what));
+                    }
+                    ps.iter().zip(&fields).try_for_each(|(p, t)| self.pat_shape(p, t))
+                }
+                TPat::Record(fs) => {
+                    let fields = self.p.record_fields(ty);
+                    fs.iter().try_for_each(|(i, p)| match fields.get(*i as usize) {
+                        Some((_, t)) => self.pat_shape(p, t),
+                        None => Err(format!("{}: pattern field {i} does not fit `{ty}`", self.what)),
+                    })
+                }
+                _ => Ok(()),
+            }
+        }
+
         fn e(&self, e: &TExpr) -> R<()> {
+            self.shape(e)?;
+            if let TKind::Match(s, arms) = &e.kind {
+                arms.iter().try_for_each(|a| self.pat_shape(&a.pat, &s.ty))?;
+            }
             let fns = self.p.fns.len();
             let generics = self.p.generics.len();
             match &e.kind {
@@ -1496,7 +1547,7 @@ mod tests {
         let g = TFn { def, locals: vec![Type::Param("A".into())], req: vec![], ens: vec![], result_local: None, body: TExpr { ty: Type::Unit, kind: TKind::Seq(vec![TExpr { ty: Type::Unit, kind: TKind::FnRefG(0, vec![Type::Int]) }, TExpr { ty: Type::Unit, kind: TKind::CallG(0, vec![], vec![]) }]) }, instance: None };
         let t = TTest {
             name: "t".into(),
-            locals: vec![Type::map(Type::Str, Type::Float)],
+            locals: vec![Type::Named("Q".into())],
             body: TExpr {
                 ty: Type::Bool,
                 kind: TKind::Seq(vec![
@@ -1506,11 +1557,13 @@ mod tests {
                     TExpr { ty: Type::Int, kind: TKind::Field(Box::new(TExpr { ty: Type::Named("R".into()), kind: TKind::Record(vec![(1, int(2)), (0, int(3))]) }), 1) },
                     TExpr { ty: Type::Int, kind: TKind::If(Box::new(TExpr { ty: Type::Bool, kind: TKind::Un(UnOp::Not, Box::new(TExpr { ty: Type::Bool, kind: TKind::Bool(true) }), "p".into()) }), Box::new(int(0)), Box::new(TExpr { ty: Type::Unit, kind: TKind::FnRef(0) })) },
                     TExpr { ty: Type::list(Type::Int), kind: TKind::List(vec![int(0), int(-64), int(63), int(64)]) },
-                    TExpr { ty: Type::Bool, kind: TKind::Match(Box::new(int(0)), vec![TArm { pat: TPat::Record(vec![(0, TPat::Str("s".into())), (1, TPat::Bool(true)), (2, TPat::Unit), (3, TPat::Int(-7))]), guard: None, body: TExpr { ty: Type::Bool, kind: TKind::Bool(true) } }]) },
+                    TExpr { ty: Type::Bool, kind: TKind::Match(Box::new(TExpr { ty: Type::Named("Q".into()), kind: TKind::Local(0) }), vec![TArm { pat: TPat::Record(vec![(0, TPat::Str("s".into())), (1, TPat::Bool(true)), (2, TPat::Unit), (3, TPat::Int(-7))]), guard: None, body: TExpr { ty: Type::Bool, kind: TKind::Bool(true) } }]) },
                 ]),
             },
         };
-        TProgram { types: vec![pair, e], fns: vec![f], tests: vec![t], generics: vec![g] }
+        let r = TypeDef { name: "R".into(), params: vec![], body: TypeBody::Record(vec![("a".into(), Type::Int), ("b".into(), Type::Int)]) };
+        let q = TypeDef { name: "Q".into(), params: vec![], body: TypeBody::Record(vec![("s".into(), Type::Str), ("b".into(), Type::Bool), ("u".into(), Type::Unit), ("n".into(), Type::Int)]) };
+        TProgram { types: vec![pair, e, r, q], fns: vec![f], tests: vec![t], generics: vec![g] }
     }
 
     fn same_bits(a: &TProgram, b: &TProgram) -> bool {
@@ -1575,6 +1628,16 @@ mod tests {
         let mut p = sample();
         p.fns[0].locals.truncate(2);
         assert!(decode(&encode(&p)).unwrap_err().contains("local"));
+        // Shapes must fit the declared types (review M6).
+        let mut p = sample();
+        p.tests[0].body = TExpr { ty: Type::option(Type::Int), kind: TKind::Variant(2, vec![]) };
+        assert!(decode(&encode(&p)).unwrap_err().contains("out of range"));
+        let mut p = sample();
+        p.tests[0].body = TExpr { ty: Type::option(Type::Int), kind: TKind::Variant(1, vec![]) };
+        assert!(decode(&encode(&p)).unwrap_err().contains("with 0 values"));
+        let mut p = sample();
+        p.tests[0].body = TExpr { ty: Type::Named("R".into()), kind: TKind::Record(vec![(0, int(1))]) };
+        assert!(decode(&encode(&p)).unwrap_err().contains("record"));
         // Deep nesting is bounded; `decode` brings its own stack, so even a small caller stack
         // (2 MiB) cannot overflow, whatever the input.
         let deep = |n: usize| {

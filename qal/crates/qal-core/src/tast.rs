@@ -124,6 +124,20 @@ impl Builtin {
         }
     }
 
+    /// Number of arguments of a call (as the checker types it).
+    pub fn arity(self) -> usize {
+        use Builtin as B;
+        match self {
+            B::ReadLine | B::NowMs | B::ReadAll | B::MapNew => 0,
+            B::StrLen | B::ListLen | B::Trim | B::ToInt | B::ToFloat | B::FromInt | B::FromFloat | B::Chars | B::Reverse | B::SortInt | B::IntToFloat | B::FloatToInt | B::Print | B::ReadFile | B::SortStr
+            | B::CharCode | B::FromCharCode | B::ToUpper | B::ToLower | B::MapSize | B::MapKeys | B::MapValues | B::ToBytes | B::BytesLen | B::BytesFrom | B::BytesToList | B::BytesToStr | B::Http
+            | B::BitNot | B::FloatBits | B::FloatOfBits | B::AccList | B::BytesJoin | B::Sha256 => 1,
+            B::Split | B::Join | B::Contains | B::StartsWith | B::Get | B::Push | B::Concat | B::Map | B::Filter | B::Range | B::WriteFile | B::RandInt | B::IndexOf | B::MapGet | B::MapDel | B::MapHas
+            | B::BytesGet | B::Compare | B::DbExec | B::DbQuery | B::BitAnd | B::BitOr | B::BitXor | B::Shl | B::Shr | B::Ushr | B::ListAt | B::BytesAt => 2,
+            B::Slice | B::Fold | B::Replace | B::MapPut | B::BytesSlice => 3,
+        }
+    }
+
     /// All source names of built-in functions (reserved: user functions cannot use them).
     pub const NAMES: &'static [&'static str] = &[
         "len", "slice", "split", "join", "trim", "contains", "starts_with", "to_int", "to_float", "from_int", "from_float",
