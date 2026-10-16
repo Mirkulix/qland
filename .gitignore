@@ -55,3 +55,6 @@ nul
 
 # QAL project stores and build output (qal init / qal mcp)
 .qal/
+
+# QAL team keys (Phase 4): never versioned
+*.ed25519

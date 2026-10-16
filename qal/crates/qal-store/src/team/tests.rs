@@ -504,3 +504,25 @@ fn version_5_stores_are_upgraded_to_6() {
     s.define("fn g() -> Int = f()", "a").unwrap();
     assert_eq!(s.history("g").unwrap()[0].agent, "a");
 }
+
+#[test]
+fn imports_are_signed_by_the_owner_only() {
+    // A package from another project.
+    let (mut lib, _) = setup();
+    lib.define("fn lib_one() -> Int = 1", "lib").unwrap();
+    let pkg = lib.export("lib_", "lib").unwrap().file;
+    let (mut s, _keys, owner, arch, _imp) = team();
+    as_member(&mut s, arch);
+    assert_eq!(s.import(&pkg).unwrap_err()[0].code, "E0903", "architects make no import records");
+    as_member(&mut s, owner);
+    let i = s.import(&pkg).unwrap();
+    assert_eq!(i.defined.len(), 1);
+    let o = verified(&mut s, None);
+    assert!(o.ok && o.records == Some(4), "{o:?}");
+    let body: Vec<u8> = raw(&s).query_row("SELECT body FROM records WHERE seq = 4", [], |r| r.get(0)).unwrap();
+    let v: Value = serde_json::from_slice(&body[RECORD_PREFIX.len()..]).unwrap();
+    assert_eq!((v["op"].as_str(), v["member"].as_str(), v["session"].as_str()), (Some("import"), Some("boss"), Some(CLI_SESSION)));
+    assert_eq!(v["args"]["entries"][0]["name"], "lib_one");
+    // The history keeps the package's agent (later imports of the same package may replace it).
+    assert!(s.history("lib_one").unwrap()[0].agent.starts_with("qal-lib@"));
+}

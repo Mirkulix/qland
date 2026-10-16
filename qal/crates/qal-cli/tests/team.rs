@@ -1,0 +1,613 @@
+//! Phase 4a end to end: `qal team`, `qal verify` and `qal mcp --session-file` as real processes.
+//! Every output of these runs (stdout, stderr, MCP lines) is kept and searched for secrets.
+
+use serde_json::{json, Value};
+use std::io::{BufRead, BufReader, Read, Write};
+use std::os::unix::fs::PermissionsExt;
+use std::path::{Path, PathBuf};
+use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+
+static NEXT: AtomicUsize = AtomicUsize::new(0);
+
+fn temp(tag: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("qal-team-cli-{tag}-{}-{}", std::process::id(), NEXT.fetch_add(1, Ordering::SeqCst)));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+/// A project with a team: `qal init`, some code, `qal team init`, the four agent members.
+struct Team {
+    project: PathBuf,
+    /// Where key files live (outside the project) and session files are written.
+    home: PathBuf,
+    keys: PathBuf,
+    /// Everything the processes printed.
+    transcript: Arc<Mutex<Vec<String>>>,
+}
+
+const BASE: &str = "fn base() -> Int = 1\nfn spare() -> Int = 2\nfn main(args: List[Str]) -> Int = 0\ntest base_works = base() == 1";
+
+impl Team {
+    fn bare() -> Team {
+        let home = temp("home");
+        let keys = home.join("keys");
+        Team { project: temp("project"), home, keys, transcript: Arc::new(Mutex::new(Vec::new())) }
+    }
+
+    fn new() -> Team {
+        let t = Team::bare();
+        assert_eq!(t.qal(&["init"]).0, 0);
+        let f = t.write("base.qal", BASE);
+        let (code, v) = t.qal(&["define", &f]);
+        assert_eq!(code, 0, "{v}");
+        let (code, v) = t.qal(&["team", "init", "--owner", "boss"]);
+        assert_eq!(code, 0, "{v}");
+        assert_eq!((v["team"]["owner"].as_str(), v["team"]["record"].as_i64()), (Some("boss"), Some(1)));
+        assert!(v["note"].as_str().unwrap().contains("not a security boundary"));
+        for (id, role) in [("arch-1", "architect"), ("impl-1", "implementer"), ("ver-1", "verifier"), ("rev-1", "reviewer")] {
+            let (code, v) = t.qal(&["team", "add", id, "--role", role]);
+            assert_eq!(code, 0, "{v}");
+            assert_eq!(v["member"]["role"], role);
+        }
+        t
+    }
+
+    fn write(&self, name: &str, content: &str) -> String {
+        let path = self.project.join(name);
+        std::fs::write(&path, content).unwrap();
+        path.to_string_lossy().into_owned()
+    }
+
+    fn command(&self) -> Command {
+        let mut c = Command::new(env!("CARGO_BIN_EXE_qal"));
+        c.current_dir(&self.project).env("QAL_KEY_DIR", &self.keys).env_remove("QAL_SESSION_FILE");
+        c
+    }
+
+    fn qal(&self, args: &[&str]) -> (i32, Value) {
+        let out = self.command().args(args).stdin(Stdio::null()).output().unwrap();
+        let stdout = String::from_utf8(out.stdout).unwrap();
+        let stderr = String::from_utf8(out.stderr).unwrap();
+        self.transcript.lock().unwrap().extend([stdout.clone(), stderr]);
+        (out.status.code().unwrap(), serde_json::from_str(&stdout).unwrap_or_else(|e| panic!("not JSON ({e}): {stdout}")))
+    }
+
+    /// A session file for `member` (written by `qal team session`).
+    fn session(&self, member: &str) -> PathBuf {
+        let file = self.home.join(format!("{member}.session"));
+        let (code, v) = self.qal(&["team", "session", member, "--out", file.to_str().unwrap()]);
+        assert_eq!(code, 0, "{v}");
+        assert!(v["session"]["id"].as_str().unwrap().starts_with('s'));
+        file
+    }
+
+    fn mcp(&self, session: Option<&Path>) -> Client {
+        let mut c = self.command();
+        c.args(["mcp", "--root"]).arg(&self.project);
+        if let Some(s) = session {
+            c.arg("--session-file").arg(s);
+        }
+        Client::spawn(c, self.transcript.clone())
+    }
+
+    fn agent(&self, member: &str) -> Client {
+        let s = self.session(member);
+        let mut c = self.mcp(Some(&s));
+        c.initialize();
+        c
+    }
+}
+
+struct Client {
+    child: Child,
+    stdin: Option<ChildStdin>,
+    stdout: BufReader<ChildStdout>,
+    next_id: i64,
+    transcript: Arc<Mutex<Vec<String>>>,
+}
+
+impl Client {
+    fn spawn(mut c: Command, transcript: Arc<Mutex<Vec<String>>>) -> Client {
+        let mut child = c.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
+        let stdin = child.stdin.take();
+        let stdout = BufReader::new(child.stdout.take().unwrap());
+        Client { child, stdin, stdout, next_id: 0, transcript }
+    }
+
+    fn request(&mut self, method: &str, params: Value) -> Value {
+        self.next_id += 1;
+        let line = json!({"jsonrpc": "2.0", "id": self.next_id, "method": method, "params": params}).to_string();
+        let stdin = self.stdin.as_mut().unwrap();
+        stdin.write_all(line.as_bytes()).unwrap();
+        stdin.write_all(b"\n").unwrap();
+        stdin.flush().unwrap();
+        let mut out = String::new();
+        self.stdout.read_line(&mut out).unwrap();
+        self.transcript.lock().unwrap().push(out.clone());
+        let v: Value = serde_json::from_str(&out).unwrap_or_else(|e| panic!("not JSON ({e}): {out}"));
+        assert_eq!(v["id"], self.next_id);
+        v
+    }
+
+    fn initialize(&mut self) {
+        self.request("initialize", json!({"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "team-test", "version": "1"}}));
+    }
+
+    fn tools(&mut self) -> Vec<String> {
+        self.request("tools/list", json!({}))["result"]["tools"].as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap().to_string()).collect()
+    }
+
+    fn call(&mut self, tool: &str, args: Value) -> (bool, Value) {
+        let r = self.request("tools/call", json!({"name": tool, "arguments": args}));
+        let result = &r["result"];
+        assert!(result.is_object(), "{r}");
+        (result["isError"].as_bool().unwrap(), result["structuredContent"].clone())
+    }
+
+    fn code(&mut self, tool: &str, args: Value) -> String {
+        let (_, v) = self.call(tool, args);
+        v["diagnostics"][0]["code"].as_str().unwrap_or("ok").to_string()
+    }
+}
+
+impl Drop for Client {
+    fn drop(&mut self) {
+        drop(self.stdin.take());
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+        let mut err = String::new();
+        if let Some(mut e) = self.child.stderr.take() {
+            let _ = e.read_to_string(&mut err);
+        }
+        if let Ok(mut t) = self.transcript.lock() {
+            t.push(err);
+        }
+    }
+}
+
+fn diag(v: &Value) -> (&str, &str) {
+    (v["diagnostics"][0]["code"].as_str().unwrap_or(""), v["diagnostics"][0]["expected"].as_str().unwrap_or(""))
+}
+
+#[test]
+fn the_owner_sets_up_a_team_on_the_command_line() {
+    let t = Team::new();
+    let file = t.session("arch-1");
+    // The token is only in the file (0600), never in the output.
+    assert_eq!(std::fs::metadata(&file).unwrap().permissions().mode() & 0o777, 0o600);
+    let token = std::fs::read_to_string(&file).unwrap();
+    assert!(token.starts_with("qs_") && token.trim().len() == 67);
+    let (code, status) = t.qal(&["team", "status"]);
+    assert_eq!(code, 0);
+    let members: Vec<&str> = status["status"]["members"].as_array().unwrap().iter().map(|m| m["id"].as_str().unwrap()).collect();
+    assert_eq!(members, ["arch-1", "boss", "impl-1", "rev-1", "ver-1"]);
+    assert_eq!(status["status"]["sessions"].as_array().unwrap().len(), 1);
+    assert_eq!(status["status"]["records"], 5);
+    assert_eq!(status["status"]["allow"], json!(["io", "time", "rand", "db:mem"]));
+    // The key files: one per member, outside the project, 0600 in a 0700 directory.
+    assert_eq!(std::fs::metadata(&t.keys).unwrap().permissions().mode() & 0o777, 0o700);
+    let key_files: Vec<_> = std::fs::read_dir(&t.keys).unwrap().flatten().collect();
+    assert_eq!(key_files.len(), 5);
+    for f in &key_files {
+        assert_eq!(f.metadata().unwrap().permissions().mode() & 0o777, 0o600);
+    }
+
+    // The command line does not write code in a team store.
+    let f = t.write("more.qal", "fn more() -> Int = 3");
+    for args in [vec!["define", f.as_str()], vec!["rename", "spare", "spare2"], vec!["delete", "spare"]] {
+        let (code, v) = t.qal(&args);
+        assert_eq!((code, diag(&v)), (1, ("E0903", "architect")), "{args:?}: {v}");
+    }
+    let (code, v) = t.qal(&["export", "base", "--out", t.home.join("p.qalpkg").to_str().unwrap()]);
+    assert_eq!(code, 0, "{v}");
+    let (code, v) = t.qal(&["import", t.home.join("p.qalpkg").to_str().unwrap()]);
+    assert_eq!((code, diag(&v).0), (1, "E0903"), "{v}");
+    // Reads still work; `init` does not import anything into a team store.
+    assert_eq!(t.qal(&["view", "base"]).0, 0);
+    assert_eq!(t.qal(&["init"]).0, 0);
+    let (code, v) = t.qal(&["team", "sync-std"]);
+    assert_eq!((code, v["std"]["status"].as_str()), (0, Some("up_to_date")), "{v}");
+
+    // Trust file and verify.
+    let trust = t.home.join("team.json");
+    let (code, v) = t.qal(&["team", "export-trust", "--out", trust.to_str().unwrap()]);
+    assert_eq!((code, v["trust"]["members"].as_i64()), (0, Some(5)), "{v}");
+    let text = std::fs::read_to_string(&trust).unwrap();
+    assert!(!text.contains("qal-ed25519-secret") && text.contains("owner_key"));
+    let (code, v) = t.qal(&["verify", "--trust", trust.to_str().unwrap()]);
+    assert_eq!((code, v["ok"].as_bool(), v["records"].as_i64(), v["trust"].as_str()), (0, Some(true), Some(5), Some("file")), "{v}");
+    let (code, v) = t.qal(&["verify"]);
+    assert_eq!((code, v["trust"].as_str()), (0, Some("store")));
+    assert!(v["warnings"][0].as_str().unwrap().contains("--trust"));
+    // Another team's trust file: E0925.
+    let other = Team::new();
+    let other_trust = other.home.join("team.json");
+    other.qal(&["team", "export-trust", "--out", other_trust.to_str().unwrap()]);
+    let (code, v) = t.qal(&["verify", "--trust", other_trust.to_str().unwrap()]);
+    assert_eq!((code, v["ok"].as_bool(), v["error"]["code"].as_str(), v["error"]["seq"].as_i64(), v["checked"].as_i64()), (1, Some(false), Some("E0925"), Some(1), Some(0)), "{v}");
+
+    // Revoke and rekey.
+    let (code, v) = t.qal(&["team", "rekey", "impl-1"]);
+    assert_eq!(code, 0, "{v}");
+    let (code, v) = t.qal(&["team", "revoke", "rev-1"]);
+    assert_eq!(code, 0, "{v}");
+    let (code, v) = t.qal(&["team", "session", "rev-1", "--out", t.home.join("x.session").to_str().unwrap()]);
+    assert_eq!((code, diag(&v).0), (1, "E0908"));
+    assert!(!t.home.join("x.session").exists());
+    assert_eq!(t.qal(&["verify", "--trust", trust.to_str().unwrap()]).1["records"], 7);
+    // Usage errors.
+    assert_eq!(t.qal_status(&["team"]), 2);
+    assert_eq!(t.qal_status(&["team", "session", "arch-1"]), 2);
+    assert_eq!(t.qal_status(&["team", "add", "x"]), 2);
+    let (code, v) = t.qal(&["team", "add", "x", "--role", "boss"]);
+    assert_eq!((code, diag(&v).0), (1, "E0701"));
+    let (code, v) = t.qal(&["team", "session", "arch-1", "--ttl", "30d", "--out", t.home.join("y.session").to_str().unwrap()]);
+    assert_eq!((code, diag(&v).0), (1, "E0914"));
+    let (code, stats) = t.qal(&["team", "stats", "--json"]);
+    assert_eq!((code, stats["stats"]["total"]["calls"].as_i64()), (0, Some(0)));
+}
+
+impl Team {
+    fn qal_status(&self, args: &[&str]) -> i32 {
+        self.command().args(args).stdin(Stdio::null()).output().unwrap().status.code().unwrap()
+    }
+}
+
+#[test]
+fn team_commands_need_a_team_store_and_keys_outside_the_project() {
+    let t = Team::bare();
+    t.qal(&["init"]);
+    let (code, v) = t.qal(&["team", "status"]);
+    assert_eq!((code, diag(&v).0), (1, "E0900"));
+    let (code, v) = t.qal(&["verify"]);
+    assert_eq!((code, diag(&v).0), (1, "E0900"));
+    // A key directory in the project.
+    let out = t.command().args(["team", "init"]).env("QAL_KEY_DIR", t.project.join("keys")).output().unwrap();
+    let v: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(diag(&v).0, "E0926", "{v}");
+    // A key directory others can read.
+    std::fs::create_dir_all(&t.keys).unwrap();
+    std::fs::set_permissions(&t.keys, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let (code, v) = t.qal(&["team", "init"]);
+    assert_eq!((code, diag(&v).0), (1, "E0920"), "{v}");
+    std::fs::set_permissions(&t.keys, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let (code, v) = t.qal(&["team", "init"]);
+    assert_eq!((code, v["team"]["owner"].as_str()), (0, Some("owner")), "{v}");
+    let (code, v) = t.qal(&["team", "init"]);
+    assert_eq!((code, diag(&v).0), (1, "E0908"));
+}
+
+#[test]
+fn sessions_decide_identity_and_roles_decide_tools() {
+    let t = Team::new();
+    let all = ["qal_define", "qal_test", "qal_prove", "qal_run", "qal_call", "qal_request", "qal_view", "qal_query", "qal_rename", "qal_delete", "qal_history", "qal_build", "qal_whoami", "qal_verify"];
+    let reads = ["qal_test", "qal_prove", "qal_run", "qal_call", "qal_request", "qal_view", "qal_query", "qal_history", "qal_build", "qal_whoami", "qal_verify"];
+    let mut arch = t.agent("arch-1");
+    assert_eq!(arch.tools(), all);
+    let mut imp = t.agent("impl-1");
+    let with_define: Vec<&str> = std::iter::once("qal_define").chain(reads).collect();
+    assert_eq!(imp.tools(), with_define);
+    let mut rev = t.agent("rev-1");
+    assert_eq!(rev.tools(), reads);
+    // The role's rules are in qal_define's reference.
+    let r = imp.request("tools/list", json!({}));
+    let reference = r["result"]["tools"][0]["description"].as_str().unwrap();
+    assert!(reference.contains("## Team") && reference.contains("You are an implementer"));
+
+    let (err, who) = arch.call("qal_whoami", json!({}));
+    assert!(!err, "{who}");
+    assert_eq!((who["member"].as_str(), who["role"].as_str(), who["space"].as_str()), (Some("arch-1"), Some("architect"), Some("main")));
+    assert!(who["session"].as_str().unwrap().starts_with('s') && who["leases"] == json!([]));
+
+    // The architect writes on main: signed records, history names the member.
+    let (err, v) = arch.call("qal_define", json!({"source": "fn f() -> Int = base() + 1", "agent": "someone-else"}));
+    assert!(!err, "{v}");
+    assert_eq!(v["space"], "main");
+    let (_, h) = arch.call("qal_history", json!({"name": "f"}));
+    assert_eq!(h["history"][0]["agent"], "arch-1");
+    // Others may not write on main; the refusal names the role that may.
+    let (err, v) = imp.call("qal_define", json!({"source": "fn g() -> Int = 1"}));
+    assert!(err);
+    assert_eq!(diag(&v), ("E0903", "architect"));
+    assert!(v["diagnostics"][0]["hints"][0].as_str().unwrap().contains("change set"));
+    assert_eq!(rev.code("qal_define", json!({"source": "fn g() -> Int = 1"})), "E0903");
+    assert_eq!(rev.code("qal_rename", json!({"old": "f", "new": "g"})), "E0903");
+    assert_eq!(imp.code("qal_delete", json!({"name": "f"})), "E0903");
+    // Reads for everyone.
+    assert_eq!(rev.code("qal_view", json!({"names": ["f"]})), "ok");
+    assert_eq!(rev.code("qal_test", json!({})), "ok");
+
+    // Verify over MCP.
+    let (err, v) = rev.call("qal_verify", json!({}));
+    assert!(!err && v["ok"] == true && v["records"] == 6 && v["trust"] == "store", "{v}");
+    let (err, v) = rev.call("qal_verify", json!({"from": 0}));
+    assert!(err && v["diagnostics"][0]["code"] == "E0701", "{v}");
+
+    // No session, an unusable session file, a revoked member: E0902 for every tool.
+    let mut none = t.mcp(None);
+    none.initialize();
+    assert_eq!(none.tools(), ["qal_whoami"]);
+    for tool in ["qal_whoami", "qal_view", "qal_define"] {
+        let (err, v) = none.call(tool, json!({"names": ["f"]}));
+        assert!(err && v["diagnostics"][0]["code"] == "E0902", "{v}");
+    }
+    let loose = t.session("ver-1");
+    std::fs::set_permissions(&loose, std::fs::Permissions::from_mode(0o644)).unwrap();
+    let mut c = t.mcp(Some(&loose));
+    c.initialize();
+    let (_, v) = c.call("qal_whoami", json!({}));
+    assert!(v["diagnostics"][0]["code"] == "E0902" && v["diagnostics"][0]["message"].as_str().unwrap().contains("644"), "{v}");
+    let garbage = t.home.join("garbage.session");
+    std::fs::write(&garbage, "qs_nothex").unwrap();
+    std::fs::set_permissions(&garbage, std::fs::Permissions::from_mode(0o600)).unwrap();
+    assert_eq!(t.mcp(Some(&garbage)).code("qal_whoami", json!({})), "E0902");
+    t.qal(&["team", "revoke", "rev-1"]);
+    assert_eq!(rev.code("qal_view", json!({"names": ["f"]})), "E0902");
+    // The env variable works like the flag.
+    let s = t.session("ver-1");
+    let mut cmd = t.command();
+    cmd.args(["mcp", "--root"]).arg(&t.project).env("QAL_SESSION_FILE", &s);
+    let mut ver = Client::spawn(cmd, t.transcript.clone());
+    ver.initialize();
+    assert_eq!(ver.call("qal_whoami", json!({})).1["member"], "ver-1");
+
+    // The call log.
+    let (_, stats) = t.qal(&["team", "stats"]);
+    let total = &stats["stats"]["total"];
+    assert!(total["calls"].as_i64().unwrap() >= 15, "{stats}");
+    assert!(total["failed_by_code"]["E0903"].as_i64().unwrap() >= 4 && total["failed_by_code"]["E0902"].as_i64().unwrap() >= 5, "{stats}");
+    assert_eq!(stats["stats"]["members"]["arch-1"]["tools"]["qal_define"], 1);
+}
+
+/// Criterion 2 for the tools of 4a: every tool with every agent role, compared with the matrix
+/// (writes on main for architects only until change sets exist).
+#[test]
+fn every_tool_with_every_role_follows_the_matrix() {
+    let t = Team::new();
+    let args = |tool: &str, role: &str| -> Value {
+        match tool {
+            "qal_define" => json!({"source": format!("fn by_{}() -> Int = 1", role)}),
+            "qal_view" => json!({"names": ["base"]}),
+            "qal_query" => json!({"name": "ba"}),
+            "qal_history" => json!({"name": "base"}),
+            "qal_test" => json!({"names": ["base_works"]}),
+            "qal_prove" => json!({"names": ["base"]}),
+            "qal_run" => json!({"entry": "main"}),
+            "qal_call" => json!({"fn": "base"}),
+            "qal_request" => json!({"handler": "base", "requests": [{"path": "/"}]}),
+            "qal_build" => json!({"entry": "base"}),
+            "qal_rename" => json!({"old": "spare", "new": "spare2"}),
+            "qal_delete" => json!({"name": "spare2"}),
+            _ => json!({}),
+        }
+    };
+    let tools = ["qal_view", "qal_query", "qal_history", "qal_whoami", "qal_verify", "qal_test", "qal_prove", "qal_run", "qal_call", "qal_request", "qal_build", "qal_define", "qal_rename", "qal_delete"];
+    // The architect last: its rename and delete change the store.
+    for (member, role) in [("rev-1", "reviewer"), ("ver-1", "verifier"), ("impl-1", "implementer"), ("arch-1", "architect")] {
+        let mut c = t.agent(member);
+        let listed = c.tools();
+        for tool in tools {
+            let allowed = qal_store::team::policy::allows(tool, None, qal_store::team::policy::Role::parse(role).unwrap(), qal_store::team::policy::Space::Main);
+            let (_, v) = c.call(tool, args(tool, role));
+            let code = v["diagnostics"][0]["code"].as_str().unwrap_or("ok");
+            assert_eq!(code == "E0903", !allowed, "{role} {tool}: {v}");
+            if allowed {
+                assert!(listed.contains(&tool.to_string()), "{role} {tool} is allowed but not listed");
+                assert!(!matches!(code, "E0902" | "E0920" | "E0915"), "{role} {tool}: {v}");
+            }
+            if !allowed && role == "reviewer" {
+                assert!(!listed.contains(&tool.to_string()), "{role} {tool} is listed");
+            }
+        }
+    }
+    // The architect's writes happened and are signed.
+    let (code, v) = t.qal(&["verify"]);
+    assert_eq!((code, v["records"].as_i64()), (0, Some(5 + 3)), "{v}");
+    assert!(t.project.join(".qal/build/main/base.wasm").is_file(), "team builds go to .qal/build/<space>/");
+}
+
+#[test]
+fn agents_grant_only_the_team_effects() {
+    let t = Team::new();
+    let mut arch = t.agent("arch-1");
+    assert_eq!(arch.code("qal_define", json!({"source": "fn hello() -> Int !io = { print(\"hi\"); 0 }"})), "ok");
+    let (err, v) = arch.call("qal_call", json!({"fn": "hello", "allow": ["io"]}));
+    assert!(!err, "{v}");
+    for allow in [json!(["fs:data"]), json!(["io,net:example.com"]), json!(["db"])] {
+        let (err, v) = arch.call("qal_call", json!({"fn": "hello", "allow": allow}));
+        assert!(err && v["diagnostics"][0]["code"] == "E0915" && v["diagnostics"][0]["kind"] == "grant_forbidden", "{v}");
+    }
+    assert_eq!(arch.code("qal_run", json!({"entry": "main", "allow": ["fs:."]})), "E0915");
+    assert_eq!(arch.code("qal_request", json!({"handler": "base", "allow": ["db:x"], "requests": [{"path": "/"}]})), "E0915");
+}
+
+#[test]
+fn without_its_key_a_member_reads_but_cannot_write() {
+    let t = Team::new();
+    let (_, status) = t.qal(&["team", "status"]);
+    let key_id = status["status"]["members"].as_array().unwrap().iter().find(|m| m["id"] == "arch-1").unwrap()["key_id"].as_str().unwrap().to_string();
+    let mut arch = t.agent("arch-1");
+    std::fs::remove_file(t.keys.join(format!("{key_id}.ed25519"))).unwrap();
+    assert_eq!(arch.code("qal_view", json!({"names": ["base"]})), "ok");
+    let (err, v) = arch.call("qal_define", json!({"source": "fn x() -> Int = 1"}));
+    assert!(err && v["diagnostics"][0]["code"] == "E0920", "{v}");
+    let message = v["diagnostics"][0]["message"].as_str().unwrap();
+    assert!(message.contains(&key_id) && message.contains("missing"), "{message}");
+    // The owner rekeys; a new server loads the new key.
+    assert_eq!(t.qal(&["team", "rekey", "arch-1"]).0, 0);
+    let mut again = t.agent("arch-1");
+    assert_eq!(again.code("qal_define", json!({"source": "fn x() -> Int = 1"})), "ok");
+    assert_eq!(t.qal(&["verify"]).1["ok"], true);
+}
+
+#[test]
+fn whoami_waits_for_notices_and_results_carry_them() {
+    let t = Team::new();
+    let mut imp = t.agent("impl-1");
+    // Notices of this std version have been produced or not; take whatever is there first.
+    imp.call("qal_whoami", json!({}));
+    let store_path = t.project.join(".qal/store.db");
+    let started = Instant::now();
+    let waiter = std::thread::spawn(move || {
+        let r = imp.call("qal_whoami", json!({"wait_s": 20}));
+        (r, imp)
+    });
+    std::thread::sleep(Duration::from_millis(600));
+    let s = qal_store::Store::open(&store_path).unwrap();
+    s.notify("impl-1", "change_opened", &json!({"change": "c0123456789ab", "title": "orders: create"})).unwrap();
+    let ((err, v), mut imp) = waiter.join().unwrap();
+    let waited = started.elapsed();
+    assert!(!err, "{v}");
+    assert!(waited < Duration::from_secs(10), "returned after the notice, not the timeout ({waited:?})");
+    assert_eq!(v["notices"][0]["kind"], "change_opened");
+    assert_eq!(v["notices"][0]["title"], "orders: create");
+    // Seen once returned.
+    let (_, v) = imp.call("qal_whoami", json!({}));
+    assert_eq!(v["notices"], json!([]));
+    // Without notices, wait_s is the timeout.
+    let started = Instant::now();
+    imp.call("qal_whoami", json!({"wait_s": 1}));
+    assert!(started.elapsed() >= Duration::from_millis(900));
+    assert_eq!(imp.code("qal_whoami", json!({"wait_s": 46})), "E0701");
+    // Other results carry unseen notices (at most 10, `notices_more` counts the rest).
+    for i in 0..12 {
+        s.notify("impl-1", "merged", &json!({"n": i})).unwrap();
+    }
+    let (_, v) = imp.call("qal_query", json!({"name": "base"}));
+    assert_eq!((v["notices"].as_array().unwrap().len(), v["notices_more"].as_i64()), (10, Some(2)), "{v}");
+    let (_, v) = imp.call("qal_query", json!({"name": "base"}));
+    assert_eq!(v["notices"].as_array().unwrap().len(), 2);
+    let (_, v) = imp.call("qal_query", json!({"name": "base"}));
+    assert!(v.get("notices").is_none() && v["space"] == "main");
+}
+
+#[test]
+fn stores_without_team_mode_are_unchanged() {
+    let t = Team::bare();
+    t.qal(&["init"]);
+    let f = t.write("base.qal", BASE);
+    t.qal(&["define", &f]);
+    // A session file is ignored by a store without team mode.
+    let file = t.home.join("x.session");
+    std::fs::write(&file, format!("qs_{}\n", "ab".repeat(32))).unwrap();
+    std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o600)).unwrap();
+    let mut c = t.mcp(Some(&file));
+    c.initialize();
+    assert_eq!(c.tools().len(), 12);
+    let (err, v) = c.call("qal_define", json!({"source": "fn f() -> Int = 1", "agent": "me"}));
+    assert!(!err && v.get("space").is_none() && v.get("notices").is_none(), "{v}");
+    assert_eq!(c.call("qal_history", json!({"name": "f"})).1["history"][0]["agent"], "me");
+    for tool in ["qal_whoami", "qal_verify"] {
+        let (err, v) = c.call(tool, json!({}));
+        assert!(err && v["diagnostics"][0]["code"] == "E0900", "{v}");
+    }
+    assert_eq!(c.request("tools/call", json!({"name": "qal_nope", "arguments": {}}))["error"]["code"], -32602);
+}
+
+fn is_hex(b: &[u8]) -> bool {
+    b.iter().all(|c| c.is_ascii_hexdigit())
+}
+
+/// Every place a secret could leak to: the transcript of all processes, the store's bytes, and
+/// every versioned file of the repository.
+#[test]
+fn secrets_never_leave_their_files() {
+    let t = Team::new();
+    let mut arch = t.agent("arch-1");
+    arch.call("qal_define", json!({"source": "fn f() -> Int = 1"}));
+    arch.call("qal_whoami", json!({}));
+    arch.call("qal_verify", json!({}));
+    let mut imp = t.agent("impl-1");
+    imp.call("qal_define", json!({"source": "fn g() -> Int = 1"}));
+    t.qal(&["team", "status"]);
+    t.qal(&["team", "stats"]);
+    t.qal(&["team", "rekey", "ver-1"]);
+    t.qal(&["verify"]);
+    drop(arch);
+    drop(imp);
+    let mut secrets: Vec<String> = Vec::new();
+    for e in std::fs::read_dir(&t.keys).unwrap().flatten() {
+        let text = std::fs::read_to_string(e.path()).unwrap();
+        secrets.push(text.trim_end().split(' ').nth(1).unwrap().to_string());
+    }
+    for e in std::fs::read_dir(&t.home).unwrap().flatten().filter(|e| e.path().extension().is_some_and(|x| x == "session")) {
+        secrets.push(std::fs::read_to_string(e.path()).unwrap().trim().to_string());
+    }
+    assert_eq!(secrets.len(), 6 + 2, "6 keys (one rekeyed) and 2 sessions");
+    let transcript = t.transcript.lock().unwrap().join("\n");
+    assert!(transcript.len() > 1000);
+    let store = [".qal/store.db", ".qal/store.db-wal", ".qal/store.db-shm"].iter().map(|f| std::fs::read(t.project.join(f)).unwrap_or_default()).collect::<Vec<_>>().concat();
+    let marker = ["qal-ed25519-secret", "-v1"].concat();
+    for s in &secrets {
+        assert!(!transcript.contains(s.as_str()), "a secret is in the output");
+        assert!(!store.windows(s.len()).any(|w| w == s.as_bytes()), "a secret is in the store");
+    }
+    assert!(!transcript.contains(&marker) && !store.windows(marker.len()).any(|w| w == marker.as_bytes()));
+    // Versioned files: no key line (the marker followed by 64 hex digits), no test secret.
+    let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    let files = Command::new("git").arg("-C").arg(&repo).args(["ls-files", "-z"]).output().unwrap();
+    assert!(files.status.success());
+    let mut scanned = 0;
+    for name in files.stdout.split(|b| *b == 0).filter(|n| !n.is_empty()) {
+        let Ok(bytes) = std::fs::read(repo.join(String::from_utf8_lossy(name).as_ref())) else { continue };
+        scanned += 1;
+        let m = marker.as_bytes();
+        for (i, w) in bytes.windows(m.len()).enumerate() {
+            if w == m {
+                let rest = &bytes[i + m.len()..];
+                assert!(!(rest.len() > 64 && rest[0] == b' ' && is_hex(&rest[1..65])), "a key file line in {}", String::from_utf8_lossy(name));
+            }
+        }
+        for s in &secrets {
+            assert!(!bytes.windows(s.len()).any(|w| w == s.as_bytes()), "a test secret in {}", String::from_utf8_lossy(name));
+        }
+    }
+    assert!(scanned > 100, "{scanned} files");
+    let gitignore = std::fs::read_to_string(repo.join(".gitignore")).unwrap();
+    assert!(gitignore.lines().any(|l| l.trim() == "*.ed25519"));
+}
+
+#[test]
+fn the_standard_library_comes_only_by_a_signed_sync() {
+    // A team store whose std is older than this qal's (here: none at all).
+    let t = Team::bare();
+    let mut s = qal_store::Store::init(&t.project).unwrap();
+    s.define(BASE, "pre").unwrap();
+    s.team_init("boss", &qal_store::team::keys::KeyDir::at(&t.keys)).unwrap();
+    drop(s);
+    assert_eq!(t.qal(&["team", "add", "arch-1", "--role", "architect"]).0, 0);
+    let mut arch = t.agent("arch-1");
+    // No automatic import on a write; agents are told instead (once).
+    let (err, v) = arch.call("qal_define", json!({"source": "fn f() -> Int = 1"}));
+    assert!(!err && v["notices"][0]["kind"] == "std_outdated" && v.get("std_imported").is_none(), "{v}");
+    let (_, v) = arch.call("qal_query", json!({"name": "std."}));
+    assert_eq!(v["results"], json!([]));
+    let (_, status) = t.qal(&["team", "status"]);
+    assert_eq!(status["status"]["records"], 3);
+    let (code, v) = t.qal(&["team", "sync-std"]);
+    assert_eq!((code, v["std"]["status"].as_str()), (0, Some("imported")), "{v}");
+    let (_, v) = arch.call("qal_query", json!({"name": "std."}));
+    assert!(!v["results"].as_array().unwrap().is_empty());
+    let (code, v) = t.qal(&["verify"]);
+    assert_eq!((code, v["records"].as_i64()), (0, Some(4)), "{v}");
+    assert_eq!(t.qal(&["team", "sync-std"]).1["std"]["status"], "up_to_date");
+}
+
+#[test]
+fn the_first_result_after_a_newer_qal_says_std_is_outdated() {
+    let t = Team::bare();
+    let mut s = qal_store::Store::init(&t.project).unwrap();
+    s.team_init("boss", &qal_store::team::keys::KeyDir::at(&t.keys)).unwrap();
+    drop(s);
+    t.qal(&["team", "add", "rev-1", "--role", "reviewer"]);
+    let mut rev = t.agent("rev-1");
+    let (_, v) = rev.call("qal_query", json!({}));
+    assert_eq!(v["notices"][0]["kind"], "std_outdated", "{v}");
+    assert!(v["notices"][0]["hint"].as_str().unwrap().contains("sync-std"));
+    let (_, v) = rev.call("qal_query", json!({}));
+    assert!(v.get("notices").is_none(), "once per version: {v}");
+}
