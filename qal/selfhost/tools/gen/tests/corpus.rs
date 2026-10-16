@@ -46,7 +46,12 @@ fn run(src: &str, name: &str, st: &mut Stats) {
     if let Ok(h) = qal_compiler::hash_program(&p) {
         assert_eq!(qal_compiler::hash_program(&p).ok(), Some(h), "{name}: hashing is deterministic");
     }
-    qal_compiler::compile(&tp, &Entry::All).unwrap_or_else(|e| panic!("{name}: {e}"));
+    let m = qal_compiler::compile(&tp, &Entry::All).unwrap_or_else(|e| panic!("{name}: {e}"));
+    // HashMap audit (spec §14.1): every HashMap gets a fresh random seed, so a second run would
+    // expose any output that depends on hash iteration order.
+    let again = qal_compiler::check(&p).unwrap_or_else(|d| panic!("{name}: {d:?}"));
+    assert_eq!(tform::encode(&again), bytes, "{name}: checking is not deterministic");
+    assert_eq!(qal_compiler::compile(&again, &Entry::All).map(|m| m.wasm).ok(), Some(m.wasm), "{name}: codegen is not deterministic");
 }
 
 #[test]
