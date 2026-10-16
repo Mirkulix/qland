@@ -1,0 +1,2 @@
+type Q = { a: Int, b: Int }
+fn mk(n: Int) -> Q = Q { b: 1 / n, a: 9223372036854775807 + 1 }

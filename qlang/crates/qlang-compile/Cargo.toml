@@ -7,6 +7,7 @@ description = "QLANG graph compiler - Graph to machine code via LLVM"
 [dependencies]
 qlang-core = { workspace = true }
 qlang-runtime = { workspace = true }
+qlang-agent = { workspace = true }
 thiserror = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

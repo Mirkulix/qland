@@ -1,0 +1,116 @@
+{
+ "name": "h40_patch_missing_order",
+ "description": "validation before existence",
+ "steps": [
+  {
+   "name": "valid body, missing todo",
+   "request": {
+    "method": "PATCH",
+    "path": "/todos/42",
+    "json": {
+     "done": true
+    }
+   },
+   "expect": {
+    "status": 404,
+    "json": {
+     "error": {
+      "code": "not_found",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "empty body, missing todo",
+   "request": {
+    "method": "PATCH",
+    "path": "/todos/42",
+    "json": {}
+   },
+   "expect": {
+    "status": 400,
+    "json": {
+     "error": {
+      "code": "missing_field",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "no content-type, missing todo",
+   "request": {
+    "method": "PATCH",
+    "path": "/todos/42",
+    "body": "{}"
+   },
+   "expect": {
+    "status": 415,
+    "json": {
+     "error": {
+      "code": "unsupported_media_type",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "bad JSON, missing todo",
+   "request": {
+    "method": "PATCH",
+    "path": "/todos/42",
+    "headers": [
+     {
+      "name": "content-type",
+      "value": "application/json"
+     }
+    ],
+    "body": "{"
+   },
+   "expect": {
+    "status": 400,
+    "json": {
+     "error": {
+      "code": "invalid_json",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "nothing created",
+   "request": {
+    "method": "GET",
+    "path": "/todos"
+   },
+   "expect": {
+    "status": 200,
+    "json": [],
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  }
+ ]
+}

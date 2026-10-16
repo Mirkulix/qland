@@ -1,0 +1,4 @@
+fn and(a: Int, b: Int) -> Int = bit_and(a, b)
+fn or(a: Int, b: Int) -> Int = bit_or(a, b)
+fn xor(a: Int, b: Int) -> Int = bit_xor(a, b)
+fn not(a: Int) -> Int = bit_not(a)

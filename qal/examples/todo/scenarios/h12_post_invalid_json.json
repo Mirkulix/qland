@@ -1,0 +1,216 @@
+{
+ "name": "h12_post_invalid_json",
+ "description": "JSON syntax errors",
+ "steps": [
+  {
+   "name": "empty body",
+   "request": {
+    "method": "POST",
+    "path": "/todos",
+    "headers": [
+     {
+      "name": "content-type",
+      "value": "application/json"
+     }
+    ],
+    "body": ""
+   },
+   "expect": {
+    "status": 400,
+    "json": {
+     "error": {
+      "code": "invalid_json",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "truncated",
+   "request": {
+    "method": "POST",
+    "path": "/todos",
+    "headers": [
+     {
+      "name": "content-type",
+      "value": "application/json"
+     }
+    ],
+    "body": "{\"title\":"
+   },
+   "expect": {
+    "status": 400,
+    "json": {
+     "error": {
+      "code": "invalid_json",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "trailing comma",
+   "request": {
+    "method": "POST",
+    "path": "/todos",
+    "headers": [
+     {
+      "name": "content-type",
+      "value": "application/json"
+     }
+    ],
+    "body": "{\"title\":\"a\",}"
+   },
+   "expect": {
+    "status": 400,
+    "json": {
+     "error": {
+      "code": "invalid_json",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "duplicate key",
+   "request": {
+    "method": "POST",
+    "path": "/todos",
+    "headers": [
+     {
+      "name": "content-type",
+      "value": "application/json"
+     }
+    ],
+    "body": "{\"title\":\"a\",\"title\":\"b\"}"
+   },
+   "expect": {
+    "status": 400,
+    "json": {
+     "error": {
+      "code": "invalid_json",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "single quotes",
+   "request": {
+    "method": "POST",
+    "path": "/todos",
+    "headers": [
+     {
+      "name": "content-type",
+      "value": "application/json"
+     }
+    ],
+    "body": "{'title':'a'}"
+   },
+   "expect": {
+    "status": 400,
+    "json": {
+     "error": {
+      "code": "invalid_json",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "two values",
+   "request": {
+    "method": "POST",
+    "path": "/todos",
+    "headers": [
+     {
+      "name": "content-type",
+      "value": "application/json"
+     }
+    ],
+    "body": "{\"title\":\"a\"} {}"
+   },
+   "expect": {
+    "status": 400,
+    "json": {
+     "error": {
+      "code": "invalid_json",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "comment",
+   "request": {
+    "method": "POST",
+    "path": "/todos",
+    "headers": [
+     {
+      "name": "content-type",
+      "value": "application/json"
+     }
+    ],
+    "body": "{\"title\":\"a\"} // x"
+   },
+   "expect": {
+    "status": 400,
+    "json": {
+     "error": {
+      "code": "invalid_json",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "nothing created",
+   "request": {
+    "method": "GET",
+    "path": "/todos"
+   },
+   "expect": {
+    "status": 200,
+    "json": [],
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  }
+ ]
+}

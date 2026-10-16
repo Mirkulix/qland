@@ -7,7 +7,6 @@
 //!   - IGQK compression state
 
 use qlang_core::graph::Graph;
-use qlang_core::serial;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -45,10 +44,15 @@ impl WeightTensor {
     }
 
     pub fn as_f32(&self) -> Option<Vec<f32>> {
-        if self.dtype != "f32" { return None; }
-        Some(self.data.chunks_exact(4)
-            .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
-            .collect())
+        if self.dtype != "f32" {
+            return None;
+        }
+        Some(
+            self.data
+                .chunks_exact(4)
+                .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+                .collect(),
+        )
     }
 
     pub fn numel(&self) -> usize {
@@ -173,20 +177,41 @@ impl Checkpoint {
     pub fn summary(&self) -> String {
         let mut s = String::new();
         s.push_str(&format!("Model: {}\n", self.graph.id));
-        s.push_str(&format!("Parameters: {} ({:.1} KB)\n", self.param_count(),
-            self.total_bytes() as f64 / 1024.0));
-        s.push_str(&format!("Graph: {} nodes, {} edges\n", self.graph.nodes.len(), self.graph.edges.len()));
-        s.push_str(&format!("Training: {} epochs, loss={:.4}, acc={:.1}%\n",
-            self.metadata.epochs_trained, self.metadata.final_loss, self.metadata.final_accuracy * 100.0));
+        s.push_str(&format!(
+            "Parameters: {} ({:.1} KB)\n",
+            self.param_count(),
+            self.total_bytes() as f64 / 1024.0
+        ));
+        s.push_str(&format!(
+            "Graph: {} nodes, {} edges\n",
+            self.graph.nodes.len(),
+            self.graph.edges.len()
+        ));
+        s.push_str(&format!(
+            "Training: {} epochs, loss={:.4}, acc={:.1}%\n",
+            self.metadata.epochs_trained,
+            self.metadata.final_loss,
+            self.metadata.final_accuracy * 100.0
+        ));
         if let Some(comp) = &self.compression {
-            s.push_str(&format!("Compression: {} ({:.1}x), acc: {:.1}%→{:.1}%\n",
-                comp.method, comp.compression_ratio, comp.accuracy_before * 100.0, comp.accuracy_after * 100.0));
+            s.push_str(&format!(
+                "Compression: {} ({:.1}x), acc: {:.1}%→{:.1}%\n",
+                comp.method,
+                comp.compression_ratio,
+                comp.accuracy_before * 100.0,
+                comp.accuracy_after * 100.0
+            ));
         }
 
         s.push_str("\nWeights:\n");
         for (name, tensor) in &self.weights {
-            s.push_str(&format!("  {}: {:?} {} ({} bytes)\n",
-                name, tensor.shape, tensor.dtype, tensor.size_bytes()));
+            s.push_str(&format!(
+                "  {}: {:?} {} ({} bytes)\n",
+                name,
+                tensor.shape,
+                tensor.dtype,
+                tensor.size_bytes()
+            ));
         }
         s
     }
@@ -200,8 +225,16 @@ mod tests {
     #[test]
     fn checkpoint_basics() {
         let mut ckpt = Checkpoint::new(Graph::new("test_model"));
-        ckpt.add_weight(WeightTensor::from_f32("W1", vec![784, 128], &vec![0.1; 784 * 128]));
-        ckpt.add_weight(WeightTensor::from_f32("W2", vec![128, 10], &vec![0.1; 128 * 10]));
+        ckpt.add_weight(WeightTensor::from_f32(
+            "W1",
+            vec![784, 128],
+            &vec![0.1; 784 * 128],
+        ));
+        ckpt.add_weight(WeightTensor::from_f32(
+            "W2",
+            vec![128, 10],
+            &vec![0.1; 128 * 10],
+        ));
 
         assert_eq!(ckpt.param_count(), 784 * 128 + 128 * 10);
         assert_eq!(ckpt.total_bytes(), (784 * 128 + 128 * 10) * 4);
@@ -228,7 +261,10 @@ mod tests {
         let loaded = Checkpoint::load_binary(path).unwrap();
         assert_eq!(loaded.graph.id, "binary_test");
         assert_eq!(loaded.metadata.epochs_trained, 10);
-        assert_eq!(loaded.weights["w"].as_f32().unwrap(), vec![1.0, 2.0, 3.0, 4.0]);
+        assert_eq!(
+            loaded.weights["w"].as_f32().unwrap(),
+            vec![1.0, 2.0, 3.0, 4.0]
+        );
 
         let _ = std::fs::remove_file(path);
     }
@@ -236,7 +272,11 @@ mod tests {
     #[test]
     fn checkpoint_summary() {
         let mut ckpt = Checkpoint::new(Graph::new("summary_test"));
-        ckpt.add_weight(WeightTensor::from_f32("W1", vec![64, 32], &vec![0.0; 64 * 32]));
+        ckpt.add_weight(WeightTensor::from_f32(
+            "W1",
+            vec![64, 32],
+            &vec![0.0; 64 * 32],
+        ));
         ckpt.metadata.epochs_trained = 50;
         ckpt.metadata.final_accuracy = 0.95;
 

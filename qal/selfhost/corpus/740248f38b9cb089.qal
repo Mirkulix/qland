@@ -1,0 +1,2 @@
+type P = { name: Str, n: Int }
+fn total(m: Map[Str, P], b: Bytes, o: Option[Int]) -> Int = fold(map_values(m), bytes_len(b), fn(acc, p) => acc + p.n) + (match o { Some(k) => k, None => 0 })

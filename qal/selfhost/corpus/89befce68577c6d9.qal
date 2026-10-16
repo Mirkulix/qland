@@ -1,0 +1,2 @@
+fn sq(x: Int) -> Int req x >= 0 = x * x
+fn f(x: Int) -> Int req x >= 0 ens r >= 0 = if sq(x) > 0 then x else 0

@@ -1,0 +1,2 @@
+fn f(b: Bytes) -> Bytes = sha256(b)
+fn g(x: Int) -> Int = x

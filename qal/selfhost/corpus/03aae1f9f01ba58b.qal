@@ -1,0 +1,4 @@
+fn base() -> Int = 1
+fn user() -> Int = base() + 1
+fn user2() -> Int = base()
+test t = user() == 2

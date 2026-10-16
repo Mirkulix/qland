@@ -1,0 +1,1 @@
+fn x(a: Int) -> Int req a >= 0 ens r >= 0 = bit_xor(a, 12345)

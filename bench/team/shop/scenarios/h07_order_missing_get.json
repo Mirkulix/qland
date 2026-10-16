@@ -1,0 +1,19 @@
+{
+  "name": "h07_order_missing_get",
+  "description": "GET /orders/999 gives 404 order_not_found",
+  "steps": [
+    {
+      "name": "get missing order",
+      "request": {"method": "GET", "path": "/orders/999"},
+      "expect": {
+        "status": 404,
+        "json": {
+          "error": {
+            "code": "order_not_found",
+            "message": {"$type": "str"}
+          }
+        }
+      }
+    }
+  ]
+}

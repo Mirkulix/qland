@@ -1,0 +1,24 @@
+{
+  "name": "h02_duplicate_sku",
+  "description": "POST /products with duplicate sku gives 409 sku_exists",
+  "steps": [
+    {
+      "name": "create first",
+      "request": {"method": "POST", "path": "/products", "json": {"sku": "DUP-1", "name": "Pen", "price_cents": 200, "stock": 50}},
+      "expect": {"status": 201}
+    },
+    {
+      "name": "create duplicate",
+      "request": {"method": "POST", "path": "/products", "json": {"sku": "DUP-1", "name": "Another Pen", "price_cents": 250, "stock": 10}},
+      "expect": {
+        "status": 409,
+        "json": {
+          "error": {
+            "code": "sku_exists",
+            "message": {"$type": "str"}
+          }
+        }
+      }
+    }
+  ]
+}

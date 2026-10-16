@@ -1,0 +1,2 @@
+type Accum = Box(Int)
+fn f(a: Accum) -> Int = match a { Box(n) => n }

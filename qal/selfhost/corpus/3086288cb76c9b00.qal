@@ -1,0 +1,2 @@
+fn spin(n: Int) -> Int = spin(n + 1)
+fn one() -> Int = 1

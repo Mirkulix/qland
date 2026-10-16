@@ -1,0 +1,19 @@
+{
+  "name": "h04_patch_nonexistent_product",
+  "description": "PATCH /products/999 gives 404 product_not_found",
+  "steps": [
+    {
+      "name": "patch missing",
+      "request": {"method": "PATCH", "path": "/products/999", "json": {"name": "Ghost"}},
+      "expect": {
+        "status": 404,
+        "json": {
+          "error": {
+            "code": "product_not_found",
+            "message": {"$type": "str"}
+          }
+        }
+      }
+    }
+  ]
+}

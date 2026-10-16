@@ -1,0 +1,6 @@
+type Shape = Dot | Circle(Int)
+fn area(s: Shape) -> Int req true = match s { Dot => 0, Circle(r) => 3 * r * r }
+fn even(n: Int) -> Bool = if n == 0 then true else odd(n - 1)
+fn odd(n: Int) -> Bool = if n == 0 then false else even(n - 1)
+fn twice(x: Int) -> Int = area(Circle(x)) + area(Circle(x))
+test t = twice(1) == 6

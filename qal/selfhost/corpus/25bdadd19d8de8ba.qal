@@ -1,0 +1,8 @@
+type P = { x: Int, tags: List[Str] }
+type E = A | B(P, Option[Int])
+fn echo(e: E) -> E = e
+fn sum(ps: List[P]) -> Int = fold(ps, 0, add)
+fn add(acc: Int, p: P) -> Int = acc + p.x
+fn path(rq: HttpRequest) -> Str = rq.method ++ " " ++ rq.path ++ " " ++ join(map(rq.headers, hname), ",")
+fn hname(h: HttpHeader) -> Str = h.name
+fn same(a: Result[Str, Int], b: Result[Str, Int]) -> Bool = a == b

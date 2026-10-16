@@ -1,0 +1,5 @@
+fn a() -> Int = b()
+fn b() -> Int = 1
+fn c() -> Int = 2
+fn unused() -> Int = 3
+test t = true

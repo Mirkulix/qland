@@ -1,0 +1,2 @@
+fn use_std() -> Str = std.url.mk("a").name
+fn use_own() -> Str = h("b").name

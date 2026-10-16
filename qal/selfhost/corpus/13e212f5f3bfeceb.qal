@@ -1,0 +1,2 @@
+fn main(args: List[Str]) -> Int !io = emit(0)
+fn emit(i: Int) -> Int !io = { print("0123456789012345678901234567890123456789"); emit(i + 1) }

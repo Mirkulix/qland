@@ -1,0 +1,3 @@
+fn price(q: Int) -> Int req q > 5 = q * 2
+test price_two = price(6) == 12
+fn spare() -> Int = 3

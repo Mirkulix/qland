@@ -1,0 +1,1 @@
+fn char_code(s: Str) -> Int = 1

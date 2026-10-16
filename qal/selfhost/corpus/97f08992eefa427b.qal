@@ -1,0 +1,1 @@
+type T = { std.a.x: Int }

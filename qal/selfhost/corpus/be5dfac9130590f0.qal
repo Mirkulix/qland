@@ -1,0 +1,5 @@
+type B[T] = { v: T }
+type Tree[T] = Leaf | Node(Tree[T], T, Tree[T])
+fn f() -> Int = { fn() => read_file_ok(); B { v: 1 }; Node(Leaf, 2, Leaf); 0 }
+fn read_file_ok() -> Result[Int, Str] = Ok(1)
+fn ig[T](x: T) -> Int = { x; 0 }

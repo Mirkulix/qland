@@ -1,0 +1,1 @@
+fn total(q: Int) -> Int req q > 0 = make(q).qty + base0() + 1

@@ -1,0 +1,44 @@
+# Binary search tree: insert in input order, then size, height and the three traversals.
+
+type Tree = Leaf | Node(Tree, Int, Tree)
+
+fn insert(t: Tree, v: Int) -> Tree =
+  match t {
+    Leaf => Node(Leaf, v, Leaf),
+    Node(l, x, r) => if v < x then Node(insert(l, v), x, r) else if v > x then Node(l, x, insert(r, v)) else t,
+  }
+
+fn height(t: Tree) -> Int = match t { Leaf => 0, Node(l, _, r) => let a = height(l) in let b = height(r) in 1 + (if a > b then a else b) }
+
+fn inorder(t: Tree) -> List[Int] = match t { Leaf => [], Node(l, x, r) => concat(push(inorder(l), x), inorder(r)) }
+
+fn preorder(t: Tree) -> List[Int] = match t { Leaf => [], Node(l, x, r) => concat(concat([x], preorder(l)), preorder(r)) }
+
+fn postorder(t: Tree) -> List[Int] = match t { Leaf => [], Node(l, x, r) => push(concat(postorder(l), postorder(r)), x) }
+
+fn is_space(c: Str) -> Bool = c == " " || c == "\t" || c == "\r" || c == "\n"
+
+fn space_out(c: Str) -> Str = if is_space(c) then " " else c
+
+fn non_empty(s: Str) -> Bool = s != ""
+
+fn number(s: Str) -> Int = match to_int(s) { Some(n) => n, None => 0 }
+
+fn numbers(text: Str) -> List[Int] = map(filter(split(join(map(chars(text), space_out), ""), " "), non_empty), number)
+
+fn show(n: Int) -> Str = from_int(n)
+
+fn line(name: Str, xs: List[Int]) -> Str = join(concat([name], map(xs, show)), " ")
+
+test tree = let t = fold([5, 3, 8, 1, 4, 9, 3], Leaf, insert) in inorder(t) == [1, 3, 4, 5, 8, 9] && preorder(t) == [5, 3, 1, 4, 8, 9] && height(t) == 3
+
+fn main(args: List[Str]) -> Int !io =
+  let t = fold(numbers(read_all()), Leaf, insert) in
+  let ino = inorder(t) in {
+    print("size " ++ from_int(len(ino)));
+    print("height " ++ from_int(height(t)));
+    print(line("inorder", ino));
+    print(line("preorder", preorder(t)));
+    print(line("postorder", postorder(t)));
+    0
+  }

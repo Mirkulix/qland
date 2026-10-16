@@ -120,9 +120,7 @@ pub fn mat_inverse_small(a: &[f64], n: usize) -> Option<Vec<f64>> {
         // Swap rows
         if pivot_row != col {
             for j in 0..cols {
-                let tmp = aug[col * cols + j];
-                aug[col * cols + j] = aug[pivot_row * cols + j];
-                aug[pivot_row * cols + j] = tmp;
+                aug.swap(col * cols + j, pivot_row * cols + j);
             }
         }
 
@@ -290,7 +288,10 @@ mod tests {
         let ab_comm = mat_commutator(&a, &b, 2);
         let ba_comm = mat_commutator(&b, &a, 2);
         let neg_ba = mat_scale(&ba_comm, -1.0, 2);
-        assert!(vecs_approx_eq(&ab_comm, &neg_ba), "[A,B] should equal -[B,A]");
+        assert!(
+            vecs_approx_eq(&ab_comm, &neg_ba),
+            "[A,B] should equal -[B,A]"
+        );
     }
 
     #[test]
@@ -300,7 +301,10 @@ mod tests {
         let b = vec![5.0, 6.0, 7.0, 8.0];
         let ab_anti = mat_anticommutator(&a, &b, 2);
         let ba_anti = mat_anticommutator(&b, &a, 2);
-        assert!(vecs_approx_eq(&ab_anti, &ba_anti), "{{A,B}} should equal {{B,A}}");
+        assert!(
+            vecs_approx_eq(&ab_anti, &ba_anti),
+            "{{A,B}} should equal {{B,A}}"
+        );
     }
 
     #[test]
@@ -317,7 +321,10 @@ mod tests {
     fn test_trace_identity() {
         for n in 1..=5 {
             let id = mat_identity(n);
-            assert!(approx_eq(mat_trace(&id, n), n as f64), "Tr(I) should equal n");
+            assert!(
+                approx_eq(mat_trace(&id, n), n as f64),
+                "Tr(I) should equal n"
+            );
         }
     }
 
@@ -333,11 +340,7 @@ mod tests {
 
     #[test]
     fn test_inverse_3x3() {
-        let a = vec![
-            1.0, 2.0, 3.0,
-            0.0, 1.0, 4.0,
-            5.0, 6.0, 0.0,
-        ];
+        let a = vec![1.0, 2.0, 3.0, 0.0, 1.0, 4.0, 5.0, 6.0, 0.0];
         let inv = mat_inverse_small(&a, 3).expect("should be invertible");
         let product = mat_mul(&a, &inv, 3, 3, 3);
         let id = mat_identity(3);
@@ -347,15 +350,20 @@ mod tests {
     #[test]
     fn test_singular_matrix() {
         let a = vec![1.0, 2.0, 2.0, 4.0]; // rank 1
-        assert!(mat_inverse_small(&a, 2).is_none(), "singular matrix should return None");
+        assert!(
+            mat_inverse_small(&a, 2).is_none(),
+            "singular matrix should return None"
+        );
     }
 
     #[test]
     fn test_frobenius_norm_identity() {
         for n in 1..=4 {
             let id = mat_identity(n);
-            assert!(approx_eq(mat_frobenius_norm(&id), (n as f64).sqrt()),
-                "||I||_F should equal sqrt(n)");
+            assert!(
+                approx_eq(mat_frobenius_norm(&id), (n as f64).sqrt()),
+                "||I||_F should equal sqrt(n)"
+            );
         }
     }
 
@@ -364,10 +372,14 @@ mod tests {
         let a = vec![1.0, 2.0, 3.0];
         let b = vec![4.0, 5.0];
         let result = mat_outer_product(&a, &b);
-        assert_eq!(result.len(), 6, "outer product of 3-vec and 2-vec should have 6 elements");
+        assert_eq!(
+            result.len(),
+            6,
+            "outer product of 3-vec and 2-vec should have 6 elements"
+        );
         // Check values: result[i,j] = a[i]*b[j]
-        assert!(approx_eq(result[0], 4.0));  // 1*4
-        assert!(approx_eq(result[1], 5.0));  // 1*5
+        assert!(approx_eq(result[0], 4.0)); // 1*4
+        assert!(approx_eq(result[1], 5.0)); // 1*5
         assert!(approx_eq(result[4], 12.0)); // 3*4
         assert!(approx_eq(result[5], 15.0)); // 3*5
     }
@@ -379,7 +391,10 @@ mod tests {
         let a = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
         let t = mat_transpose(&a, m, n);
         let tt = mat_transpose(&t, n, m);
-        assert!(vecs_approx_eq(&tt, &a), "transpose(transpose(A)) should equal A");
+        assert!(
+            vecs_approx_eq(&tt, &a),
+            "transpose(transpose(A)) should equal A"
+        );
     }
 
     #[test]
@@ -391,27 +406,34 @@ mod tests {
     #[test]
     fn test_psd_negative() {
         // Diagonal matrix with a negative entry
-        let a = vec![
-            1.0, 0.0, 0.0,
-            0.0, -2.0, 0.0,
-            0.0, 0.0, 1.0,
-        ];
-        assert!(!mat_is_positive_semidefinite(&a, 3), "matrix with negative eigenvalue is not PSD");
+        let a = vec![1.0, 0.0, 0.0, 0.0, -2.0, 0.0, 0.0, 0.0, 1.0];
+        assert!(
+            !mat_is_positive_semidefinite(&a, 3),
+            "matrix with negative eigenvalue is not PSD"
+        );
     }
 
     #[test]
     fn test_eigenvalues_diagonal() {
-        let a = vec![
-            3.0, 0.0, 0.0,
-            0.0, 1.0, 0.0,
-            0.0, 0.0, 2.0,
-        ];
+        let a = vec![3.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 2.0];
         let eigs = eigenvalues_symmetric(&a, 3);
         assert_eq!(eigs.len(), 3);
         // Should be sorted descending: 3, 2, 1
-        assert!(approx_eq(eigs[0], 3.0), "largest eigenvalue should be 3.0, got {}", eigs[0]);
-        assert!(approx_eq(eigs[1], 2.0), "middle eigenvalue should be 2.0, got {}", eigs[1]);
-        assert!(approx_eq(eigs[2], 1.0), "smallest eigenvalue should be 1.0, got {}", eigs[2]);
+        assert!(
+            approx_eq(eigs[0], 3.0),
+            "largest eigenvalue should be 3.0, got {}",
+            eigs[0]
+        );
+        assert!(
+            approx_eq(eigs[1], 2.0),
+            "middle eigenvalue should be 2.0, got {}",
+            eigs[1]
+        );
+        assert!(
+            approx_eq(eigs[2], 1.0),
+            "smallest eigenvalue should be 1.0, got {}",
+            eigs[2]
+        );
     }
 
     #[test]

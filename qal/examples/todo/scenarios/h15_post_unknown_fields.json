@@ -1,0 +1,143 @@
+{
+ "name": "h15_post_unknown_fields",
+ "description": "unknown fields",
+ "steps": [
+  {
+   "name": "extra",
+   "request": {
+    "method": "POST",
+    "path": "/todos",
+    "json": {
+     "title": "a",
+     "extra": 1
+    }
+   },
+   "expect": {
+    "status": 400,
+    "json": {
+     "error": {
+      "code": "unknown_field",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "id",
+   "request": {
+    "method": "POST",
+    "path": "/todos",
+    "json": {
+     "title": "a",
+     "id": 5
+    }
+   },
+   "expect": {
+    "status": 400,
+    "json": {
+     "error": {
+      "code": "unknown_field",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "created_at",
+   "request": {
+    "method": "POST",
+    "path": "/todos",
+    "json": {
+     "title": "a",
+     "created_at": 1
+    }
+   },
+   "expect": {
+    "status": 400,
+    "json": {
+     "error": {
+      "code": "unknown_field",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "case differs",
+   "request": {
+    "method": "POST",
+    "path": "/todos",
+    "json": {
+     "Title": "a"
+    }
+   },
+   "expect": {
+    "status": 400,
+    "json": {
+     "error": {
+      "code": "unknown_field",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "nothing created",
+   "request": {
+    "method": "GET",
+    "path": "/todos"
+   },
+   "expect": {
+    "status": 200,
+    "json": [],
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "next create still gets id 1",
+   "request": {
+    "method": "POST",
+    "path": "/todos",
+    "json": {
+     "title": "ok"
+    }
+   },
+   "expect": {
+    "status": 201,
+    "json": {
+     "id": 1,
+     "title": "ok",
+     "done": false,
+     "created_at": {
+      "$type": "int"
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  }
+ ]
+}

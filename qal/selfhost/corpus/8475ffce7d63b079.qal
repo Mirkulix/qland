@@ -1,0 +1,2 @@
+fn main(args: List[Str]) -> Int !time !rand = if now_ms() > 1700000000000 && in_range(100) then 0 else 1
+fn in_range(n: Int) -> Bool !rand = if n == 0 then true else (let x = rand_int(1, 6) in x >= 1 && x <= 6) && in_range(n - 1)

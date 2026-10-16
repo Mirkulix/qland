@@ -23,12 +23,13 @@ pub struct OptimizationReport {
 
 /// Run all optimization passes on a graph and return a report.
 pub fn optimize(graph: &mut Graph) -> OptimizationReport {
-    let mut report = OptimizationReport::default();
-
-    report.dead_nodes_removed = eliminate_dead_nodes(graph);
-    report.constants_folded = constant_folding(graph);
-    report.identity_ops_removed = eliminate_identity_ops(graph);
-    report.common_subexpressions_eliminated = common_subexpression_elimination(graph);
+    let mut report = OptimizationReport {
+        dead_nodes_removed: eliminate_dead_nodes(graph),
+        constants_folded: constant_folding(graph),
+        identity_ops_removed: eliminate_identity_ops(graph),
+        common_subexpressions_eliminated: common_subexpression_elimination(graph),
+        ..Default::default()
+    };
     let (fused, descriptions) = fuse_operations(graph);
     report.ops_fused = fused;
     report.fused_descriptions = descriptions;
@@ -50,10 +51,7 @@ pub fn eliminate_dead_nodes(graph: &mut Graph) -> usize {
         let dead: Vec<NodeId> = graph
             .nodes
             .iter()
-            .filter(|n| {
-                !matches!(n.op, Op::Output { .. })
-                    && graph.outgoing_edges(n.id).is_empty()
-            })
+            .filter(|n| !matches!(n.op, Op::Output { .. }) && graph.outgoing_edges(n.id).is_empty())
             .map(|n| n.id)
             .collect();
 
@@ -153,16 +151,12 @@ pub fn fuse_operations(graph: &mut Graph) -> (usize, Vec<String>) {
                         || (matches!(target.op, Op::Add) && target_incoming.len() == 2)
                     {
                         match &target.op {
-                            Op::Add => Some((
-                                matmul_node.id,
-                                target.id,
-                                "FusedMatMulAdd".to_string(),
-                            )),
-                            Op::Relu => Some((
-                                matmul_node.id,
-                                target.id,
-                                "FusedMatMulRelu".to_string(),
-                            )),
+                            Op::Add => {
+                                Some((matmul_node.id, target.id, "FusedMatMulAdd".to_string()))
+                            }
+                            Op::Relu => {
+                                Some((matmul_node.id, target.id, "FusedMatMulRelu".to_string()))
+                            }
                             _ => None,
                         }
                     } else {
@@ -248,7 +242,9 @@ pub fn eliminate_identity_ops(graph: &mut Graph) -> usize {
             .collect();
 
         for (to_node, to_port, _from_port, tensor_type) in outgoing {
-            graph.edges.retain(|e| !(e.from_node == outer_id && e.to_node == to_node && e.to_port == to_port));
+            graph.edges.retain(|e| {
+                !(e.from_node == outer_id && e.to_node == to_node && e.to_port == to_port)
+            });
             graph.add_edge(source_id, 0, to_node, to_port, tensor_type);
         }
         removed += 1;
@@ -312,7 +308,9 @@ pub fn eliminate_identity_ops(graph: &mut Graph) -> usize {
             .collect();
 
         for (to_node, to_port, tensor_type) in outgoing {
-            graph.edges.retain(|e| !(e.from_node == op_id && e.to_node == to_node && e.to_port == to_port));
+            graph.edges.retain(|e| {
+                !(e.from_node == op_id && e.to_node == to_node && e.to_port == to_port)
+            });
             graph.add_edge(passthrough_id, 0, to_node, to_port, tensor_type);
         }
         removed += 1;
@@ -418,19 +416,11 @@ mod tests {
     fn dead_node_elimination_removes_unreachable() {
         let mut g = Graph::new("dce_test");
 
-        let input = g.add_node(
-            Op::Input { name: "x".into() },
-            vec![],
-            vec![f32v4()],
-        );
+        let input = g.add_node(Op::Input { name: "x".into() }, vec![], vec![f32v4()]);
         let relu = g.add_node(Op::Relu, vec![f32v4()], vec![f32v4()]);
         // Dead node: not connected to anything downstream.
         let _dead = g.add_node(Op::Neg, vec![f32v4()], vec![f32v4()]);
-        let out = g.add_node(
-            Op::Output { name: "y".into() },
-            vec![f32v4()],
-            vec![],
-        );
+        let out = g.add_node(Op::Output { name: "y".into() }, vec![f32v4()], vec![]);
 
         g.add_edge(input, 0, relu, 0, f32v4());
         g.add_edge(relu, 0, out, 0, f32v4());
@@ -515,7 +505,13 @@ mod tests {
 
         let a = g.add_node(Op::Input { name: "a".into() }, vec![], vec![f32v4()]);
         let b = g.add_node(Op::Input { name: "b".into() }, vec![], vec![f32v4()]);
-        let bias = g.add_node(Op::Input { name: "bias".into() }, vec![], vec![f32v4()]);
+        let bias = g.add_node(
+            Op::Input {
+                name: "bias".into(),
+            },
+            vec![],
+            vec![f32v4()],
+        );
         let mm = g.add_node(Op::MatMul, vec![f32v4(), f32v4()], vec![f32v4()]);
         let add = g.add_node(Op::Add, vec![f32v4(), f32v4()], vec![f32v4()]);
         let out = g.add_node(Op::Output { name: "y".into() }, vec![f32v4()], vec![]);
@@ -565,8 +561,12 @@ mod tests {
         let inp = g.add_node(Op::Input { name: "x".into() }, vec![], vec![f32v4()]);
         let zero = g.add_node(Op::Constant, vec![], vec![f32v4()]);
         // Mark constant as zero.
-        g.nodes.iter_mut().find(|n| n.id == zero).unwrap()
-            .metadata.insert("value".into(), "0".into());
+        g.nodes
+            .iter_mut()
+            .find(|n| n.id == zero)
+            .unwrap()
+            .metadata
+            .insert("value".into(), "0".into());
         let add = g.add_node(Op::Add, vec![f32v4(), f32v4()], vec![f32v4()]);
         let out = g.add_node(Op::Output { name: "y".into() }, vec![f32v4()], vec![]);
 
@@ -588,8 +588,12 @@ mod tests {
 
         let inp = g.add_node(Op::Input { name: "x".into() }, vec![], vec![f32v4()]);
         let one = g.add_node(Op::Constant, vec![], vec![f32v4()]);
-        g.nodes.iter_mut().find(|n| n.id == one).unwrap()
-            .metadata.insert("value".into(), "1".into());
+        g.nodes
+            .iter_mut()
+            .find(|n| n.id == one)
+            .unwrap()
+            .metadata
+            .insert("value".into(), "1".into());
         let mul = g.add_node(Op::Mul, vec![f32v4(), f32v4()], vec![f32v4()]);
         let out = g.add_node(Op::Output { name: "y".into() }, vec![f32v4()], vec![]);
 
@@ -681,18 +685,10 @@ mod tests {
     fn full_optimize_pipeline() {
         let mut g = Graph::new("full_test");
 
-        let input = g.add_node(
-            Op::Input { name: "x".into() },
-            vec![],
-            vec![f32v4()],
-        );
+        let input = g.add_node(Op::Input { name: "x".into() }, vec![], vec![f32v4()]);
         let relu = g.add_node(Op::Relu, vec![f32v4()], vec![f32v4()]);
         let _dead = g.add_node(Op::Neg, vec![f32v4()], vec![f32v4()]);
-        let out = g.add_node(
-            Op::Output { name: "y".into() },
-            vec![f32v4()],
-            vec![],
-        );
+        let out = g.add_node(Op::Output { name: "y".into() }, vec![f32v4()], vec![]);
 
         g.add_edge(input, 0, relu, 0, f32v4());
         g.add_edge(relu, 0, out, 0, f32v4());

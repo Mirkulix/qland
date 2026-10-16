@@ -1,0 +1,5 @@
+fn main(args: List[Str]) -> Int !io = loop(0)
+fn loop(total: Int) -> Int !io = match read_line() {
+None => { print(from_int(total)); 0 },
+Some(line) => loop(total + (match to_int(trim(line)) { Some(n) => n, None => 0 })),
+}

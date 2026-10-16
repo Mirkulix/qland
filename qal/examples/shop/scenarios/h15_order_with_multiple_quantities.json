@@ -1,0 +1,60 @@
+{
+  "name": "h15_order_with_multiple_quantities",
+  "description": "Comprehensive order creation, multiple orders, partial cancellations and report verification",
+  "steps": [
+    {
+      "name": "create p1",
+      "request": {"method": "POST", "path": "/products", "json": {"sku": "MULTI-1", "name": "Item 1", "price_cents": 100, "stock": 50}},
+      "expect": {"status": 201},
+      "capture": {"p1": "/id"}
+    },
+    {
+      "name": "create p2",
+      "request": {"method": "POST", "path": "/products", "json": {"sku": "MULTI-2", "name": "Item 2", "price_cents": 200, "stock": 30}},
+      "expect": {"status": 201},
+      "capture": {"p2": "/id"}
+    },
+    {
+      "name": "order 1",
+      "request": {"method": "POST", "path": "/orders", "json": {"lines": [{"product_id": "{{p1}}", "qty": 10}, {"product_id": "{{p2}}", "qty": 5}]}},
+      "expect": {"status": 201},
+      "capture": {"o1": "/id"}
+    },
+    {
+      "name": "order 2",
+      "request": {"method": "POST", "path": "/orders", "json": {"lines": [{"product_id": "{{p1}}", "qty": 5}, {"product_id": "{{p2}}", "qty": 10}]}},
+      "expect": {"status": 201},
+      "capture": {"o2": "/id"}
+    },
+    {
+      "name": "cancel order 1",
+      "request": {"method": "POST", "path": "/orders/{{o1}}/cancel"},
+      "expect": {"status": 200, "json": {"id": {"$var": "o1"}, "status": "cancelled"}}
+    },
+    {
+      "name": "verify stock report",
+      "request": {"method": "GET", "path": "/reports/stock"},
+      "expect": {
+        "status": 200,
+        "json": [
+          {
+            "product_id": {"$var": "p1"},
+            "sku": "MULTI-1",
+            "name": "Item 1",
+            "current_stock": 45,
+            "reserved_stock": 5,
+            "revenue_cents": 500
+          },
+          {
+            "product_id": {"$var": "p2"},
+            "sku": "MULTI-2",
+            "name": "Item 2",
+            "current_stock": 20,
+            "reserved_stock": 10,
+            "revenue_cents": 2000
+          }
+        ]
+      }
+    }
+  ]
+}

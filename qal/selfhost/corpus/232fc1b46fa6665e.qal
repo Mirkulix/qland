@@ -1,0 +1,1 @@
+fn lib_one() -> Int = 1

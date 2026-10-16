@@ -1,0 +1,1 @@
+fn f(xs: List[Str]) -> Bytes = bytes_join(xs)

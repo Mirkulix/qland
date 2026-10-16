@@ -1,0 +1,7 @@
+fn double(x: Int) -> Int = x * 2
+fn add(a: Int, b: Int) -> Int = a + b
+fn positive(x: Int) -> Bool = x > 0
+test t = fold(map(filter(range(-2, 3), positive), double), 0, add) == 6
+test u = len("héllo") == 5 && len([1, 2]) == 2 && get([1.5], 0) == Some(1.5)
+test v = [] == concat([], []) && reverse(["a"]) ++ ["b"] == ["a", "b"]
+test w = to_int("12") == Some(12) && from_float(int_to_float(2)) == "2.0"

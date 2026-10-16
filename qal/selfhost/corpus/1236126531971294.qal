@@ -1,0 +1,1 @@
+fn q(a: Int, b: Int) -> Int req b > 0 ens r * b <= a = a / b

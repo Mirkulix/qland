@@ -1,0 +1,2 @@
+fn mk(i: Int) -> SqlValue = SqlNull
+fn p(n: Int) -> Int !db = match db_exec("SELECT 1", map(range(0, n), mk)) { Ok(_) => 0, Err(_) => 1 }

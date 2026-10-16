@@ -1,0 +1,4 @@
+type User = { id: Int, name: Str, }
+type Err = Empty | NotNumber(Str) | Pair(Int, List[Float])
+type One = | Only
+fn f(u: User, k: fn(Int) -> Option[Int] !io, r2: Result[Unit, Str]) -> List[Err] = []

@@ -1,0 +1,2 @@
+type Accum = Box(Int)
+fn g(xs: List[Int]) -> List[Int] = acc_list(xs)

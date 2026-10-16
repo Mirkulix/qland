@@ -1,0 +1,155 @@
+{
+ "name": "h17_error_precedence",
+ "description": "unknown_field > invalid_type > invalid_value > missing_field",
+ "steps": [
+  {
+   "name": "unknown beats type",
+   "request": {
+    "method": "POST",
+    "path": "/todos",
+    "json": {
+     "title": 5,
+     "bogus": 1
+    }
+   },
+   "expect": {
+    "status": 400,
+    "json": {
+     "error": {
+      "code": "unknown_field",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "unknown first in body",
+   "request": {
+    "method": "POST",
+    "path": "/todos",
+    "json": {
+     "bogus": 1,
+     "title": ""
+    }
+   },
+   "expect": {
+    "status": 400,
+    "json": {
+     "error": {
+      "code": "unknown_field",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "type beats value",
+   "request": {
+    "method": "POST",
+    "path": "/todos",
+    "json": {
+     "title": "",
+     "done": "x"
+    }
+   },
+   "expect": {
+    "status": 400,
+    "json": {
+     "error": {
+      "code": "invalid_type",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "value",
+   "request": {
+    "method": "POST",
+    "path": "/todos",
+    "json": {
+     "done": true,
+     "title": " "
+    }
+   },
+   "expect": {
+    "status": 400,
+    "json": {
+     "error": {
+      "code": "invalid_value",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "unknown beats missing",
+   "request": {
+    "method": "POST",
+    "path": "/todos",
+    "json": {
+     "done": true,
+     "x": 1
+    }
+   },
+   "expect": {
+    "status": 400,
+    "json": {
+     "error": {
+      "code": "unknown_field",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "type beats missing",
+   "request": {
+    "method": "POST",
+    "path": "/todos",
+    "json": {
+     "done": 0
+    }
+   },
+   "expect": {
+    "status": 400,
+    "json": {
+     "error": {
+      "code": "invalid_type",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  }
+ ]
+}

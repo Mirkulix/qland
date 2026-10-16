@@ -1,0 +1,21 @@
+# Unique lowercase words (runs of ASCII letters), sorted.
+
+fn is_letter(c: Str) -> Bool = (c >= "a" && c <= "z") || (c >= "A" && c <= "Z")
+
+fn letter_or_space(c: Str) -> Str = if is_letter(c) then c else " "
+
+fn non_empty(s: Str) -> Bool = s != ""
+
+fn words(text: Str) -> List[Str] = filter(split(to_lower(join(map(chars(text), letter_or_space), "")), " "), non_empty)
+
+type U = { out: List[Str], last: Str }
+
+fn unique_step(u: U, w: Str) -> U = if w == u.last then u else U { out: push(u.out, w), last: w }
+
+fn unique(sorted: List[Str]) -> List[Str] = fold(sorted, U { out: [], last: "" }, unique_step).out
+
+fn show(n: Int, w: Str) -> Int !io = { print(w); n + 1 }
+
+test example = unique(sort_str(words("The quick brown fox, the lazy dog.\nA fox!"))) == ["a", "brown", "dog", "fox", "lazy", "quick", "the"]
+
+fn main(args: List[Str]) -> Int !io = let n = fold(unique(sort_str(words(read_all()))), 0, show) in 0

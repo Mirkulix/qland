@@ -1,0 +1,2 @@
+fn f(a: Int, b: Float, c: Str, d: Bool) -> Int = a
+fn g(xs: List[Int]) -> Int = 0

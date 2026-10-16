@@ -1,0 +1,1 @@
+fn h(a: Int, b: Int, c: Int) -> Int req a > 1 req b > 1 req c > 1 ens r != 1000003 = a * b * c

@@ -1,0 +1,2 @@
+fn user(x: Int) -> Int
+= double(x) + 1

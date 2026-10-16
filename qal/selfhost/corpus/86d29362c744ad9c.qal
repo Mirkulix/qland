@@ -1,0 +1,3 @@
+fn std.a.f(x: Int) -> Int = x
+test std.a.t = std.a.f(1) == 1
+fn std.a.lone() -> Int = 0

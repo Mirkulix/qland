@@ -1,0 +1,166 @@
+{
+ "name": "p04_post_validation",
+ "description": "POST validation errors",
+ "steps": [
+  {
+   "name": "no content-type",
+   "request": {
+    "method": "POST",
+    "path": "/todos",
+    "headers": [],
+    "body": "{\"title\":\"x\"}"
+   },
+   "expect": {
+    "status": 415,
+    "json": {
+     "error": {
+      "code": "unsupported_media_type",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "broken JSON",
+   "request": {
+    "method": "POST",
+    "path": "/todos",
+    "headers": [
+     {
+      "name": "content-type",
+      "value": "application/json"
+     }
+    ],
+    "body": "{\"title\":"
+   },
+   "expect": {
+    "status": 400,
+    "json": {
+     "error": {
+      "code": "invalid_json",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "unknown field",
+   "request": {
+    "method": "POST",
+    "path": "/todos",
+    "json": {
+     "title": "x",
+     "priority": 1
+    }
+   },
+   "expect": {
+    "status": 400,
+    "json": {
+     "error": {
+      "code": "unknown_field",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "title not a string",
+   "request": {
+    "method": "POST",
+    "path": "/todos",
+    "json": {
+     "title": 42
+    }
+   },
+   "expect": {
+    "status": 400,
+    "json": {
+     "error": {
+      "code": "invalid_type",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "blank title",
+   "request": {
+    "method": "POST",
+    "path": "/todos",
+    "json": {
+     "title": "   "
+    }
+   },
+   "expect": {
+    "status": 400,
+    "json": {
+     "error": {
+      "code": "invalid_value",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "no title",
+   "request": {
+    "method": "POST",
+    "path": "/todos",
+    "json": {}
+   },
+   "expect": {
+    "status": 400,
+    "json": {
+     "error": {
+      "code": "missing_field",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "nothing was created",
+   "request": {
+    "method": "GET",
+    "path": "/todos"
+   },
+   "expect": {
+    "status": 200,
+    "json": [],
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  }
+ ]
+}

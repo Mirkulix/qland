@@ -27,7 +27,10 @@ fn main() {
     println!("  Feed-forward:    {d_ff}");
     println!("  Attention heads: {n_heads}");
     println!("  Head dimension:  {d_k}");
-    println!("  Parameters per layer: ~{}", 4 * d_model * d_model + 2 * d_model * d_ff);
+    println!(
+        "  Parameters per layer: ~{}",
+        4 * d_model * d_model + 2 * d_model * d_ff
+    );
 
     // ─── Create input (token embeddings + positional encoding) ───
     println!("\n[2] Creating input...");
@@ -52,7 +55,9 @@ fn main() {
 
     let make_weights = |tape: &mut Tape, r: usize, c: usize, seed: f32| -> usize {
         let scale = (2.0 / (r + c) as f64).sqrt() as f32;
-        let data: Vec<f32> = (0..r * c).map(|i| (i as f32 * seed).sin() * scale).collect();
+        let data: Vec<f32> = (0..r * c)
+            .map(|i| (i as f32 * seed).sin() * scale)
+            .collect();
         tape.variable(data, vec![r, c])
     };
 
@@ -67,17 +72,18 @@ fn main() {
     let ff_w2 = make_weights(&mut tape, d_ff, d_model, 0.613);
 
     let total_params = 4 * d_model * d_model + d_model * d_ff + d_ff * d_model;
-    println!("  Total parameters: {} ({:.1} KB)", total_params, total_params as f64 * 4.0 / 1024.0);
+    println!(
+        "  Total parameters: {} ({:.1} KB)",
+        total_params,
+        total_params as f64 * 4.0 / 1024.0
+    );
 
     // ─── Forward pass ───
     println!("\n[4] Forward pass (1 Transformer layer)...");
     let start = std::time::Instant::now();
 
     let output = transformer_encoder_layer(
-        &mut tape, input,
-        w_q, w_k, w_v, w_o,
-        ff_w1, ff_w2,
-        n_heads, d_model,
+        &mut tape, input, w_q, w_k, w_v, w_o, ff_w1, ff_w2, n_heads, d_model,
     );
 
     let forward_time = start.elapsed();
@@ -125,20 +131,25 @@ fn main() {
         total_layer_params += 4 * d_model * d_model + d_model * d_ff + d_ff * d_model;
 
         current = transformer_encoder_layer(
-            &mut tape2, current,
-            wq, wk, wv, wo,
-            fw1, fw2,
-            n_heads, d_model,
+            &mut tape2, current, wq, wk, wv, wo, fw1, fw2, n_heads, d_model,
         );
     }
 
     let stack_time = start.elapsed();
     let stack_result = tape2.value(current);
 
-    println!("  {} layers × {} params = {} total params ({:.1} KB)",
-        n_layers, total_params, total_layer_params, total_layer_params as f64 * 4.0 / 1024.0);
+    println!(
+        "  {} layers × {} params = {} total params ({:.1} KB)",
+        n_layers,
+        total_params,
+        total_layer_params,
+        total_layer_params as f64 * 4.0 / 1024.0
+    );
     println!("  Forward time: {:?}", stack_time);
-    println!("  Values finite: {}", stack_result.iter().all(|x| x.is_finite()));
+    println!(
+        "  Values finite: {}",
+        stack_result.iter().all(|x| x.is_finite())
+    );
 
     // ─── IGQK Compression ───
     println!("\n[6] IGQK Ternary Compression of attention weights...");
@@ -146,28 +157,48 @@ fn main() {
     let w_q_data = tape.value(w_q).to_vec();
     let mean_abs: f32 = w_q_data.iter().map(|x| x.abs()).sum::<f32>() / w_q_data.len() as f32;
     let threshold = mean_abs * 0.7;
-    let ternary: Vec<f32> = w_q_data.iter().map(|&x| {
-        if x > threshold { 1.0 } else if x < -threshold { -1.0 } else { 0.0 }
-    }).collect();
+    let ternary: Vec<f32> = w_q_data
+        .iter()
+        .map(|&x| {
+            if x > threshold {
+                1.0
+            } else if x < -threshold {
+                -1.0
+            } else {
+                0.0
+            }
+        })
+        .collect();
 
     let pos = ternary.iter().filter(|&&w| w == 1.0).count();
     let neg = ternary.iter().filter(|&&w| w == -1.0).count();
     let zero = ternary.iter().filter(|&&w| w == 0.0).count();
     let total = ternary.len();
 
-    println!("  W_Q: [{d_model}×{d_model}] = {} params", d_model * d_model);
-    println!("  +1: {} ({:.0}%), 0: {} ({:.0}%), -1: {} ({:.0}%)",
-        pos, pos as f64 / total as f64 * 100.0,
-        zero, zero as f64 / total as f64 * 100.0,
-        neg, neg as f64 / total as f64 * 100.0);
+    println!(
+        "  W_Q: [{d_model}×{d_model}] = {} params",
+        d_model * d_model
+    );
+    println!(
+        "  +1: {} ({:.0}%), 0: {} ({:.0}%), -1: {} ({:.0}%)",
+        pos,
+        pos as f64 / total as f64 * 100.0,
+        zero,
+        zero as f64 / total as f64 * 100.0,
+        neg,
+        neg as f64 / total as f64 * 100.0
+    );
     println!("  Compression: f32 → ternary = 16x (with 2-bit packing)");
-    println!("  All 4 attention matrices: {} KB → {} KB",
+    println!(
+        "  All 4 attention matrices: {} KB → {} KB",
         4 * d_model * d_model * 4 / 1024,
-        4 * d_model * d_model / 4 / 1024);
+        4 * d_model * d_model / 4 / 1024
+    );
 
     // ─── QLANG text ───
     println!("\n[7] QLANG text representation:");
-    let qlang = format!(r#"graph transformer_encoder {{
+    let qlang = format!(
+        r#"graph transformer_encoder {{
   input tokens: f32[{seq_len}, {d_model}]
   input W_Q: f32[{d_model}, {d_model}]
   input W_K: f32[{d_model}, {d_model}]
@@ -196,7 +227,8 @@ fn main() {
 
   output encoded = residual2
   output compressed_Q = comp_Q
-}}"#);
+}}"#
+    );
 
     println!("{qlang}");
 

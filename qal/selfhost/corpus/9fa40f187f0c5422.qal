@@ -1,0 +1,1 @@
+fn f(b: Bytes) -> Int ens bytes_at(b, 5) <= 255 = 0

@@ -1,0 +1,733 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>QLANG</title>
+<style>
+:root{--bg:#000;--s1:#0d1117;--s2:#161b22;--bd:#21262d;--tx:#e6edf3;--dm:#7d8590;--bl:#58a6ff;--gn:#3fb950;--or:#f97316;--pu:#bc8cff;--rd:#f85149;--yl:#d29922}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--tx);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:14px;height:100vh;overflow:hidden}
+button{cursor:pointer;font-family:inherit;border:none;border-radius:6px;font-size:13px;font-weight:600;padding:10px 16px;transition:all .15s}
+select,input[type=number]{background:var(--s1);color:var(--tx);border:1px solid var(--bd);border-radius:6px;padding:6px 8px;font-size:13px;font-family:inherit}
+textarea{background:var(--s1);color:var(--tx);border:1px solid var(--bd);border-radius:6px;padding:10px;font-size:13px;font-family:'SF Mono',Menlo,Consolas,monospace;resize:none;width:100%;line-height:1.6}
+textarea:focus,select:focus{border-color:var(--bl);outline:none}
+
+/* Layout: Header + 2 columns */
+.app{display:grid;grid-template-rows:48px 1fr;grid-template-columns:1fr 380px;height:100vh}
+.hdr{grid-column:1/-1;background:var(--s1);border-bottom:1px solid var(--bd);display:flex;align-items:center;padding:0 20px;gap:16px}
+.hdr h1{font-family:'SF Mono',Menlo,monospace;font-size:16px;font-weight:700;color:var(--bl);letter-spacing:2px}
+.hdr .sep{width:1px;height:24px;background:var(--bd)}
+.status{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--dm);padding:4px 10px;background:var(--s2);border:1px solid var(--bd);border-radius:16px}
+.dot{width:8px;height:8px;border-radius:50%}
+.dot.ok{background:var(--gn);box-shadow:0 0 6px var(--gn)}
+.dot.off{background:var(--rd)}
+.hdr-right{margin-left:auto;display:flex;gap:10px;align-items:center}
+.hdr a{color:var(--dm);font-size:12px;text-decoration:none;padding:4px 8px;border-radius:4px}
+.hdr a:hover{background:var(--s2);color:var(--tx)}
+
+/* Left: Live Feed - THE MAIN THING */
+.feed{overflow-y:auto;padding:16px;background:var(--bg)}
+.feed::-webkit-scrollbar{width:4px}
+.feed::-webkit-scrollbar-thumb{background:var(--bd);border-radius:2px}
+
+.msg{padding:10px 14px;margin-bottom:8px;border-radius:8px;background:var(--s2);border-left:3px solid var(--bd);animation:fadeIn .2s ease;font-size:13px;line-height:1.6}
+@keyframes fadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+.msg .time{color:#484f58;font-size:10px;font-family:'SF Mono',Menlo,monospace;margin-right:8px}
+.msg .tag{display:inline-block;padding:1px 6px;border-radius:3px;font-size:10px;font-weight:700;margin-right:6px;letter-spacing:.3px}
+.msg.sys{border-left-color:var(--bl)} .msg.sys .tag{background:rgba(88,166,255,.12);color:var(--bl)}
+.msg.ai{border-left-color:var(--or)} .msg.ai .tag{background:rgba(249,115,22,.12);color:var(--or)}
+.msg.train{border-left-color:var(--gn)} .msg.train .tag{background:rgba(63,185,80,.12);color:var(--gn)}
+.msg.igqk{border-left-color:var(--pu)} .msg.igqk .tag{background:rgba(188,140,255,.12);color:var(--pu)}
+.msg.err{border-left-color:var(--rd)} .msg.err .tag{background:rgba(248,81,73,.12);color:var(--rd)}
+.msg.ok{border-left-color:var(--gn);background:rgba(63,185,80,.06)} .msg.ok .tag{background:rgba(63,185,80,.15);color:var(--gn)}
+.msg.step{border-left-color:var(--yl)} .msg.step .tag{background:rgba(210,153,34,.12);color:var(--yl)}
+
+.msg-big{font-size:16px;font-weight:600;padding:14px 18px;margin:12px 0}
+.msg-result{display:flex;gap:12px;flex-wrap:wrap;margin-top:8px}
+.msg-result .stat{background:var(--s1);border:1px solid var(--bd);border-radius:6px;padding:8px 14px;text-align:center;min-width:80px}
+.msg-result .stat .v{font-size:18px;font-weight:700;font-family:'SF Mono',Menlo,monospace}
+.msg-result .stat .l{font-size:9px;color:var(--dm);text-transform:uppercase;margin-top:2px}
+
+/* Right sidebar: Actions */
+.side{background:var(--s1);border-left:1px solid var(--bd);overflow-y:auto;padding:0}
+.side::-webkit-scrollbar{width:4px}
+.side::-webkit-scrollbar-thumb{background:var(--bd);border-radius:2px}
+
+.panel{border-bottom:1px solid var(--bd);padding:16px}
+.panel h3{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--dm);margin-bottom:12px}
+.panel .desc{font-size:12px;color:var(--dm);margin-bottom:12px;line-height:1.5}
+
+.btn-primary{width:100%;background:var(--bl);color:#fff}
+.btn-primary:hover{box-shadow:0 0 16px rgba(37,99,235,.3)}
+.btn-primary:disabled{opacity:.4;cursor:not-allowed;box-shadow:none}
+.btn-green{width:100%;background:var(--gn);color:#000}
+.btn-green:hover{box-shadow:0 0 16px rgba(63,185,80,.3)}
+.btn-purple{width:100%;background:var(--pu);color:#000}
+.btn-purple:hover{box-shadow:0 0 16px rgba(188,140,255,.3)}
+.btn-orange{width:100%;background:var(--or);color:#000}
+.btn-orange:hover{box-shadow:0 0 16px rgba(249,115,22,.3)}
+
+.running{animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.7}}
+
+.field{margin-bottom:10px}
+.field label{display:block;font-size:11px;color:var(--dm);margin-bottom:4px}
+.row{display:flex;gap:8px}
+.row>*{flex:1}
+
+/* Progress bar */
+.pbar{height:6px;background:var(--bd);border-radius:3px;overflow:hidden;margin:8px 0}
+.pbar .fill{height:100%;background:linear-gradient(90deg,var(--bl),var(--gn));border-radius:3px;transition:width .3s;width:0%}
+.pbar-label{display:flex;justify-content:space-between;font-size:11px;color:var(--dm);font-family:'SF Mono',Menlo,monospace}
+
+/* Welcome */
+.welcome{padding:40px;text-align:center;max-width:500px;margin:60px auto}
+.welcome h2{font-size:24px;margin-bottom:8px}
+.welcome p{color:var(--dm);font-size:14px;line-height:1.6;margin-bottom:20px}
+.welcome .arrow{font-size:32px;color:var(--bd);margin:16px 0}
+
+/* Live Charts */
+.live-chart{background:var(--s1);border:1px solid var(--bd);border-radius:8px;padding:12px;margin:8px 0;animation:fadeIn .3s ease}
+.live-chart canvas{width:100%;height:120px;display:block;border-radius:4px}
+.live-chart .chart-title{font-size:11px;color:var(--dm);margin-bottom:6px;font-weight:600;text-transform:uppercase;letter-spacing:.5px}
+.live-chart .chart-legend{display:flex;gap:14px;margin-top:6px;font-size:10px;color:var(--dm)}
+.live-chart .chart-legend span::before{content:'';display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:4px;vertical-align:middle}
+.live-chart .leg-loss::before{background:var(--or)}
+.live-chart .leg-acc::before{background:var(--gn)}
+.live-chart .leg-best::before{background:var(--pu)}
+
+/* Swarm grid visualization */
+.swarm-grid{display:flex;flex-wrap:wrap;gap:6px;padding:8px;background:var(--s1);border:1px solid var(--bd);border-radius:8px;margin:8px 0;animation:fadeIn .3s ease}
+.swarm-dot{width:40px;height:40px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;font-family:'SF Mono',Menlo,monospace;border:2px solid var(--bd);transition:all .3s}
+.swarm-dot.best{border-color:var(--gn);box-shadow:0 0 10px rgba(63,185,80,.3)}
+
+/* Pipeline steps visual */
+.pipe-steps{display:flex;align-items:center;gap:2px;padding:10px 14px;background:var(--s1);border:1px solid var(--bd);border-radius:8px;margin:8px 0;overflow-x:auto;animation:fadeIn .3s ease}
+.pipe-step{padding:6px 10px;border-radius:6px;font-size:11px;font-weight:600;color:var(--dm);background:var(--s2);border:1px solid var(--bd);white-space:nowrap;transition:all .3s}
+.pipe-step.active{color:var(--bl);border-color:var(--bl);background:rgba(37,99,235,.1);box-shadow:0 0 8px rgba(37,99,235,.2)}
+.pipe-step.done{color:var(--gn);border-color:var(--gn);background:rgba(63,185,80,.06)}
+.pipe-arrow{color:var(--bd);font-size:14px}
+.pipe-arrow.active{color:var(--bl)}
+
+/* Autonomous iteration cards */
+.iter-card{background:var(--s1);border:1px solid var(--bd);border-radius:8px;padding:12px;margin:8px 0;display:flex;align-items:center;gap:12px;animation:fadeIn .3s ease}
+.iter-num{width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700;font-family:'SF Mono',Menlo,monospace;border:2px solid var(--bd);flex-shrink:0}
+.iter-num.pass{border-color:var(--gn);color:var(--gn)}
+.iter-num.fail{border-color:var(--yl);color:var(--yl)}
+.iter-num.win{border-color:var(--gn);color:#000;background:var(--gn)}
+.iter-body{flex:1;font-size:12px;line-height:1.5}
+.iter-arch{font-family:'SF Mono',Menlo,monospace;color:var(--bl);font-weight:600}
+.iter-metrics{display:flex;gap:10px;margin-top:4px}
+.iter-metric{font-size:11px;color:var(--dm)}
+.iter-metric b{color:var(--tx)}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- Header -->
+  <header class="hdr">
+    <h1>QLANG</h1>
+    <span class="sep"></span>
+    <div class="status"><div class="dot off" id="wsDot"></div><span id="wsLbl">Verbinde...</span></div>
+    <div class="status"><div class="dot off" id="olDot"></div><span id="olLbl">Ollama...</span></div>
+    <div class="hdr-right">
+      <a href="/docs.html">Dokumentation</a>
+    </div>
+  </header>
+
+  <!-- Left: Live Feed -->
+  <div class="feed" id="feed">
+    <div class="welcome" id="welcome">
+      <h2>Willkommen bei QLANG</h2>
+      <p>Waehle rechts eine Aktion aus.<br>Alles was passiert siehst du hier in Echtzeit.</p>
+      <div class="arrow">&rarr;</div>
+    </div>
+  </div>
+
+  <!-- Right: Actions -->
+  <div class="side">
+
+    <!-- 1. Quick Actions -->
+    <div class="panel">
+      <h3>Schnellstart</h3>
+      <div class="desc">Waehle was du machen willst. Das Ergebnis erscheint links in Echtzeit.</div>
+      <button class="btn-green" id="btnSwarm" onclick="doSwarm()" disabled style="margin-bottom:8px">
+        Schwarm trainieren
+      </button>
+      <div class="desc">6 kleine Sprachmodelle evolvieren sich. Das beste wird gespeichert.</div>
+      <div class="field">
+        <label>Trainingsdaten</label>
+        <select id="selData">
+          <option value="quick">Eingebaut (schnell, 5 Sek)</option>
+          <option value="data/text/wiki_small.txt">WikiText-2 klein (500 KB)</option>
+          <option value="data/text/wiki2_train.txt">WikiText-2 voll (10 MB)</option>
+        </select>
+      </div>
+      <div class="row">
+        <div class="field"><label>Modelle</label><input type="number" id="inPop" value="6" min="2" max="20" style="width:100%"></div>
+        <div class="field"><label>Generationen</label><input type="number" id="inGen" value="3" min="1" max="20" style="width:100%"></div>
+      </div>
+      <div class="pbar" id="swarmBar" style="display:none"><div class="fill" id="swarmFill"></div></div>
+      <div class="pbar-label" id="swarmLbl" style="display:none"><span id="swarmL">-</span><span id="swarmR">-</span></div>
+    </div>
+
+    <!-- 2. KI Pipeline -->
+    <div class="panel">
+      <h3>KI Pipeline</h3>
+      <div class="desc">Ein Ollama-LLM entwirft die Architektur, QLANG trainiert, ein zweites LLM bewertet.</div>
+      <div class="field">
+        <label>Aufgabe</label>
+        <textarea id="taskText" rows="2" placeholder="z.B. Baue einen Ziffern-Erkenner">Baue einen Ziffern-Erkenner</textarea>
+      </div>
+      <div class="row">
+        <div class="field"><label>Architekt</label><select id="selArch"><option>deepseek-r1:1.5b</option></select></div>
+        <div class="field"><label>Evaluator</label><select id="selEval"><option>llama3.2</option></select></div>
+      </div>
+      <button class="btn-primary" id="btnPipeline" onclick="doPipeline()" disabled>Pipeline starten</button>
+    </div>
+
+    <!-- 3. Autonom -->
+    <div class="panel">
+      <h3>Autonomer Modus</h3>
+      <div class="desc">KI verbessert sich selbst bis die Ziel-Accuracy erreicht ist. Laeuft ohne Eingriff.</div>
+      <div class="row">
+        <div class="field"><label>Ziel-Accuracy</label><input type="number" id="inTarget" value="95" min="50" max="100" style="width:100%">%</div>
+        <div class="field"><label>Max Versuche</label><input type="number" id="inMaxIter" value="5" min="1" max="20" style="width:100%"></div>
+      </div>
+      <button class="btn-purple" id="btnAuto" onclick="doAutonomous()" disabled>Autonom starten</button>
+    </div>
+
+    <!-- 4. Code ausfuehren -->
+    <div class="panel">
+      <h3>Code ausfuehren</h3>
+      <div class="desc">QLANG-Code direkt ausfuehren. Ergebnis erscheint links.</div>
+      <textarea id="codeText" rows="6" style="font-size:12px">let x: int = 42
+print("Hello QLANG!")
+print("x^2 = " + str(x ** 2))
+
+fn fib(n) {
+  if n <= 1 { return n }
+  return fib(n-1) + fib(n-2)
+}
+
+for i in 0..8 {
+  print("fib(" + str(i) + ") = " + str(fib(i)))
+}</textarea>
+      <button class="btn-orange" id="btnRun" onclick="doRun()" disabled style="margin-top:8px">Code ausfuehren</button>
+    </div>
+
+  </div>
+</div>
+
+<script>
+var ws = null, connected = false;
+
+// ============================================================
+// FEED - Everything visible here
+// ============================================================
+function addMsg(cls, tag, html) {
+  var w = document.getElementById('welcome');
+  if (w) w.remove();
+  var feed = document.getElementById('feed');
+  var d = document.createElement('div');
+  d.className = 'msg ' + cls;
+  var t = new Date().toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  d.innerHTML = '<span class="time">' + t + '</span><span class="tag">' + tag + '</span>' + html;
+  feed.appendChild(d);
+  feed.scrollTop = feed.scrollHeight;
+}
+
+function addBig(cls, html) {
+  var w = document.getElementById('welcome');
+  if (w) w.remove();
+  var feed = document.getElementById('feed');
+  var d = document.createElement('div');
+  d.className = 'msg msg-big ' + cls;
+  d.innerHTML = html;
+  feed.appendChild(d);
+  feed.scrollTop = feed.scrollHeight;
+}
+
+function addResult(stats) {
+  var feed = document.getElementById('feed');
+  var d = document.createElement('div');
+  d.className = 'msg-result';
+  d.innerHTML = stats.map(function(s) {
+    return '<div class="stat"><div class="v" style="color:' + (s.c||'var(--tx)') + '">' + s.v + '</div><div class="l">' + s.l + '</div></div>';
+  }).join('');
+  feed.appendChild(d);
+  feed.scrollTop = feed.scrollHeight;
+}
+
+// ============================================================
+// WEBSOCKET
+// ============================================================
+function connect() {
+  var url = 'ws://' + location.host + '/ws';
+  ws = new WebSocket(url);
+  ws.onopen = function() {
+    connected = true;
+    document.getElementById('wsDot').className = 'dot ok';
+    document.getElementById('wsLbl').textContent = 'Verbunden';
+    addMsg('sys','SYSTEM','Verbunden mit QLANG Server');
+    ws.send(JSON.stringify({type:'list_models'}));
+    // Enable all buttons
+    ['btnSwarm','btnPipeline','btnAuto','btnRun'].forEach(function(id){document.getElementById(id).disabled=false});
+  };
+  ws.onclose = function() {
+    connected = false;
+    document.getElementById('wsDot').className = 'dot off';
+    document.getElementById('wsLbl').textContent = 'Getrennt';
+    ['btnSwarm','btnPipeline','btnAuto','btnRun'].forEach(function(id){document.getElementById(id).disabled=true});
+    addMsg('err','WS','Verbindung getrennt. Reconnect in 3s...');
+    setTimeout(connect, 3000);
+  };
+  ws.onerror = function() { addMsg('err','WS','Verbindungsfehler'); };
+  ws.onmessage = function(ev) {
+    var m; try { m = JSON.parse(ev.data); } catch(e) { return; }
+    handle(m);
+  };
+}
+
+function send(obj) { if (ws && connected) ws.send(JSON.stringify(obj)); }
+
+// ============================================================
+// MESSAGE HANDLER
+// ============================================================
+function handle(m) {
+  switch(m.type) {
+    // Models
+    case 'models_list':
+      var models = m.models || [];
+      document.getElementById('olDot').className = 'dot ok';
+      document.getElementById('olLbl').textContent = 'Ollama: ' + models.length;
+      addMsg('sys','OLLAMA','Gefunden: ' + models.join(', '));
+      ['selArch','selEval'].forEach(function(id){
+        var s = document.getElementById(id); s.innerHTML = '';
+        models.forEach(function(n){var o=document.createElement('option');o.value=n;o.textContent=n;s.appendChild(o)});
+      });
+      break;
+
+    // Pipeline - visual steps
+    case 'pipeline_status':
+      updatePipelineViz(m.step, m.total_steps);
+      addMsg('step','STEP ' + m.step + '/' + m.total_steps, m.description);
+      break;
+    case 'agent_thinking':
+      addMsg('ai','OLLAMA', '<b>' + m.agent + '</b> (' + m.model + ') denkt nach...');
+      break;
+    case 'agent_response':
+      addMsg('ai','OLLAMA', '<b>' + m.agent + '</b>: ' + m.response);
+      break;
+
+    // Training - live chart
+    case 'training':
+      var pct = (m.accuracy * 100).toFixed(1);
+      trainLoss.push(m.loss);
+      trainAcc.push(m.accuracy);
+      updateTrainChart();
+      addMsg('train','EPOCH ' + m.epoch, 'Loss=' + m.loss.toFixed(4) + ' Accuracy=' + pct + '%');
+      break;
+
+    // Compression
+    case 'compression':
+      addMsg('igqk','IGQK', m.original_size + ' &rarr; ' + m.compressed_size + ' (' + m.ratio + ')');
+      addResult([
+        {v:m.original_size, l:'Original', c:'var(--dm)'},
+        {v:m.compressed_size, l:'Komprimiert', c:'var(--gn)'},
+        {v:m.ratio, l:'Ratio', c:'var(--pu)'}
+      ]);
+      break;
+
+    // System
+    case 'system':
+      addMsg('sys','INFO', m.text || '');
+      break;
+    case 'graph':
+      addMsg('sys','GRAPH', (m.nodes||[]).length + ' Nodes geladen');
+      break;
+    case 'model_ready':
+      addMsg('ok','MODELL', 'Trainiertes Modell bereit');
+      break;
+
+    // Autonomous - visual iteration cards
+    case 'autonomous_status':
+      if (m.phase === 'start') {
+        autoIterations = [];
+        addBig('sys', 'Autonomer Modus gestartet (Ziel: ' + (m.target_accuracy*100).toFixed(0) + '%)');
+      } else if (m.phase === 'success') {
+        addBig('ok', 'ZIEL ERREICHT nach ' + m.iteration + ' Versuchen!');
+        document.getElementById('btnAuto').disabled = false;
+        document.getElementById('btnAuto').classList.remove('running');
+      } else if (m.phase === 'max_reached') {
+        addMsg('step','ENDE', 'Maximum erreicht. Bestes: ' + (m.best_accuracy*100).toFixed(1) + '%');
+        document.getElementById('btnAuto').disabled = false;
+        document.getElementById('btnAuto').classList.remove('running');
+      } else if (m.phase === 'training' && m.config) {
+        addIterCard(m.iteration, m.config.h1, m.config.h2, null, null, 'active');
+      }
+      break;
+    case 'autonomous_result':
+      updateIterCard(m.iteration, m.test_accuracy, m.compression_ratio, m.test_accuracy >= 0.95);
+      addResult([
+        {v:(m.test_accuracy*100).toFixed(1)+'%', l:'Accuracy', c:'var(--gn)'},
+        {v:m.compression_ratio.toFixed(1)+'x', l:'Kompression', c:'var(--pu)'},
+        {v:m.params, l:'Parameter', c:'var(--bl)'}
+      ]);
+      break;
+    case 'autonomous_feedback':
+      addMsg('ai','FEEDBACK', m.feedback);
+      break;
+    case 'autonomous_summary':
+      addMsg('ok','ERGEBNIS', m.summary);
+      break;
+    case 'autonomous_design':
+      addMsg('ai','DESIGN', m.response);
+      break;
+
+    // Swarm - visual grid
+    case 'swarm_status':
+      addMsg('sys','SWARM', m.phase + (m.vocab_size ? ' (Vocab: ' + m.vocab_size + ' Tokens)' : ''));
+      break;
+    case 'swarm_model':
+      swarmModels.push({id:m.id, d:m.d_model, l:m.layers, p:m.params, loss:null});
+      addMsg('sys','MODELL', '#' + (m.id+1) + ': d=' + m.d_model + ' L=' + m.layers + ' (' + m.params + ' Params)');
+      break;
+    case 'swarm_generation':
+      swarmCurrentGen = m.gen;
+      addBig('step', 'Generation ' + m.gen + ' / ' + m.total);
+      addSwarmGrid();
+      document.getElementById('swarmBar').style.display = 'block';
+      document.getElementById('swarmLbl').style.display = 'flex';
+      var pct = (m.gen / m.total * 100);
+      document.getElementById('swarmFill').style.width = pct + '%';
+      document.getElementById('swarmL').textContent = 'Gen ' + m.gen + '/' + m.total;
+      break;
+    case 'swarm_fitness':
+      updateSwarmDot(m.id, m.loss, m.d_model, m.layers);
+      swarmLosses.push(m.loss);
+      var sample = m.sample ? ' &rarr; "' + m.sample.substring(0,30) + '"' : '';
+      addMsg('train','MODELL ' + (m.id+1), 'd=' + m.d_model + ' L=' + m.layers + ' Loss=' + m.loss.toFixed(4) + sample);
+      break;
+    case 'swarm_best':
+      swarmBestLoss.push(m.loss);
+      updateSwarmChart();
+      addMsg('ok','BESTES', 'd=' + m.d_model + ' L=' + m.layers + ' Loss=' + m.loss.toFixed(4) + ' (' + m.params + ' Params)');
+      break;
+    case 'swarm_complete':
+      addBig('ok', 'Schwarm-Training abgeschlossen!');
+      if (m.results) {
+        addResult(m.results.slice(0,3).map(function(r){
+          return {v:'#'+r.rank+' d='+r.d_model, l:r.loss.toFixed(3)+' Loss', c:r.rank===1?'var(--gn)':'var(--tx)'};
+        }));
+      }
+      document.getElementById('btnSwarm').disabled = false;
+      document.getElementById('btnSwarm').classList.remove('running');
+      document.getElementById('btnSwarm').textContent = 'Schwarm trainieren';
+      document.getElementById('swarmFill').style.width = '100%';
+      document.getElementById('swarmR').textContent = 'Fertig!';
+      break;
+    case 'swarm_saved':
+      addMsg('ok','GESPEICHERT', 'Modell: ' + m.model_path + '<br>Tokenizer: ' + m.tokenizer_path);
+      break;
+
+    // Code execution
+    case 'exec_result':
+      if (m.error) {
+        addMsg('err','FEHLER', m.error);
+      } else if (m.output) {
+        m.output.forEach(function(line) { addMsg('sys','OUTPUT', line); });
+      }
+      document.getElementById('btnRun').disabled = false;
+      document.getElementById('btnRun').classList.remove('running');
+      break;
+    case 'repl_result':
+      if (m.error) addMsg('err','FEHLER', m.error);
+      else addMsg('sys','REPL', m.output || '');
+      break;
+
+    default:
+      addMsg('sys', m.type.toUpperCase(), JSON.stringify(m).substring(0,100));
+  }
+}
+
+// ============================================================
+// ACTIONS
+// ============================================================
+function doSwarm() {
+  var pop = parseInt(document.getElementById('inPop').value) || 6;
+  var gen = parseInt(document.getElementById('inGen').value) || 3;
+  var data = document.getElementById('selData').value;
+  swarmModels = []; swarmLosses = []; swarmBestLoss = []; swarmCurrentGen = 0;
+  send({type:'start_swarm', population:pop, generations:gen, data:data});
+  document.getElementById('btnSwarm').disabled = true;
+  document.getElementById('btnSwarm').classList.add('running');
+  document.getElementById('btnSwarm').textContent = 'Laeuft...';
+  document.getElementById('swarmBar').style.display = 'block';
+  document.getElementById('swarmLbl').style.display = 'flex';
+  document.getElementById('swarmFill').style.width = '0%';
+  document.getElementById('swarmL').textContent = 'Startet...';
+  document.getElementById('swarmR').textContent = '';
+  addBig('sys', 'Schwarm-Training gestartet (' + pop + ' Modelle, ' + gen + ' Generationen)');
+}
+
+function doPipeline() {
+  var task = document.getElementById('taskText').value.trim();
+  if (!task) { document.getElementById('taskText').focus(); return; }
+  send({
+    type:'start_pipeline',
+    task:task,
+    architect_model: document.getElementById('selArch').value,
+    evaluator_model: document.getElementById('selEval').value,
+    epochs: 10,
+    dataset: 'synthetic',
+    compress: true
+  });
+  document.getElementById('btnPipeline').disabled = true;
+  document.getElementById('btnPipeline').classList.add('running');
+  addBig('sys', 'KI-Pipeline gestartet: "' + task + '"');
+}
+
+function doAutonomous() {
+  var target = parseInt(document.getElementById('inTarget').value) || 95;
+  var maxIter = parseInt(document.getElementById('inMaxIter').value) || 5;
+  send({
+    type:'start_autonomous',
+    task: document.getElementById('taskText').value || 'Build a classifier',
+    model: document.getElementById('selArch').value,
+    target_accuracy: target / 100,
+    max_iterations: maxIter,
+    dataset: 'synthetic'
+  });
+  document.getElementById('btnAuto').disabled = true;
+  document.getElementById('btnAuto').classList.add('running');
+}
+
+function doRun() {
+  var code = document.getElementById('codeText').value;
+  if (!code.trim()) return;
+  send({type:'exec', code:code});
+  document.getElementById('btnRun').disabled = true;
+  document.getElementById('btnRun').classList.add('running');
+  addMsg('sys','CODE','Ausfuehren...');
+}
+
+// ============================================================
+// LIVE VISUALIZATIONS
+// ============================================================
+
+// --- Training Chart (Loss + Accuracy over epochs) ---
+var trainLoss = [], trainAcc = [], trainChartEl = null;
+
+function updateTrainChart() {
+  if (!trainChartEl) {
+    var feed = document.getElementById('feed');
+    trainChartEl = document.createElement('div');
+    trainChartEl.className = 'live-chart';
+    trainChartEl.innerHTML = '<div class="chart-title">Training Verlauf</div><canvas id="trainCanvas" width="600" height="120"></canvas><div class="chart-legend"><span class="leg-loss">Loss</span><span class="leg-acc">Accuracy</span></div>';
+    feed.appendChild(trainChartEl);
+  }
+  var c = document.getElementById('trainCanvas');
+  if (!c) return;
+  var ctx = c.getContext('2d');
+  var w = c.width, h = c.height;
+  ctx.clearRect(0,0,w,h);
+
+  // Background grid
+  ctx.strokeStyle = '#21262d';
+  ctx.lineWidth = 0.5;
+  for (var i = 0; i < 5; i++) {
+    var y = h * i / 4;
+    ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(w,y); ctx.stroke();
+  }
+
+  if (trainLoss.length < 2) return;
+  var n = trainLoss.length;
+  var maxLoss = Math.max.apply(null, trainLoss) * 1.1;
+
+  // Loss line (orange)
+  ctx.beginPath();
+  ctx.strokeStyle = '#f97316';
+  ctx.lineWidth = 2;
+  for (var i = 0; i < n; i++) {
+    var x = (i/(n-1)) * w;
+    var y = h - (trainLoss[i]/maxLoss) * h;
+    i === 0 ? ctx.moveTo(x,y) : ctx.lineTo(x,y);
+  }
+  ctx.stroke();
+
+  // Accuracy line (green)
+  ctx.beginPath();
+  ctx.strokeStyle = '#3fb950';
+  ctx.lineWidth = 2;
+  for (var i = 0; i < n; i++) {
+    var x = (i/(n-1)) * w;
+    var y = h - trainAcc[i] * h;
+    i === 0 ? ctx.moveTo(x,y) : ctx.lineTo(x,y);
+  }
+  ctx.stroke();
+
+  // Labels
+  ctx.fillStyle = '#7d8590';
+  ctx.font = '10px system-ui';
+  ctx.textAlign = 'left';
+  ctx.fillText('Loss: ' + trainLoss[n-1].toFixed(4), 4, 12);
+  ctx.fillText('Acc: ' + (trainAcc[n-1]*100).toFixed(1) + '%', 4, 24);
+  ctx.textAlign = 'right';
+  ctx.fillText('Epoch ' + n, w-4, h-4);
+
+  trainChartEl.scrollIntoView({behavior:'smooth', block:'nearest'});
+}
+
+// --- Pipeline Step Visualization ---
+var pipeStepNames = ['Aufgabe','Architekt','Build','Training','IGQK','Evaluator'];
+var pipeVizEl = null;
+
+function updatePipelineViz(step, total) {
+  if (!pipeVizEl) {
+    var feed = document.getElementById('feed');
+    pipeVizEl = document.createElement('div');
+    pipeVizEl.className = 'pipe-steps';
+    pipeVizEl.id = 'pipeViz';
+    var html = '';
+    for (var i = 0; i < pipeStepNames.length; i++) {
+      if (i > 0) html += '<span class="pipe-arrow">&rarr;</span>';
+      html += '<span class="pipe-step" id="ps' + i + '">' + pipeStepNames[i] + '</span>';
+    }
+    pipeVizEl.innerHTML = html;
+    feed.appendChild(pipeVizEl);
+  }
+  for (var i = 0; i < pipeStepNames.length; i++) {
+    var el = document.getElementById('ps' + i);
+    if (!el) continue;
+    if (i < step - 1) el.className = 'pipe-step done';
+    else if (i === step - 1) el.className = 'pipe-step active';
+    else el.className = 'pipe-step';
+  }
+  // Arrows
+  var arrows = pipeVizEl.querySelectorAll('.pipe-arrow');
+  arrows.forEach(function(a, idx) {
+    a.className = idx < step - 1 ? 'pipe-arrow active' : 'pipe-arrow';
+  });
+}
+
+// --- Swarm Grid Visualization ---
+var swarmModels = [], swarmLosses = [], swarmBestLoss = [], swarmCurrentGen = 0;
+var swarmGridEl = null, swarmChartEl = null;
+
+function addSwarmGrid() {
+  var feed = document.getElementById('feed');
+  swarmGridEl = document.createElement('div');
+  swarmGridEl.className = 'swarm-grid';
+  swarmGridEl.id = 'swarmGrid' + swarmCurrentGen;
+  var html = '';
+  for (var i = 0; i < swarmModels.length; i++) {
+    var m = swarmModels[i];
+    html += '<div class="swarm-dot" id="sd' + swarmCurrentGen + '_' + i + '" title="d=' + m.d + ' L=' + m.l + '">' + (i+1) + '</div>';
+  }
+  swarmGridEl.innerHTML = html;
+  feed.appendChild(swarmGridEl);
+  feed.scrollTop = feed.scrollHeight;
+}
+
+function updateSwarmDot(id, loss, d, layers) {
+  var el = document.getElementById('sd' + swarmCurrentGen + '_' + id);
+  if (!el) return;
+  // Color based on loss: lower = greener
+  var minL = 5.5, maxL = 7.0;
+  var t = Math.max(0, Math.min(1, (loss - minL) / (maxL - minL)));
+  var r = Math.round(249 * t + 63 * (1-t));
+  var g = Math.round(115 * t + 185 * (1-t));
+  var b = Math.round(22 * t + 80 * (1-t));
+  el.style.background = 'rgb(' + r + ',' + g + ',' + b + ')';
+  el.style.color = '#000';
+  el.title = 'd=' + d + ' L=' + layers + ' Loss=' + loss.toFixed(3);
+}
+
+function updateSwarmChart() {
+  if (swarmBestLoss.length < 2) return;
+  if (!swarmChartEl) {
+    var feed = document.getElementById('feed');
+    swarmChartEl = document.createElement('div');
+    swarmChartEl.className = 'live-chart';
+    swarmChartEl.innerHTML = '<div class="chart-title">Bester Loss pro Generation</div><canvas id="swarmCanvas" width="600" height="80"></canvas><div class="chart-legend"><span class="leg-best">Best Loss</span></div>';
+    feed.appendChild(swarmChartEl);
+  }
+  var c = document.getElementById('swarmCanvas');
+  if (!c) return;
+  var ctx = c.getContext('2d');
+  var w = c.width, h = c.height;
+  ctx.clearRect(0,0,w,h);
+
+  var n = swarmBestLoss.length;
+  var maxL = Math.max.apply(null, swarmBestLoss) * 1.05;
+  var minL = Math.min.apply(null, swarmBestLoss) * 0.95;
+
+  // Bars
+  var barW = Math.min(60, (w - 20) / n);
+  for (var i = 0; i < n; i++) {
+    var x = 10 + i * (barW + 4);
+    var barH = ((swarmBestLoss[i] - minL) / (maxL - minL)) * (h - 30);
+    var y = h - 20 - barH;
+
+    ctx.fillStyle = i === n-1 ? '#3fb950' : '#bc8cff';
+    ctx.beginPath();
+    ctx.roundRect(x, y, barW, barH, 3);
+    ctx.fill();
+
+    ctx.fillStyle = '#e6edf3';
+    ctx.font = '9px system-ui';
+    ctx.textAlign = 'center';
+    ctx.fillText(swarmBestLoss[i].toFixed(3), x + barW/2, y - 4);
+    ctx.fillStyle = '#7d8590';
+    ctx.fillText('Gen ' + (i+1), x + barW/2, h - 6);
+  }
+  swarmChartEl.scrollIntoView({behavior:'smooth', block:'nearest'});
+}
+
+// --- Autonomous Iteration Cards ---
+var autoIterations = [];
+
+function addIterCard(iter, h1, h2, acc, ratio, status) {
+  var feed = document.getElementById('feed');
+  var d = document.createElement('div');
+  d.className = 'iter-card';
+  d.id = 'iter' + iter;
+  var numCls = status === 'active' ? '' : (acc && acc >= 0.95 ? 'win' : (acc ? 'fail' : ''));
+  d.innerHTML = '<div class="iter-num ' + numCls + '">' + iter + '</div>' +
+    '<div class="iter-body">' +
+    '<div class="iter-arch">784 &rarr; ' + h1 + ' &rarr; ' + h2 + ' &rarr; 10</div>' +
+    '<div class="iter-metrics">' +
+    '<span class="iter-metric">Accuracy: <b id="iterAcc' + iter + '">' + (acc ? (acc*100).toFixed(1)+'%' : '...') + '</b></span>' +
+    '<span class="iter-metric">Kompression: <b id="iterRatio' + iter + '">' + (ratio ? ratio.toFixed(1)+'x' : '...') + '</b></span>' +
+    '</div></div>';
+  feed.appendChild(d);
+  feed.scrollTop = feed.scrollHeight;
+}
+
+function updateIterCard(iter, acc, ratio, success) {
+  var numEl = document.querySelector('#iter' + iter + ' .iter-num');
+  if (numEl) numEl.className = 'iter-num ' + (success ? 'win' : 'fail');
+  var accEl = document.getElementById('iterAcc' + iter);
+  if (accEl) { accEl.textContent = (acc*100).toFixed(1) + '%'; accEl.style.color = success ? 'var(--gn)' : 'var(--yl)'; }
+  var ratEl = document.getElementById('iterRatio' + iter);
+  if (ratEl) ratEl.textContent = ratio.toFixed(1) + 'x';
+}
+
+// Reset state on new actions
+function resetViz() {
+  trainLoss = []; trainAcc = []; trainChartEl = null;
+  pipeVizEl = null;
+  swarmGridEl = null; swarmChartEl = null;
+  autoIterations = [];
+}
+
+// ============================================================
+// INIT
+// ============================================================
+connect();
+</script>
+</body>
+</html>

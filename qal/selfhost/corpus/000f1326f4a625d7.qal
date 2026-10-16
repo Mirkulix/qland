@@ -1,0 +1,1 @@
+fn f(xs: List[Int], s: Str) -> Int ens r < 40 = len(xs) + len(s)

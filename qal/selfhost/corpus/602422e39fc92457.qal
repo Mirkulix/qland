@@ -1,0 +1,1 @@
+fn f(x: Option[Int]) -> Int = match x { None => 0, Some(n) if n > 0 => n }

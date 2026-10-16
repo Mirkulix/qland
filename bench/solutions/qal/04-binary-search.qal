@@ -1,0 +1,33 @@
+# First index of each query in a sorted list (lower-bound binary search).
+
+fn non_empty(s: Str) -> Bool = s != ""
+
+fn number(s: Str) -> Int = match to_int(trim(s)) { Some(n) => n, None => 0 }
+
+# Smallest index in [lo, hi) whose element is >= v (hi if none).
+fn lower_bound(xs: List[Int], v: Int, lo: Int, hi: Int) -> Int =
+  if lo >= hi then lo
+  else
+    let mid = (lo + hi) / 2 in
+    match get(xs, mid) {
+      Some(x) if x < v => lower_bound(xs, v, mid + 1, hi),
+      _ => lower_bound(xs, v, lo, mid),
+    }
+
+fn find(xs: List[Int], v: Int) -> Int =
+  let i = lower_bound(xs, v, 0, len(xs)) in
+  match get(xs, i) { Some(x) if x == v => i, _ => -1 }
+
+test first_of_duplicates = find([1, 3, 3, 5], 3) == 1 && find([1, 3, 3, 5], 4) == -1 && find([], 1) == -1
+
+fn queries(xs: List[Int]) -> Int !io =
+  match read_line() {
+    None => 0,
+    Some(q) => { print(from_int(find(xs, number(q)))); queries(xs) },
+  }
+
+fn main(args: List[Str]) -> Int !io =
+  match read_line() {
+    None => 0,
+    Some(first) => queries(map(filter(split(first, " "), non_empty), number)),
+  }

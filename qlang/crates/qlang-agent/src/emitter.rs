@@ -47,8 +47,7 @@ impl GraphEmitter {
             vec![tensor_type.clone(), tensor_type.clone()],
             vec![tensor_type.clone()],
         );
-        self.graph
-            .add_edge(a, 0, node, 0, tensor_type.clone());
+        self.graph.add_edge(a, 0, node, 0, tensor_type.clone());
         self.graph.add_edge(b, 0, node, 1, tensor_type);
         node
     }
@@ -60,8 +59,7 @@ impl GraphEmitter {
             vec![tensor_type.clone(), tensor_type.clone()],
             vec![tensor_type.clone()],
         );
-        self.graph
-            .add_edge(a, 0, node, 0, tensor_type.clone());
+        self.graph.add_edge(a, 0, node, 0, tensor_type.clone());
         self.graph.add_edge(b, 0, node, 1, tensor_type);
         node
     }
@@ -108,19 +106,27 @@ impl GraphEmitter {
         );
 
         // Attach IGQK compression bound proof
-        self.graph.nodes.last_mut().unwrap().constraints.push(Constraint {
-            kind: ConstraintKind::DistortionBound {
-                max_distortion: 0.01,
-            },
-            proof: Some(Proof {
-                theorem: TheoremRef::IgqkCompressionBound,
-                status: ProofStatus::Assumed,
-                parameters: vec![
-                    ("n".to_string(), input_type.shape.numel().unwrap_or(0) as f64),
-                    ("beta".to_string(), 1.0),
-                ],
-            }),
-        });
+        self.graph
+            .nodes
+            .last_mut()
+            .unwrap()
+            .constraints
+            .push(Constraint {
+                kind: ConstraintKind::DistortionBound {
+                    max_distortion: 0.01,
+                },
+                proof: Some(Proof {
+                    theorem: TheoremRef::IgqkCompressionBound,
+                    status: ProofStatus::Assumed,
+                    parameters: vec![
+                        (
+                            "n".to_string(),
+                            input_type.shape.numel().unwrap_or(0) as f64,
+                        ),
+                        ("beta".to_string(), 1.0),
+                    ],
+                }),
+            });
 
         self.graph.add_edge(input, 0, node, 0, input_type);
         node

@@ -1,0 +1,1 @@
+type R0 = { a: Int }

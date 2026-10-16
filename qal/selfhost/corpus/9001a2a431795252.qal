@@ -1,0 +1,1 @@
+fn g() -> Bool = match get([], 0) { Some(x) => x <= 1.5, None => false }

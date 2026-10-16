@@ -1,0 +1,1 @@
+fn f(b: Bytes, i: Int) -> Int req i >= 0 ens bytes_at(b, i) >= 0 = 0

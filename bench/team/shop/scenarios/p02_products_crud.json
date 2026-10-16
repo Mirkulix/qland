@@ -1,0 +1,63 @@
+{
+  "name": "p02_products_crud",
+  "description": "Products CRUD and stock filtering",
+  "steps": [
+    {
+      "name": "create a",
+      "request": {"method": "POST", "path": "/products", "json": {"sku": "SKU-A", "name": "Apples", "price_cents": 150, "stock": 20}},
+      "expect": {
+        "status": 201,
+        "headers": {"location": "/products/{{a}}", "content-type": "application/json"},
+        "json": {"id": {"$var": "a"}, "sku": "SKU-A", "name": "Apples", "price_cents": 150, "stock": 20}
+      },
+      "capture": {"a": "/id"}
+    },
+    {
+      "name": "get a",
+      "request": {"method": "GET", "path": "/products/{{a}}"},
+      "expect": {
+        "status": 200,
+        "json": {"id": {"$var": "a"}, "sku": "SKU-A", "name": "Apples", "price_cents": 150, "stock": 20}
+      }
+    },
+    {
+      "name": "patch a",
+      "request": {"method": "PATCH", "path": "/products/{{a}}", "json": {"price_cents": 180, "stock": 25}},
+      "expect": {
+        "status": 200,
+        "json": {"id": {"$var": "a"}, "sku": "SKU-A", "name": "Apples", "price_cents": 180, "stock": 25}
+      }
+    },
+    {
+      "name": "create b",
+      "request": {"method": "POST", "path": "/products", "json": {"sku": "SKU-B", "name": "Bananas", "price_cents": 90, "stock": 5}},
+      "expect": {
+        "status": 201,
+        "headers": {"location": "/products/{{b}}", "content-type": "application/json"},
+        "json": {"id": {"$var": "b"}, "sku": "SKU-B", "name": "Bananas", "price_cents": 90, "stock": 5}
+      },
+      "capture": {"b": "/id"}
+    },
+    {
+      "name": "list all",
+      "request": {"method": "GET", "path": "/products"},
+      "expect": {
+        "status": 200,
+        "json": [
+          {"id": {"$var": "a"}, "sku": "SKU-A", "name": "Apples", "price_cents": 180, "stock": 25},
+          {"id": {"$var": "b"}, "sku": "SKU-B", "name": "Bananas", "price_cents": 90, "stock": 5}
+        ]
+      }
+    },
+    {
+      "name": "list below 10",
+      "request": {"method": "GET", "path": "/products", "query": "below=10"},
+      "expect": {
+        "status": 200,
+        "json": [
+          {"id": {"$var": "b"}, "sku": "SKU-B", "name": "Bananas", "price_cents": 90, "stock": 5}
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,1 @@
+test t = bytes_len("s") == 1

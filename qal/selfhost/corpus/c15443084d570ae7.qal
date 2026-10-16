@@ -1,0 +1,2 @@
+fn same[T](a: T, b: T) -> Bool = a == b
+fn f(g: fn() -> Int) -> Bool = same(g, g)

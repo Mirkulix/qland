@@ -1,0 +1,3 @@
+type P = { z: Int, a: Str }
+fn mk(s: Str) -> P = P { z: 1, a: s }
+fn chk(z: Int, a: Int) -> Int req z < a = 0

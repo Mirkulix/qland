@@ -1,0 +1,18 @@
+[package]
+name = "qal-run"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+qal-core = { workspace = true }
+qal-compiler = { workspace = true }
+rusqlite = { workspace = true, features = ["hooks", "limits"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+ureq = { workspace = true }
+url = { workspace = true }
+wasmtime = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+rustix = { workspace = true }

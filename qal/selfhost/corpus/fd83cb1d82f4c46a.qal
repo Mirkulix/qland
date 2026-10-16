@@ -1,0 +1,1 @@
+fn z(a: Int) -> Int ens r == a = shl(a, 0)

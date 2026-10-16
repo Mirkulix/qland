@@ -1,0 +1,4 @@
+fn base() -> Int = 1
+fn user() -> Int = base() + 1
+test t = user() == 2
+fn other() -> Int = 7

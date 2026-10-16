@@ -1,0 +1,1 @@
+fn use_it() -> Int = std.a.g(std.a.One) + std.a.unbox(std.a.Box { item: 1 })

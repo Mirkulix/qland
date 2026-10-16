@@ -33,17 +33,25 @@ pub fn compute_stats(graph: &Graph) -> GraphStats {
         let op_name = format!("{}", node.op);
         *ops_count.entry(op_name).or_default() += 1;
 
-        if node.op.is_quantum() { quantum += 1; }
-        if matches!(node.op, Op::ToTernary | Op::ToLowRank { .. } | Op::ToSparse { .. }) {
+        if node.op.is_quantum() {
+            quantum += 1;
+        }
+        if matches!(
+            node.op,
+            Op::ToTernary | Op::ToLowRank { .. } | Op::ToSparse { .. }
+        ) {
             compression += 1;
         }
-        if matches!(node.op, Op::Attention { .. } | Op::LayerNorm { .. } | Op::Gelu) {
+        if matches!(
+            node.op,
+            Op::Attention { .. } | Op::LayerNorm { .. } | Op::Gelu
+        ) {
             transformer += 1;
         }
     }
 
     let mut ops_histogram: Vec<(String, usize)> = ops_count.into_iter().collect();
-    ops_histogram.sort_by(|a, b| b.1.cmp(&a.1));
+    ops_histogram.sort_by_key(|b| std::cmp::Reverse(b.1));
 
     // Compute depth (longest path from any input to any output)
     let max_depth = compute_depth(graph);
@@ -52,14 +60,18 @@ pub fn compute_stats(graph: &Graph) -> GraphStats {
     let max_width = compute_max_width(graph);
 
     // Estimate parameters (sum of all weight tensor sizes)
-    let estimated_params: u64 = graph.nodes.iter()
+    let estimated_params: u64 = graph
+        .nodes
+        .iter()
         .filter(|n| matches!(n.op, Op::Input { .. }))
         .filter_map(|n| n.output_types.first())
         .filter_map(|t| t.shape.numel())
         .map(|n| n as u64)
         .sum();
 
-    let estimated_memory: u64 = graph.edges.iter()
+    let estimated_memory: u64 = graph
+        .edges
+        .iter()
         .filter_map(|e| e.tensor_type.size_bytes())
         .map(|b| b as u64)
         .sum();
@@ -94,7 +106,8 @@ fn compute_depth(graph: &Graph) -> usize {
         let d = if incoming.is_empty() {
             0
         } else {
-            incoming.iter()
+            incoming
+                .iter()
                 .map(|e| depth.get(&e.from_node).copied().unwrap_or(0) + 1)
                 .max()
                 .unwrap_or(0)
@@ -117,7 +130,8 @@ fn compute_max_width(graph: &Graph) -> usize {
         let l = if incoming.is_empty() {
             0
         } else {
-            incoming.iter()
+            incoming
+                .iter()
                 .map(|e| level.get(&e.from_node).copied().unwrap_or(0) + 1)
                 .max()
                 .unwrap_or(0)
@@ -137,13 +151,22 @@ fn compute_max_width(graph: &Graph) -> usize {
 impl std::fmt::Display for GraphStats {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(f, "Graph Statistics: {}", self.name)?;
-        writeln!(f, "  Nodes:        {} ({} compute, {} I/O)",
-            self.total_nodes, self.compute_nodes, self.input_nodes + self.output_nodes)?;
+        writeln!(
+            f,
+            "  Nodes:        {} ({} compute, {} I/O)",
+            self.total_nodes,
+            self.compute_nodes,
+            self.input_nodes + self.output_nodes
+        )?;
         writeln!(f, "  Edges:        {}", self.total_edges)?;
         writeln!(f, "  Depth:        {} levels", self.max_depth)?;
         writeln!(f, "  Width:        {} (max parallel)", self.max_width)?;
         writeln!(f, "  Params:       ~{}", self.estimated_params)?;
-        writeln!(f, "  Memory:       ~{:.1} KB", self.estimated_memory_bytes as f64 / 1024.0)?;
+        writeln!(
+            f,
+            "  Memory:       ~{:.1} KB",
+            self.estimated_memory_bytes as f64 / 1024.0
+        )?;
         if self.quantum_nodes > 0 {
             writeln!(f, "  Quantum ops:  {}", self.quantum_nodes)?;
         }
@@ -171,10 +194,26 @@ mod tests {
     #[test]
     fn stats_simple_graph() {
         let mut g = Graph::new("stats_test");
-        let a = g.add_node(Op::Input { name: "a".into() }, vec![], vec![TensorType::f32_vector(100)]);
-        let b = g.add_node(Op::Input { name: "b".into() }, vec![], vec![TensorType::f32_vector(100)]);
-        let add = g.add_node(Op::Add, vec![TensorType::f32_vector(100); 2], vec![TensorType::f32_vector(100)]);
-        let out = g.add_node(Op::Output { name: "y".into() }, vec![TensorType::f32_vector(100)], vec![]);
+        let a = g.add_node(
+            Op::Input { name: "a".into() },
+            vec![],
+            vec![TensorType::f32_vector(100)],
+        );
+        let b = g.add_node(
+            Op::Input { name: "b".into() },
+            vec![],
+            vec![TensorType::f32_vector(100)],
+        );
+        let add = g.add_node(
+            Op::Add,
+            vec![TensorType::f32_vector(100); 2],
+            vec![TensorType::f32_vector(100)],
+        );
+        let out = g.add_node(
+            Op::Output { name: "y".into() },
+            vec![TensorType::f32_vector(100)],
+            vec![],
+        );
         g.add_edge(a, 0, add, 0, TensorType::f32_vector(100));
         g.add_edge(b, 0, add, 1, TensorType::f32_vector(100));
         g.add_edge(add, 0, out, 0, TensorType::f32_vector(100));

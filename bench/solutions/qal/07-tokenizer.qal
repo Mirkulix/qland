@@ -1,0 +1,37 @@
+# Tokenizer for arithmetic expressions: NUM, ID, OP, LP, RP or the first invalid character.
+
+fn is_digit(c: Str) -> Bool = c >= "0" && c <= "9"
+
+fn is_letter(c: Str) -> Bool = (c >= "a" && c <= "z") || (c >= "A" && c <= "Z") || c == "_"
+
+fn is_word(c: Str) -> Bool = is_letter(c) || is_digit(c)
+
+fn at(cs: List[Str], i: Int) -> Str = match get(cs, i) { Some(c) => c, None => "" }
+
+# End of the run starting at i whose characters satisfy `ok`.
+fn run_end(cs: List[Str], i: Int, ok: fn(Str) -> Bool) -> Int = if i < len(cs) && ok(at(cs, i)) then run_end(cs, i + 1, ok) else i
+
+fn text(cs: List[Str], from: Int, to: Int) -> Str = join(slice_list(cs, from, to), "")
+
+fn slice_list(cs: List[Str], from: Int, to: Int) -> List[Str] = if from >= to then [] else concat([at(cs, from)], slice_list(cs, from + 1, to))
+
+fn tokens(cs: List[Str], i: Int, acc: List[Str]) -> Str =
+  match get(cs, i) {
+    None => join(acc, " "),
+    Some(c) =>
+      if c == " " || c == "\t" then tokens(cs, i + 1, acc)
+      else if is_digit(c) then let e = run_end(cs, i, is_digit) in tokens(cs, e, push(acc, "NUM(" ++ text(cs, i, e) ++ ")"))
+      else if is_letter(c) then let e = run_end(cs, i, is_word) in tokens(cs, e, push(acc, "ID(" ++ text(cs, i, e) ++ ")"))
+      else if c == "+" || c == "-" || c == "*" || c == "/" || c == "%" then tokens(cs, i + 1, push(acc, "OP(" ++ c ++ ")"))
+      else if c == "(" then tokens(cs, i + 1, push(acc, "LP"))
+      else if c == ")" then tokens(cs, i + 1, push(acc, "RP"))
+      else "error at " ++ from_int(i + 1) ++ ": '" ++ c ++ "'",
+  }
+
+fn tokenize(line: Str) -> Str = tokens(chars(line), 0, [])
+
+test example = tokenize("x1 + 42*(y - 7)") == "ID(x1) OP(+) NUM(42) OP(*) LP ID(y) OP(-) NUM(7) RP" && tokenize("3 $ 4") == "error at 3: '$'"
+
+fn each_line() -> Int !io = match read_line() { None => 0, Some(l) => { print(tokenize(l)); each_line() } }
+
+fn main(args: List[Str]) -> Int !io = each_line()

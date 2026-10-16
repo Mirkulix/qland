@@ -151,12 +151,17 @@ impl DiagnosticCollector {
 
     /// True if any error-severity diagnostic was recorded.
     pub fn has_errors(&self) -> bool {
-        self.diagnostics.iter().any(|d| d.severity == Severity::Error)
+        self.diagnostics
+            .iter()
+            .any(|d| d.severity == Severity::Error)
     }
 
     /// Number of diagnostics at a given severity.
     pub fn count(&self, severity: Severity) -> usize {
-        self.diagnostics.iter().filter(|d| d.severity == severity).count()
+        self.diagnostics
+            .iter()
+            .filter(|d| d.severity == severity)
+            .count()
     }
 
     /// Total number of diagnostics.
@@ -227,16 +232,14 @@ fn check_edge_validity(graph: &Graph, collector: &mut DiagnosticCollector) {
 
         // Target node exists?
         let to_node = graph.node(edge.to_node);
-        if to_node.is_none() {
-            if !ids.contains(&edge.to_node) {
-                collector.push(
-                    RuntimeDiagnostic::error(format!(
-                        "Edge {}: target node {} does not exist",
-                        edge.id, edge.to_node
-                    ))
-                    .with_suggestion("Remove the edge or add the missing target node."),
-                );
-            }
+        if to_node.is_none() && !ids.contains(&edge.to_node) {
+            collector.push(
+                RuntimeDiagnostic::error(format!(
+                    "Edge {}: target node {} does not exist",
+                    edge.id, edge.to_node
+                ))
+                .with_suggestion("Remove the edge or add the missing target node."),
+            );
         }
 
         // Source port in range?
@@ -249,9 +252,7 @@ fn check_edge_validity(graph: &Graph, collector: &mut DiagnosticCollector) {
                         edge.id, edge.from_port, src.id, src.op
                     ))
                     .with_node(src.id)
-                    .with_suggestion(format!(
-                        "Valid output ports for {} are 0..{n_out}.", src.op
-                    )),
+                    .with_suggestion(format!("Valid output ports for {} are 0..{n_out}.", src.op)),
                 );
             }
         }
@@ -266,9 +267,7 @@ fn check_edge_validity(graph: &Graph, collector: &mut DiagnosticCollector) {
                         edge.id, edge.to_port, tgt.id, tgt.op
                     ))
                     .with_node(tgt.id)
-                    .with_suggestion(format!(
-                        "Valid input ports for {} are 0..{n_in}.", tgt.op
-                    )),
+                    .with_suggestion(format!("Valid input ports for {} are 0..{n_in}.", tgt.op)),
                 );
             }
         }
@@ -294,10 +293,16 @@ fn check_shape_compatibility(graph: &Graph, collector: &mut DiagnosticCollector)
                     RuntimeDiagnostic::error(format!(
                         "Edge {}: shape mismatch at source — node {} output port {} has shape {}, \
                          but edge declares {}",
-                        edge.id, from_node.id, edge.from_port, src_type.shape, edge.tensor_type.shape
+                        edge.id,
+                        from_node.id,
+                        edge.from_port,
+                        src_type.shape,
+                        edge.tensor_type.shape
                     ))
                     .with_node(from_node.id)
-                    .with_suggestion("Update the edge tensor type to match the source node output."),
+                    .with_suggestion(
+                        "Update the edge tensor type to match the source node output.",
+                    ),
                 );
             }
         }
@@ -335,8 +340,14 @@ fn check_unused_nodes(graph: &Graph, collector: &mut DiagnosticCollector) {
         backward.entry(node.id).or_default();
     }
     for edge in &graph.edges {
-        forward.entry(edge.from_node).or_default().push(edge.to_node);
-        backward.entry(edge.to_node).or_default().push(edge.from_node);
+        forward
+            .entry(edge.from_node)
+            .or_default()
+            .push(edge.to_node);
+        backward
+            .entry(edge.to_node)
+            .or_default()
+            .push(edge.from_node);
     }
 
     // Forward reachable from inputs.
@@ -383,21 +394,17 @@ fn check_unused_nodes(graph: &Graph, collector: &mut DiagnosticCollector) {
             let severity = if matches!(node.op, Op::Input { .. } | Op::Output { .. }) {
                 Severity::Warning
             } else {
-                Severity::Warning
+                Severity::Info
             };
-            collector.push(
-                RuntimeDiagnostic {
-                    severity,
-                    message: format!(
-                        "Node {} ({}) is unused — not on any path from input to output",
-                        node.id, node.op
-                    ),
-                    node_id: Some(node.id),
-                    suggestion: Some(
-                        "Remove the node or connect it to the rest of the graph.".into(),
-                    ),
-                },
-            );
+            collector.push(RuntimeDiagnostic {
+                severity,
+                message: format!(
+                    "Node {} ({}) is unused — not on any path from input to output",
+                    node.id, node.op
+                ),
+                node_id: Some(node.id),
+                suggestion: Some("Remove the node or connect it to the rest of the graph.".into()),
+            });
         }
     }
 }
@@ -422,9 +429,8 @@ fn check_type_mismatches(graph: &Graph, collector: &mut DiagnosticCollector) {
         )
     };
 
-    let is_float = |dtype: &Dtype| -> bool {
-        matches!(dtype, Dtype::F16 | Dtype::F32 | Dtype::F64)
-    };
+    let is_float =
+        |dtype: &Dtype| -> bool { matches!(dtype, Dtype::F16 | Dtype::F32 | Dtype::F64) };
 
     for edge in &graph.edges {
         let to_node = match graph.node(edge.to_node) {
@@ -520,9 +526,18 @@ pub fn format_diagnostics(diagnostics: &[RuntimeDiagnostic]) -> String {
 
     let mut out = String::new();
 
-    let n_err = diagnostics.iter().filter(|d| d.severity == Severity::Error).count();
-    let n_warn = diagnostics.iter().filter(|d| d.severity == Severity::Warning).count();
-    let n_info = diagnostics.iter().filter(|d| d.severity == Severity::Info).count();
+    let n_err = diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .count();
+    let n_warn = diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Warning)
+        .count();
+    let n_info = diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Info)
+        .count();
 
     out.push_str(&format!(
         "Found {} diagnostic(s): {} error(s), {} warning(s), {} info(s)\n\n",
@@ -617,16 +632,15 @@ mod tests {
     #[test]
     fn detects_invalid_source_node() {
         let mut g = Graph::new("test");
-        let out = g.add_node(
-            Op::Output { name: "y".into() },
-            vec![f32_vec(4)],
-            vec![],
-        );
+        let out = g.add_node(Op::Output { name: "y".into() }, vec![f32_vec(4)], vec![]);
         // Edge from non-existent node 99 to the output.
         g.add_edge(99, 0, out, 0, f32_vec(4));
 
         let diags = validate_graph_deep(&g);
-        let errors: Vec<_> = diags.iter().filter(|d| d.severity == Severity::Error).collect();
+        let errors: Vec<_> = diags
+            .iter()
+            .filter(|d| d.severity == Severity::Error)
+            .collect();
         assert!(
             errors.iter().any(|d| d.message.contains("source node 99")),
             "Expected error about missing source node, got: {errors:?}"
@@ -636,16 +650,15 @@ mod tests {
     #[test]
     fn detects_invalid_target_node() {
         let mut g = Graph::new("test");
-        let inp = g.add_node(
-            Op::Input { name: "x".into() },
-            vec![],
-            vec![f32_vec(4)],
-        );
+        let inp = g.add_node(Op::Input { name: "x".into() }, vec![], vec![f32_vec(4)]);
         // Edge to non-existent node 99.
         g.add_edge(inp, 0, 99, 0, f32_vec(4));
 
         let diags = validate_graph_deep(&g);
-        let errors: Vec<_> = diags.iter().filter(|d| d.severity == Severity::Error).collect();
+        let errors: Vec<_> = diags
+            .iter()
+            .filter(|d| d.severity == Severity::Error)
+            .collect();
         assert!(
             errors.iter().any(|d| d.message.contains("target node 99")),
             "Expected error about missing target node, got: {errors:?}"
@@ -655,17 +668,16 @@ mod tests {
     #[test]
     fn detects_invalid_port() {
         let mut g = Graph::new("test");
-        let inp = g.add_node(
-            Op::Input { name: "x".into() },
-            vec![],
-            vec![f32_vec(4)],
-        );
+        let inp = g.add_node(Op::Input { name: "x".into() }, vec![], vec![f32_vec(4)]);
         let relu = g.add_node(Op::Relu, vec![f32_vec(4)], vec![f32_vec(4)]);
         // Relu has 1 input (port 0). Port 5 is invalid.
         g.add_edge(inp, 0, relu, 5, f32_vec(4));
 
         let diags = validate_graph_deep(&g);
-        let errors: Vec<_> = diags.iter().filter(|d| d.severity == Severity::Error).collect();
+        let errors: Vec<_> = diags
+            .iter()
+            .filter(|d| d.severity == Severity::Error)
+            .collect();
         assert!(
             errors.iter().any(|d| d.message.contains("target port 5")),
             "Expected error about invalid port, got: {errors:?}"
@@ -677,23 +689,18 @@ mod tests {
     #[test]
     fn detects_shape_mismatch_on_edge() {
         let mut g = Graph::new("test");
-        let inp = g.add_node(
-            Op::Input { name: "x".into() },
-            vec![],
-            vec![f32_vec(4)],
-        );
+        let inp = g.add_node(Op::Input { name: "x".into() }, vec![], vec![f32_vec(4)]);
         let relu = g.add_node(Op::Relu, vec![f32_vec(8)], vec![f32_vec(8)]);
-        let out = g.add_node(
-            Op::Output { name: "y".into() },
-            vec![f32_vec(8)],
-            vec![],
-        );
+        let out = g.add_node(Op::Output { name: "y".into() }, vec![f32_vec(8)], vec![]);
         // Edge carries shape [4] but relu expects [8].
         g.add_edge(inp, 0, relu, 0, f32_vec(4));
         g.add_edge(relu, 0, out, 0, f32_vec(8));
 
         let diags = validate_graph_deep(&g);
-        let errors: Vec<_> = diags.iter().filter(|d| d.severity == Severity::Error).collect();
+        let errors: Vec<_> = diags
+            .iter()
+            .filter(|d| d.severity == Severity::Error)
+            .collect();
         assert!(
             errors.iter().any(|d| d.message.contains("shape mismatch")),
             "Expected shape mismatch error, got: {errors:?}"
@@ -705,43 +712,31 @@ mod tests {
     #[test]
     fn detects_unused_node() {
         let mut g = Graph::new("test");
-        let inp = g.add_node(
-            Op::Input { name: "x".into() },
-            vec![],
-            vec![f32_vec(4)],
-        );
-        let out = g.add_node(
-            Op::Output { name: "y".into() },
-            vec![f32_vec(4)],
-            vec![],
-        );
+        let inp = g.add_node(Op::Input { name: "x".into() }, vec![], vec![f32_vec(4)]);
+        let out = g.add_node(Op::Output { name: "y".into() }, vec![f32_vec(4)], vec![]);
         // Add an orphan node not connected to anything.
         let _orphan = g.add_node(Op::Relu, vec![f32_vec(4)], vec![f32_vec(4)]);
 
         g.add_edge(inp, 0, out, 0, f32_vec(4));
 
         let diags = validate_graph_deep(&g);
-        let warnings: Vec<_> = diags.iter().filter(|d| d.severity == Severity::Warning).collect();
+        // Orphan compute nodes are reported as Info; only disconnected inputs/outputs warn.
+        let infos: Vec<_> = diags
+            .iter()
+            .filter(|d| d.severity == Severity::Info)
+            .collect();
         assert!(
-            warnings.iter().any(|d| d.message.contains("unused")),
-            "Expected warning about unused node, got: {warnings:?}"
+            infos.iter().any(|d| d.message.contains("unused")),
+            "Expected info about unused node, got: {infos:?}"
         );
     }
 
     #[test]
     fn no_unused_warning_for_connected_graph() {
         let mut g = Graph::new("test");
-        let inp = g.add_node(
-            Op::Input { name: "x".into() },
-            vec![],
-            vec![f32_vec(4)],
-        );
+        let inp = g.add_node(Op::Input { name: "x".into() }, vec![], vec![f32_vec(4)]);
         let relu = g.add_node(Op::Relu, vec![f32_vec(4)], vec![f32_vec(4)]);
-        let out = g.add_node(
-            Op::Output { name: "y".into() },
-            vec![f32_vec(4)],
-            vec![],
-        );
+        let out = g.add_node(Op::Output { name: "y".into() }, vec![f32_vec(4)], vec![]);
         g.add_edge(inp, 0, relu, 0, f32_vec(4));
         g.add_edge(relu, 0, out, 0, f32_vec(4));
 
@@ -761,11 +756,7 @@ mod tests {
     #[test]
     fn detects_ternary_input_to_matmul() {
         let mut g = Graph::new("test");
-        let inp = g.add_node(
-            Op::Input { name: "x".into() },
-            vec![],
-            vec![ternary_vec(4)],
-        );
+        let inp = g.add_node(Op::Input { name: "x".into() }, vec![], vec![ternary_vec(4)]);
         let matmul = g.add_node(
             Op::MatMul,
             vec![f32_mat(4, 4), f32_mat(4, 4)],
@@ -794,26 +785,14 @@ mod tests {
     #[test]
     fn no_type_mismatch_for_float_to_matmul() {
         let mut g = Graph::new("test");
-        let a = g.add_node(
-            Op::Input { name: "a".into() },
-            vec![],
-            vec![f32_mat(4, 4)],
-        );
-        let b = g.add_node(
-            Op::Input { name: "b".into() },
-            vec![],
-            vec![f32_mat(4, 4)],
-        );
+        let a = g.add_node(Op::Input { name: "a".into() }, vec![], vec![f32_mat(4, 4)]);
+        let b = g.add_node(Op::Input { name: "b".into() }, vec![], vec![f32_mat(4, 4)]);
         let mm = g.add_node(
             Op::MatMul,
             vec![f32_mat(4, 4), f32_mat(4, 4)],
             vec![f32_mat(4, 4)],
         );
-        let out = g.add_node(
-            Op::Output { name: "y".into() },
-            vec![f32_mat(4, 4)],
-            vec![],
-        );
+        let out = g.add_node(Op::Output { name: "y".into() }, vec![f32_mat(4, 4)], vec![]);
         g.add_edge(a, 0, mm, 0, f32_mat(4, 4));
         g.add_edge(b, 0, mm, 1, f32_mat(4, 4));
         g.add_edge(mm, 0, out, 0, f32_mat(4, 4));
@@ -835,11 +814,7 @@ mod tests {
     fn detects_zero_dimension() {
         let mut g = Graph::new("test");
         let zero_type = TensorType::new(Dtype::F32, Shape::vector(0));
-        g.add_node(
-            Op::Input { name: "x".into() },
-            vec![],
-            vec![zero_type],
-        );
+        g.add_node(Op::Input { name: "x".into() }, vec![], vec![zero_type]);
 
         let diags = validate_graph_deep(&g);
         let errors: Vec<_> = diags
@@ -891,12 +866,17 @@ mod tests {
     fn format_contains_severity_labels() {
         let diags = vec![
             RuntimeDiagnostic::error("bad").with_node(0),
-            RuntimeDiagnostic::warning("hmm").with_node(1).with_suggestion("try this"),
+            RuntimeDiagnostic::warning("hmm")
+                .with_node(1)
+                .with_suggestion("try this"),
             RuntimeDiagnostic::info("fyi"),
         ];
         let out = format_diagnostics(&diags);
         assert!(out.contains("ERROR"), "output should contain ERROR label");
-        assert!(out.contains("WARNING"), "output should contain WARNING label");
+        assert!(
+            out.contains("WARNING"),
+            "output should contain WARNING label"
+        );
         assert!(out.contains("INFO"), "output should contain INFO label");
         assert!(out.contains("3 diagnostic(s)"));
         assert!(out.contains("1 error(s)"));
@@ -908,7 +888,10 @@ mod tests {
         let diags = vec![RuntimeDiagnostic::error("oops")];
         let out = format_diagnostics(&diags);
         // Check for red ANSI escape (error color).
-        assert!(out.contains("\x1b[1;31m"), "expected red ANSI code for error");
+        assert!(
+            out.contains("\x1b[1;31m"),
+            "expected red ANSI code for error"
+        );
         assert!(out.contains("\x1b[0m"), "expected ANSI reset code");
     }
 
@@ -931,22 +914,20 @@ mod tests {
     #[test]
     fn valid_graph_has_no_errors() {
         let mut g = Graph::new("good");
-        let inp = g.add_node(
-            Op::Input { name: "x".into() },
-            vec![],
-            vec![f32_vec(4)],
-        );
+        let inp = g.add_node(Op::Input { name: "x".into() }, vec![], vec![f32_vec(4)]);
         let relu = g.add_node(Op::Relu, vec![f32_vec(4)], vec![f32_vec(4)]);
-        let out = g.add_node(
-            Op::Output { name: "y".into() },
-            vec![f32_vec(4)],
-            vec![],
-        );
+        let out = g.add_node(Op::Output { name: "y".into() }, vec![f32_vec(4)], vec![]);
         g.add_edge(inp, 0, relu, 0, f32_vec(4));
         g.add_edge(relu, 0, out, 0, f32_vec(4));
 
         let diags = validate_graph_deep(&g);
-        let errors: Vec<_> = diags.iter().filter(|d| d.severity == Severity::Error).collect();
-        assert!(errors.is_empty(), "Valid graph should have no errors, got: {errors:?}");
+        let errors: Vec<_> = diags
+            .iter()
+            .filter(|d| d.severity == Severity::Error)
+            .collect();
+        assert!(
+            errors.is_empty(),
+            "Valid graph should have no errors, got: {errors:?}"
+        );
     }
 }

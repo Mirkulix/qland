@@ -1,0 +1,18 @@
+# Test fixture for tests/todo_http.rs (hand-written test code, not the standard library and not
+# part of the todo project): a handler with endpoints that misbehave on purpose, in front of the
+# todo backend's `handle`. Defined into a temporary copy of the todo project only.
+
+fn iso_spin(n: Int) -> Int = iso_spin(n + 1)
+
+fn iso_grow(s: Str, k: Int) -> Str = if k == 0 then s else iso_grow(s ++ s, k - 1)
+
+fn iso_count(i: Int, n: Int) -> Int = if i >= n then i else iso_count(i + 1, n)
+
+fn iso_text(body: Str) -> HttpResponse = HttpResponse { status: 200, headers: [], body: body }
+
+fn isolation(rq: HttpRequest) -> HttpResponse !db !time =
+  if rq.path == "/iso/trap" then iso_text(from_int(9223372036854775807 + len(rq.path)))
+  else if rq.path == "/iso/spin" then iso_text(from_int(iso_spin(0)))
+  else if rq.path == "/iso/big" then iso_text(from_int(len(iso_grow("0123456789abcde", 21))))
+  else if rq.path == "/iso/slow" then iso_text(from_int(iso_count(0, match to_int(rq.query) { Some(n) => n, None => 1000 })))
+  else handle(rq)

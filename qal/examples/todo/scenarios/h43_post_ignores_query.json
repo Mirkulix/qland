@@ -1,0 +1,31 @@
+{
+ "name": "h43_post_ignores_query",
+ "description": "POST ignores the query string",
+ "steps": [
+  {
+   "name": "post with ?done=true",
+   "request": {
+    "method": "POST",
+    "path": "/todos",
+    "query": "done=true",
+    "json": {
+     "title": "q"
+    }
+   },
+   "expect": {
+    "status": 201,
+    "json": {
+     "id": 1,
+     "title": "q",
+     "done": false,
+     "created_at": {
+      "$type": "int"
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  }
+ ]
+}

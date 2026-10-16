@@ -1,0 +1,67 @@
+# Test fixture for qal-serve (hand-written test code, not the standard library): a small todo
+# service plus endpoints that misbehave on purpose.
+
+fn setup() -> Result[Unit, Str] !db = match db_exec("CREATE TABLE IF NOT EXISTS todos (id INTEGER PRIMARY KEY, title TEXT NOT NULL)", []) {
+  Ok(_) => Ok(()),
+  Err(_) => Err("cannot create the table")
+}
+
+fn text(status: Int, body: Str) -> HttpResponse = HttpResponse { status: status, headers: [], body: body }
+
+fn json(status: Int, body: Str) -> HttpResponse = HttpResponse { status: status, headers: [HttpHeader { name: "content-type", value: "application/json" }], body: body }
+
+fn todo_json(id: Int, title: Str) -> Str = "{\"id\":" ++ from_int(id) ++ ",\"title\":\"" ++ title ++ "\"}"
+
+fn row_json(row: List[SqlValue]) -> Str = match get(row, 0) {
+  Some(SqlInt(id)) => match get(row, 1) { Some(SqlText(t)) => todo_json(id, t), _ => "null" },
+  _ => "null"
+}
+
+fn add_row(acc: Str, row: List[SqlValue]) -> Str = if acc == "" then row_json(row) else acc ++ "," ++ row_json(row)
+
+fn create(title: Str) -> HttpResponse !db = if title == "" then text(400, "empty title") else match db_query("INSERT INTO todos (title) VALUES (?) RETURNING id, title", [SqlText(title)]) {
+  Ok(r) => match get(r.rows, 0) {
+    Some(row) => match get(row, 0) {
+      Some(SqlInt(id)) => HttpResponse { status: 201, headers: [HttpHeader { name: "content-type", value: "application/json" }, HttpHeader { name: "location", value: "/todos/" ++ from_int(id) }], body: row_json(row) },
+      _ => text(500, "no id")
+    },
+    None => text(500, "no row")
+  },
+  Err(_) => text(500, "insert failed")
+}
+
+fn list() -> HttpResponse !db = match db_query("SELECT id, title FROM todos ORDER BY id", []) {
+  Ok(r) => json(200, "[" ++ fold(r.rows, "", add_row) ++ "]"),
+  Err(_) => text(500, "query failed")
+}
+
+fn one(method: Str, id: Str) -> HttpResponse !db = match to_int(id) {
+  None => text(400, "bad id"),
+  Some(n) => if method == "DELETE" then (match db_exec("DELETE FROM todos WHERE id = ?", [SqlInt(n)]) { Ok(0) => text(404, "no such todo"), Ok(_) => text(204, ""), Err(_) => text(500, "delete failed") })
+    else match db_query("SELECT id, title FROM todos WHERE id = ?", [SqlInt(n)]) {
+      Ok(r) => match get(r.rows, 0) { Some(row) => json(200, row_json(row)), None => text(404, "no such todo") },
+      Err(_) => text(500, "query failed")
+    }
+}
+
+fn grow(s: Str, k: Int) -> Str = if k == 0 then s else grow(s ++ s, k - 1)
+
+fn spin(n: Int) -> Int = spin(n + 1)
+
+fn count(i: Int, n: Int) -> Int = if i >= n then i else count(i + 1, n)
+
+fn hname(h: HttpHeader) -> Str = h.name
+
+fn handle(rq: HttpRequest) -> HttpResponse !db !io = let p = rq.path in
+  if p == "/health" then text(200, "ok")
+  else if p == "/todos" then (if rq.method == "POST" then create(rq.body) else if rq.method == "GET" then list() else text(405, "method not allowed"))
+  else if starts_with(p, "/todos/") then one(rq.method, slice(p, 7, len(p)))
+  else if p == "/echo" then text(200, rq.method ++ " " ++ p ++ "?" ++ rq.query ++ " " ++ join(map(rq.headers, hname), ",") ++ " " ++ rq.body)
+  else if p == "/trap" then text(200, from_int(9223372036854775807 + len(p)))
+  else if p == "/spin" then text(200, from_int(spin(0)))
+  else if p == "/big" then (if grow("0123456789abcdef", 20) == "" then text(500, "") else text(200, "16777216"))
+  else if p == "/bad" then HttpResponse { status: 200, headers: [HttpHeader { name: "x-split", value: "a\r\nset-cookie: evil" }], body: "" }
+  else if p == "/print" then { print("hello from the handler"); text(200, "printed") }
+  else if p == "/slow" then text(200, from_int(count(0, match to_int(rq.query) { Some(n) => n, None => 1000 })))
+  else if p == "/fail" then (match db_exec("INSERT INTO todos (title) VALUES (?)", [SqlText("rolled back")]) { Ok(_) => text(422, "rejected after writing"), Err(_) => text(500, "insert failed") })
+  else text(404, "not found")

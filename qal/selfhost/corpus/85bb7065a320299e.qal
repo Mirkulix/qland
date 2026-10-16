@@ -1,0 +1,2 @@
+fn handle(rq: HttpRequest) -> HttpResponse = HttpResponse { status: 200, headers: [HttpHeader { name: "x", value: rq.path }], body: "" }
+fn cell(v: SqlValue) -> Int = match v { SqlInt(n) => n, _ => 0 }

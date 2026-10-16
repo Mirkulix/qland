@@ -1,0 +1,1 @@
+fn m(b: Bytes) -> Int ens bytes_slice(b, 0, 1) == b || true = 0

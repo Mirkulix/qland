@@ -1,0 +1,7 @@
+type Err = Empty | NotNumber(Str) | Negative(Int)
+fn parse_age(s: Str) -> Result[Int, Err]
+ens match r { Ok(n) => n >= 0, _ => true }
+= if len(trim(s)) == 0 then Err(Empty)
+else match to_int(trim(s)) { None => Err(NotNumber(s)), Some(n) if n < 0 => Err(Negative(n)), Some(n) => Ok(n) }
+test parse_age_ok = parse_age(" 42 ") == Ok(42)
+test parse_age_neg = parse_age("-1") == Err(Negative(-1))

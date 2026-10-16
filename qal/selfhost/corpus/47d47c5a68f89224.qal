@@ -1,0 +1,2 @@
+fn std.zz.int(n: Int) -> std.zz.Json
+= std.zz.Int(n)

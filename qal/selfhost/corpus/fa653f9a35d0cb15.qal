@@ -1,0 +1,2 @@
+fn say() -> Unit !io = ()
+test t = say() == ()

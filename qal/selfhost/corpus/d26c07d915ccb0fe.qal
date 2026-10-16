@@ -1,0 +1,1 @@
+test t = match (P { x: 1 }) { P { x: 1, y } => y, P { x: n } if n < -1 => -1, _ => match y { -3 => 1, () => 2 } }

@@ -1,0 +1,1 @@
+fn put() -> Int !db = match db_exec("CREATE TEMP TABLE IF NOT EXISTS leak AS SELECT 'secret' AS s", []) { Ok(_) => 1, Err(DbSql(_)) => 0, Err(_) => 2 }

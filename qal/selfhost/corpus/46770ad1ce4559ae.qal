@@ -1,0 +1,1 @@
+fn dec(x: Int) -> Int ens r >= 0 = x - 1

@@ -1,0 +1,2 @@
+fn f[T](x: T) -> Int = g(Some(x))
+fn g[U](y: U) -> Int = f(y)

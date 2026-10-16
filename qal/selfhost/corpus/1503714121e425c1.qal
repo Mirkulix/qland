@@ -1,0 +1,2 @@
+fn main(args: List[Str]) -> Int !io = loop(0)
+fn loop(i: Int) -> Int !io = if i == 1000 then 7 else { print("0123456789"); loop(i + 1) }

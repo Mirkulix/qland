@@ -1,0 +1,83 @@
+{
+ "name": "h22_title_escapes",
+ "description": "JSON escapes round-trip",
+ "steps": [
+  {
+   "name": "escaped input",
+   "request": {
+    "method": "POST",
+    "path": "/todos",
+    "headers": [
+     {
+      "name": "content-type",
+      "value": "application/json"
+     }
+    ],
+    "body": "{\"title\":\"\\u00e9 \\\"q\\\" a\\\\b\\nc\\ud83d\\ude00\"}"
+   },
+   "expect": {
+    "status": 201,
+    "json": {
+     "id": 1,
+     "title": "é \"q\" a\\b\nc😀",
+     "done": false,
+     "created_at": {
+      "$type": "int"
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "get",
+   "request": {
+    "method": "GET",
+    "path": "/todos/1"
+   },
+   "expect": {
+    "status": 200,
+    "json": {
+     "id": 1,
+     "title": "é \"q\" a\\b\nc😀",
+     "done": false,
+     "created_at": {
+      "$type": "int"
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "lone surrogate is invalid JSON",
+   "request": {
+    "method": "POST",
+    "path": "/todos",
+    "headers": [
+     {
+      "name": "content-type",
+      "value": "application/json"
+     }
+    ],
+    "body": "{\"title\":\"\\ud83d\"}"
+   },
+   "expect": {
+    "status": 400,
+    "json": {
+     "error": {
+      "code": "invalid_json",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  }
+ ]
+}

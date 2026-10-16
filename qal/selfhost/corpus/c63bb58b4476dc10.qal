@@ -1,0 +1,5 @@
+fn before(a: Str, b: Str) -> Bool = a < b || a <= b || a > b || a >= b
+fn words(s: Str) -> List[Str] = sort_str(split(to_lower(replace(s, ",", " ")), " "))
+fn at(s: Str, sub: Str) -> Int = match index_of(s, sub) { Some(i) => i, None => -1 }
+fn shift(c: Str) -> Str = from_char_code(char_code(c) + 1) ++ to_upper(c)
+fn main(args: List[Str]) -> Int !io = len(read_all())

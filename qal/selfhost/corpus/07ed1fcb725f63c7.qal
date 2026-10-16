@@ -1,0 +1,3 @@
+fn main(args: List[Str]) -> Int !io !fs = { print("hi"); helper() }
+fn helper() -> Int !io = { print("x"); 0 }
+fn unused(p: Str) -> Result[Str, Str] !fs = read_file(p)

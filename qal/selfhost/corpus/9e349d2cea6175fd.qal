@@ -1,0 +1,2 @@
+type T = A(Int, Int)
+fn f(x: T) -> Int = match x { A(a, a) => a }

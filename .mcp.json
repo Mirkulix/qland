@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "qal": {
+      "command": "sh",
+      "args": ["qal/mcp.sh"]
+    },
+    "qal-std": {
+      "command": "sh",
+      "args": ["qal/mcp.sh", "std"]
+    }
+  }
+}

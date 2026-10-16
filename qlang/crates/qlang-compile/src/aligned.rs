@@ -4,7 +4,7 @@
 //! Standard Vec<f32> only guarantees 4-byte alignment.
 //! This module provides AlignedVec which guarantees 32-byte alignment.
 
-use std::alloc::{Layout, alloc, dealloc};
+use std::alloc::{alloc, dealloc, Layout};
 use std::ops::{Deref, DerefMut};
 
 /// A Vec-like container with guaranteed memory alignment.
@@ -88,7 +88,7 @@ impl AlignedVec {
 
     /// Verify alignment.
     pub fn is_aligned(&self) -> bool {
-        (self.ptr as usize) % self.alignment == 0
+        (self.ptr as usize).is_multiple_of(self.alignment)
     }
 
     /// Convert to a regular Vec (copies data).
@@ -209,16 +209,32 @@ mod tests {
 
     #[test]
     fn simd_execution_with_aligned_memory() {
+        use inkwell::context::Context;
         use qlang_core::graph::Graph;
         use qlang_core::ops::Op;
         use qlang_core::tensor::TensorType;
-        use inkwell::context::Context;
 
         let mut g = Graph::new("aligned_test");
-        let a = g.add_node(Op::Input { name: "a".into() }, vec![], vec![TensorType::f32_vector(16)]);
-        let b = g.add_node(Op::Input { name: "b".into() }, vec![], vec![TensorType::f32_vector(16)]);
-        let add = g.add_node(Op::Add, vec![TensorType::f32_vector(16); 2], vec![TensorType::f32_vector(16)]);
-        let out = g.add_node(Op::Output { name: "y".into() }, vec![TensorType::f32_vector(16)], vec![]);
+        let a = g.add_node(
+            Op::Input { name: "a".into() },
+            vec![],
+            vec![TensorType::f32_vector(16)],
+        );
+        let b = g.add_node(
+            Op::Input { name: "b".into() },
+            vec![],
+            vec![TensorType::f32_vector(16)],
+        );
+        let add = g.add_node(
+            Op::Add,
+            vec![TensorType::f32_vector(16); 2],
+            vec![TensorType::f32_vector(16)],
+        );
+        let out = g.add_node(
+            Op::Output { name: "y".into() },
+            vec![TensorType::f32_vector(16)],
+            vec![],
+        );
         g.add_edge(a, 0, add, 0, TensorType::f32_vector(16));
         g.add_edge(b, 0, add, 1, TensorType::f32_vector(16));
         g.add_edge(add, 0, out, 0, TensorType::f32_vector(16));
@@ -236,16 +252,32 @@ mod tests {
 
     #[test]
     fn simd_relu_aligned() {
+        use inkwell::context::Context;
         use qlang_core::graph::Graph;
         use qlang_core::ops::Op;
         use qlang_core::tensor::TensorType;
-        use inkwell::context::Context;
 
         let mut g = Graph::new("relu_aligned");
-        let a = g.add_node(Op::Input { name: "a".into() }, vec![], vec![TensorType::f32_vector(24)]);
-        let _b = g.add_node(Op::Input { name: "b".into() }, vec![], vec![TensorType::f32_vector(24)]);
-        let relu = g.add_node(Op::Relu, vec![TensorType::f32_vector(24)], vec![TensorType::f32_vector(24)]);
-        let out = g.add_node(Op::Output { name: "y".into() }, vec![TensorType::f32_vector(24)], vec![]);
+        let a = g.add_node(
+            Op::Input { name: "a".into() },
+            vec![],
+            vec![TensorType::f32_vector(24)],
+        );
+        let _b = g.add_node(
+            Op::Input { name: "b".into() },
+            vec![],
+            vec![TensorType::f32_vector(24)],
+        );
+        let relu = g.add_node(
+            Op::Relu,
+            vec![TensorType::f32_vector(24)],
+            vec![TensorType::f32_vector(24)],
+        );
+        let out = g.add_node(
+            Op::Output { name: "y".into() },
+            vec![TensorType::f32_vector(24)],
+            vec![],
+        );
         g.add_edge(a, 0, relu, 0, TensorType::f32_vector(24));
         g.add_edge(relu, 0, out, 0, TensorType::f32_vector(24));
 
@@ -262,16 +294,32 @@ mod tests {
 
     #[test]
     fn simd_ternary_aligned() {
+        use inkwell::context::Context;
         use qlang_core::graph::Graph;
         use qlang_core::ops::Op;
         use qlang_core::tensor::TensorType;
-        use inkwell::context::Context;
 
         let mut g = Graph::new("ternary_aligned");
-        let a = g.add_node(Op::Input { name: "a".into() }, vec![], vec![TensorType::f32_vector(16)]);
-        let _b = g.add_node(Op::Input { name: "b".into() }, vec![], vec![TensorType::f32_vector(16)]);
-        let ternary = g.add_node(Op::ToTernary, vec![TensorType::f32_vector(16)], vec![TensorType::f32_vector(16)]);
-        let out = g.add_node(Op::Output { name: "y".into() }, vec![TensorType::f32_vector(16)], vec![]);
+        let a = g.add_node(
+            Op::Input { name: "a".into() },
+            vec![],
+            vec![TensorType::f32_vector(16)],
+        );
+        let _b = g.add_node(
+            Op::Input { name: "b".into() },
+            vec![],
+            vec![TensorType::f32_vector(16)],
+        );
+        let ternary = g.add_node(
+            Op::ToTernary,
+            vec![TensorType::f32_vector(16)],
+            vec![TensorType::f32_vector(16)],
+        );
+        let out = g.add_node(
+            Op::Output { name: "y".into() },
+            vec![TensorType::f32_vector(16)],
+            vec![],
+        );
         g.add_edge(a, 0, ternary, 0, TensorType::f32_vector(16));
         g.add_edge(ternary, 0, out, 0, TensorType::f32_vector(16));
 
@@ -279,16 +327,25 @@ mod tests {
         let compiled = crate::simd::compile_graph_simd(&context, &g).unwrap();
 
         let input: Vec<f32> = vec![
-            0.5, -0.5, 0.1, -0.1, 0.8, -0.8, 0.0, 0.25,
-            -0.25, 0.4, -0.4, 0.05, -0.05, 1.0, -1.0, 0.29,
+            0.5, -0.5, 0.1, -0.1, 0.8, -0.8, 0.0, 0.25, -0.25, 0.4, -0.4, 0.05, -0.05, 1.0, -1.0,
+            0.29,
         ];
         let dummy = vec![0.0f32; 16];
         let result = execute_aligned(&compiled, &input, &dummy).unwrap();
 
         // Values > 0.3 → +1, < -0.3 → -1, else → 0
-        let expected: Vec<f32> = input.iter().map(|&x| {
-            if x > 0.3 { 1.0 } else if x < -0.3 { -1.0 } else { 0.0 }
-        }).collect();
+        let expected: Vec<f32> = input
+            .iter()
+            .map(|&x| {
+                if x > 0.3 {
+                    1.0
+                } else if x < -0.3 {
+                    -1.0
+                } else {
+                    0.0
+                }
+            })
+            .collect();
         assert_eq!(result, expected);
     }
 }

@@ -1,0 +1,1 @@
+fn main(args: List[Str]) -> Int !rand = rand_int(5, 1)

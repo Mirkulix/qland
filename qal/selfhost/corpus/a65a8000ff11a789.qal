@@ -1,0 +1,7 @@
+fn sqrt_floor(n: Int) -> Int
+  req n >= 0
+  ens r * r <= n
+  ens (r + 1) * (r + 1) > n
+= go(n, 0)
+fn go(n: Int, i: Int) -> Int = if (i + 1) * (i + 1) > n then i else go(n, i + 1)
+fn liar(n: Int) -> Int ens r > n = n

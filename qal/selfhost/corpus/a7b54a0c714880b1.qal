@@ -1,0 +1,1 @@
+fn g(x: Int) -> Int ens r > 0 = match x { y if y > 0 => y, _ => 1 }

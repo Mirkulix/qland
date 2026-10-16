@@ -1,0 +1,13 @@
+test ordering = "a" < "b" && "ab" > "a" && "" < "a" && "B" < "a" && "x" <= "x" && "x" >= "x" && !("b" < "a") && "z" < "é" && "é" < "😀"
+test sorting = sort_str(["pear", "Apple", "fig", "", "fig", "é"]) == ["", "Apple", "fig", "fig", "pear", "é"] && sort_str([]) == []
+test sorting_many = sort_str(map(reverse(range(0, 300)), key)) == map(range(0, 300), key)
+fn key(n: Int) -> Str = from_char_code(1000 + n)
+test codes = char_code("A") == 65 && char_code("é") == 233 && char_code("€") == 8364 && char_code("😀") == 128512 && char_code("ab") == 97 && char_code("\0") == 0
+test from_codes = from_char_code(65) == "A" && from_char_code(233) == "é" && from_char_code(8364) == "€" && from_char_code(128512) == "😀" && from_char_code(127) == "\u{7F}" && from_char_code(128) == "\u{80}" && from_char_code(2047) == "\u{7FF}" && from_char_code(2048) == "\u{800}" && from_char_code(65535) == "\u{FFFF}" && from_char_code(65536) == "\u{10000}" && from_char_code(1114111) == "\u{10FFFF}"
+test round_trip = map(map(range(0, 2980), scalar_text), code_of) == map(range(0, 2980), scalar)
+fn scalar(n: Int) -> Int = let c = n * 373 in if c >= 55296 && c <= 57343 then c + 2048 else c
+fn scalar_text(n: Int) -> Str = from_char_code(scalar(n))
+fn code_of(s: Str) -> Int = char_code(s)
+test case = to_upper("Hello, wörld 9!") == "HELLO, WöRLD 9!" && to_lower("HeLLo É Z@[`{") == "hello É z@[`{" && to_upper("") == "" && to_upper("az") == "AZ" && to_lower("AZ") == "az"
+test replacing = replace("a,b,,c", ",", ";") == "a;b;;c" && replace("aaa", "aa", "b") == "ba" && replace("abc", "x", "y") == "abc" && replace("", "a", "b") == "" && replace("héllo", "é", "e") == "hello" && replace("ab", "ab", "") == "" && replace("xax", "a", "long") == "xlongx"
+test finding = index_of("hello", "l") == Some(2) && index_of("héllo", "l") == Some(2) && index_of("😀x", "x") == Some(1) && index_of("abc", "") == Some(0) && index_of("abc", "abcd") == None && index_of("", "a") == None && index_of("abab", "ab") == Some(0)

@@ -1,0 +1,164 @@
+{
+ "name": "h29_unknown_paths",
+ "description": "unknown paths are 404 for every method",
+ "steps": [
+  {
+   "name": "root",
+   "request": {
+    "method": "GET",
+    "path": "/"
+   },
+   "expect": {
+    "status": 404,
+    "json": {
+     "error": {
+      "code": "not_found",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "singular",
+   "request": {
+    "method": "GET",
+    "path": "/todo"
+   },
+   "expect": {
+    "status": 404,
+    "json": {
+     "error": {
+      "code": "not_found",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "deeper",
+   "request": {
+    "method": "GET",
+    "path": "/todos/1/x"
+   },
+   "expect": {
+    "status": 404,
+    "json": {
+     "error": {
+      "code": "not_found",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "case",
+   "request": {
+    "method": "GET",
+    "path": "/TODOS"
+   },
+   "expect": {
+    "status": 404,
+    "json": {
+     "error": {
+      "code": "not_found",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "prefix",
+   "request": {
+    "method": "GET",
+    "path": "/api/todos"
+   },
+   "expect": {
+    "status": 404,
+    "json": {
+     "error": {
+      "code": "not_found",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "POST unknown",
+   "request": {
+    "method": "POST",
+    "path": "/items"
+   },
+   "expect": {
+    "status": 404,
+    "json": {
+     "error": {
+      "code": "not_found",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "DELETE unknown",
+   "request": {
+    "method": "DELETE",
+    "path": "/"
+   },
+   "expect": {
+    "status": 404,
+    "json": {
+     "error": {
+      "code": "not_found",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "HEAD unknown",
+   "request": {
+    "method": "HEAD",
+    "path": "/x"
+   },
+   "expect": {
+    "status": 404,
+    "body": ""
+   }
+  }
+ ]
+}

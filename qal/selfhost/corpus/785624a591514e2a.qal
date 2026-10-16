@@ -1,0 +1,1 @@
+type Row = { n: Int }

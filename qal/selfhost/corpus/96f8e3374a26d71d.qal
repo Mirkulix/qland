@@ -1,0 +1,1 @@
+type Tree = Leaf | Node(Tree, Int, Tree)

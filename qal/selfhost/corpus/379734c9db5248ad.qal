@@ -1,0 +1,2 @@
+fn user() -> Int
+= alpha() + 1

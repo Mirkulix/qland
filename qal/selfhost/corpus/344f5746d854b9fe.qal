@@ -1,0 +1,2 @@
+fn main(args: List[Str]) -> Int !fs = go(0, match get(args, 0) { Some(d) => d, None => "." })
+fn go(i: Int, d: Str) -> Int !fs = if i == 3 then 0 else match write_file(d ++ "/f" ++ from_int(i), "0123456789") { Ok(_) => go(i + 1, d), Err(_) => 9 }

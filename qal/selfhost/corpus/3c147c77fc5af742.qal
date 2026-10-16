@@ -1,0 +1,2 @@
+fn std.db.first(rows: DbRows) -> Int = len(rows.rows)
+test std.db.test_first = std.db.first(DbRows { columns: [], rows: [] }) == 0

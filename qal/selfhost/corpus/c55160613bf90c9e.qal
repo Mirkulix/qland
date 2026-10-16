@@ -1,0 +1,5 @@
+type std.json.Json = std.json.Null | std.json.Str(Str) | std.json.Arr(List[std.json.Json])
+type std.route.Route[A] = { method: Str, tag: A }
+fn std.json.str(s: Str) -> std.json.Json = std.json.Str(s)
+fn std.route.tag[A](r: std.route.Route[A]) -> A = r.tag
+test std.json.t = match std.json.str("a") { std.json.Str(x) => x == "a", std.json.Null => false, _ => false }

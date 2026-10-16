@@ -1,0 +1,16 @@
+fn spin(n: Int) -> Int = spin(n + 1)
+fn main(args: List[Str]) -> Int = spin(0)
+fn shout(n: Int) -> Int !io = { print("0123456789abcdef"); shout(n + 1) }
+fn loud(args: List[Str]) -> Int !io = shout(0)
+fn grow(s: Str) -> Int = grow(s ++ s)
+fn hog(args: List[Str]) -> Int = grow("x")
+fn double(s: Str, n: Int) -> Str = if n == 0 then s else double(s ++ s, n - 1)
+fn huge() -> Str = double("x", 25)
+fn quotes(i: Int) -> Str = "\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\""
+fn many() -> List[Str] = map(range(0, 90000), quotes)
+fn short(s: Str) -> Bool req len(s) < 10 = true
+test big_value = short(double("y", 22))
+test fine = 1 == 1
+fn talk(n: Int) -> Int !io = if n == 0 then 0 else { print("0123456789abcdef"); talk(n - 1) }
+fn chatty(args: List[Str]) -> Int !io = talk(100000)
+test forever = spin(0) == 1

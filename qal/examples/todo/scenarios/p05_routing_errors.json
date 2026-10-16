@@ -1,0 +1,113 @@
+{
+ "name": "p05_routing_errors",
+ "description": "404 and 405",
+ "steps": [
+  {
+   "name": "unknown path",
+   "request": {
+    "method": "GET",
+    "path": "/nope"
+   },
+   "expect": {
+    "status": 404,
+    "json": {
+     "error": {
+      "code": "not_found",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "PUT on collection",
+   "request": {
+    "method": "PUT",
+    "path": "/todos"
+   },
+   "expect": {
+    "status": 405,
+    "json": {
+     "error": {
+      "code": "method_not_allowed",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "allow": "GET, HEAD, POST",
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "POST on item",
+   "request": {
+    "method": "POST",
+    "path": "/todos/1"
+   },
+   "expect": {
+    "status": 405,
+    "json": {
+     "error": {
+      "code": "method_not_allowed",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "allow": "DELETE, GET, HEAD, PATCH",
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "id not a number",
+   "request": {
+    "method": "GET",
+    "path": "/todos/abc"
+   },
+   "expect": {
+    "status": 400,
+    "json": {
+     "error": {
+      "code": "invalid_id",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "missing todo",
+   "request": {
+    "method": "GET",
+    "path": "/todos/1"
+   },
+   "expect": {
+    "status": 404,
+    "json": {
+     "error": {
+      "code": "not_found",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  }
+ ]
+}

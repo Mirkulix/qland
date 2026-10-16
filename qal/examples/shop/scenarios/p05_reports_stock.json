@@ -1,0 +1,42 @@
+{
+  "name": "p05_reports_stock",
+  "description": "Stock and revenue report reflects product stock, reserved quantity and sales",
+  "steps": [
+    {
+      "name": "create prod",
+      "request": {"method": "POST", "path": "/products", "json": {"sku": "REP-1", "name": "Tablet", "price_cents": 30000, "stock": 10}},
+      "expect": {"status": 201},
+      "capture": {"pid": "/id"}
+    },
+    {
+      "name": "order some",
+      "request": {
+        "method": "POST",
+        "path": "/orders",
+        "json": {
+          "lines": [
+            {"product_id": "{{pid}}", "qty": 3}
+          ]
+        }
+      },
+      "expect": {"status": 201}
+    },
+    {
+      "name": "get report",
+      "request": {"method": "GET", "path": "/reports/stock"},
+      "expect": {
+        "status": 200,
+        "json": [
+          {
+            "product_id": {"$var": "pid"},
+            "sku": "REP-1",
+            "name": "Tablet",
+            "current_stock": 7,
+            "reserved_stock": 3,
+            "revenue_cents": 90000
+          }
+        ]
+      }
+    }
+  ]
+}

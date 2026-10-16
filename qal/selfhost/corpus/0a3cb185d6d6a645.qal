@@ -1,0 +1,5 @@
+type Order = { id: Int }
+fn a() -> Order = todo()
+fn b(x: Int) -> Result[Order, Str] = if x > 0 then todo() else Err("no")
+fn c() -> Int = a().id
+test t = todo()

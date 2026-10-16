@@ -1,0 +1,1 @@
+fn f(b: Str) -> Int = bytes_at(b, 0)

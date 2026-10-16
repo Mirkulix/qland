@@ -1,0 +1,4 @@
+type P = { x: Int }
+fn f(p: P) -> Int = p.x
+fn g() -> Int = 1
+test t = g() == 1

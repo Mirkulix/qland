@@ -1,0 +1,4 @@
+fn a() -> Int = 1
+fn b() -> Int = 1
+fn ua() -> Int = a() + 1
+fn ub() -> Int = b() + 1

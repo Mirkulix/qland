@@ -1,0 +1,1 @@
+fn o(a: Int) -> Int req a >= 0 ens r >= a = bit_or(a, 1)

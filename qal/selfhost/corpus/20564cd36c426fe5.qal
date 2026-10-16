@@ -1,0 +1,2 @@
+type T = A | B
+fn f(a: Accum[T]) -> List[T] = acc_list(AccPush(a, A))

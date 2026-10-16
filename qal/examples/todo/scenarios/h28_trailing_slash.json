@@ -1,0 +1,142 @@
+{
+ "name": "h28_trailing_slash",
+ "description": "no path normalization",
+ "steps": [
+  {
+   "name": "create a",
+   "request": {
+    "method": "POST",
+    "path": "/todos",
+    "json": {
+     "title": "x"
+    }
+   },
+   "expect": {
+    "status": 201,
+    "json": {
+     "id": {
+      "$var": "a"
+     },
+     "title": "x",
+     "done": false,
+     "created_at": {
+      "$type": "int"
+     }
+    },
+    "headers": {
+     "location": "/todos/{{a}}",
+     "content-type": "application/json"
+    }
+   },
+   "capture": {
+    "a": "/id"
+   }
+  },
+  {
+   "name": "GET /todos/",
+   "request": {
+    "method": "GET",
+    "path": "/todos/"
+   },
+   "expect": {
+    "status": 400,
+    "json": {
+     "error": {
+      "code": "invalid_id",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "POST /todos/",
+   "request": {
+    "method": "POST",
+    "path": "/todos/"
+   },
+   "expect": {
+    "status": 405,
+    "json": {
+     "error": {
+      "code": "method_not_allowed",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "allow": "DELETE, GET, HEAD, PATCH",
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "GET /todos/1/",
+   "request": {
+    "method": "GET",
+    "path": "/todos/{{a}}/"
+   },
+   "expect": {
+    "status": 404,
+    "json": {
+     "error": {
+      "code": "not_found",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "GET //todos",
+   "request": {
+    "method": "GET",
+    "path": "//todos"
+   },
+   "expect": {
+    "status": 404,
+    "json": {
+     "error": {
+      "code": "not_found",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "GET /todos//1",
+   "request": {
+    "method": "GET",
+    "path": "/todos//1"
+   },
+   "expect": {
+    "status": 404,
+    "json": {
+     "error": {
+      "code": "not_found",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  }
+ ]
+}

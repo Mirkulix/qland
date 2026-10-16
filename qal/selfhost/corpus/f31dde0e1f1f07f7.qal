@@ -1,0 +1,9 @@
+fn main(args: List[Str]) -> Int !fs !io = {
+print(show(write_file(dir(args) ++ "/out.txt", "written")));
+print(show_read(read_file(dir(args) ++ "/out.txt")));
+print(show_read(read_file(dir(args) ++ "/../secret.txt")));
+print(show(write_file(dir(args) ++ "/../evil.txt", "x")));
+0 }
+fn dir(args: List[Str]) -> Str = match get(args, 0) { Some(d) => d, None => "." }
+fn show(r: Result[Unit, Str]) -> Str = match r { Ok(_) => "ok", Err(e) => e }
+fn show_read(r: Result[Str, Str]) -> Str = match r { Ok(s) => s, Err(e) => e }

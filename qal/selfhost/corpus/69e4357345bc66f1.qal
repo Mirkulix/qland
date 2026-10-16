@@ -1,0 +1,6 @@
+type P = { x: Int }
+fn lib_x(p: P) -> Int = p.x
+fn lib_two() -> Int = lib_x(P { x: 2 }) + helper()
+fn helper() -> Int = 0
+fn other() -> Int = 9
+test lib_t = lib_two() == 2

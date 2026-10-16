@@ -1,0 +1,2 @@
+fn spare() -> Int = 2
+fn uses() -> Int = base() * 10

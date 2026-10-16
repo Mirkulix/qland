@@ -1,0 +1,102 @@
+{
+ "name": "h45_failed_post_does_not_persist",
+ "description": "rolled back POSTs leave no row",
+ "steps": [
+  {
+   "name": "bad",
+   "request": {
+    "method": "POST",
+    "path": "/todos",
+    "json": {
+     "title": "a",
+     "x": 1
+    }
+   },
+   "expect": {
+    "status": 400,
+    "json": {
+     "error": {
+      "code": "unknown_field",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "bad 2",
+   "request": {
+    "method": "POST",
+    "path": "/todos",
+    "json": {
+     "title": ""
+    }
+   },
+   "expect": {
+    "status": 400,
+    "json": {
+     "error": {
+      "code": "invalid_value",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "create",
+   "request": {
+    "method": "POST",
+    "path": "/todos",
+    "json": {
+     "title": "ok"
+    }
+   },
+   "expect": {
+    "status": 201,
+    "json": {
+     "id": 1,
+     "title": "ok",
+     "done": false,
+     "created_at": {
+      "$type": "int"
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "list",
+   "request": {
+    "method": "GET",
+    "path": "/todos"
+   },
+   "expect": {
+    "status": 200,
+    "json": [
+     {
+      "id": 1,
+      "title": "ok",
+      "done": false,
+      "created_at": {
+       "$type": "int"
+      }
+     }
+    ],
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  }
+ ]
+}

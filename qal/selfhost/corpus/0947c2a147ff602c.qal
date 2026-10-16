@@ -1,0 +1,2 @@
+type std.url.Param = { name: Str, value: Str }
+fn std.url.mk(n: Str) -> std.url.Param = std.url.Param { name: n, value: "" }

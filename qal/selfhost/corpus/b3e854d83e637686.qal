@@ -1,0 +1,3 @@
+fn b(x: Float) -> Int = float_bits(x)
+fn f(i: Int) -> Float = float_of_bits(i)
+fn rt(i: Int) -> Int = float_bits(float_of_bits(i))

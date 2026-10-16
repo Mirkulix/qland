@@ -1,0 +1,5 @@
+type P = { x: Int }
+fn px(p: P) -> Int = p.x
+fn main_ish() -> Int = px(P { x: 1 })
+test t = main_ish() == 1
+fn lone() -> Int = 2

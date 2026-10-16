@@ -1,0 +1,1 @@
+fn f(n: Int) -> Int = { n + 1; [n, n]; 2.5; "s"; fn(x) => x + n; Some(n); n * 2 }

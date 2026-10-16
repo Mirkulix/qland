@@ -1,0 +1,53 @@
+[workspace]
+members = [
+    "crates/qal-core",
+    "crates/qal-text",
+    "crates/qal-check",
+    "crates/qal-wasm",
+    "crates/qal-run",
+    "crates/qal-store",
+    "crates/qal-serve",
+    "crates/qal-cli",
+    "crates/qal-prove",
+    "crates/qal-compiler",
+    "selfhost/tools/gen",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[workspace.dependencies]
+qal-core = { path = "crates/qal-core" }
+qal-text = { path = "crates/qal-text" }
+qal-check = { path = "crates/qal-check" }
+qal-wasm = { path = "crates/qal-wasm" }
+qal-run = { path = "crates/qal-run" }
+qal-store = { path = "crates/qal-store" }
+qal-prove = { path = "crates/qal-prove" }
+qal-serve = { path = "crates/qal-serve" }
+qal-compiler = { path = "crates/qal-compiler" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "=0.11.0"
+rusqlite = { version = "=0.40.2", features = ["bundled"] }
+wasm-encoder = "=0.259.0"
+wasmparser = "=0.259.0"
+wasmtime = { version = "=49.0.1", default-features = false, features = ["cranelift", "runtime", "std", "pooling-allocator"] }
+rustix = { version = "=1.1.5", default-features = false, features = ["std", "fs"] }
+ureq = { version = "=2.12.1", default-features = false, features = ["tls"] }
+url = "=2.5.8"
+httparse = "=1.10.1"
+signal-hook = "=0.4.4"
+z3 = { version = "=0.21.1", features = ["vendored"] }
+ed25519-dalek = { version = "=3.0.0", default-features = false, features = ["fast", "zeroize"] }
+getrandom = "=0.4.3"
+zeroize = "=1.9.0"
+
+# Z3 is compiled from source (C++, several minutes, once) and linked statically. Build it optimized
+# in debug and test builds too: a Debug build of Z3 is many times slower and writes `.z3-trace` files.
+[profile.dev.package.z3-sys]
+opt-level = 3
+debug = false

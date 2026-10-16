@@ -1,0 +1,3 @@
+fn say() -> Unit !io = ()
+fn pure_caller() -> Unit = say()
+fn ok() -> Unit !io = say()

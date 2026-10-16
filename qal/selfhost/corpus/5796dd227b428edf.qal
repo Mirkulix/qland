@@ -1,0 +1,2 @@
+fn std.a.f(x: Int, y: Int) -> Int = x
+test std.a.t = std.a.f(1, 2) == 1

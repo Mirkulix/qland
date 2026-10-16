@@ -1,0 +1,1 @@
+fn n(a: Int) -> Int ens r + a == -1 = bit_not(a)

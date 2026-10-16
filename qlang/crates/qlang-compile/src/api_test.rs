@@ -28,10 +28,7 @@ fn parse_post_request_with_body() {
     assert_eq!(req.method, Method::Post);
     assert_eq!(req.path, "/graph");
     assert_eq!(req.body, body.as_bytes());
-    assert_eq!(
-        req.headers.get("content-type").unwrap(),
-        "application/json"
-    );
+    assert_eq!(req.headers.get("content-type").unwrap(), "application/json");
 }
 
 #[test]
@@ -307,11 +304,7 @@ fn optimize_endpoint_removes_dead_nodes() {
         vec![tt.clone()],
     );
     // Dead node: not connected to output.
-    let _dead = g.add_node(
-        qlang_core::ops::Op::Neg,
-        vec![tt.clone()],
-        vec![tt.clone()],
-    );
+    let _dead = g.add_node(qlang_core::ops::Op::Neg, vec![tt.clone()], vec![tt.clone()]);
     let out = g.add_node(
         qlang_core::ops::Op::Output { name: "y".into() },
         vec![tt.clone()],
@@ -327,7 +320,10 @@ fn optimize_endpoint_removes_dead_nodes() {
     let body: serde_json::Value = serde_json::from_slice(&resp.body).unwrap();
     assert_eq!(body["ok"], true);
     assert!(body["report"]["dead_nodes_removed"].as_u64().unwrap() >= 1);
-    assert!(body["report"]["nodes_after"].as_u64().unwrap() < body["report"]["nodes_before"].as_u64().unwrap());
+    assert!(
+        body["report"]["nodes_after"].as_u64().unwrap()
+            < body["report"]["nodes_before"].as_u64().unwrap()
+    );
 }
 
 #[test]

@@ -82,7 +82,10 @@ pub fn max_pool2d(
 ) -> (Vec<f32>, [usize; 4]) {
     let [batch, channels, h, w] = input_shape;
     assert!(pool_size > 0 && stride > 0);
-    assert!(pool_size <= h && pool_size <= w, "Pool size exceeds spatial dimensions");
+    assert!(
+        pool_size <= h && pool_size <= w,
+        "Pool size exceeds spatial dimensions"
+    );
 
     let out_h = (h - pool_size) / stride + 1;
     let out_w = (w - pool_size) / stride + 1;
@@ -157,7 +160,11 @@ pub fn masked_attention(
     let seq_k = tape.values[k].shape[0];
     let d_v = tape.values[v].shape[1];
 
-    assert_eq!(mask.len(), seq_q * seq_k, "Mask shape must be [seq_q, seq_k]");
+    assert_eq!(
+        mask.len(),
+        seq_q * seq_k,
+        "Mask shape must be [seq_q, seq_k]"
+    );
 
     // Compute Q @ K^T / sqrt(d_k) + mask
     let scale = 1.0 / (d_k as f32).sqrt();
@@ -214,28 +221,14 @@ mod tests {
     #[test]
     fn test_conv2d_known_output() {
         // 1 batch, 1 channel, 3x3 input, 1 output channel, 2x2 kernel, stride=1, padding=0
-        let input = vec![
-            1.0, 2.0, 3.0,
-            4.0, 5.0, 6.0,
-            7.0, 8.0, 9.0,
-        ];
-        let kernel = vec![
-            1.0, 0.0,
-            0.0, 1.0,
-        ];
+        let input = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0];
+        let kernel = vec![1.0, 0.0, 0.0, 1.0];
         // Expected output (2x2):
         //   (1*1 + 2*0 + 4*0 + 5*1) = 6
         //   (2*1 + 3*0 + 5*0 + 6*1) = 8
         //   (4*1 + 5*0 + 7*0 + 8*1) = 12
         //   (5*1 + 6*0 + 8*0 + 9*1) = 14
-        let (output, shape) = conv2d(
-            &input,
-            [1, 1, 3, 3],
-            &kernel,
-            [1, 1, 2, 2],
-            1,
-            0,
-        );
+        let (output, shape) = conv2d(&input, [1, 1, 3, 3], &kernel, [1, 1, 2, 2], 1, 0);
         assert_eq!(shape, [1, 1, 2, 2]);
         assert_eq!(output, vec![6.0, 8.0, 12.0, 14.0]);
     }
@@ -245,19 +238,8 @@ mod tests {
         // 1 batch, 1 channel, 2x2 input, 1 output channel, 3x3 kernel, stride=1, padding=1
         // With padding=1, output should be same size as input (2x2)
         let input = vec![1.0, 2.0, 3.0, 4.0];
-        let kernel = vec![
-            0.0, 0.0, 0.0,
-            0.0, 1.0, 0.0,
-            0.0, 0.0, 0.0,
-        ]; // Identity kernel
-        let (output, shape) = conv2d(
-            &input,
-            [1, 1, 2, 2],
-            &kernel,
-            [1, 1, 3, 3],
-            1,
-            1,
-        );
+        let kernel = vec![0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0]; // Identity kernel
+        let (output, shape) = conv2d(&input, [1, 1, 2, 2], &kernel, [1, 1, 3, 3], 1, 1);
         assert_eq!(shape, [1, 1, 2, 2]);
         assert_eq!(output, vec![1.0, 2.0, 3.0, 4.0]);
     }
@@ -266,20 +248,10 @@ mod tests {
     fn test_conv2d_stride() {
         // 1 batch, 1 channel, 4x4 input, stride=2
         let input = vec![
-            1.0, 2.0, 3.0, 4.0,
-            5.0, 6.0, 7.0, 8.0,
-            9.0, 10.0, 11.0, 12.0,
-            13.0, 14.0, 15.0, 16.0,
+            1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0, 16.0,
         ];
         let kernel = vec![1.0, 1.0, 1.0, 1.0]; // 2x2 all-ones kernel
-        let (output, shape) = conv2d(
-            &input,
-            [1, 1, 4, 4],
-            &kernel,
-            [1, 1, 2, 2],
-            2,
-            0,
-        );
+        let (output, shape) = conv2d(&input, [1, 1, 4, 4], &kernel, [1, 1, 2, 2], 2, 0);
         // out_h = (4 - 2)/2 + 1 = 2, out_w = 2
         assert_eq!(shape, [1, 1, 2, 2]);
         // top-left: 1+2+5+6=14, top-right: 3+4+7+8=22
@@ -292,22 +264,12 @@ mod tests {
         // 1 batch, 2 input channels, 2x2 input, 1 output channel
         let input = vec![
             // channel 0
-            1.0, 2.0,
-            3.0, 4.0,
-            // channel 1
-            5.0, 6.0,
-            7.0, 8.0,
+            1.0, 2.0, 3.0, 4.0, // channel 1
+            5.0, 6.0, 7.0, 8.0,
         ];
         // kernel: [1, 2, 1, 1] -- single 1x1 kernel across 2 input channels
         let kernel = vec![1.0, 1.0];
-        let (output, shape) = conv2d(
-            &input,
-            [1, 2, 2, 2],
-            &kernel,
-            [1, 2, 1, 1],
-            1,
-            0,
-        );
+        let (output, shape) = conv2d(&input, [1, 2, 2, 2], &kernel, [1, 2, 1, 1], 1, 0);
         assert_eq!(shape, [1, 1, 2, 2]);
         // Each output pixel = sum of corresponding pixels across channels
         assert_eq!(output, vec![6.0, 8.0, 10.0, 12.0]);
@@ -317,10 +279,7 @@ mod tests {
     fn test_max_pool2d_basic() {
         // 1 batch, 1 channel, 4x4 input, pool_size=2, stride=2
         let input = vec![
-            1.0, 2.0, 3.0, 4.0,
-            5.0, 6.0, 7.0, 8.0,
-            9.0, 10.0, 11.0, 12.0,
-            13.0, 14.0, 15.0, 16.0,
+            1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0, 16.0,
         ];
         let (output, shape) = max_pool2d(&input, [1, 1, 4, 4], 2, 2);
         assert_eq!(shape, [1, 1, 2, 2]);
@@ -338,11 +297,7 @@ mod tests {
     #[test]
     fn test_max_pool2d_overlapping() {
         // pool_size=2, stride=1 on 3x3 -> 2x2
-        let input = vec![
-            9.0, 1.0, 2.0,
-            3.0, 5.0, 4.0,
-            7.0, 8.0, 6.0,
-        ];
+        let input = vec![9.0, 1.0, 2.0, 3.0, 5.0, 4.0, 7.0, 8.0, 6.0];
         let (output, shape) = max_pool2d(&input, [1, 1, 3, 3], 2, 1);
         assert_eq!(shape, [1, 1, 2, 2]);
         // [max(9,1,3,5), max(1,2,5,4), max(3,5,7,8), max(5,4,8,6)]

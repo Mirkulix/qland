@@ -1,0 +1,12 @@
+test lit = "héllo" == "héllo" && "a" != "b" && "" == ""
+test cat = "ab" ++ "" ++ "cd" == "abcd"
+test length = len("héllo") == 5 && len("") == 0
+test slicing = slice("héllo", 1, 3) == "él" && slice("abc", 0, 3) == "abc" && slice("abc", 2, 2) == ""
+test splitting = split("a,b,,c", ",") == ["a", "b", "", "c"] && split("abc", "--") == ["abc"] && split("a--b", "--") == ["a", "b"]
+test joining = join(["a", "b", "c"], ", ") == "a, b, c" && join([], "x") == "" && join(["z"], "-") == "z"
+test trimming = trim(" \t a b \n") == "a b" && trim("   ") == "" && trim("x") == "x"
+test search = contains("hello", "ll") && !contains("hello", "lo!") && contains("a", "") && starts_with("hello", "he") && !starts_with("h", "he")
+test ints = to_int("42") == Some(42) && to_int("-7") == Some(-7) && to_int("+3") == Some(3) && to_int("") == None && to_int("-") == None && to_int("1x") == None && to_int(" 1") == None
+test int_limits = to_int("9223372036854775807") == Some(9223372036854775807) && to_int("-9223372036854775808") == Some(-9223372036854775807 - 1) && to_int("9223372036854775808") == None
+test from_ints = from_int(0) == "0" && from_int(-120) == "-120" && from_int(-9223372036854775807 - 1) == "-9223372036854775808"
+test char_list = chars("aé😀") == ["a", "é", "😀"] && chars("") == []

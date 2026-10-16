@@ -1,0 +1,1 @@
+fn f16[T](x: T) -> Bool = map_has(map_put(map_new(), x, 1), x) && x == x && compare(x, x) == 0

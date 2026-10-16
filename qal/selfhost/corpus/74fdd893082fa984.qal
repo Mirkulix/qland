@@ -1,0 +1,1 @@
+test t = compare(1, "a") == 0

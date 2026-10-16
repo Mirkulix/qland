@@ -1,0 +1,2 @@
+fn std.a.h(x: Str) -> Str = x
+fn std.a.k(x: Int) -> Int = x + 1

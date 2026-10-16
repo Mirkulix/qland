@@ -1,0 +1,16 @@
+fn double(x: Int) -> Int = x * 2
+fn positive(x: Int) -> Bool = x > 0
+fn add(a: Int, b: Int) -> Int = a + b
+fn shout(s: Str) -> Str = s ++ "!"
+fn half(x: Int) -> Float = int_to_float(x) / 2.0
+fn apply(f: fn(Int) -> Int, x: Int) -> Int = f(x)
+fn pick(b: Bool) -> fn(Int) -> Int = if b then double else negate
+fn negate(x: Int) -> Int = -x
+test basics = len([1, 2, 3]) == 3 && get([1, 2], 1) == Some(2) && get([1], 1) == None && get([1], -1) == None
+test building = push([1], 2) == [1, 2] && concat([1], [2, 3]) == [1, 2, 3] && [1] ++ [] == [1] && reverse([1, 2, 3]) == [3, 2, 1]
+test ranges = range(0, 4) == [0, 1, 2, 3] && range(3, 3) == [] && range(5, 1) == [] && len(range(-2, 2)) == 4
+test sorting = sort_int([3, -1, 2, 2, 0]) == [-1, 0, 2, 2, 3] && sort_int([]) == [] && sort_int(reverse(range(0, 1000))) == range(0, 1000)
+test higher_order = map([1, 2], double) == [2, 4] && filter(range(-3, 4), positive) == [1, 2, 3] && fold([1, 2, 3], 10, add) == 16
+test mixed_reprs = map(["a"], shout) == ["a!"] && map([1, 3], half) == [0.5, 1.5]
+test fn_values = apply(double, 5) == 10 && (let f = pick(false) in f(3)) == -3 && apply(pick(true), 1) == 2
+test nested = [[1], []] == [[1], []] && [[1]] != [[2]] && get([["x"]], 0) == Some(["x"])

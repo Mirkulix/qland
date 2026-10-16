@@ -1,0 +1,1 @@
+fn  add(a:Int,b:Int)->Int !io req a>=0 = a+b*2

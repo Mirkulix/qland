@@ -1,0 +1,2 @@
+fn c(n: Int) -> Int = if n <= 0 then 1 else d(n - 1)
+fn d(n: Int) -> Int = if n <= 1 then 0 else c(n - 2)

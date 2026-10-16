@@ -1,0 +1,3 @@
+fn fetch(u: Str) -> Result[HttpResponse, NetError] !net = http(HttpCall { method: "GET", url: u, headers: [], body: "" })
+fn add(t: Str) -> Result[Int, DbError] !db = db_exec("INSERT INTO todos (title) VALUES (?)", [SqlText(t)])
+fn all() -> Result[DbRows, DbError] !db = db_query("SELECT * FROM todos", [])

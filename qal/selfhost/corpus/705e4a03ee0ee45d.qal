@@ -1,0 +1,7 @@
+fn main(args: List[Str]) -> Int !fs !io = {
+print(show(read_file("/nonexistent-dir-qal/missing")));
+print(show(read_file("/etc/hosts")));
+print(show(read_file("/nonexistent-dir-qal/../etc/hosts")));
+print(show(read_file("/etc/hosts/x")));
+0 }
+fn show(r: Result[Str, Str]) -> Str = match r { Ok(_) => "ok", Err(e) => e }

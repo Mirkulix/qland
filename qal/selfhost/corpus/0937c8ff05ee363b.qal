@@ -1,0 +1,4 @@
+type Order = { id: Int }
+fn make(id: Int) -> Order = todo()
+fn pick(x: Int) -> Int = if x > 0 then x else todo()
+test t = make(1).id == 1

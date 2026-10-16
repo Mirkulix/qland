@@ -1,0 +1,1 @@
+fn big(n: Int) -> Int = len(range(0, n))

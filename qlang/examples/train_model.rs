@@ -10,12 +10,12 @@
 fn main() {
     println!("=== QLANG Neural Network Training ===\n");
 
-    use qlang_runtime::training::{MlpWeights, TrainConfig, generate_toy_dataset};
+    use qlang_runtime::training::{generate_toy_dataset, MlpWeights, TrainConfig};
     use std::time::Instant;
 
     let input_dim = 64; // 8x8 images
     let hidden_dim = 32;
-    let output_dim = 4;  // 4 pattern classes
+    let output_dim = 4; // 4 pattern classes
 
     // ─── Generate dataset ───
     println!("[1] Generating toy dataset (8×8 patterns)...");
@@ -29,7 +29,10 @@ fn main() {
     println!("  Classes:  horizontal, vertical, diagonal, cross\n");
 
     // ─── Initialize model ───
-    println!("[2] Initializing MLP ({} → {} → {})...", input_dim, hidden_dim, output_dim);
+    println!(
+        "[2] Initializing MLP ({} → {} → {})...",
+        input_dim, hidden_dim, output_dim
+    );
     let mut mlp = MlpWeights::new(input_dim, hidden_dim, output_dim);
     println!("  Parameters: {}", mlp.param_count());
 
@@ -38,7 +41,10 @@ fn main() {
     let initial_acc = mlp.accuracy(&probs, &test_labels);
     let initial_loss = mlp.loss(&probs, &test_labels);
     println!("  Initial loss:     {:.4}", initial_loss);
-    println!("  Initial accuracy: {:.1}% (random=25%)\n", initial_acc * 100.0);
+    println!(
+        "  Initial accuracy: {:.1}% (random=25%)\n",
+        initial_acc * 100.0
+    );
 
     // ─── Train ───
     println!("[3] Training with gradient descent...");
@@ -71,8 +77,14 @@ fn main() {
         let test_acc = mlp.accuracy(&test_probs, &test_labels);
         let test_loss = mlp.loss(&test_probs, &test_labels);
 
-        println!("  Epoch {}/{}: train_loss={:.4}, test_loss={:.4}, test_acc={:.1}%",
-            epoch + 1, config.epochs, avg_loss, test_loss, test_acc * 100.0);
+        println!(
+            "  Epoch {}/{}: train_loss={:.4}, test_loss={:.4}, test_acc={:.1}%",
+            epoch + 1,
+            config.epochs,
+            avg_loss,
+            test_loss,
+            test_acc * 100.0
+        );
     }
 
     let train_time = start.elapsed();
@@ -83,8 +95,15 @@ fn main() {
     let final_probs = mlp.forward(&test_images);
     let final_acc = mlp.accuracy(&final_probs, &test_labels);
     let final_loss = mlp.loss(&final_probs, &test_labels);
-    println!("  Final loss:     {:.4} (was {:.4})", final_loss, initial_loss);
-    println!("  Final accuracy: {:.1}% (was {:.1}%)", final_acc * 100.0, initial_acc * 100.0);
+    println!(
+        "  Final loss:     {:.4} (was {:.4})",
+        final_loss, initial_loss
+    );
+    println!(
+        "  Final accuracy: {:.1}% (was {:.1}%)",
+        final_acc * 100.0,
+        initial_acc * 100.0
+    );
 
     // Show some predictions
     println!("\n  Sample predictions:");
@@ -99,9 +118,10 @@ fn main() {
             .unwrap();
         let label = test_labels[i] as usize;
         let marker = if predicted == label { "✓" } else { "✗" };
-        println!("    [{marker}] Sample {i}: predicted={} ({}), actual={} ({})",
-            predicted, class_names[predicted],
-            label, class_names[label]);
+        println!(
+            "    [{marker}] Sample {i}: predicted={} ({}), actual={} ({})",
+            predicted, class_names[predicted], label, class_names[label]
+        );
     }
 
     // ─── IGQK Compression ───
@@ -113,27 +133,50 @@ fn main() {
     let compressed_acc = compressed.accuracy(&compressed_probs, &test_labels);
     let compressed_loss = compressed.loss(&compressed_probs, &test_labels);
 
-    println!("  Compressed loss:     {:.4} (was {:.4})", compressed_loss, final_loss);
-    println!("  Compressed accuracy: {:.1}% (was {:.1}%)", compressed_acc * 100.0, final_acc * 100.0);
+    println!(
+        "  Compressed loss:     {:.4} (was {:.4})",
+        compressed_loss, final_loss
+    );
+    println!(
+        "  Compressed accuracy: {:.1}% (was {:.1}%)",
+        compressed_acc * 100.0,
+        final_acc * 100.0
+    );
 
     let orig_bytes = mlp.param_count() * 4; // f32
     let compressed_bytes = (mlp.w1.len() + mlp.w2.len()) * 1 + (mlp.b1.len() + mlp.b2.len()) * 4;
     println!("  Original size:   {} bytes", orig_bytes);
     println!("  Compressed size: {} bytes", compressed_bytes);
-    println!("  Compression:     {:.1}x", orig_bytes as f64 / compressed_bytes as f64);
+    println!(
+        "  Compression:     {:.1}x",
+        orig_bytes as f64 / compressed_bytes as f64
+    );
 
     // Weight distribution
     let w1_pos = compressed.w1.iter().filter(|&&w| w == 1.0).count();
     let w1_neg = compressed.w1.iter().filter(|&&w| w == -1.0).count();
     let w1_zero = compressed.w1.iter().filter(|&&w| w == 0.0).count();
     println!("\n  W1 ternary distribution:");
-    println!("    +1: {} ({:.1}%)", w1_pos, w1_pos as f64 / compressed.w1.len() as f64 * 100.0);
-    println!("     0: {} ({:.1}%)", w1_zero, w1_zero as f64 / compressed.w1.len() as f64 * 100.0);
-    println!("    -1: {} ({:.1}%)", w1_neg, w1_neg as f64 / compressed.w1.len() as f64 * 100.0);
+    println!(
+        "    +1: {} ({:.1}%)",
+        w1_pos,
+        w1_pos as f64 / compressed.w1.len() as f64 * 100.0
+    );
+    println!(
+        "     0: {} ({:.1}%)",
+        w1_zero,
+        w1_zero as f64 / compressed.w1.len() as f64 * 100.0
+    );
+    println!(
+        "    -1: {} ({:.1}%)",
+        w1_neg,
+        w1_neg as f64 / compressed.w1.len() as f64 * 100.0
+    );
 
     // ─── Emit QLANG text ───
     println!("\n[6] QLANG text representation of the model:");
-    let qlang_text = format!(r#"graph trained_mlp {{
+    let qlang_text = format!(
+        r#"graph trained_mlp {{
   input x: f32[1, {input_dim}]
   input W1: f32[{input_dim}, {hidden_dim}]
   input W2: f32[{hidden_dim}, {output_dim}]
@@ -150,16 +193,25 @@ fn main() {
   output predictions = probs
   output ternary_W1 = compressed_W1
   output ternary_W2 = compressed_W2
-}}"#);
+}}"#
+    );
 
     println!("{qlang_text}");
 
     // Parse it back to verify
     match qlang_compile::parser::parse(&qlang_text) {
         Ok(graph) => {
-            println!("\n  Parsed successfully: {} nodes, {} edges", graph.nodes.len(), graph.edges.len());
+            println!(
+                "\n  Parsed successfully: {} nodes, {} edges",
+                graph.nodes.len(),
+                graph.edges.len()
+            );
             let verify = qlang_core::verify::verify_graph(&graph);
-            println!("  Verification: {} passed, {} failed", verify.passed.len(), verify.failed.len());
+            println!(
+                "  Verification: {} passed, {} failed",
+                verify.passed.len(),
+                verify.failed.len()
+            );
         }
         Err(e) => println!("\n  Parse error: {e}"),
     }

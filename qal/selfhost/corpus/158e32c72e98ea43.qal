@@ -1,0 +1,2 @@
+fn price(q: Int) -> Int req q > 0 = q * 2
+test price_two = price(1) == 2

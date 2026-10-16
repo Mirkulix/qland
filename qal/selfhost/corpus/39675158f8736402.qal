@@ -1,0 +1,1 @@
+fn app(args: List[Str]) -> Int = len(args)

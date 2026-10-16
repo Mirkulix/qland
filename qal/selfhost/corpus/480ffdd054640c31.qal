@@ -1,0 +1,2 @@
+fn inc(x: Int) -> Int = x + 1
+fn many(rq: HttpRequest) -> HttpResponse = let a = map([1, 2], inc) in 

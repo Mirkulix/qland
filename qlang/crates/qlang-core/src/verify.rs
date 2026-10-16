@@ -137,7 +137,11 @@ pub fn verify_graph(graph: &Graph) -> VerificationResult {
     for edge in &graph.edges {
         if let Some(from_node) = graph.node(edge.from_node) {
             if let Some(output_type) = from_node.output_types.get(edge.from_port as usize) {
-                if !edge.tensor_type.shape.is_compatible_with(&output_type.shape) {
+                if !edge
+                    .tensor_type
+                    .shape
+                    .is_compatible_with(&output_type.shape)
+                {
                     failed.push(VerificationCheck {
                         node_id: Some(edge.from_node),
                         check: "type_check".into(),
@@ -186,11 +190,7 @@ pub fn verify_graph(graph: &Graph) -> VerificationResult {
     }
 
     // 4. Warnings
-    let quantum_ops: Vec<_> = graph
-        .nodes
-        .iter()
-        .filter(|n| n.op.is_quantum())
-        .collect();
+    let quantum_ops: Vec<_> = graph.nodes.iter().filter(|n| n.op.is_quantum()).collect();
     if !quantum_ops.is_empty() {
         warnings.push(format!(
             "{} quantum operations present — results will be probabilistic",

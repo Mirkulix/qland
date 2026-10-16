@@ -1,0 +1,2 @@
+fn user2() -> Int
+= uno() * 2

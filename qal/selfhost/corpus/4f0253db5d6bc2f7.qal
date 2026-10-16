@@ -1,0 +1,2 @@
+fn g(t: Str, n: Int) -> Int req len(t) == 0 = if n > 0 then g("x", n - 1) else 0
+fn f(t: Str) -> Int = g(t, 1)

@@ -1,0 +1,2 @@
+fn app[T](f: fn(T) -> T, x: T) -> T = f(x)
+fn bad() -> Unit !io = app(fn(u) => print("x"), ())

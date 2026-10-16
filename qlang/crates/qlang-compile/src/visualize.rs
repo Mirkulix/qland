@@ -22,13 +22,13 @@ pub fn to_dot(graph: &Graph) -> String {
     // Nodes
     for node in &graph.nodes {
         let (color, shape) = match &node.op {
-            Op::Input { .. } => ("#d4edda", "ellipse"),   // green
-            Op::Output { .. } => ("#d1ecf1", "ellipse"),  // blue
+            Op::Input { .. } => ("#d4edda", "ellipse"),  // green
+            Op::Output { .. } => ("#d1ecf1", "ellipse"), // blue
             Op::ToTernary | Op::ToLowRank { .. } | Op::ToSparse { .. } | Op::Project { .. } => {
                 ("#f8d7da", "box") // red - compression
             }
-            op if op.is_quantum() => ("#e2d5f1", "box"),  // purple - quantum
-            _ => ("#fff3cd", "box"),                       // yellow - compute
+            op if op.is_quantum() => ("#e2d5f1", "box"), // purple - quantum
+            _ => ("#fff3cd", "box"),                     // yellow - compute
         };
 
         let label = match &node.op {
@@ -46,7 +46,11 @@ pub fn to_dot(graph: &Graph) -> String {
             String::new()
         };
 
-        let proof_badge = if !node.constraints.is_empty() { "\\n✓ proven" } else { "" };
+        let proof_badge = if !node.constraints.is_empty() {
+            "\\n✓ proven"
+        } else {
+            ""
+        };
 
         dot.push_str(&format!(
             "  n{} [label=\"{}{}{}\", shape={}, style=\"filled,rounded\", fillcolor=\"{}\"];\n",
@@ -54,7 +58,7 @@ pub fn to_dot(graph: &Graph) -> String {
         ));
     }
 
-    dot.push_str("\n");
+    dot.push('\n');
 
     // Edges
     for edge in &graph.edges {
@@ -74,9 +78,9 @@ pub fn to_ascii(graph: &Graph) -> String {
     let mut out = String::new();
 
     // Sort nodes topologically for display
-    let order = graph.topological_sort().unwrap_or_else(|_| {
-        graph.nodes.iter().map(|n| n.id).collect()
-    });
+    let order = graph
+        .topological_sort()
+        .unwrap_or_else(|_| graph.nodes.iter().map(|n| n.id).collect());
 
     out.push_str(&format!("╔══ Graph: {} ══╗\n", graph.id));
     out.push_str("║\n");
@@ -95,14 +99,22 @@ pub fn to_ascii(graph: &Graph) -> String {
                 _ => "■",
             };
 
-            let type_str = node.output_types.first()
+            let type_str = node
+                .output_types
+                .first()
                 .map(|t| format!(" → {t}"))
                 .unwrap_or_default();
 
-            let proof_str = if !node.constraints.is_empty() { " ✓" } else { "" };
+            let proof_str = if !node.constraints.is_empty() {
+                " ✓"
+            } else {
+                ""
+            };
 
-            out.push_str(&format!("║  [{:>2}] {icon} {}{}{}\n",
-                node.id, node.op, type_str, proof_str));
+            out.push_str(&format!(
+                "║  [{:>2}] {icon} {}{}{}\n",
+                node.id, node.op, type_str, proof_str
+            ));
 
             // Show edges going out
             let outgoing = graph.outgoing_edges(node_id);
@@ -113,7 +125,11 @@ pub fn to_ascii(graph: &Graph) -> String {
     }
 
     out.push_str("║\n");
-    out.push_str(&format!("╚══ {} nodes, {} edges ══╝\n", graph.nodes.len(), graph.edges.len()));
+    out.push_str(&format!(
+        "╚══ {} nodes, {} edges ══╝\n",
+        graph.nodes.len(),
+        graph.edges.len()
+    ));
 
     out
 }
@@ -127,9 +143,21 @@ mod tests {
 
     fn make_test_graph() -> Graph {
         let mut g = Graph::new("vis_test");
-        let a = g.add_node(Op::Input { name: "x".into() }, vec![], vec![TensorType::f32_vector(4)]);
-        let relu = g.add_node(Op::Relu, vec![TensorType::f32_vector(4)], vec![TensorType::f32_vector(4)]);
-        let out = g.add_node(Op::Output { name: "y".into() }, vec![TensorType::f32_vector(4)], vec![]);
+        let a = g.add_node(
+            Op::Input { name: "x".into() },
+            vec![],
+            vec![TensorType::f32_vector(4)],
+        );
+        let relu = g.add_node(
+            Op::Relu,
+            vec![TensorType::f32_vector(4)],
+            vec![TensorType::f32_vector(4)],
+        );
+        let out = g.add_node(
+            Op::Output { name: "y".into() },
+            vec![TensorType::f32_vector(4)],
+            vec![],
+        );
         g.add_edge(a, 0, relu, 0, TensorType::f32_vector(4));
         g.add_edge(relu, 0, out, 0, TensorType::f32_vector(4));
         g

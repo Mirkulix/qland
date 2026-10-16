@@ -1,0 +1,52 @@
+# Run-length encoding and decoding, line by line.
+
+fn is_digit(c: Str) -> Bool = c >= "0" && c <= "9"
+
+fn run_end(cs: List[Str], c: Str, i: Int) -> Int = match get(cs, i) { Some(d) if d == c => run_end(cs, c, i + 1), _ => i }
+
+fn encode_from(cs: List[Str], i: Int, acc: List[Str]) -> Str =
+  match get(cs, i) {
+    None => join(acc, ""),
+    Some(c) => let e = run_end(cs, c, i) in encode_from(cs, e, push(acc, from_int(e - i) ++ c)),
+  }
+
+fn encode(line: Str) -> Str = encode_from(chars(line), 0, [])
+
+fn repeat(c: Str, n: Int) -> Str =
+  if n <= 0 then "" else if n % 2 == 0 then let h = repeat(c, n / 2) in h ++ h else c ++ repeat(c, n - 1)
+
+fn digits_end(cs: List[Str], i: Int) -> Int = match get(cs, i) { Some(c) if is_digit(c) => digits_end(cs, i + 1), _ => i }
+
+fn decode_from(cs: List[Str], i: Int, acc: List[Str]) -> Str =
+  if i >= len(cs) then join(acc, "")
+  else
+    decode_pair(cs, i, digits_end(cs, i), acc)
+
+fn decode_pair(cs: List[Str], i: Int, e: Int, acc: List[Str]) -> Str =
+  match get(cs, e) {
+    Some(c) if e > i && !is_digit(c) =>
+      match to_int(number(cs, i, e, "")) {
+        Some(n) if n > 0 => decode_from(cs, e + 1, push(acc, repeat(c, n))),
+        _ => "error",
+      },
+    _ => "error",
+  }
+
+fn number(cs: List[Str], i: Int, e: Int, acc: Str) -> Str =
+  if i >= e then acc else number(cs, i + 1, e, acc ++ (match get(cs, i) { Some(c) => c, None => "" }))
+
+fn decode(line: Str) -> Str = decode_from(chars(line), 0, [])
+
+test round = encode("aaabccdddd") == "3a1b2c4d" && decode("3a1b2c") == "aaabcc" && decode("x2") == "error" && decode("0a") == "error"
+
+fn each_line(mode: Str) -> Int !io =
+  match read_line() {
+    None => 0,
+    Some(l) => { print(if mode == "encode" then encode(l) else decode(l)); each_line(mode) },
+  }
+
+fn main(args: List[Str]) -> Int !io =
+  match get(args, 0) {
+    Some(mode) if len(args) == 1 && (mode == "encode" || mode == "decode") => each_line(mode),
+    _ => { print("usage: rle encode|decode"); 2 },
+  }

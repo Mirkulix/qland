@@ -1,0 +1,4 @@
+fn fetch(c: HttpCall) -> Result[HttpResponse, NetError] !net = http(c)
+fn add(t: Str) -> Result[Int, DbError] !db = db_exec("INSERT INTO t (a) VALUES (?)", [SqlText(t)])
+fn all() -> Result[DbRows, DbError] !db = db_query("SELECT a FROM t", [])
+fn main(args: List[Str]) -> Int !net !db = match all() { Ok(r) => len(r.rows), Err(_) => match add("x") { Ok(n) => n, Err(_) => 1 } }

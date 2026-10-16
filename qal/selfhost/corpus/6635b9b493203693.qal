@@ -1,0 +1,1 @@
+fn slow(n: Int) -> Int !db = match db_query("WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c WHERE x < ?) SELECT count(*) FROM c", [SqlInt(n)]) { Ok(_) => 1, Err(_) => 2 }

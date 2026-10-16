@@ -1,0 +1,186 @@
+# qal-pkg 1
+# package todo ecf1c13b38c3eb374989fd9ff85e2d0aae46d7aaf6d7cec1454803f224b6ba91
+# std 7df6acc501ea929b95e67df267f4e4a5d54fc356891be34903be794c04cacf96
+# def Endpoint 74c2793d3c57939025fd6736d25b2c3d7a88eb89f4c1e8d1b62c0ede204d0520 todo-1
+# def TodoIn cc739bdd2c12a8c85a5cec3a65ba7cfe2194d0ee35e3bdcbe698fea45779a029 todo-1
+# def bad a864a01825b3a1ec5f646fef3fe6aa948c5e6f86ace6fc91d11a282100d51fae todo-1
+# def bad_len fd183cac51ad579858754ef26bee245adb6ec48e47d1fe30b856ebc742733f53 todo-1
+# def bool_param 0fbb0dd2e3a16d190a2ebd5fa3fc0bdd28316d0bb23388356fddbf99ebb6b212 todo-1
+# def check_body a69ccd86de6e1401b7e5417d8758784d0d80cd0b31e19eb0bf5b5007d4114f36 todo-1
+# def create_todo 5dce01aa0c2c82615d867032e79bb83b8fb452d331cbec11147f11bc5d7b0593 todo-1
+# def db_fail b45495751550e76540edc6bac9866436b6a37f011dc46233b0caa3580042386d todo-1
+# def delete_todo 2b5abcac611edccbdf2b45cfef2a25cf00f9048638f2d1fab3efb57fbd9211df todo-1
+# def dispatch 1fa3e62636a6227185730d2e469cc4733fd04bce451c62786e3cb0fdd1d9de6e todo-1
+# def done_of 64fa88974a21f2d5ddf40fb4c9f6ddf903376450bb0ad9fb73ce7adbe78f59b9 todo-1
+# def first_row_resp ec2e337f664a2c26c3f69bc78ed2f4223dac60e375125b63f1b30209795ace52 todo-1
+# def get_todo 3ff9d78a802b88d6c71ad91ae0c1cbd99c5c5243550c8e8d21cfb8758310367b todo-1
+# def handle db4178616fca34ab5fd6cd1e1f9ca72c769680e166c684427a0fc8bd8a4e0145 todo-1
+# def id_of 8183815787ef7027445d9a9d40fbb30e159ecd0e15bca268762626369c18b412 todo-1
+# def invalid_id 596a86977f50a38e0dafb09a68c2e3fe18025a8cb102be7ce1b86bf4a569f663 todo-1
+# def is_digit 0efbec8afc6288dd99586416499abf54390edb60f09d5cb6bdc76f04de22770e todo-1
+# def is_none_bool 1153bb1678f68f8ba1716b835e0103fcf09999df3c7ef0422685391edbf5090e todo-1
+# def is_none_str 54fe035722a5e79b15ed9166bddbd5e77930f463f66fb9ee571963a3048cf96d todo-1
+# def is_unknown c72df6d50245a30554aec2ff5d040aa5cd1f2a411910d936162547da1e9ef807 todo-1
+# def list_todos be38370809538d8881d3e369b2463d4b65c48b20d576502e1ce6a80ea4012f6d todo-1
+# def opt_bool 1b727b5568b48f6fe2609194b83358d1c65493843bc6ab5a5f0f16ae88642efb todo-1
+# def opt_int 0df07ceaaf29781f1efe493ef6e20d4d084002846cd853bc9cf8e7fbfe19cea1 todo-1
+# def opt_str af1417e3fac3527a75a144b0691b93c1cafd85dcac64612fe35e14e5afd70c34 todo-1
+# def parse_id 6cc7f17429f23e0c8b570c29eb12313ec23d8d15a0d0036b1fb869536d13add6 todo-1
+# def patch_todo d47c30c8cc3e8642581e6504ee5f74a800215f1dcc67b9dd1c77c17b3f0c5007 todo-1
+# def read_body 70c08214d485b6941174b9b0d68bc31499c8dfa580563ded8f0c9ca1069c9e4a todo-1
+# def routes 7b6c65f1ea79de33182066c939fbb8ba026dc90c5f03135d64b3df9338328945 todo-1
+# def rows_json abba20aa8cfbe7a8c5b7791d172be59251b6943997c4b09a9bffaf7f43a36655 todo-1
+# def setup 0344068156a897f1d878294beb18f2900ded4eb036a3fd425820a2a6eb36e75c todo-1
+# def t_body_201 4268f111a9bd16c08977a5a7cc696dd7c306e9127ca65c7b9ebb78bcaae8f797 todo-1
+# def t_body_missing 12f171636c0e2a7e523fb7ba1d7e09a602ad9d0e6588b010c31630f4cc389b69 todo-1
+# def t_body_missing_post 006e6873ef1c660e3fbcde5695391e917e99413b3ba59ea4caa6c20e36920520 todo-1
+# def t_body_notobj 59b226a40792e5dd6c42a4e6b301b9d988fe193d5af639a26130c221c7d62142 todo-1
+# def t_body_ok 6b0fc23be7bf9dc6ca97f576e946fbe13dda3754c450ec9637c5dda778a0a2e5 todo-1
+# def t_body_type f60168f9ee9f986a3493011a7a5c1e547edfc5fc8fd1330c7c0b5a2bbc9d4bae todo-1
+# def t_body_unknown 7c70c666d3727b67dea8162ec03889cabf72fc7afab03bebc5a8e61fd8913f2a todo-1
+# def t_body_value 4b3997b43f5f865fb678f0f357d1d8ed6d42140f7f15e204c79e07f8cc6da77e todo-1
+# def t_id_bad 812b7a0e4e2d41a86335c11c41379a5a266a3a0bf60c232ad8cab1cb6e26c3e1 todo-1
+# def t_id_ok b1f0d16ac9c6c4c9ff2960947ba5be67acbf2ffd9d45f6828064dd7455be6a25 todo-1
+# def t_json_order 2f04e4cdadd6aa1d97fb167f5eb3454dac952edf93b059d37a6982c6f922bc37 todo-1
+# def t_route_404 9350b7b8da7063ef88d2c38dbae4b35f4685684e0bfc0a35dd25914dcc6415c9 todo-1
+# def t_route_405 76e4010a89d1e5b1df14832fb4cc41470e8ba51919a3dd72e9b5f754d386e45f todo-1
+# def t_route_empty_id cfbec8af3ae3fa2c09d383f369447739bce870d43afaec891b9089498959bd18 todo-1
+# def t_route_health d6a780e34c3567ca08b240d57f2d1cee1d9c83f2f68def7fb98b7b70a6775070 todo-1
+# def text_param a1140dcb1a8eead610f54d42002f8398311880f821d74917e695b033ef005929 todo-1
+# def title_of e92fdcd839b09ce4757f5716eb1c8bb1617638464d2b1e70ed66bbec640020b1 todo-1
+# def todo_json 7f1ea6674a3355ca8deca7ba08a0fbd9a92e5d385e2ca223325f68cfa853d13c todo-1
+# def wrong_bool dfb7cc40bc71e29594274d20cd04325380268227e5b5f9cd54fb89c11c014174 todo-1
+# def wrong_str d09c4fa1c59a812a97aaf2e8620e6fa81933ed0202f401f4393567f229c12c0b todo-1
+
+type Endpoint = Health | ListTodos | CreateTodo | GetTodo | PatchTodo | DeleteTodo
+
+type TodoIn = { title: Option[Str], done: Option[Bool] }
+
+fn bad(code: Str, msg: Str) -> HttpResponse
+= std.http.error(400, code, msg)
+
+fn bad_len(t: Option[Str]) -> Bool
+= match t { None => false, Some(s) => len(s) < 1 || len(s) > 200 }
+
+fn bool_param(o: Option[Bool]) -> SqlValue
+= match o { Some(b) => SqlInt(if b then 1 else 0), None => SqlNull }
+
+fn db_fail() -> HttpResponse
+= std.http.error(500, "db_error", "database error")
+
+fn done_of(j: Option[std.json.Json]) -> Option[Bool]
+= match j { None => None, Some(v) => std.json.as_bool(v) }
+
+fn is_digit(c: Str) -> Bool
+= len(c) == 1 && char_code(c) >= 48 && char_code(c) <= 57
+
+fn is_none_bool(t: Option[Bool]) -> Bool
+= match t { None => true, Some(_) => false }
+
+fn is_none_str(t: Option[Str]) -> Bool
+= match t { None => true, Some(_) => false }
+
+fn is_unknown(f: std.json.Field) -> Bool
+= f.key != "title" && f.key != "done"
+
+fn opt_bool(o: Option[Bool]) -> Bool
+= match o { Some(b) => b, None => false }
+
+fn opt_int(o: Option[Int]) -> Int
+= match o { Some(n) => n, None => 0 }
+
+fn opt_str(o: Option[Str]) -> Str
+= match o { Some(s) => s, None => "" }
+
+fn setup() -> Result[Unit, Str] !db
+= match db_exec("CREATE TABLE IF NOT EXISTS todos (id INTEGER PRIMARY KEY, title TEXT NOT NULL, done INTEGER NOT NULL DEFAULT 0 CHECK (done IN (0,1)), created_at INTEGER NOT NULL)", []) { Ok(_) => Ok(()), Err(_) => Err("cannot create schema") }
+
+fn text_param(o: Option[Str]) -> SqlValue
+= match o { Some(s) => SqlText(s), None => SqlNull }
+
+fn title_of(j: Option[std.json.Json]) -> Option[Str]
+= match j { None => None, Some(v) => match std.json.as_str(v) { None => None, Some(s) => Some(trim(s)) } }
+
+fn wrong_bool(j: Option[std.json.Json]) -> Bool
+= match j { None => false, Some(v) => match std.json.as_bool(v) { None => true, Some(_) => false } }
+
+fn wrong_str(j: Option[std.json.Json]) -> Bool
+= match j { None => false, Some(v) => match std.json.as_str(v) { None => true, Some(_) => false } }
+
+fn check_body(j: std.json.Json, need_title: Bool) -> Result[TodoIn, HttpResponse]
+= match std.json.as_obj(j) { None => Err(bad("invalid_type", "body must be a JSON object")), Some(fs) => if len(filter(fs, fn(f) => is_unknown(f))) > 0 then Err(bad("unknown_field", "unknown field")) else let tj = std.json.get(j, "title") in let dj = std.json.get(j, "done") in if wrong_str(tj) || wrong_bool(dj) then Err(bad("invalid_type", "wrong field type")) else let t = title_of(tj) in let d = done_of(dj) in if bad_len(t) then Err(bad("invalid_value", "title must have 1 to 200 characters")) else if need_title && is_none_str(t) || is_none_str(t) && is_none_bool(d) then Err(bad("missing_field", "missing field")) else Ok(TodoIn { title: t, done: d }) }
+
+fn delete_todo(id: Int) -> HttpResponse !db
+= match db_exec("DELETE FROM todos WHERE id = ?", [SqlInt(id)]) { Err(_) => db_fail(), Ok(n) => if n == 0 then std.http.not_found() else HttpResponse { status: 204, headers: [], body: "" } }
+
+fn invalid_id() -> HttpResponse
+= bad("invalid_id", "invalid id")
+
+fn parse_id(s: Str) -> Option[Int]
+= if len(s) == 0 then None else if len(filter(chars(s), fn(c) => !is_digit(c))) > 0 then None else match to_int(s) { Some(n) => if n >= 1 then Some(n) else None, None => None }
+
+fn routes() -> List[std.route.Route[Endpoint]]
+= [std.route.Route { method: "GET", pattern: "/health", tag: Health }, std.route.Route { method: "GET", pattern: "/todos", tag: ListTodos }, std.route.Route { method: "POST", pattern: "/todos", tag: CreateTodo }, std.route.Route { method: "GET", pattern: "/todos/:id", tag: GetTodo }, std.route.Route { method: "PATCH", pattern: "/todos/:id", tag: PatchTodo }, std.route.Route { method: "DELETE", pattern: "/todos/:id", tag: DeleteTodo }]
+
+fn todo_json(row: List[SqlValue]) -> std.json.Json
+= std.json.obj([std.json.field("id", std.json.int(opt_int(std.db.int(row, 0)))), std.json.field("title", std.json.str(opt_str(std.db.text(row, 1)))), std.json.field("done", std.json.bool(opt_bool(std.db.bool(row, 2)))), std.json.field("created_at", std.json.int(opt_int(std.db.int(row, 3))))])
+
+fn first_row_resp(rows: DbRows, status: Int) -> HttpResponse
+= match std.db.first(rows) { Some(r) => std.http.json(status, todo_json(r)), None => std.http.not_found() }
+
+fn id_of(ps: List[std.url.Param]) -> Option[Int]
+= parse_id(opt_str(std.route.param(ps, "id")))
+
+fn read_body(rq: HttpRequest, need_title: Bool) -> Result[TodoIn, HttpResponse]
+= match std.http.json_body(rq) { Err(resp) => Err(resp), Ok(j) => check_body(j, need_title) }
+
+fn rows_json(rows: DbRows) -> std.json.Json
+= std.json.arr(map(rows.rows, fn(r) => todo_json(r)))
+
+test t_body_201 = match std.json.parse("{\"title\":\"" ++ join(map(range(0, 201), fn(i) => "x"), "") ++ "\"}") { Ok(j) => match check_body(j, true) { Err(r) => contains(r.body, "invalid_value"), Ok(_) => false }, Err(_) => false }
+
+test t_body_missing = match check_body(std.json.Obj([]), false) { Err(r) => contains(r.body, "missing_field"), Ok(_) => false }
+
+test t_body_missing_post = match check_body(std.json.Obj([std.json.field("done", std.json.bool(true))]), true) { Err(r) => contains(r.body, "missing_field"), Ok(_) => false }
+
+test t_body_notobj = match check_body(std.json.Arr([]), true) { Err(r) => contains(r.body, "invalid_type"), Ok(_) => false }
+
+test t_body_ok = match check_body(std.json.Obj([std.json.field("title", std.json.str("  hi  "))]), true) { Ok(i) => i.title == Some("hi") && i.done == None, Err(_) => false }
+
+test t_body_type = match check_body(std.json.Obj([std.json.field("done", std.json.Null)]), false) { Err(r) => contains(r.body, "invalid_type"), Ok(_) => false }
+
+test t_body_unknown = match check_body(std.json.Obj([std.json.field("title", std.json.int(1)), std.json.field("id", std.json.int(1))]), true) { Err(r) => r.status == 400 && contains(r.body, "unknown_field"), Ok(_) => false }
+
+test t_body_value = match check_body(std.json.Obj([std.json.field("title", std.json.str("   "))]), true) { Err(r) => contains(r.body, "invalid_value"), Ok(_) => false }
+
+test t_id_bad = parse_id("") == None && parse_id("0") == None && parse_id("-1") == None && parse_id("+5") == None && parse_id("1.5") == None && parse_id("99999999999999999999") == None && parse_id(" ") == None && parse_id("abc") == None
+
+test t_id_ok = parse_id("001") == Some(1) && parse_id("%31") == None && parse_id("42") == Some(42)
+
+test t_json_order = std.json.print(todo_json([SqlInt(3), SqlText("a"), SqlInt(1), SqlInt(77)])) == "{\"id\":3,\"title\":\"a\",\"done\":true,\"created_at\":77}"
+
+test t_route_404 = match std.route.route(routes(), "GET", "/todos/1/") { std.route.NotFound => true, _ => false }
+
+test t_route_405 = match std.route.route(routes(), "PUT", "/todos") { std.route.MethodNotAllowed(ms) => ms == ["GET", "HEAD", "POST"], _ => false }
+
+test t_route_empty_id = match std.route.route(routes(), "GET", "/todos/") { std.route.Matched(GetTodo, ps) => std.route.param(ps, "id") == Some(""), _ => false }
+
+test t_route_health = match std.route.route(routes(), "GET", "/health") { std.route.Matched(Health, _) => true, _ => false }
+
+fn create_todo(rq: HttpRequest) -> HttpResponse !db !time
+= match read_body(rq, true) { Err(resp) => resp, Ok(inp) => match db_query("INSERT INTO todos (title, done, created_at) VALUES (?, ?, ?) RETURNING id, title, done, created_at", [SqlText(opt_str(inp.title)), SqlInt(if opt_bool(inp.done) then 1 else 0), SqlInt(now_ms())]) { Err(_) => db_fail(), Ok(rows) => match std.db.first(rows) { None => db_fail(), Some(r) => std.http.with_header(std.http.json(201, todo_json(r)), "location", "/todos/" ++ from_int(opt_int(std.db.int(r, 0)))) } } }
+
+fn get_todo(id: Int) -> HttpResponse !db
+= match db_query("SELECT id, title, done, created_at FROM todos WHERE id = ?", [SqlInt(id)]) { Err(_) => db_fail(), Ok(rows) => first_row_resp(rows, 200) }
+
+fn list_todos(rq: HttpRequest) -> HttpResponse !db
+= match std.url.param(std.http.query(rq), "done") { None => match db_query("SELECT id, title, done, created_at FROM todos ORDER BY id", []) { Ok(rows) => std.http.json(200, rows_json(rows)), Err(_) => db_fail() }, Some("true") => match db_query("SELECT id, title, done, created_at FROM todos WHERE done = ? ORDER BY id", [SqlInt(1)]) { Ok(rows) => std.http.json(200, rows_json(rows)), Err(_) => db_fail() }, Some("false") => match db_query("SELECT id, title, done, created_at FROM todos WHERE done = ? ORDER BY id", [SqlInt(0)]) { Ok(rows) => std.http.json(200, rows_json(rows)), Err(_) => db_fail() }, Some(_) => bad("invalid_query", "done must be true or false") }
+
+fn patch_todo(id: Int, rq: HttpRequest) -> HttpResponse !db
+= match read_body(rq, false) { Err(resp) => resp, Ok(inp) => match db_query("UPDATE todos SET title = COALESCE(?, title), done = COALESCE(?, done) WHERE id = ? RETURNING id, title, done, created_at", [text_param(inp.title), bool_param(inp.done), SqlInt(id)]) { Err(_) => db_fail(), Ok(rows) => first_row_resp(rows, 200) } }
+
+fn dispatch(tag: Endpoint, ps: List[std.url.Param], rq: HttpRequest) -> HttpResponse !db !time
+= match tag { Health => std.http.json(200, std.json.obj([std.json.field("ok", std.json.bool(true))])), ListTodos => list_todos(rq), CreateTodo => create_todo(rq), GetTodo => match id_of(ps) { None => invalid_id(), Some(id) => get_todo(id) }, PatchTodo => match id_of(ps) { None => invalid_id(), Some(id) => patch_todo(id, rq) }, DeleteTodo => match id_of(ps) { None => invalid_id(), Some(id) => delete_todo(id) } }
+
+fn handle(rq: HttpRequest) -> HttpResponse !db !time
+= match std.route.route(routes(), rq.method, rq.path) { std.route.Matched(tag, ps) => dispatch(tag, ps, rq), std.route.NotFound => std.http.not_found(), std.route.MethodNotAllowed(ms) => std.http.method_not_allowed(ms) }

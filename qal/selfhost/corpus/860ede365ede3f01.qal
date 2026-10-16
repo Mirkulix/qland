@@ -1,0 +1,1 @@
+fn elsewhere() -> Int = 1

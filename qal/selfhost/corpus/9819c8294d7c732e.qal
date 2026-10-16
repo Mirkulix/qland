@@ -1,0 +1,2 @@
+fn one() -> Int = 5
+fn uno() -> Int = 5

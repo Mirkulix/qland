@@ -1,0 +1,30 @@
+# Balanced-bracket check per line; reports the 1-based position of the first error.
+# Recursive descent over the characters: one recursion level per open bracket.
+
+fn closer(c: Str) -> Str = match c { "(" => ")", "[" => "]", "{" => "}", _ => "" }
+
+fn is_closer(c: Str) -> Bool = c == ")" || c == "]" || c == "}"
+
+# Scans from index i inside a bracket that `want` closes ("" at the top level). Result: the index
+# after that closing bracket, or -(error position).
+fn scan(cs: List[Str], i: Int, want: Str) -> Int =
+  match get(cs, i) {
+    None => if want == "" then i else 0 - (len(cs) + 1),
+    Some(c) =>
+      if closer(c) != "" then
+        let next = scan(cs, i + 1, closer(c)) in
+        if next < 0 then next else scan(cs, next, want)
+      else if is_closer(c) then (if c == want then i + 1 else 0 - (i + 1))
+      else scan(cs, i + 1, want),
+  }
+
+fn check(line: Str) -> Str =
+  let cs = chars(line) in
+  let r = scan(cs, 0, "") in
+  if r < 0 then "error " ++ from_int(0 - r) else if r < len(cs) then "error " ++ from_int(r) else "ok"
+
+test examples = check("(a[b]{c})") == "ok" && check("(]") == "error 2" && check("((") == "error 3" && check("") == "ok" && check(")(") == "error 1"
+
+fn each_line() -> Int !io = match read_line() { None => 0, Some(l) => { print(check(l)); each_line() } }
+
+fn main(args: List[Str]) -> Int !io = each_line()

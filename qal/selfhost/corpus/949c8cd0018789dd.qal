@@ -1,0 +1,2 @@
+fn buy() -> Int = price(1)
+test spare_two = spare() == 2
