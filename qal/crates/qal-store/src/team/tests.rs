@@ -1272,6 +1272,14 @@ fn a_rebase_marks_conflicts_and_their_resolution_merges() {
     ok_verify(&mut s);
     pass_gate(&mut s, &arch, &ver, &rev, &b);
     assert_eq!(merge_as(&mut s, &keys, &rev, &b).unwrap_err()[0].code, "E0908", "conflict marks");
+    // Main moves on elsewhere; another rebase keeps the unresolved mark.
+    let other = open(&mut s, &arch, "other", &[], None);
+    write_in(&mut s, &keys, &arch, &other, "fn elsewhere() -> Int = 1").unwrap();
+    pass_gate(&mut s, &arch, &ver, &rev, &other);
+    merge_as(&mut s, &keys, &rev, &other).unwrap();
+    let r = s.rebase(&again(&keys, &s, &arch), &b, None).unwrap();
+    assert_eq!(r["conflicts"][0]["name"], "spare", "the mark stays until resolved: {r}");
+    ok_verify(&mut s);
     // Resolve: define it again (the mark goes), submit, reviews again, merge.
     write_in(&mut s, &keys, &arch, &b, "fn spare() -> Int = 7").unwrap();
     let marks: i64 = raw(&s).query_row("SELECT count(*) FROM change_names WHERE change = ?1 AND conflict IS NOT NULL", [&b], |r| r.get(0)).unwrap();

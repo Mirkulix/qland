@@ -793,6 +793,17 @@ fn plan_rebase(tx: &Transaction, signer: &Signer, id: &str) -> Result<Rebase, Ve
             conflicts.push(json!({"name": d.name, "conflict": kind, "base": d.base, "ours": d.ours, "theirs": d.theirs, "theirs_by": by, "record": record}));
         }
     }
+    // A mark nobody resolved yet stays (a later rebase does not decide it), unless both sides
+    // now have the same definition.
+    for (n, r) in meta.rows.iter().filter(|(n, r)| r.conflict.is_some() && !marks.contains_key(*n)) {
+        let converged = ds.iter().any(|d| d.name == *n && d.class == Class::Converged);
+        let kept = r.hash.is_some() || main.contains_key(n);
+        if let (Some(mark), false, true) = (&r.conflict, converged, kept) {
+            marks.insert(n.clone(), mark.clone());
+            let m: Value = serde_json::from_str(mark).unwrap_or(Value::Null);
+            conflicts.push(json!({"name": n, "conflict": "unresolved", "base": m["base"], "ours": r.hash, "theirs": m["theirs"], "theirs_by": Value::Null, "record": Value::Null}));
+        }
+    }
     let meta_rows = rebase_meta(&meta, &main, &after, &marks);
     let replayed_names: Vec<String> = o.input.defs.iter().map(|d| d.name().to_string()).collect();
     // For the prover: what changed relative to the change set (as its `define` would report).
