@@ -8,9 +8,10 @@ use std::time::Duration;
 
 /// `PRAGMA user_version` of stores this code reads and writes. Version 2 is Phase 1; version 3
 /// (Phase 2b) adds the `proofs` table; version 4 (Phase 3a) adds `meta`; version 5 (Phase 3b) allows
-/// the history action `deleted`. Older stores are upgraded in place when they are opened
-/// ([`migrate`]: 2 -> 3 -> 4 -> 5, one transaction).
-pub const SCHEMA_VERSION: i64 = 5;
+/// the history action `deleted`; version 6 (Phase 4a) adds the team tables and `history.space` /
+/// `history.record`. Older stores are upgraded in place when they are opened
+/// ([`migrate`]: 2 -> 3 -> 4 -> 5 -> 6, one transaction).
+pub const SCHEMA_VERSION: i64 = 6;
 
 /// Proof results by definition hash and prover key (prover version, Z3 version, resource limit):
 /// a definition's hash fixes everything a proof depends on (its callees' contracts are referenced
@@ -53,6 +54,125 @@ DROP TABLE history;
 ALTER TABLE history_v5 RENAME TO history;
 CREATE INDEX history_by_name ON history(name);
 ";
+
+/// 5 -> 6 (Phase 4 spec §12): the team tables, created empty (a store becomes a team store only with
+/// `qal team init`, `meta.team = 1`). Nothing else changes, so a store without team mode works
+/// exactly as before. `IF NOT EXISTS`: a store downgraded by hand may still have them.
+pub const TEAM: &str = "
+CREATE TABLE IF NOT EXISTS members (
+    id         TEXT PRIMARY KEY,
+    role       TEXT NOT NULL CHECK (role IN ('owner', 'architect', 'implementer', 'verifier', 'reviewer')),
+    key        TEXT NOT NULL,
+    key_id     TEXT NOT NULL,
+    added_at   INTEGER NOT NULL,
+    revoked_at INTEGER
+);
+CREATE TABLE IF NOT EXISTS sessions (
+    token_sha256   TEXT PRIMARY KEY,
+    id             TEXT NOT NULL UNIQUE,
+    member         TEXT NOT NULL REFERENCES members(id),
+    created_at     INTEGER NOT NULL,
+    expires_at     INTEGER NOT NULL,
+    revoked_at     INTEGER,
+    current_change TEXT
+);
+CREATE TABLE IF NOT EXISTS changes (
+    id           TEXT PRIMARY KEY,
+    title        TEXT NOT NULL,
+    description  TEXT NOT NULL,
+    scope        TEXT NOT NULL,
+    owner        TEXT NOT NULL,
+    assignee     TEXT,
+    status       TEXT NOT NULL CHECK (status IN ('open', 'submitted', 'merged', 'abandoned')),
+    claimed      INTEGER NOT NULL DEFAULT 0,
+    base_seq     INTEGER NOT NULL,
+    base_root    TEXT NOT NULL,
+    needs_rebase INTEGER NOT NULL DEFAULT 0,
+    created_at   INTEGER NOT NULL,
+    updated_at   INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS change_names (
+    change      TEXT NOT NULL,
+    name        TEXT NOT NULL,
+    hash        TEXT,
+    local_names TEXT NOT NULL,
+    refs        TEXT NOT NULL,
+    origin      TEXT NOT NULL CHECK (origin IN ('base', 'edited', 'added', 'relinked', 'renamed')),
+    base_hash   TEXT,
+    conflict    TEXT,
+    updated_at  INTEGER NOT NULL,
+    PRIMARY KEY (change, name)
+);
+CREATE TABLE IF NOT EXISTS reviews (
+    id       INTEGER PRIMARY KEY,
+    change   TEXT NOT NULL,
+    member   TEXT NOT NULL,
+    verdict  TEXT NOT NULL,
+    root     TEXT NOT NULL,
+    comments TEXT NOT NULL,
+    at       INTEGER NOT NULL,
+    record   INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS leases (
+    name        TEXT PRIMARY KEY,
+    change      TEXT NOT NULL,
+    member      TEXT NOT NULL,
+    acquired_at INTEGER NOT NULL,
+    expires_at  INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS seen (
+    session TEXT NOT NULL,
+    space   TEXT NOT NULL,
+    name    TEXT NOT NULL,
+    hash    TEXT NOT NULL,
+    PRIMARY KEY (session, space, name)
+);
+CREATE TABLE IF NOT EXISTS notices (
+    id     INTEGER PRIMARY KEY,
+    member TEXT NOT NULL,
+    kind   TEXT NOT NULL,
+    body   TEXT NOT NULL,
+    at     INTEGER NOT NULL,
+    seen   INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS notices_by_member ON notices(member, seen);
+CREATE TABLE IF NOT EXISTS calls (
+    id      INTEGER PRIMARY KEY,
+    member  TEXT NOT NULL,
+    session TEXT NOT NULL,
+    tool    TEXT NOT NULL,
+    ok      INTEGER NOT NULL,
+    code    TEXT,
+    ms      INTEGER NOT NULL,
+    at      INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS records (
+    seq  INTEGER PRIMARY KEY,
+    hash TEXT NOT NULL UNIQUE,
+    body BLOB NOT NULL,
+    sig  TEXT NOT NULL
+);
+";
+
+/// The 5 -> 6 step: the team tables plus `history.space` and `history.record` (added only if missing).
+fn upgrade_v6(tx: &rusqlite::Transaction) -> Result<(), Vec<Diagnostic>> {
+    tx.execute_batch(TEAM).map_err(sql)?;
+    let mut columns = Vec::new();
+    {
+        let mut stmt = tx.prepare("SELECT name FROM pragma_table_info('history')").map_err(sql)?;
+        let rows = stmt.query_map([], |r| r.get::<_, String>(0)).map_err(sql)?;
+        for r in rows {
+            columns.push(r.map_err(sql)?);
+        }
+    }
+    if !columns.iter().any(|c| c == "space") {
+        tx.execute_batch("ALTER TABLE history ADD COLUMN space TEXT NOT NULL DEFAULT 'main';").map_err(sql)?;
+    }
+    if !columns.iter().any(|c| c == "record") {
+        tx.execute_batch("ALTER TABLE history ADD COLUMN record INTEGER NULL;").map_err(sql)?;
+    }
+    Ok(())
+}
 
 /// How long a writer waits for another process's `define`/`rename` to finish.
 pub const BUSY_TIMEOUT: Duration = Duration::from_secs(10);
@@ -124,6 +244,7 @@ pub fn create(conn: &mut Connection, path: &Path) -> Result<(), Vec<Diagnostic>>
         tx.execute_batch(SCHEMA).map_err(sql)?;
         tx.execute_batch(PROOFS).map_err(sql)?;
         tx.execute_batch(META).map_err(sql)?;
+        upgrade_v6(&tx)?;
         tx.pragma_update(None, "user_version", SCHEMA_VERSION).map_err(sql)?;
     } else if (2..SCHEMA_VERSION).contains(&version) {
         upgrade(&tx, version)?;
@@ -136,8 +257,9 @@ pub fn create(conn: &mut Connection, path: &Path) -> Result<(), Vec<Diagnostic>>
     Ok(())
 }
 
-/// Upgrades a store of version `from` (2, 3 or 4) to [`SCHEMA_VERSION`] inside `tx`, step by step:
-/// 2 -> 3 creates `proofs`, 3 -> 4 creates `meta`, 4 -> 5 rebuilds `history`.
+/// Upgrades a store of version `from` (2 to 5) to [`SCHEMA_VERSION`] inside `tx`, step by step:
+/// 2 -> 3 creates `proofs`, 3 -> 4 creates `meta`, 4 -> 5 rebuilds `history`, 5 -> 6 adds the team
+/// tables and the history columns `space` and `record`.
 fn upgrade(tx: &rusqlite::Transaction, from: i64) -> Result<(), Vec<Diagnostic>> {
     if from <= 2 {
         tx.execute_batch(PROOFS).map_err(sql)?;
@@ -151,12 +273,16 @@ fn upgrade(tx: &rusqlite::Transaction, from: i64) -> Result<(), Vec<Diagnostic>>
         tx.execute_batch(HISTORY_V5).map_err(sql)?;
         tx.pragma_update(None, "user_version", 5).map_err(sql)?;
     }
+    if from <= 5 {
+        upgrade_v6(tx)?;
+        tx.pragma_update(None, "user_version", 6).map_err(sql)?;
+    }
     Ok(())
 }
 
-/// Brings a store of an older version (2, 3 or 4) to [`SCHEMA_VERSION`] in one transaction (2 -> 3
-/// creates `proofs`, 3 -> 4 `meta`, 4 -> 5 rebuilds `history` with its rows). Other versions are left alone (the caller
-/// reports them).
+/// Brings a store of an older version (2 to 5) to [`SCHEMA_VERSION`] in one transaction (2 -> 3
+/// creates `proofs`, 3 -> 4 `meta`, 4 -> 5 rebuilds `history` with its rows, 5 -> 6 the team tables).
+/// Other versions are left alone (the caller reports them).
 pub fn migrate(conn: &mut Connection) -> Result<(), Vec<Diagnostic>> {
     let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0)).map_err(sql)?;
     if !(2..SCHEMA_VERSION).contains(&version) {

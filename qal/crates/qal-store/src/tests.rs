@@ -824,7 +824,7 @@ fn version_2_stores_are_upgraded_and_keep_proof_results() {
     drop(s);
     // 2 -> 3 (proofs) -> 4 (meta) in one migration.
     let mut s = Store::open(&path).unwrap();
-    assert_eq!(raw(&s).query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), 5);
+    assert_eq!(raw(&s).query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), schema::SCHEMA_VERSION);
     assert_eq!(s.meta("x").unwrap(), None);
     let h = hash(&mut s, "f");
     assert_eq!(s.proofs(&h, "p1").unwrap(), None);
@@ -1014,7 +1014,7 @@ fn an_empty_package_is_valid_and_old_stores_are_migrated() {
     assert_eq!(hashes(&mut again).len(), 1);
     assert_eq!(again.proofs(&h, "p").unwrap().as_deref(), Some("[1]"));
     let v: i64 = raw(&again).query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-    assert_eq!(v, 5);
+    assert_eq!(v, schema::SCHEMA_VERSION);
 }
 
 #[test]
@@ -1362,7 +1362,7 @@ fn version_4_stores_get_the_deleted_history_action() {
     c.execute_batch(
         "CREATE TABLE h4 (id INTEGER PRIMARY KEY, name TEXT NOT NULL, action TEXT NOT NULL CHECK (action IN ('added', 'replaced', 'relinked', 'renamed')), \
          old_hash TEXT, new_hash TEXT NOT NULL, from_name TEXT, to_name TEXT, agent TEXT NOT NULL, at INTEGER NOT NULL); \
-         INSERT INTO h4 SELECT * FROM history; DROP TABLE history; ALTER TABLE h4 RENAME TO history; CREATE INDEX history_by_name ON history(name); \
+         INSERT INTO h4 SELECT id, name, action, old_hash, new_hash, from_name, to_name, agent, at FROM history; DROP TABLE history; ALTER TABLE h4 RENAME TO history; CREATE INDEX history_by_name ON history(name); \
          PRAGMA user_version = 4;",
     )
     .unwrap();
@@ -1370,7 +1370,7 @@ fn version_4_stores_get_the_deleted_history_action() {
     let path = s.path().to_path_buf();
     drop(s);
     let mut s = Store::open(&path).unwrap();
-    assert_eq!(raw(&s).query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), 5);
+    assert_eq!(raw(&s).query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), schema::SCHEMA_VERSION);
     assert_eq!(s.history("f").unwrap()[0].action, "added");
     s.delete(&["f".into()], "a").unwrap();
     assert_eq!(s.history("f").unwrap()[1].action, "deleted");
