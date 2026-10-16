@@ -62,12 +62,18 @@ pub fn default_jobs() -> usize {
 
 /// One call of the compiler in a fresh instance.
 pub trait Invoke: Sync {
-    /// The compiler's answer to `req`, or the runtime error that ended the call.
-    fn invoke(&self, req: &[u8]) -> Result<Vec<u8>, String>;
+    /// The compiler's answer to `req` within `timeout`, or the runtime error that ended the call.
+    fn invoke(&self, req: &[u8], timeout: Duration) -> Result<Vec<u8>, String>;
+
+    /// How many calls may run at once (a prepared runner has a fixed number of instance slots).
+    fn max_parallel(&self) -> usize {
+        usize::MAX
+    }
 }
 
+/// A plain function as a compiler (tests, the Rust reference server); it ignores the timeout.
 impl<F: Fn(&[u8]) -> Result<Vec<u8>, String> + Sync> Invoke for F {
-    fn invoke(&self, req: &[u8]) -> Result<Vec<u8>, String> {
+    fn invoke(&self, req: &[u8], _timeout: Duration) -> Result<Vec<u8>, String> {
         self(req)
     }
 }
@@ -105,19 +111,19 @@ fn decode(bytes: &[u8]) -> Result<Response, DriveError> {
     Response::decode(bytes).map_err(DriveError::Malformed)
 }
 
-/// Runs `req` to its final answer (`DONE` payload or `DIAGNOSTICS`), following forks.
+/// Runs `req` to its final answer (`DONE` payload or `DIAGNOSTICS`), following forks. The whole
+/// drive, forks included, ends within `limits.total_timeout`: every call gets at most the time left.
 pub fn drive(req: Vec<u8>, jobs: usize, limits: &Limits, compiler: &dyn Invoke) -> Result<(Response, DriveStats), DriveError> {
-    let start = Instant::now();
-    let jobs = jobs.clamp(1, 64);
+    let deadline = Instant::now() + limits.total_timeout;
+    let jobs = jobs.clamp(1, 64).min(compiler.max_parallel().max(1));
     let mut stats = DriveStats::default();
     let mut req = req;
     loop {
-        if start.elapsed() > limits.total_timeout {
-            return Err(DriveError::Limit(format!("the compilation took longer than {} s", limits.total_timeout.as_secs())));
-        }
-        stats.calls += 1;
         let item = if stats.rounds == 0 { "main".to_string() } else { format!("join {}", stats.rounds) };
-        let bytes = compiler.invoke(&req).map_err(|error| DriveError::Failed { item: item.clone(), error })?;
+        let left = time_left(deadline, limits)?;
+        stats.calls += 1;
+        let bytes = compiler.invoke(&req, left.min(limits.item_timeout)).map_err(|error| DriveError::Failed { item: item.clone(), error })?;
+        time_left(deadline, limits)?;
         match decode(&bytes)? {
             Response::Fork { continuation, items } => {
                 stats.rounds += 1;
@@ -131,7 +137,7 @@ pub fn drive(req: Vec<u8>, jobs: usize, limits: &Limits, compiler: &dyn Invoke) 
                 if size > limits.max_round_bytes {
                     return Err(DriveError::Limit(format!("{size} bytes of work items in one round (at most {})", limits.max_round_bytes)));
                 }
-                let results = run_items(&items, jobs, compiler, stats.rounds)?;
+                let results = run_items(&items, jobs, compiler, stats.rounds, deadline, limits)?;
                 let size: usize = results.iter().map(Vec::len).sum();
                 if size > limits.max_round_bytes {
                     return Err(DriveError::Limit(format!("{size} bytes of results in one round (at most {})", limits.max_round_bytes)));
@@ -146,15 +152,34 @@ pub fn drive(req: Vec<u8>, jobs: usize, limits: &Limits, compiler: &dyn Invoke) 
     }
 }
 
+/// The time left until `deadline`, or the total-time limit error.
+fn time_left(deadline: Instant, limits: &Limits) -> Result<Duration, DriveError> {
+    match deadline.checked_duration_since(Instant::now()) {
+        Some(d) if !d.is_zero() => Ok(d),
+        _ => Err(DriveError::Limit(format!("the compilation took longer than {} s", limits.total_timeout.as_secs()))),
+    }
+}
+
 /// Runs the items on up to `jobs` threads; results in item order. An item's answer must be valid
-/// `QALR` (it is passed on unread otherwise); the first failure in item order is reported.
-fn run_items(items: &[Vec<u8>], jobs: usize, compiler: &dyn Invoke, round: usize) -> Result<Vec<Vec<u8>>, DriveError> {
+/// `QALR` (it is passed on unread otherwise). After a failure no later item is started (the first
+/// failure in item order is reported, so earlier items still run); after the deadline none is.
+fn run_items(items: &[Vec<u8>], jobs: usize, compiler: &dyn Invoke, round: usize, deadline: Instant, limits: &Limits) -> Result<Vec<Vec<u8>>, DriveError> {
     let slots: Vec<Mutex<Option<Result<Vec<u8>, DriveError>>>> = items.iter().map(|_| Mutex::new(None)).collect();
     let next = AtomicUsize::new(0);
+    let first_failure = AtomicUsize::new(usize::MAX);
     let work = || loop {
         let i = next.fetch_add(1, Ordering::Relaxed);
         let Some(item) = items.get(i) else { break };
-        let r = compiler.invoke(item).map_err(|error| DriveError::Failed { item: format!("round {round} item {i}"), error }).and_then(|b| decode(&b).map(|_| b));
+        if i > first_failure.load(Ordering::Relaxed) {
+            break;
+        }
+        let r = match time_left(deadline, limits) {
+            Err(e) => Err(e),
+            Ok(left) => compiler.invoke(item, left.min(limits.item_timeout)).map_err(|error| DriveError::Failed { item: format!("round {round} item {i}"), error }).and_then(|b| decode(&b).map(|_| b)),
+        };
+        if r.is_err() {
+            first_failure.fetch_min(i, Ordering::Relaxed);
+        }
         if let Ok(mut s) = slots[i].lock() {
             *s = Some(r);
         }
@@ -176,6 +201,7 @@ fn run_items(items: &[Vec<u8>], jobs: usize, compiler: &dyn Invoke, round: usize
         }
         Ok(())
     })?;
+    time_left(deadline, limits)?;
     slots
         .into_iter()
         .enumerate()
@@ -189,27 +215,34 @@ fn run_items(items: &[Vec<u8>], jobs: usize, compiler: &dyn Invoke, round: usize
 /// A compiler module, linked once; every call runs in a fresh instance with no system access.
 pub struct Compiler {
     runner: Runner,
+    slots: usize,
 }
 
 impl Compiler {
-    /// `module` must export `qc_main(Bytes) -> Bytes`, be pure and be compiled with
-    /// `memory_max_pages` matching `limits.memory_bytes`.
-    pub fn new(module: CompiledModule, limits: &Limits, jobs: usize) -> Result<Compiler, String> {
+    /// `module` must export a pure `qc_main(Bytes) -> Bytes` and declare a memory maximum equal to
+    /// `limits.memory_bytes`; `slots` instances can run at once (the most `drive` will use).
+    pub fn new(module: CompiledModule, limits: &Limits, slots: usize) -> Result<Compiler, String> {
         let f = module.func(ENTRY).ok_or_else(|| format!("the compiler module does not export `{ENTRY}`"))?;
-        if f.params.len() != 1 || !f.effects.is_empty() {
+        let bytes = qal_core::ast::Type::Bytes;
+        if f.params.len() != 1 || f.params[0].1 != bytes || f.ret != bytes || !f.effects.is_empty() {
             return Err(format!("`{ENTRY}` must be a pure fn(Bytes) -> Bytes"));
         }
-        let runner = Runner::prepared(module, Permissions::default(), limits.memory_bytes, jobs.max(1))?
+        let declared = (module.memory_max_pages as usize) << 16;
+        if declared != limits.memory_bytes {
+            return Err(format!("the compiler module allows {} MiB of memory, but its limits {} MiB (compile it with the matching memory_max_pages)", declared >> 20, limits.memory_bytes >> 20));
+        }
+        let slots = slots.max(1);
+        let runner = Runner::prepared(module, Permissions::default(), limits.memory_bytes, slots)?
             .with_fuel(limits.fuel)
             .with_timeout(limits.item_timeout)
             .with_exact_results(limits.max_round_bytes);
-        Ok(Compiler { runner })
+        Ok(Compiler { runner, slots })
     }
 
     /// One call in a fresh instance on the calling thread (which needs [`GUEST_THREAD_STACK`]),
-    /// with the fuel it used and the instance's final memory size.
-    pub fn call_here(&self, req: &[u8]) -> (Result<Vec<u8>, RunError>, u64, usize) {
-        let out = self.runner.execute(ENTRY, &[Value::Bytes(req.to_vec(), 0)], ExecIn::default(), &commit_if_ok);
+    /// within `timeout` (at most the item timeout), with the fuel it used and the final memory size.
+    pub fn call_here(&self, req: &[u8], timeout: Duration) -> (Result<Vec<u8>, RunError>, u64, usize) {
+        let out = self.runner.execute_within(ENTRY, &[Value::Bytes(req.to_vec(), 0)], ExecIn::default(), &commit_if_ok, timeout);
         let r = match out.outcome.result {
             Ok(Value::Bytes(b, 0)) => Ok(b),
             Ok(other) => Err(RunError::new("bad_response", ENTRY, format!("`{ENTRY}` returned {other:?}"))),
@@ -220,12 +253,16 @@ impl Compiler {
 }
 
 impl Invoke for Compiler {
-    fn invoke(&self, req: &[u8]) -> Result<Vec<u8>, String> {
-        let run = || self.call_here(req).0;
+    fn invoke(&self, req: &[u8], timeout: Duration) -> Result<Vec<u8>, String> {
+        let run = || self.call_here(req, timeout).0;
         let r = std::thread::scope(|scope| match std::thread::Builder::new().name("qal-compiler".into()).stack_size(GUEST_THREAD_STACK).spawn_scoped(scope, run) {
             Ok(h) => h.join().unwrap_or_else(|_| Err(RunError::new("trap", ENTRY, "the runtime panicked"))),
             Err(e) => Err(RunError::new("trap", ENTRY, format!("cannot start the execution thread: {e}"))),
         });
         r.map_err(|e| format!("{} ({}): {}", e.kind, e.code, e.message))
+    }
+
+    fn max_parallel(&self) -> usize {
+        self.slots
     }
 }

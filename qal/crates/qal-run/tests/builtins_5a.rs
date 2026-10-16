@@ -171,6 +171,12 @@ fn sha256_is_the_standard_digest() {
     assert_eq!(hex(r.call("h", &[bytes(&long)]).unwrap()), qal_core::canon::Hash::of(&long).to_hex());
     assert_eq!(r.call("hs", &[Value::Str("x".repeat(1000))]), Ok(int(32)));
     assert!(r.run_tests().iter().all(|t| t.passed));
+    // Hashing costs fuel (review M5): hashing 1 MiB 2000 times exceeds a budget of 10^7.
+    let looping = runner("fn big(b: Bytes, k: Int) -> Bytes = if k == 0 then b else big(b ++ b, k - 1)\n\
+                          fn spin(b: Bytes, n: Int) -> Int = if n == 0 then 0 else bytes_len(sha256(b)) + spin(b, n - 1) - 32\n\
+                          fn go(n: Int) -> Int = spin(big(to_bytes(\"x\"), 20), n)").with_fuel(10_000_000);
+    assert_eq!(looping.call("go", &[int(1)]), Ok(int(0)));
+    assert_eq!(looping.call("go", &[int(2000)]).unwrap_err().kind, "timeout");
     // Only a module that uses it imports the helper.
     let p = qal_compiler::check(&qal_compiler::parse_program("fn f(b: Bytes) -> Bytes = sha256(b)\nfn g(x: Int) -> Int = x").unwrap()).unwrap();
     assert!(qal_compiler::compile(&p, &Entry::Fn("f".into())).unwrap().imports.contains(&"sha256"));

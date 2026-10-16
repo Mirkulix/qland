@@ -423,7 +423,7 @@ impl Runner {
     /// (one per execution, only if the function uses `db`) is committed.
     pub fn invoke_with(&self, export: &str, args: &[Value], commit: &(dyn Fn(&Result<Value, RunError>) -> bool + Sync)) -> Outcome {
         std::thread::scope(|scope| {
-            let spawned = std::thread::Builder::new().name("qal-guest".into()).stack_size(GUEST_THREAD_STACK).spawn_scoped(scope, || self.invoke_here(export, args, commit, ExecIn::default()).outcome);
+            let spawned = std::thread::Builder::new().name("qal-guest".into()).stack_size(GUEST_THREAD_STACK).spawn_scoped(scope, || self.invoke_here(export, args, commit, ExecIn::default(), self.timeout).outcome);
             match spawned {
                 Ok(h) => h.join().unwrap_or_else(|_| Outcome::failed(export, "the runtime panicked while running the program".into())),
                 Err(e) => Outcome::failed(export, format!("cannot start the execution thread: {e}")),
@@ -434,17 +434,25 @@ impl Runner {
     /// Runs one execution of a prepared runner on the calling thread, which must have a stack of
     /// at least [`GUEST_THREAD_STACK`] bytes (server workers do).
     pub fn execute(&self, export: &str, args: &[Value], input: ExecIn, commit: &dyn Fn(&Result<Value, RunError>) -> bool) -> ExecOut {
-        self.invoke_here(export, args, commit, input)
+        self.invoke_here(export, args, commit, input, self.timeout)
     }
 
-    fn invoke_here(&self, export: &str, args: &[Value], commit: &dyn Fn(&Result<Value, RunError>) -> bool, input: ExecIn) -> ExecOut {
+    /// [`Runner::execute`] with the wall-clock limit lowered to `timeout` for this execution (a
+    /// compiler work item gets at most what is left of its whole compilation).
+    pub fn execute_within(&self, export: &str, args: &[Value], input: ExecIn, commit: &dyn Fn(&Result<Value, RunError>) -> bool, timeout: Duration) -> ExecOut {
+        let t = Some(self.timeout.map_or(timeout, |own| own.min(timeout)));
+        self.invoke_here(export, args, commit, input, t)
+    }
+
+    fn invoke_here(&self, export: &str, args: &[Value], commit: &dyn Fn(&Result<Value, RunError>) -> bool, input: ExecIn, timeout: Option<Duration>) -> ExecOut {
         let stdin: Box<dyn std::io::BufRead + Send> = match &self.stdin {
             Some(bytes) => Box::new(Cursor::new(bytes.clone())),
             None => Box::new(std::io::BufReader::new(std::io::stdin())),
         };
         let mut state = HostState::new(self.perms.clone(), stdin, self.memory_limit, self.budgets);
         state.stdout_limit = self.stdout_limit;
-        state.deadline = self.timeout.map(|t| std::time::Instant::now() + t);
+        state.deadline = timeout.map(|t| std::time::Instant::now() + t);
+        state.timeout = timeout;
         state.host_used = input.host_used;
         let early = |outcome: Outcome, db: Option<Db>| ExecOut { outcome, db, fuel: 0, mem_bytes: 0 };
         let uses_db = self.meta.func(export).is_some_and(|m| m.effects.iter().any(|e| e == "db"));
@@ -470,7 +478,7 @@ impl Runner {
         }
         let mut store = Store::new(&self.engine, state);
         store.limiter(|s| &mut s.limits);
-        let watchdog = match (&self.ticker, self.timeout) {
+        let watchdog = match (&self.ticker, timeout) {
             (Some(_), Some(t)) => {
                 // Whole ticks, rounded up, plus one: the current tick may be about to end.
                 let ticks = t.as_nanos().div_ceil(EPOCH_TICK.as_nanos()) as u64 + 1;
@@ -573,7 +581,7 @@ impl Runner {
                     Some(Trap::OutOfFuel) => RunError::new("timeout", &meta.name, format!("instruction budget of {} exhausted", self.fuel))
                         .hint("look for unbounded recursion"),
                     Some(Trap::Interrupt) => {
-                        let ms = self.timeout.map_or(0, |t| t.as_millis());
+                        let ms = store.data().timeout.map_or(0, |t| t.as_millis());
                         RunError::new("timeout", &meta.name, format!("wall-clock limit of {ms} ms exceeded")).hint("look for unbounded recursion or very large intermediate values")
                     }
                     _ => RunError::new("trap", &meta.name, e.to_string()),
@@ -623,7 +631,7 @@ impl Runner {
             return e;
         }
         if f.kind == FAIL_TIMEOUT {
-            let ms = self.timeout.map_or(0, |t| t.as_millis());
+            let ms = store.data().timeout.map_or(0, |t| t.as_millis());
             return RunError::new("timeout", entry, format!("wall-clock limit of {ms} ms exceeded")).hint("a database statement ran past the limit; look for unbounded recursive queries or missing indexes");
         }
         if f.kind == FAIL_BUDGET {

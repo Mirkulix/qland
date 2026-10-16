@@ -215,6 +215,8 @@ pub struct Failure {
 
 pub struct HostState {
     pub failure: Option<Failure>,
+    /// The wall-clock limit of this execution (for messages; the deadline enforces it).
+    pub timeout: Option<std::time::Duration>,
     pub stdout: Vec<u8>,
     pub stdin: Box<dyn BufRead + Send>,
     pub perms: Permissions,
@@ -249,6 +251,7 @@ impl HostState {
     pub fn new(perms: Permissions, stdin: Box<dyn BufRead + Send>, limit: usize, budgets: Limits) -> HostState {
         HostState {
             failure: None,
+            timeout: None,
             stdout: Vec::new(),
             stdin,
             perms,
@@ -607,8 +610,13 @@ pub fn link(linker: &mut Linker<HostState>, perms: &Permissions) -> Result<(), w
                 .map(|l| u32::from_le_bytes(l) as usize)
                 .and_then(|len| data.get(at + 4..at + 4 + len))
                 .ok_or_else(|| wasmtime::Error::msg("invalid bytes pointer"))?;
-            qal_core::canon::Hash::of(bytes).0
+            (qal_core::canon::Hash::of(bytes).0, bytes.len() as u64)
         };
+        // Hashing costs fuel like the instructions it replaces (about one unit per 16 bytes), so
+        // a loop over large inputs runs out of fuel instead of burning uncounted host time.
+        let (digest, len) = digest;
+        let fuel = c.get_fuel()?;
+        c.set_fuel(fuel.saturating_sub(len / 16 + 1))?;
         new_bytes(&mut c, &digest)
     })?;
     linker.func_wrap(HOST_MODULE, host::STR_TO_FLOAT, |mut c: Caller<'_, HostState>, p: i32| {

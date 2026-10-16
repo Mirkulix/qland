@@ -183,6 +183,8 @@ pub struct CompiledModule {
     pub imports: Vec<&'static str>,
     /// Elements of the module's function table (its minimum and maximum size).
     pub table_len: usize,
+    /// The memory maximum the module declares, in 64 KiB pages.
+    pub memory_max_pages: u64,
 }
 
 impl CompiledModule {
@@ -325,7 +327,7 @@ pub fn compile_with(p: &TProgram, entry: &Entry, opts: &CompileOptions) -> Resul
     }
 
     let (wasm, table_len) = mb.finish(&exports)?;
-    Ok(CompiledModule { wasm, funcs: metas, types: p.types.clone(), imports, table_len })
+    Ok(CompiledModule { wasm, funcs: metas, types: p.types.clone(), imports, table_len, memory_max_pages: opts.memory_max_pages })
 }
 
 /// Collects called/referenced functions and used built-ins.

@@ -120,7 +120,17 @@ fn a_compiler_module_in_qal_forks_and_joins() {
     assert!(matches!(&e, DriveError::Failed { error, .. } if error.starts_with("index")), "{e:?}");
     assert_eq!(e.diagnostic("stage1", "op 101").code, "E0951");
     assert!(matches!(selfhost::drive(b"QALQ\x01\x03".to_vec(), 1, &limits, &c).unwrap_err(), DriveError::Failed { error, .. } if error.contains("unknown operation")));
-    assert!(Compiler::new(module(CompileOptions::default()), &limits, 1).is_ok());
+    // The entry and the memory maximum must match what the host runs it with (review M4).
+    let e = Compiler::new(module(CompileOptions::default()), &limits, 1).err().unwrap();
+    assert!(e.contains("memory_max_pages"), "{e}");
+    let small = Limits { memory_bytes: 256 << 20, ..limits };
+    assert!(Compiler::new(module(CompileOptions::default()), &small, 1).is_ok());
+    let tp = qal_compiler::check(&qal_compiler::parse_program("fn qc_main(b: Str) -> Bytes = to_bytes(b)").unwrap()).unwrap();
+    let wrong = qal_compiler::compile_with(&tp, &Entry::All, &CompileOptions::compiler()).unwrap();
+    assert!(Compiler::new(wrong, &limits, 1).err().unwrap().contains("fn(Bytes) -> Bytes"));
+    // More jobs than instance slots: drive uses only the slots, with the same output (review M1).
+    let one = Compiler::new(module(CompileOptions::compiler()), &limits, 1).unwrap();
+    assert_eq!(done(selfhost::drive(parse_req(text), 8, &limits, &one).unwrap().0), expected);
 }
 
 fn mem_req(mib: usize) -> Vec<u8> {
@@ -137,15 +147,60 @@ fn compiler_runs_get_1_gib_and_user_programs_256_mib() {
     // sentinels (index_of) and Bytes/List lengths still work above 512 MiB.
     let limits = Limits::compiler();
     let c = Compiler::new(module(CompileOptions::compiler()), &limits, 1).unwrap();
-    let (r, fuel, mem) = c.call_here(&mem_req(700));
+    let (r, fuel, mem) = c.call_here(&mem_req(700), limits.item_timeout);
     let payload = done(Response::decode(&r.unwrap()).unwrap());
     assert_eq!(String::from_utf8(payload).unwrap(), (700usize << 20).to_string());
     assert!(mem > 700 << 20 && mem <= 1 << 30 && fuel > 0, "{mem} {fuel}");
     // Beyond 1 GiB: out_of_memory, as a diagnostic.
     let e = selfhost::drive(mem_req(1100), 1, &limits, &c).unwrap_err();
     assert!(matches!(&e, DriveError::Failed { error, .. } if error.starts_with("out_of_memory")), "{e:?}");
-    // A module compiled for user programs cannot grow beyond 256 MiB, whatever the runner allows.
-    let small = Compiler::new(module(CompileOptions::default()), &limits, 1).unwrap();
-    assert!(matches!(selfhost::drive(mem_req(300), 1, &limits, &small).unwrap_err(), DriveError::Failed { error, .. } if error.starts_with("out_of_memory")));
-    assert!(proto::Response::decode(&small.call_here(&mem_req(100)).0.unwrap()).is_ok());
+    // A module compiled for user programs cannot grow beyond 256 MiB.
+    let small_limits = Limits { memory_bytes: 256 << 20, ..limits };
+    let small = Compiler::new(module(CompileOptions::default()), &small_limits, 1).unwrap();
+    assert!(matches!(selfhost::drive(mem_req(300), 1, &small_limits, &small).unwrap_err(), DriveError::Failed { error, .. } if error.starts_with("out_of_memory")));
+    assert!(proto::Response::decode(&small.call_here(&mem_req(100), limits.item_timeout).0.unwrap()).is_ok());
+}
+
+#[test]
+fn the_total_time_limit_holds_inside_a_round() {
+    // Review I3: 64 items of 100 ms on 2 threads would take 3.2 s; the limit is 0.5 s.
+    let slow = |req: &[u8]| -> Result<Vec<u8>, String> {
+        match Request::decode(req)? {
+            Request::Parse { text } if text.len() > 1 => Ok(Response::Fork { continuation: vec![], items: (0..64).map(|_| parse_req("x")).collect() }.encode()),
+            _ => {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+                Ok(Response::Done(vec![]).encode())
+            }
+        }
+    };
+    let limits = Limits { total_timeout: std::time::Duration::from_millis(500), ..Limits::compiler() };
+    let t = std::time::Instant::now();
+    let e = selfhost::drive(parse_req("many"), 2, &limits, &slow).unwrap_err();
+    assert!(matches!(&e, DriveError::Limit(m) if m.contains("longer than")), "{e:?}");
+    assert!(t.elapsed() < std::time::Duration::from_millis(1500), "{:?}", t.elapsed());
+    assert_eq!(e.diagnostic("stage0", "PARSE").code, "E0954");
+}
+
+#[test]
+fn a_failing_item_stops_the_later_ones() {
+    // Review I3: item 3 fails; items after it are not started (one thread: exactly 4 calls + main).
+    let calls = AtomicUsize::new(0);
+    let fails = |req: &[u8]| -> Result<Vec<u8>, String> {
+        calls.fetch_add(1, Ordering::SeqCst);
+        match Request::decode(req)? {
+            Request::Parse { text } if text.len() > 1 => Ok(Response::Fork { continuation: vec![], items: (0..100).map(|i| parse_req(&i.to_string()[..1])).collect() }.encode()),
+            Request::Parse { text } if text == "3" => Err("trap".into()),
+            _ => Ok(Response::Done(vec![]).encode()),
+        }
+    };
+    let limits = Limits::compiler();
+    // items "0".."9" then "1".."9" again (first digit): the first "3" is item 3
+    let e = selfhost::drive(parse_req("go"), 1, &limits, &fails).unwrap_err();
+    assert!(matches!(&e, DriveError::Failed { item, .. } if item == "round 1 item 3"), "{e:?}");
+    assert_eq!(calls.load(Ordering::SeqCst), 5);
+    // With several threads the reported failure is still the first in item order.
+    calls.store(0, Ordering::SeqCst);
+    let e = selfhost::drive(parse_req("go"), 8, &limits, &fails).unwrap_err();
+    assert!(matches!(&e, DriveError::Failed { item, .. } if item == "round 1 item 3"), "{e:?}");
+    assert!(calls.load(Ordering::SeqCst) < 101);
 }

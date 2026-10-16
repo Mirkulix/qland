@@ -31,7 +31,7 @@
 //!
 //! program  := n def                                          (tform definitions)
 //! texts    := n (name:str text:str)
-//! module   := wasm:bytes imports:n str table_len:uint types:n typedef funcs:n func
+//! module   := wasm:bytes imports:n str table_len:uint memory_max_pages:uint types:n typedef funcs:n func
 //! func     := name:str export:str is_test:bool params:n (str type) ret:type effects:n str
 //!             req:n expr ens:n expr sites:n (path:str label:str opt(contract:uint) values:n (str type))
 //! prepared := typed:bytes n canon m group k sig_old           (spec §4.5, what qal-store reads)
@@ -561,6 +561,7 @@ fn put_module(w: &mut Writer, m: &CompiledModule) {
         w.str(i);
     }
     w.len(m.table_len);
+    w.uint(m.memory_max_pages);
     w.len(m.types.len());
     for t in &m.types {
         w.typedef(t);
@@ -608,6 +609,7 @@ fn get_module(r: &mut Reader) -> R<CompiledModule> {
         imports.push(host_name(&s).ok_or_else(|| format!("unknown host function `{s}`"))?);
     }
     let table_len = r.usize()?;
+    let memory_max_pages = r.uint()?;
     let n = r.count()?;
     let types = (0..n).map(|_| r.typedef()).collect::<R<Vec<_>>>()?;
     let n = r.count()?;
@@ -642,7 +644,7 @@ fn get_module(r: &mut Reader) -> R<CompiledModule> {
         }
         funcs.push(FuncMeta { name, export, is_test, params, ret, effects, req, ens, sites });
     }
-    Ok(CompiledModule { wasm, funcs, types, imports, table_len })
+    Ok(CompiledModule { wasm, funcs, types, imports, table_len, memory_max_pages })
 }
 
 pub fn encode_module(m: &CompiledModule) -> Vec<u8> {
@@ -996,7 +998,7 @@ mod tests {
         let m = decode_module(&done(&serve(&Request::Build { state: st.clone(), entry: Entry::All, options: opts }.encode()))).unwrap();
         let reference = crate::compile_with(&crate::check(&p).unwrap(), &Entry::All, &CompileOptions::compiler()).unwrap();
         assert_eq!(m.wasm, reference.wasm);
-        assert_eq!((m.funcs, m.types, m.imports, m.table_len), (reference.funcs, reference.types, reference.imports, reference.table_len));
+        assert_eq!((m.funcs, m.types, m.imports, m.table_len, m.memory_max_pages), (reference.funcs, reference.types, reference.imports, reference.table_len, 16384));
         // CHECK_FILE: diagnostics, the typed form, or the module
         match Response::decode(&serve(&Request::CheckFile { text: "fn f() -> Int = \"x\"".into(), entry: None, options: opts }.encode())).unwrap() {
             Response::Diagnostics(ds) => assert_eq!((ds[0].code, ds[0].kind), ("E0203", "type_mismatch")),
