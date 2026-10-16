@@ -13,7 +13,7 @@ Mehrere Agenten arbeiten **gleichzeitig** über MCP an **einer** Codebase. Jeder
 
 **Phase 4 ist fertig, wenn (nachweisbar):**
 
-1. **Team-Modus:** `qal team init` macht einen Store zum Team-Store (Schema 5). Danach braucht jeder MCP-Aufruf eine gültige Sitzung (E0902 sonst); jede Sitzung gehört einem Mitglied mit genau einer Rolle aus `architect`, `implementer`, `verifier`, `reviewer`; der Inhaber (`owner`) handelt nur über die CLI.
+1. **Team-Modus:** `qal team init` macht einen Store zum Team-Store (Schema 6). Danach braucht jeder MCP-Aufruf eine gültige Sitzung (E0902 sonst); jede Sitzung gehört einem Mitglied mit genau einer Rolle aus `architect`, `implementer`, `verifier`, `reviewer`; der Inhaber (`owner`) handelt nur über die CLI.
 2. **Rollen:** Die Rechte-Matrix §8 wird vom Server erzwungen (E0903 bei Verstoß, mit der Rolle, die es dürfte); `tools/list` zeigt einer Sitzung nur die Werkzeuge ihrer Rolle. Ein Test ruft jedes der 18 Werkzeuge (mit jeder seiner Aktionen) mit jeder der 4 Agentenrollen auf und vergleicht mit der Matrix.
 3. **Sperren:** Leases pro Definitionsname mit TTL; nie blockierendes Warten (try-acquire, alles-oder-nichts), daher verklemmungsfrei; ein Nebenläufigkeitstest mit 8 Prozessen × 200 zufälligen `define`/`lease`/`merge`-Operationen auf 20 Namen endet ohne Hänger, ohne verlorene Änderung (jede bestätigte Änderung steht in Store und Records) und mit konsistentem Store (`qal verify` ok).
 4. **Merge:** Change Sets haben eine eigene, geprüfte Sicht (Basis + Delta). Der Merge klassifiziert jeden Namen nach §7.2; konfliktfreie Merges laufen automatisch (auch wenn der Hauptstand inzwischen weiterlief), echte und semantische Konflikte werden mit E0910/E0911 abgelehnt, `qal_rebase` markiert Konflikte zur Auflösung. Jede Zeile der Tabelle §7.2 ist durch einen Test belegt.
@@ -76,7 +76,7 @@ Mehrere Agenten arbeiten **gleichzeitig** über MCP an **einer** Codebase. Jeder
 ### 4.1 Einrichten (nur CLI, Inhaber)
 
 ```
-qal team init [--owner <id>]                    # Schema 5, Inhaberschlüssel, Genesis-Record
+qal team init [--owner <id>]                    # Schema 6, Inhaberschlüssel, Genesis-Record
 qal team add <id> --role <architect|implementer|verifier|reviewer>   # Schlüssel erzeugen, Record member_add
 qal team rekey <id> | qal team revoke <id>      # Records member_key / member_revoke
 qal team session <id> [--ttl 24h] --out <datei> # Token in <datei> (0600), gibt Sitzungs-Id aus
@@ -327,9 +327,9 @@ Tabelle `calls(id, member, session, tool, ok, code, ms, at)` — ein Eintrag pro
 
 ---
 
-## 12. Store-Schema 5
+## 12. Store-Schema 6
 
-Migration 4 → 5 in einer Transaktion (nur Anlegen, keine Datenänderung): `members(id PK, role, key, key_id, added_at, revoked_at)`, `sessions(token_sha256 PK, id UNIQUE, member, created_at, expires_at, revoked_at, current_change)`, `changes(id PK, title, description, scope, owner, assignee, status ∈ {open, submitted, merged, abandoned}, claimed, base_seq, base_root, needs_rebase, created_at, updated_at)`, `change_names` (§6.1, PK `(change, name)`), `reviews(id PK, change, member, verdict, root, comments, at, record)`, `leases` (§5.2), `seen` (§5.3), `notices` (§10.3), `calls` (§10.4), `records` (§9.1); `history` bekommt `space TEXT NOT NULL DEFAULT 'main'` und `record INTEGER NULL`. `meta`: `team = 1`, `team_allow`, `owner`. Ein Store ohne Team-Modus bleibt nach der Migration bitgenau so benutzbar wie vorher (Tests aus 1c–3a laufen unverändert).
+Migration 5 → 6 in einer Transaktion (Schema 5 ist seit Phase 3b belegt: `history` mit Aktion `deleted`) (nur Anlegen, keine Datenänderung): `members(id PK, role, key, key_id, added_at, revoked_at)`, `sessions(token_sha256 PK, id UNIQUE, member, created_at, expires_at, revoked_at, current_change)`, `changes(id PK, title, description, scope, owner, assignee, status ∈ {open, submitted, merged, abandoned}, claimed, base_seq, base_root, needs_rebase, created_at, updated_at)`, `change_names` (§6.1, PK `(change, name)`), `reviews(id PK, change, member, verdict, root, comments, at, record)`, `leases` (§5.2), `seen` (§5.3), `notices` (§10.3), `calls` (§10.4), `records` (§9.1); `history` bekommt `space TEXT NOT NULL DEFAULT 'main'` und `record INTEGER NULL`. `meta`: `team = 1`, `team_allow`, `owner`. Ein Store ohne Team-Modus bleibt nach der Migration bitgenau so benutzbar wie vorher (Tests aus 1c–3a laufen unverändert).
 
 ---
 
@@ -485,7 +485,7 @@ Verteilte Stores über mehrere Maschinen (Push/Pull von Change Sets), Schutz geg
 
 ## 21. Teilpläne
 
-- **4a — Identität, Rollen, Signaturen:** Schema 5 (alle Tabellen), `qal team init/add/rekey/revoke/session/export-trust/status/stats`, Schlüsselordner und -format, `getrandom`/`ed25519-dalek`, Records mit kanonischem JSON in jeder Schreibtransaktion des Team-Modus (bis 4b schreibt `define`/`rename` im Team-Modus übergangsweise direkt auf `main`, nur für Architekten; 4b ersetzt das durch Change Sets), Sitzungsauflösung im MCP-Server (`--session-file`), Policy-Tabelle §8 mit E0902/E0903/E0915, rollengefiltertes `tools/list`, `qal_whoami` mit Notices und Long-Poll, `calls`-Protokoll, `qal verify`/`qal_verify` (Kette, Signaturen, Wiederabspielen), Geheimnis-Tests. **Fertig:** Kriterien 1, 2, 5 (ohne Merge-Prüfungen).
+- **4a — Identität, Rollen, Signaturen:** Schema 6 (alle Tabellen), `qal team init/add/rekey/revoke/session/export-trust/status/stats`, Schlüsselordner und -format, `getrandom`/`ed25519-dalek`, Records mit kanonischem JSON in jeder Schreibtransaktion des Team-Modus (bis 4b schreibt `define`/`rename` im Team-Modus übergangsweise direkt auf `main`, nur für Architekten; 4b ersetzt das durch Change Sets), Sitzungsauflösung im MCP-Server (`--session-file`), Policy-Tabelle §8 mit E0902/E0903/E0915, rollengefiltertes `tools/list`, `qal_whoami` mit Notices und Long-Poll, `calls`-Protokoll, `qal verify`/`qal_verify` (Kette, Signaturen, Wiederabspielen), Geheimnis-Tests. **Fertig:** Kriterien 1, 2, 5 (ohne Merge-Prüfungen).
 - **4b — Change Sets und Leases:** Räume (`change_names`, `Snapshot::load(space)`, `change`-Parameter aller Werkzeuge, `name@space`), `qal_change` (open/list/show/diff/claim/submit/abandon/scope), Leases implizit/explizit/break, `seen` und E0904, Scope- und Schnittstellenregeln (E0905/E0906), `todo()` (Prüfer, Codegen, Beweiser, E0540, `stubs`), Notices `change_*`/`lease_broken`/`relinked`, Nebenläufigkeitstests (a)–(c), Sperrdauer-Messung. **Fertig:** Kriterium 3.
 - **4c — Review, Merge, Rebase:** `qal_review`, Merge-Tor, Klassifikation §7.2, Fast-Forward und Wiederabspielen mit Beweisen und Tests, `rehashed`, `qal_rebase` mit Konfliktmarkierungen, `needs_rebase`, Merge-Records mit Review-Belegen, Erweiterung von `qal verify` um Berechtigungen und Merge-Tor, alle Merge- und Manipulationstests, Referenzabschnitt „Team“. **Fertig:** Kriterien 4, 5, 7.
 - **4d — Demo und Messung (braucht 3c):** `bench/team/` (Karte, versteckte Szenarien, Rollen-Prompts, Vorbereitungs- und Auswerteskript nach Muster `bench/run.py`), HTTP-Harness `shop_http.rs`, 2 Team-Läufe + 2 Solo-Läufe, `report.md`, `discussion.md`, Roadmap Zeile 4 auf ☑ mit Nachweisen, Abschluss-Review. **Fertig:** Kriterium 6.
