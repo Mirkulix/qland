@@ -1,0 +1,36 @@
+{
+  "name": "h09_cancel_already_cancelled",
+  "description": "POST /orders/:id/cancel when already cancelled gives 409 order_already_cancelled",
+  "steps": [
+    {
+      "name": "create prod",
+      "request": {"method": "POST", "path": "/products", "json": {"sku": "CANC-1", "name": "Box", "price_cents": 100, "stock": 5}},
+      "expect": {"status": 201},
+      "capture": {"p": "/id"}
+    },
+    {
+      "name": "create order",
+      "request": {"method": "POST", "path": "/orders", "json": {"lines": [{"product_id": "{{p}}", "qty": 1}]}},
+      "expect": {"status": 201},
+      "capture": {"o": "/id"}
+    },
+    {
+      "name": "first cancel",
+      "request": {"method": "POST", "path": "/orders/{{o}}/cancel"},
+      "expect": {"status": 200, "json": {"id": {"$var": "o"}, "status": "cancelled"}}
+    },
+    {
+      "name": "second cancel",
+      "request": {"method": "POST", "path": "/orders/{{o}}/cancel"},
+      "expect": {
+        "status": 409,
+        "json": {
+          "error": {
+            "code": "order_already_cancelled",
+            "message": {"$type": "str"}
+          }
+        }
+      }
+    }
+  ]
+}

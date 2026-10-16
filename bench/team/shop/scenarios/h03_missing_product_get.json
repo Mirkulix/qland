@@ -1,0 +1,19 @@
+{
+  "name": "h03_missing_product_get",
+  "description": "GET /products/999 gives 404 product_not_found",
+  "steps": [
+    {
+      "name": "get missing",
+      "request": {"method": "GET", "path": "/products/999"},
+      "expect": {
+        "status": 404,
+        "json": {
+          "error": {
+            "code": "product_not_found",
+            "message": {"$type": "str"}
+          }
+        }
+      }
+    }
+  ]
+}

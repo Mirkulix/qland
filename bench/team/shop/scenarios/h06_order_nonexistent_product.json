@@ -1,0 +1,23 @@
+{
+  "name": "h06_order_nonexistent_product",
+  "description": "POST /orders with unknown product gives 404 product_not_found",
+  "steps": [
+    {
+      "name": "order missing product",
+      "request": {
+        "method": "POST",
+        "path": "/orders",
+        "json": {"lines": [{"product_id": 9999, "qty": 1}]}
+      },
+      "expect": {
+        "status": 404,
+        "json": {
+          "error": {
+            "code": "product_not_found",
+            "message": {"$type": "str"}
+          }
+        }
+      }
+    }
+  ]
+}
