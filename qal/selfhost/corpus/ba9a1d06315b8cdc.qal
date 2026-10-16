@@ -1,0 +1,2 @@
+fn create(body: Str) -> HttpResponse = todo()
+fn handle(q: HttpRequest) -> HttpResponse = if q.method == "POST" then create(q.body) else HttpResponse { status: 200, headers: [], body: "ok" }

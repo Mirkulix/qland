@@ -1,0 +1,2 @@
+fn mine() -> Int = 2
+fn shared() -> Int = 3

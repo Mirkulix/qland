@@ -1,0 +1,2 @@
+fn make(q: Int) -> Int ens r == q = todo()
+fn real(q: Int) -> Int ens r == q = q

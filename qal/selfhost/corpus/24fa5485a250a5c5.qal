@@ -1,0 +1,1 @@
+test total_one = total(1) == 7

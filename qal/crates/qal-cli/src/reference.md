@@ -44,16 +44,15 @@ Built-ins (indices count characters; slice and range are half-open: the end is e
        from_char_code(n) -> Str (n a code point 0..=1114111, not 55296..=57343)  Violated preconditions are contract_violation.
   List len(xs) get(xs, i) -> Option[T] push(xs, x) concat(xs, ys) map(xs, f) filter(xs, pred) fold(xs, init, f) with f(acc, x)
        (f may carry effects; the caller then declares them. For-each: fn step(acc: Int, x: Int) -> Int !io = { print(from_int(x)); acc }, then fold(xs, 0, step))
-       range(from, to) -> List[Int]  reverse(xs)  sort_int(xs)  sort_str(xs)
+       range(from, to) -> List[Int]  reverse(xs)  sort_int(xs)  sort_str(xs)  todo(): a stub of any type; traps E0540
   Map  map_new() map_put(m, k, v) map_get(m, k) -> Option[V] map_del(m, k) map_has(m, k) map_size(m) map_keys(m) map_values(m)
   Bytes to_bytes(s) bytes_len(b) bytes_get(b, i) -> Option[Int] bytes_slice(b, from, to) bytes_from(xs) (0..=255) bytes_to_list(b) bytes_to_str(b) -> Option[Str]  b1 ++ b2
   Bits bit_and bit_or bit_xor bit_not shl shr ushr(a, n) (0 <= n < 64) float_bits float_of_bits  list_at(xs, i) bytes_at(b, i) (no Option; index error)  bytes_join(bs) sha256(b)  Accum[T] = AccEnd | AccPush(a, x): acc_list(a) (O(1) appends)
   Num  int_to_float(n)  float_to_int(x) -> Option[Int]   compare(a, b) -> Int: -1, 0 or 1 for any two values without functions
-       (Str bytewise, lists/records/variants in order): write your own sort (e.g. merge sort) with it
+       (Str bytewise, lists/records/variants in order): build your own sort with it
   Sys  print(s) !io (writes s and a newline)  read_line() -> Option[Str] !io (next line without its `\n` or `\r\n`; None at end)
        read_all() -> Str !io (all remaining input including `\r`; "" at end; invalid UTF-8 becomes U+FFFD, as in read_line)
        read_file(path) -> Result[Str, Str] !fs  write_file(path, text) -> Result[Unit, Str] !fs  now_ms() -> Int !time  rand_int(lo, hi) -> Int !rand (both ends included; lo <= hi, else contract_violation)
-  Stub todo() -> T (any type, from the expected one: fn f(x: Int) -> Order = todo()): reaching it is runtime error todo_reached (E0540); a stub is never proven.
   to_int accepts an optional sign and digits only (no spaces: trim first). Deep non-tail recursion can overflow the stack (about 100 000 calls).
 Performance: push on a list or ++ on a string in a loop is quadratic (about 8 000 elements at most): build lists with split/map/filter/range. len and slice on Str are O(n): iterate with chars.
 

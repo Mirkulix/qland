@@ -1,0 +1,3 @@
+type Order = { qty: Int }
+fn make(q: Int) -> Order req q > 0 ens r.qty == q = todo()
+fn total(q: Int) -> Int req q > 0 = make(q).qty + base()

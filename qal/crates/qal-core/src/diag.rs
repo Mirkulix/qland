@@ -371,9 +371,15 @@ pub const KNOWN: &[(&str, &str)] = &[
     ("E0802", "contract_unproven"),
     // Phase 4 (team procedure, signed records).
     ("E0900", "not_a_team"),
+    ("E0901", "lease_held"),
     ("E0902", "no_session"),
     ("E0903", "role_forbidden"),
+    ("E0904", "stale_base"),
+    ("E0905", "out_of_scope"),
+    ("E0906", "interface_change"),
+    ("E0907", "store_busy"),
     ("E0908", "change_state"),
+    ("E0909", "not_owner"),
     ("E0914", "team_limit"),
     ("E0915", "grant_forbidden"),
     ("E0920", "key_unusable"),
@@ -383,6 +389,8 @@ pub const KNOWN: &[(&str, &str)] = &[
     ("E0924", "unauthorized_record"),
     ("E0925", "untrusted_key"),
     ("E0926", "key_dir_in_project"),
+    // Phase 4b (change sets, leases, stubs).
+    ("E0930", "stub_present"),
     // Phase 5 (self-hosting).
     ("E0950", "compiler_divergence"),
     ("E0951", "compiler_failed"),
