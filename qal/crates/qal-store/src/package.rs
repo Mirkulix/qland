@@ -186,7 +186,7 @@ pub fn export(conn: &mut Connection, prefix: &str, package: &str) -> Result<Expo
         return Err(vec![Diagnostic::new("E0701", "bad_arguments", "", "", format!("`{package}` is not a package name")).hint("package names are 1 to 64 characters `a-z`, `0-9`, `_`, `-`, starting with a letter")]);
     }
     let tx = conn.transaction().map_err(sql)?;
-    let snap = Snapshot::load(&tx)?;
+    let snap = Snapshot::load(&tx, &crate::space::Space::Main)?;
     let std_store = define::is_std_store(&tx)?;
     let names = closure(&snap, prefix, std_store);
     // A project's package refers to its std by name: record which std that was.
@@ -195,7 +195,7 @@ pub fn export(conn: &mut Connection, prefix: &str, package: &str) -> Result<Expo
     let mut defs = Vec::new();
     for n in &names {
         let agent: Option<String> = tx
-            .query_row("SELECT agent FROM history WHERE name = ?1 AND action IN ('added', 'replaced') ORDER BY id DESC LIMIT 1", params![n], |r| r.get(0))
+            .query_row("SELECT agent FROM history WHERE name = ?1 AND space = 'main' AND action IN ('added', 'replaced') ORDER BY id DESC LIMIT 1", params![n], |r| r.get(0))
             .optional()
             .map_err(sql)?;
         defs.push(PackageDef { name: n.clone(), hash: snap.names[n].hash.to_hex(), agent: agent.unwrap_or_else(|| "unknown".into()) });
@@ -250,7 +250,7 @@ pub fn import(conn: &mut Connection, file: &str, verify: Option<&mut Verify>, re
         let ours = format!("qal-{}@", pkg.name);
         for d in defined.iter().filter(|d| d.status == "replaced" && !(std_store && is_std)) {
             let last: Option<String> = tx
-                .query_row("SELECT agent FROM history WHERE name = ?1 AND action IN ('added', 'replaced') AND new_hash != ?2 ORDER BY id DESC LIMIT 1", params![d.name, d.hash], |r| r.get(0))
+                .query_row("SELECT agent FROM history WHERE name = ?1 AND space = 'main' AND action IN ('added', 'replaced') AND new_hash != ?2 ORDER BY id DESC LIMIT 1", params![d.name, d.hash], |r| r.get(0))
                 .optional()
                 .map_err(sql)?;
             if !last.as_deref().is_some_and(|a| a.starts_with(&ours)) {
@@ -281,7 +281,7 @@ pub fn import(conn: &mut Connection, file: &str, verify: Option<&mut Verify>, re
     };
     let rules = Rules { std: if is_std { StdNames::Package } else { StdNames::Unchanged }, release, breaking: false };
     let ours = meta(conn, META_STD_PACKAGE)?;
-    let defined = define::define_checked(conn, &pkg.text, &agent, &rules, verify, &check).map_err(|mut d| {
+    let defined = define::define_checked(conn, &pkg.text, &agent, &rules, &crate::space::Space::Main, verify, &define::no_guard, &check).map_err(|mut d| {
         // Built against another std: say so first (the hashes or names differ because of it).
         if let Some(theirs) = pkg.std.as_deref().filter(|h| ours.as_deref() != Some(*h)) {
             let mine = ours.as_deref().map_or("none".to_string(), |h| short(h).to_string());

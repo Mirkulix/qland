@@ -20,6 +20,9 @@ pub struct Diagnostic {
     /// For refuted or unproven contracts and failed properties: the input (parameter name -> value).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub counterexample: Option<serde_json::Value>,
+    /// Structured details of team diagnostics (e.g. E0901: the lease `{name, change, member, expires_at}`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail: Option<serde_json::Value>,
 }
 
 impl Diagnostic {
@@ -35,6 +38,7 @@ impl Diagnostic {
             hints: Vec::new(),
             dependents: Vec::new(),
             counterexample: None,
+            detail: None,
         }
     }
 

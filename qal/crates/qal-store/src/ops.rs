@@ -2,6 +2,7 @@
 
 use crate::pattern;
 use crate::snapshot::Snapshot;
+use crate::space::{self, Space};
 use crate::team::Entry as Change;
 use crate::{now_ms, sql};
 use qal_core::ast::{Def, Program};
@@ -105,7 +106,7 @@ fn missing_row(h: &Hash) -> Vec<Diagnostic> {
 
 /// The current name of a definition that was once called `old` and renamed (following chains of
 /// renames), if it still has that name.
-pub(crate) fn renamed_to(conn: &Connection, names: &dyn Fn(&str) -> bool, old: &str) -> Result<Option<String>, Vec<Diagnostic>> {
+pub(crate) fn renamed_to(conn: &Connection, space: &Space, names: &dyn Fn(&str) -> bool, old: &str) -> Result<Option<String>, Vec<Diagnostic>> {
     // Follow the latest rename of each name until the chain ends or comes back to a name already
     // seen (renames back and forth); the answer is the last name on the way that still exists.
     let mut seen = std::collections::HashSet::from([old.to_string()]);
@@ -113,7 +114,7 @@ pub(crate) fn renamed_to(conn: &Connection, names: &dyn Fn(&str) -> bool, old: &
     let mut found = None;
     for _ in 0..1024 {
         let next: Option<String> = conn
-            .query_row("SELECT to_name FROM history WHERE action = 'renamed' AND from_name = ?1 ORDER BY id DESC LIMIT 1", params![current], |r| r.get(0))
+            .query_row(&format!("SELECT to_name FROM history WHERE action = 'renamed' AND from_name = ?1 AND {} ORDER BY id DESC LIMIT 1", space::history_filter(space, 2)), params![current, space.id()], |r| r.get(0))
             .map(Some)
             .or_else(|e| if e == rusqlite::Error::QueryReturnedNoRows { Ok(None) } else { Err(e) })
             .map_err(sql)?;
@@ -130,12 +131,12 @@ pub(crate) fn renamed_to(conn: &Connection, names: &dyn Fn(&str) -> bool, old: &
 }
 
 /// `unknown_name` for `name`, with a hint if the definition was renamed.
-pub(crate) fn unknown(conn: &Connection, names: &dyn Fn(&str) -> bool, name: &str) -> Diagnostic {
+pub(crate) fn unknown(conn: &Connection, space: &Space, names: &dyn Fn(&str) -> bool, name: &str) -> Diagnostic {
     let d = Diagnostic::unknown_name(name, "", name);
-    match renamed_to(conn, names, name) {
+    match renamed_to(conn, space, names, name) {
         Ok(Some(new)) => d.hint(format!("`{name}` was renamed to `{new}`")),
         _ => {
-            let last: Option<String> = conn.query_row("SELECT action FROM history WHERE name = ?1 ORDER BY id DESC LIMIT 1", params![name], |r| r.get(0)).ok();
+            let last: Option<String> = conn.query_row(&format!("SELECT action FROM history WHERE name = ?1 AND {} ORDER BY id DESC LIMIT 1", space::history_filter(space, 2)), params![name, space.id()], |r| r.get(0)).ok();
             if last.as_deref() == Some("deleted") {
                 d.hint(format!("`{name}` was deleted; its history and old versions remain (history of `{name}`, view `#<hash>`)"))
             } else {
@@ -146,7 +147,7 @@ pub(crate) fn unknown(conn: &Connection, names: &dyn Fn(&str) -> bool, name: &st
 }
 
 /// A name or `#<64 hex digits>` -> the hash it stands for.
-fn resolve(snap: &Snapshot, conn: &Connection, s: &str) -> Result<Hash, Vec<Diagnostic>> {
+fn resolve(snap: &Snapshot, conn: &Connection, space: &Space, s: &str) -> Result<Hash, Vec<Diagnostic>> {
     if let Some(hex) = s.strip_prefix('#') {
         if let Some(h) = Hash::from_hex(hex) {
             if snap.row(conn, &h)?.is_some() {
@@ -155,7 +156,7 @@ fn resolve(snap: &Snapshot, conn: &Connection, s: &str) -> Result<Hash, Vec<Diag
         }
         return Err(vec![Diagnostic::unknown_name("", "", s).hint("give a stored name or `#` followed by a full 64-digit hash")]);
     }
-    snap.names.get(s).map(|e| e.hash).ok_or_else(|| vec![unknown(conn, &|n| snap.names.contains_key(n), s)])
+    snap.names.get(s).map(|e| e.hash).ok_or_else(|| vec![unknown(conn, space, &|n| snap.names.contains_key(n), s)])
 }
 
 /// Names follow the text form's rules: types start uppercase, functions and tests lowercase.
@@ -182,9 +183,9 @@ fn valid_name(name: &str, kind: Kind) -> Result<(), Vec<Diagnostic>> {
 /// (no `std.` names in a project; in the std project every name is one). Each gets a `deleted`
 /// history entry; the definitions stay stored by hash but have no name any more.
 /// `post` runs last inside the transaction with the changes (the signed record of a team store).
-pub fn delete(conn: &mut Connection, names: &[String], agent: &str, rules: &crate::define::Rules, post: &Post) -> Result<Vec<Deleted>, Vec<Diagnostic>> {
+pub fn delete(conn: &mut Connection, space: &Space, names: &[String], agent: &str, rules: &crate::define::Rules, post: &Post) -> Result<Vec<Deleted>, Vec<Diagnostic>> {
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(sql)?;
-    let snap = Snapshot::load(&tx)?;
+    let snap = Snapshot::load(&tx, space)?;
     let std_store = crate::define::is_std_store(&tx)?;
     let wanted: std::collections::BTreeSet<&str> = names.iter().map(String::as_str).collect();
     let mut diags = Vec::new();
@@ -200,7 +201,7 @@ pub fn delete(conn: &mut Connection, names: &[String], agent: &str, rules: &crat
             continue;
         }
         let Some(entry) = snap.names.get(name) else {
-            diags.push(unknown(&tx, &|n| snap.names.contains_key(n), name));
+            diags.push(unknown(&tx, space, &|n| snap.names.contains_key(n), name));
             continue;
         };
         // A released std name stays (std is additive), unless the break is deliberate.
@@ -223,10 +224,10 @@ pub fn delete(conn: &mut Connection, names: &[String], agent: &str, rules: &crat
     }
     let now = now_ms();
     for d in &out {
-        tx.execute("DELETE FROM names WHERE name = ?1", params![d.name]).map_err(sql)?;
+        space::remove(&tx, space, &d.name, "edited", now)?;
         tx.execute(
-            "INSERT INTO history (name, action, old_hash, new_hash, agent, at) VALUES (?1, 'deleted', ?2, ?2, ?3, ?4)",
-            params![d.name, d.hash, agent, now],
+            "INSERT INTO history (name, action, old_hash, new_hash, agent, at, space) VALUES (?1, 'deleted', ?2, ?2, ?3, ?4, ?5)",
+            params![d.name, d.hash, agent, now, space.id()],
         )
         .map_err(sql)?;
     }
@@ -241,11 +242,11 @@ pub type Post<'c> = dyn Fn(&rusqlite::Transaction, &[Change], &crate::team::Rows
 
 /// `post` runs last inside the transaction (the signed record of a team store): the old name goes
 /// (`renamed`), the new one comes (`added`), with the same hash.
-pub fn rename(conn: &mut Connection, old: &str, new: &str, agent: &str, rules: &crate::define::Rules, post: &Post) -> Result<Renamed, Vec<Diagnostic>> {
+pub fn rename(conn: &mut Connection, space: &Space, old: &str, new: &str, agent: &str, rules: &crate::define::Rules, post: &Post) -> Result<Renamed, Vec<Diagnostic>> {
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(sql)?;
-    let snap = Snapshot::load(&tx)?;
+    let snap = Snapshot::load(&tx, space)?;
     let Some(hash) = snap.names.get(old).map(|e| e.hash) else {
-        return Err(vec![unknown(&tx, &|n| snap.names.contains_key(n), old)]);
+        return Err(vec![unknown(&tx, space, &|n| snap.names.contains_key(n), old)]);
     };
     let kind = snap.row(&tx, &hash)?.map(|r| r.kind).ok_or_else(|| vec![Diagnostic::store_error(format!("`{old}` has no definition"))])?;
     if snap.names.contains_key(new) {
@@ -293,16 +294,26 @@ pub fn rename(conn: &mut Connection, old: &str, new: &str, agent: &str, rules: &
         }
     }
     let now = now_ms();
-    tx.execute("UPDATE names SET name = ?1, updated_at = ?2 WHERE name = ?3", params![new, now, old]).map_err(sql)?;
+    match space {
+        Space::Main => {
+            tx.execute("UPDATE names SET name = ?1, updated_at = ?2 WHERE name = ?3", params![new, now, old]).map_err(sql)?;
+        }
+        Space::Change(_) => {
+            let e = &snap.names[old];
+            let json = |l: &[String]| serde_json::Value::from(l.to_vec()).to_string();
+            space::remove(&tx, space, old, "renamed", now)?;
+            space::put(&tx, space, new, &hash.to_hex(), &json(&e.locals), &json(&e.refs), true, now)?;
+        }
+    }
     // The users written against `old` now read `new`.
     for user in snap.dependents(old) {
         let refs = &renamed.names[&user].refs;
-        tx.execute("UPDATE names SET refs = ?1 WHERE name = ?2", params![serde_json::Value::from(refs.clone()).to_string(), user]).map_err(sql)?;
+        space::set_refs(&tx, space, &user, &serde_json::Value::from(refs.clone()).to_string(), now)?;
     }
-    tx.execute("UPDATE history SET name = ?1 WHERE name = ?2", params![new, old]).map_err(sql)?;
+    tx.execute("UPDATE history SET name = ?1 WHERE name = ?2 AND space = ?3", params![new, old, space.id()]).map_err(sql)?;
     tx.execute(
-        "INSERT INTO history (name, action, old_hash, new_hash, from_name, to_name, agent, at) VALUES (?1, 'renamed', ?2, ?2, ?3, ?1, ?4, ?5)",
-        params![new, hash.to_hex(), old, agent, now],
+        "INSERT INTO history (name, action, old_hash, new_hash, from_name, to_name, agent, at, space) VALUES (?1, 'renamed', ?2, ?2, ?3, ?1, ?4, ?5, ?6)",
+        params![new, hash.to_hex(), old, agent, now, space.id()],
     )
     .map_err(sql)?;
     let h = hash.to_hex();
@@ -311,13 +322,13 @@ pub fn rename(conn: &mut Connection, old: &str, new: &str, agent: &str, rules: &
     Ok(Renamed { name: new.to_string(), kind: kind.as_str(), hash: hash.to_hex() })
 }
 
-pub fn view(conn: &mut Connection, names: &[String]) -> Result<Vec<View>, Vec<Diagnostic>> {
+pub fn view(conn: &mut Connection, space: &Space, names: &[String]) -> Result<Vec<View>, Vec<Diagnostic>> {
     let tx = conn.transaction().map_err(sql)?;
-    let snap = Snapshot::load(&tx)?;
+    let snap = Snapshot::load(&tx, space)?;
     let mut out = Vec::new();
     let mut diags = Vec::new();
     for n in names {
-        let hash = match resolve(&snap, &tx, n) {
+        let hash = match resolve(&snap, &tx, space, n) {
             Ok(h) => h,
             Err(d) => {
                 diags.extend(d);
@@ -358,14 +369,14 @@ pub fn view(conn: &mut Connection, names: &[String]) -> Result<Vec<View>, Vec<Di
     }
 }
 
-pub fn query(conn: &mut Connection, q: &Query) -> Result<Vec<Entry>, Vec<Diagnostic>> {
+pub fn query(conn: &mut Connection, space: &Space, q: &Query) -> Result<Vec<Entry>, Vec<Diagnostic>> {
     if let Some(p) = &q.type_pattern {
         pattern::validate(p).map_err(|reason| vec![Diagnostic::bad_pattern(p, &reason)])?;
     }
     let tx = conn.transaction().map_err(sql)?;
-    let snap = Snapshot::load(&tx)?;
+    let snap = Snapshot::load(&tx, space)?;
     // `uses` is a name (the definitions written against it) or `#<hash>` (those that refer to the hash).
-    let uses = q.uses.as_deref().map(|u| resolve(&snap, &tx, u).map(|h| (u, h))).transpose()?;
+    let uses = q.uses.as_deref().map(|u| resolve(&snap, &tx, space, u).map(|h| (u, h))).transpose()?;
     let mut out = Vec::new();
     for (name, entry) in &snap.names {
         let hash = &entry.hash;
@@ -392,18 +403,19 @@ pub fn query(conn: &mut Connection, q: &Query) -> Result<Vec<Entry>, Vec<Diagnos
     Ok(out)
 }
 
-pub fn history(conn: &mut Connection, name: &str) -> Result<Vec<HistoryEntry>, Vec<Diagnostic>> {
+pub fn history(conn: &mut Connection, space: &Space, name: &str) -> Result<Vec<HistoryEntry>, Vec<Diagnostic>> {
     let tx = conn.transaction().map_err(sql)?;
-    let mut stmt = tx.prepare("SELECT action, name, from_name, to_name, old_hash, new_hash, agent, at FROM history WHERE name = ?1 ORDER BY id").map_err(sql)?;
+    space::require(&tx, space)?;
+    let mut stmt = tx.prepare(&format!("SELECT action, name, from_name, to_name, old_hash, new_hash, agent, at FROM history WHERE name = ?1 AND {} ORDER BY id", space::history_filter(space, 2))).map_err(sql)?;
     let rows = stmt
-        .query_map(params![name], |r| {
+        .query_map(params![name, space.id()], |r| {
             Ok(HistoryEntry { action: r.get(0)?, name: r.get(1)?, from_name: r.get(2)?, to_name: r.get(3)?, old_hash: r.get(4)?, new_hash: r.get(5)?, agent: r.get(6)?, at: r.get(7)? })
         })
         .map_err(sql)?;
     let out = rows.collect::<Result<Vec<_>, _>>().map_err(sql)?;
     if out.is_empty() {
-        let current = |n: &str| tx.query_row("SELECT 1 FROM names WHERE name = ?1", params![n], |_| Ok(())).is_ok();
-        return Err(vec![unknown(&tx, &current, name)]);
+        let current = |n: &str| space::hash_of(&tx, space, n).ok().flatten().is_some();
+        return Err(vec![unknown(&tx, space, &current, name)]);
     }
     Ok(out)
 }

@@ -1,6 +1,7 @@
 //! A consistent, verified view of the store's contents (read inside one transaction), and decoding
 //! of stored definitions back into source ASTs with the current names.
 
+use crate::space::Space;
 use crate::sql;
 use qal_core::ast::{Def, Program};
 use qal_core::canon::{self, Hash, Kind};
@@ -84,15 +85,11 @@ fn index(names: &BTreeMap<String, NameEntry>) -> (HashMap<Hash, Vec<String>>, Ha
 }
 
 impl Snapshot {
-    /// Reads all names and the definitions they point to.
-    pub fn load(conn: &Connection) -> Result<Snapshot, Vec<Diagnostic>> {
+    /// Reads all names of `space` and the definitions they point to.
+    pub fn load(conn: &Connection, space: &Space) -> Result<Snapshot, Vec<Diagnostic>> {
+        crate::space::require(conn, space)?;
         let mut names = BTreeMap::new();
-        let mut stmt = conn.prepare("SELECT name, hash, local_names, refs FROM names ORDER BY name").map_err(sql)?;
-        let rows = stmt
-            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, String>(3)?)))
-            .map_err(sql)?;
-        for row in rows {
-            let (name, hash, locals, refs) = row.map_err(sql)?;
+        for (name, hash, locals, refs) in crate::space::rows(conn, space)? {
             let entry = NameEntry { hash: parse_hash(&hash)?, locals: json_list(&locals, "names.local_names")?, refs: json_list(&refs, "names.refs")? };
             names.insert(name, entry);
         }

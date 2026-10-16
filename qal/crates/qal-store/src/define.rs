@@ -2,6 +2,7 @@
 //! and write everything in one transaction (spec §6).
 
 use crate::snapshot::Snapshot;
+use crate::space::Space;
 use crate::{now_ms, sql, Defined, Verify};
 use qal_core::ast::{Def, Program, TypeBody};
 use qal_core::canon::{self, Canon, Hash, HashError, Hashed, Kind};
@@ -193,16 +194,46 @@ const ATTEMPTS: usize = 3;
 /// of a team store). It gets the result and the names as they were before the write.
 pub type Check<'c> = dyn Fn(&[Defined], &Transaction, &crate::team::Rows) -> Result<(), Vec<Diagnostic>> + 'c;
 
-/// `define`, committed only if `check` accepts the written result (after the verification);
+/// A check of a `define` against the space before anything is written (the team rules: rights,
+/// scope, interface, leases, stale base). `dry`: on a snapshot outside the write lock, it must not
+/// write; otherwise inside the write transaction (it may write, e.g. leases).
+pub type Guard<'c> = dyn Fn(&Transaction, &Snapshot, &Program, &TProgram, bool) -> Result<(), Vec<Diagnostic>> + 'c;
+
+/// No guard (outside team mode).
+pub fn no_guard(_: &Transaction, _: &Snapshot, _: &Program, _: &TProgram, _: bool) -> Result<(), Vec<Diagnostic>> {
+    Ok(())
+}
+
+thread_local! {
+    /// How long the last `define` of this thread held the write lock (Phase 4 spec §20, risk 3).
+    static LOCK_HELD: std::cell::Cell<std::time::Duration> = const { std::cell::Cell::new(std::time::Duration::ZERO) };
+}
+
+/// How long the last `define` (or import) of this thread held SQLite's write lock.
+pub fn last_lock_held() -> std::time::Duration {
+    LOCK_HELD.with(|c| c.get())
+}
+
+/// Commits `tx` and records how long the write lock was held since `start`.
+fn commit(tx: Transaction, start: std::time::Instant) -> Result<(), Vec<Diagnostic>> {
+    tx.commit().map_err(sql)?;
+    LOCK_HELD.with(|c| c.set(start.elapsed()));
+    Ok(())
+}
+
+/// `define` in `space`, committed only if `guard` and `check` accept it (after the verification);
 /// `rules` say who may write `std.` names.
-pub fn define_checked(conn: &mut Connection, src: &str, agent: &str, rules: &Rules, verify: Option<&mut Verify>, check: &Check) -> Result<Vec<Defined>, Vec<Diagnostic>> {
+#[allow(clippy::too_many_arguments)]
+pub fn define_checked(conn: &mut Connection, src: &str, agent: &str, rules: &Rules, space: &Space, verify: Option<&mut Verify>, guard: &Guard, check: &Check) -> Result<Vec<Defined>, Vec<Diagnostic>> {
     let input = qal_compiler::parse_program(src).map_err(|d| vec![d])?;
     let Some(v) = verify else {
+        let start = std::time::Instant::now();
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(sql)?;
-        let state = prepare(&tx, &input, rules)?;
-        let out = state.write(&tx, &input, agent, false)?;
+        let state = prepare(&tx, &input, rules, space)?;
+        guard(&tx, &state.snap, &input, &state.typed, false)?;
+        let out = state.write(&tx, &input, agent, space, false)?;
         check(&out, &tx, &crate::team::rows_of(&state.snap))?;
-        tx.commit().map_err(sql)?;
+        commit(tx, start)?;
         return Ok(out);
     };
     // The verifier (the prover) may take its whole time budget, longer than another writer waits
@@ -214,36 +245,41 @@ pub fn define_checked(conn: &mut Connection, src: &str, agent: &str, rules: &Rul
         let (typed, todo) = {
             // A deferred transaction that only reads: a consistent snapshot, no write lock.
             let tx = conn.transaction().map_err(sql)?;
-            let state = prepare(&tx, &input, rules)?;
-            let out = state.write(&tx, &input, agent, true)?;
+            let state = prepare(&tx, &input, rules, space)?;
+            guard(&tx, &state.snap, &input, &state.typed, true)?;
+            let out = state.write(&tx, &input, agent, space, true)?;
             let todo = to_verify(&tx, &out, &v.key)?;
             (state.typed, todo)
         };
         let rows = if todo.is_empty() { Vec::new() } else { (v.run)(&typed, &todo)? };
         // IMMEDIATE takes the write lock before reading, so two concurrent `define`s serialize
         // instead of both deciding on the same old state.
+        let start = std::time::Instant::now();
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(sql)?;
-        let state = prepare(&tx, &input, rules)?;
-        let out = state.write(&tx, &input, agent, false)?;
+        let state = prepare(&tx, &input, rules, space)?;
+        guard(&tx, &state.snap, &input, &state.typed, false)?;
+        let out = state.write(&tx, &input, agent, space, false)?;
         let now = to_verify(&tx, &out, &v.key)?;
         if now.iter().all(|d| todo.contains(d)) {
             let hashes: HashSet<&str> = now.iter().map(|(_, h)| h.as_str()).collect();
             store_results(&tx, &v.key, rows.into_iter().filter(|(h, _)| hashes.contains(h.as_str())))?;
             check(&out, &tx, &crate::team::rows_of(&state.snap))?;
-            tx.commit().map_err(sql)?;
+            commit(tx, start)?;
             return Ok(out);
         }
         // Another writer changed what has to be verified: drop this transaction and start over.
     }
+    let start = std::time::Instant::now();
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(sql)?;
-    let state = prepare(&tx, &input, rules)?;
-    let out = state.write(&tx, &input, agent, false)?;
+    let state = prepare(&tx, &input, rules, space)?;
+    guard(&tx, &state.snap, &input, &state.typed, false)?;
+    let out = state.write(&tx, &input, agent, space, false)?;
     let todo = to_verify(&tx, &out, &v.key)?;
     if !todo.is_empty() {
         store_results(&tx, &v.key, (v.run)(&state.typed, &todo)?.into_iter())?;
     }
     check(&out, &tx, &crate::team::rows_of(&state.snap))?;
-    tx.commit().map_err(sql)?;
+    commit(tx, start)?;
     Ok(out)
 }
 
@@ -256,8 +292,8 @@ struct Prepared {
 
 impl Prepared {
     /// Writes the definitions (`dry`: only computes the results).
-    fn write(&self, tx: &Transaction, input: &Program, agent: &str, dry: bool) -> Result<Vec<Defined>, Vec<Diagnostic>> {
-        write(tx, &self.snap, input, &self.hashed, agent, dry)
+    fn write(&self, tx: &Transaction, input: &Program, agent: &str, space: &Space, dry: bool) -> Result<Vec<Defined>, Vec<Diagnostic>> {
+        write(tx, &self.snap, input, &self.hashed, agent, space, dry)
     }
 }
 
@@ -278,9 +314,9 @@ fn legacy_writer() -> bool {
 }
 
 /// Assembles the input with the stored codebase, enforces the replacement rule, checks and hashes.
-fn prepare(tx: &Transaction, input: &Program, rules: &Rules) -> Result<Prepared, Vec<Diagnostic>> {
+fn prepare(tx: &Transaction, input: &Program, rules: &Rules, space: &Space) -> Result<Prepared, Vec<Diagnostic>> {
     let policy = rules.std;
-    let snap = Snapshot::load(tx)?;
+    let snap = Snapshot::load(tx, space)?;
     let std_store = is_std_store(tx)?;
     namespace(std_store, policy, input)?;
     if std_store && policy == StdNames::Refuse {
@@ -494,7 +530,7 @@ fn ref_names(c: &Canon, hash_of: &HashMap<&str, Hash>) -> Vec<String> {
 
 /// Writes new definitions, dependencies, names and history; returns the per-name results:
 /// the input definitions in input order, then relinked dependents by name. `dry`: writes nothing.
-fn write(tx: &Transaction, snap: &Snapshot, input: &Program, hashed: &Hashed, agent: &str, dry: bool) -> Result<Vec<Defined>, Vec<Diagnostic>> {
+fn write(tx: &Transaction, snap: &Snapshot, input: &Program, hashed: &Hashed, agent: &str, space: &Space, dry: bool) -> Result<Vec<Defined>, Vec<Diagnostic>> {
     let now = now_ms();
     let canons = &hashed.defs;
     let input_names: HashSet<&str> = input.defs.iter().map(|d| d.name()).collect();
@@ -519,17 +555,12 @@ fn write(tx: &Transaction, snap: &Snapshot, input: &Program, hashed: &Hashed, ag
         let old_hash = old.map(|e| e.hash.to_hex());
         if !dry {
             if status != "unchanged" || old.is_some_and(|e| e.locals != c.local_names || e.refs != refs) {
-                tx.execute(
-                    "INSERT INTO names (name, hash, local_names, refs, updated_at) VALUES (?1, ?2, ?3, ?4, ?5) \
-                     ON CONFLICT(name) DO UPDATE SET hash = excluded.hash, local_names = excluded.local_names, refs = excluded.refs, updated_at = excluded.updated_at",
-                    params![c.name, c.hash.to_hex(), json(&c.local_names), json(&refs), now],
-                )
-                .map_err(sql)?;
+                crate::space::put(tx, space, &c.name, &c.hash.to_hex(), &json(&c.local_names), &json(&refs), is_input, now)?;
             }
             if status != "unchanged" {
                 tx.execute(
-                    "INSERT INTO history (name, action, old_hash, new_hash, agent, at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                    params![c.name, status, old_hash, c.hash.to_hex(), agent, now],
+                    "INSERT INTO history (name, action, old_hash, new_hash, agent, at, space) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                    params![c.name, status, old_hash, c.hash.to_hex(), agent, now, space.id()],
                 )
                 .map_err(sql)?;
             }

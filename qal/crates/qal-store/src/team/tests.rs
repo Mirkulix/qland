@@ -31,7 +31,16 @@ fn raw(s: &Store) -> Connection {
 }
 
 /// A team store with an architect `arch-1` and an implementer `impl-1`; returns their signers.
+/// The architect has opened an own change set (record 4), and the store works in it.
 fn team() -> (Store, KeyDir, Signer, Signer, Signer) {
+    let (mut s, keys, owner, arch, imp) = bare_team();
+    let c = s.change_open(&arch, &change::OpenArgs { title: "work".into(), ..Default::default() }).unwrap();
+    s.set_space(crate::Space::Change(c["change"].as_str().unwrap().to_string()));
+    (s, keys, owner, arch, imp)
+}
+
+/// [`team`] without the change set.
+fn bare_team() -> (Store, KeyDir, Signer, Signer, Signer) {
     let (mut s, keys) = setup();
     s.define("fn base() -> Int = 1", "pre-team").unwrap();
     s.team_init("boss", &keys).unwrap();
@@ -153,9 +162,9 @@ fn the_policy_matrix() {
             }
         }
     }
-    // Writes on main: architects only, until change sets (4b).
+    // Writes on main: nobody (main changes only by merge).
     for tool in ["qal_define", "qal_rename", "qal_delete"] {
-        assert_eq!(policy::allowed_roles(tool, None, Space::Main), [Architect]);
+        assert!(policy::allowed_roles(tool, None, Space::Main).is_empty(), "{tool}");
     }
     // In change sets: the matrix cells.
     assert_eq!(policy::allowed_roles("qal_define", None, Space::Own), [Architect, Implementer, Verifier]);
@@ -169,19 +178,24 @@ fn the_policy_matrix() {
     assert_eq!(policy::allowed_roles("qal_lease", Some("break"), Space::Main), [Architect]);
     assert!(policy::rule("qal_lease", None, Architect).is_none(), "lease needs an action");
     // tools/list: only available tools; reviewers do not see writes.
-    assert_eq!(policy::tools_for(Reviewer), ["qal_view", "qal_query", "qal_history", "qal_whoami", "qal_verify", "qal_test", "qal_prove", "qal_run", "qal_call", "qal_request", "qal_build"]);
+    assert_eq!(policy::tools_for(Reviewer), ["qal_view", "qal_query", "qal_history", "qal_whoami", "qal_verify", "qal_test", "qal_prove", "qal_run", "qal_call", "qal_request", "qal_build", "qal_change"]);
     assert!(policy::tools_for(Implementer).contains(&"qal_define") && !policy::tools_for(Implementer).contains(&"qal_rename"));
-    assert_eq!(policy::tools_for(Architect).len(), 14);
+    assert_eq!(policy::tools_for(Architect).len(), 16);
     // E0903 names the roles that may.
     let d = policy::forbidden("qal_define", None, Implementer, Space::Main);
-    assert_eq!((d.code, d.kind, d.expected.as_deref(), d.found.as_deref()), ("E0903", "role_forbidden", Some("architect"), Some("implementer")));
+    assert_eq!((d.code, d.kind, d.expected.as_deref(), d.found.as_deref()), ("E0903", "role_forbidden", Some("nobody"), Some("implementer")));
     assert!(d.hints[0].contains("change set"));
     let d = policy::forbidden("qal_rename", None, Reviewer, Space::Main);
     assert!(d.message.contains("reviewer") && d.hints[0].contains("architect"), "{d:?}");
     // Records.
-    assert!(policy::record_allowed("define", "architect") && !policy::record_allowed("define", "implementer") && !policy::record_allowed("define", OWNER));
-    assert!(policy::record_allowed("member_add", OWNER) && !policy::record_allowed("member_add", "architect"));
-    assert!(!policy::record_allowed("frobnicate", OWNER));
+    let ok = |op: &str, action: Option<&str>, role: &str, sp: Space| policy::record_allowed(op, action, role, sp);
+    assert!(ok("define", None, "architect", Space::Own) && ok("define", None, "implementer", Space::Own) && !ok("define", None, "architect", Space::Main) && !ok("define", None, OWNER, Space::Own));
+    assert!(ok("define", None, "verifier", Space::ForeignSubmitted) && !ok("define", None, "implementer", Space::ForeignSubmitted) && !ok("define", None, "reviewer", Space::Own));
+    assert!(ok("change", Some("open"), "implementer", Space::Own) && !ok("change", Some("open"), "reviewer", Space::Own) && !ok("change", Some("list"), "architect", Space::Own));
+    assert!(ok("change", Some("abandon"), "architect", Space::ForeignOther) && !ok("change", Some("abandon"), "implementer", Space::ForeignOther));
+    assert!(ok("lease_break", None, "architect", Space::ForeignOther) && !ok("lease_break", None, "implementer", Space::ForeignOther));
+    assert!(ok("member_add", None, OWNER, Space::Main) && !ok("member_add", None, "architect", Space::Main));
+    assert!(!ok("frobnicate", None, OWNER, Space::Main));
 }
 
 #[test]
@@ -189,10 +203,10 @@ fn a_team_store_signs_every_write_and_verifies() {
     let (mut s, keys, owner, arch, imp) = team();
     let trust = Trust::parse(&s.team_trust().unwrap().to_string()).unwrap();
     assert_eq!(trust.owner, "boss");
-    // genesis + 2 members.
+    // genesis + 2 members + the architect's change set.
     let o = verified(&mut s, Some(&trust));
     assert!(o.ok, "{o:?}");
-    assert_eq!((o.records, o.members, o.trust), (Some(3), Some(3), Some("file")));
+    assert_eq!((o.records, o.members, o.trust), (Some(4), Some(3), Some("file")));
     assert!(!o.warnings.iter().any(|w| w.contains("--trust")), "{o:?}");
     assert!(o.warnings.iter().any(|w| w.contains("--head")));
     let o = verified(&mut s, None);
@@ -203,11 +217,11 @@ fn a_team_store_signs_every_write_and_verifies() {
     for e in [s.define("fn f() -> Int = 1", "cli").unwrap_err(), s.rename("base", "b2", "cli").unwrap_err(), s.delete(&["base".into()], "cli").unwrap_err()] {
         assert_eq!((e[0].code, e[0].expected.as_deref()), ("E0903", Some("architect")));
     }
-    // An implementer cannot write on main (records refuse it too).
+    // An implementer cannot write in the architect's change set, nobody on main (records refuse it too).
     as_member(&mut s, imp);
     assert_eq!(s.define("fn f() -> Int = 1", "x").unwrap_err()[0].code, "E0903");
-    assert_eq!(count(&s, "records"), 3);
-    // An architect can; the history names the member, not the given agent.
+    assert_eq!(count(&s, "records"), 4);
+    // The architect writes in its own change set; the history names the member, not the given agent.
     as_member(&mut s, arch);
     let d = s.define("fn f() -> Int = base() + 1\ntest f_works = f() == 2", "ignored").unwrap();
     assert_eq!(d.len(), 2);
@@ -216,7 +230,7 @@ fn a_team_store_signs_every_write_and_verifies() {
     s.rename("f", "g", "x").unwrap();
     s.define("fn tmp() -> Int = 0", "x").unwrap();
     s.delete(&["tmp".into()], "x").unwrap();
-    assert_eq!(count(&s, "records"), 8);
+    assert_eq!(count(&s, "records"), 9);
     // Every history row of the team era points to its record.
     let unlinked: i64 = raw(&s).query_row("SELECT count(*) FROM history WHERE record IS NULL AND agent != 'pre-team' AND agent NOT LIKE 'qal-std@%'", [], |r| r.get(0)).unwrap();
     assert_eq!(unlinked, 0);
@@ -224,11 +238,11 @@ fn a_team_store_signs_every_write_and_verifies() {
     assert_eq!(pre, None);
     let o = verified(&mut s, Some(&trust));
     assert!(o.ok, "{o:?}");
-    assert_eq!(o.records, Some(8));
+    assert_eq!(o.records, Some(9));
     // The record's body: op, member, entries.
-    let body: Vec<u8> = raw(&s).query_row("SELECT body FROM records WHERE seq = 6", [], |r| r.get(0)).unwrap();
+    let body: Vec<u8> = raw(&s).query_row("SELECT body FROM records WHERE seq = 7", [], |r| r.get(0)).unwrap();
     let v: Value = serde_json::from_slice(&body[RECORD_PREFIX.len()..]).unwrap();
-    assert_eq!((v["op"].as_str(), v["member"].as_str(), v["space"].as_str()), (Some("rename"), Some("arch-1"), Some("main")));
+    assert_eq!((v["op"].as_str(), v["member"].as_str(), v["space"].as_str()), (Some("rename"), Some("arch-1"), Some(s.space().id())));
     assert_eq!(v["args"]["entries"][0]["action"], "renamed");
     assert_eq!(v["args"]["entries"][0]["new"], Value::Null);
     // The users of the renamed name now refer to the new name: an `updated` entry with its refs.
@@ -256,7 +270,7 @@ fn a_team_store_signs_every_write_and_verifies() {
     assert_eq!(s.define("fn i() -> Int = 3", "x").unwrap_err()[0].code, "E0902");
     let o = verified(&mut s, Some(&trust));
     assert!(o.ok, "{o:?}");
-    assert_eq!(o.records, Some(11));
+    assert_eq!(o.records, Some(12));
     // Owner changes are refused; double init too.
     assert_eq!(s.team_rekey(&owner, "boss", &keys).unwrap_err()[0].code, "E0908");
     assert_eq!(s.team_init("boss", &keys).unwrap_err()[0].code, "E0908");
@@ -331,7 +345,7 @@ fn tampering_with_records_is_detected() {
     assert_eq!(code(&verified(&mut s, Some(&trust))), "E0922");
     // The last record removed: the chain is fine, the names are not.
     let (mut s, trust, _, _) = signed_store();
-    raw(&s).execute("DELETE FROM records WHERE seq = 5", []).unwrap();
+    raw(&s).execute("DELETE FROM records WHERE seq = 6", []).unwrap();
     assert_eq!(code(&verified(&mut s, Some(&trust))), "E0923");
     // Two records swapped.
     let (mut s, trust, _, _) = signed_store();
@@ -342,26 +356,39 @@ fn tampering_with_records_is_detected() {
 
 #[test]
 fn tampering_with_names_and_definitions_is_detected() {
-    // A name pointing to another hash.
+    // A name pointing to another hash: on main and in the change set.
     let (mut s, trust, _, _) = signed_store();
-    flip(&s, "names", "hash", "name = 'f'", 5);
+    flip(&s, "names", "hash", "name = 'base'", 5);
+    assert_eq!(code(&verified(&mut s, Some(&trust))), "E0923");
+    let (mut s, trust, _, _) = signed_store();
+    flip(&s, "change_names", "hash", "name = 'f'", 5);
     assert_eq!(code(&verified(&mut s, Some(&trust))), "E0923");
     // A name moved to another stored definition (as a valid hash).
     let (mut s, trust, _, _) = signed_store();
-    raw(&s).execute("UPDATE names SET hash = (SELECT hash FROM names WHERE name = 'base') WHERE name = 'g'", []).unwrap();
+    raw(&s).execute("UPDATE change_names SET hash = (SELECT hash FROM names WHERE name = 'base') WHERE name = 'g'", []).unwrap();
     assert_eq!(code(&verified(&mut s, Some(&trust))), "E0923");
     // A name added or removed behind the records' back.
     let (mut s, trust, _, _) = signed_store();
-    raw(&s).execute("DELETE FROM names WHERE name = 'g'", []).unwrap();
+    raw(&s).execute("DELETE FROM change_names WHERE name = 'g'", []).unwrap();
+    assert_eq!(code(&verified(&mut s, Some(&trust))), "E0923");
+    let (mut s, trust, _, _) = signed_store();
+    raw(&s).execute("DELETE FROM names WHERE name = 'base'", []).unwrap();
+    assert_eq!(code(&verified(&mut s, Some(&trust))), "E0923");
+    // A change set's status or scope changed behind the records' back.
+    let (mut s, trust, _, _) = signed_store();
+    raw(&s).execute("UPDATE changes SET status = 'submitted'", []).unwrap();
+    assert_eq!(code(&verified(&mut s, Some(&trust))), "E0923");
+    let (mut s, trust, _, _) = signed_store();
+    raw(&s).execute("UPDATE changes SET scope = '[\"f\"]'", []).unwrap();
     assert_eq!(code(&verified(&mut s, Some(&trust))), "E0923");
     // A row in `change_names` no record made.
     let (mut s, trust, _, _) = signed_store();
-    raw(&s).execute("INSERT INTO change_names (change, name, hash, local_names, refs, origin, updated_at) SELECT 'c000000000001', name, hash, local_names, refs, 'edited', 0 FROM names WHERE name = 'f'", []).unwrap();
+    raw(&s).execute("INSERT INTO change_names (change, name, hash, local_names, refs, origin, updated_at) SELECT 'c000000000001', name, hash, local_names, refs, 'edited', 0 FROM names WHERE name = 'base'", []).unwrap();
     assert_eq!(code(&verified(&mut s, Some(&trust))), "E0923");
     // A change_names row changed by one byte (same detection).
     // One byte in a definition's canonical form.
     let (mut s, trust, _, _) = signed_store();
-    let h: String = raw(&s).query_row("SELECT hash FROM names WHERE name = 'g'", [], |r| r.get(0)).unwrap();
+    let h: String = raw(&s).query_row("SELECT hash FROM change_names WHERE name = 'g'", [], |r| r.get(0)).unwrap();
     flip(&s, "defs", "canonical", &format!("hash = '{h}'"), 8);
     let o = verified(&mut s, Some(&trust));
     assert!(code(&o) == "E0923" && o.error.as_ref().unwrap().message.contains("does not match its hash"), "{o:?}");
@@ -530,13 +557,14 @@ fn a_team_store_imports_only_std_signed_by_the_owner() {
     let i = s.import(&std_pkg).unwrap();
     assert_eq!(i.defined.len(), 1);
     let o = verified(&mut s, None);
-    assert!(o.ok && o.records == Some(4), "{o:?}");
-    let body: Vec<u8> = raw(&s).query_row("SELECT body FROM records WHERE seq = 4", [], |r| r.get(0)).unwrap();
+    assert!(o.ok && o.records == Some(5), "{o:?}");
+    let body: Vec<u8> = raw(&s).query_row("SELECT body FROM records WHERE seq = 5", [], |r| r.get(0)).unwrap();
     let v: Value = serde_json::from_slice(&body[RECORD_PREFIX.len()..]).unwrap();
     assert_eq!((v["op"].as_str(), v["member"].as_str(), v["session"].as_str()), (Some("import"), Some("boss"), Some(CLI_SESSION)));
     assert_eq!((v["args"]["package"].as_str(), v["args"]["hash"].as_str()), (Some("std"), Some(i.hash.as_str())));
     assert_eq!(v["args"]["entries"][0]["name"], "std.a.one");
     // The history keeps the package's agent (later imports of the same package may replace it).
+    s.set_space(crate::Space::Main);
     assert!(s.history("std.a.one").unwrap()[0].agent.starts_with("qal-std@"));
 }
 
@@ -553,19 +581,20 @@ fn group_store() -> (Store, Trust, Signer, Signer) {
 #[test]
 fn tampering_with_any_code_bearing_column_is_detected() {
     let probes: &[(&str, &str)] = &[
-        ("names.refs", "UPDATE names SET refs = '[]' WHERE name = 'twice'"),
-        ("names.refs of a group member", "UPDATE names SET refs = '[\"is_even\",\"is_odd\"]' WHERE name = 'is_odd'"),
-        ("names.refs re-spelled", "UPDATE names SET refs = '[ \"f\" ]' WHERE name = 'twice'"),
-        ("names.local_names", "UPDATE names SET local_names = '[\"y\"]' WHERE name = 'twice'"),
-        ("defs.signature", "UPDATE defs SET signature = 'fn(Int) -> Str' WHERE hash = (SELECT hash FROM names WHERE name = 'twice')"),
-        ("defs.effects", "UPDATE defs SET effects = '[\"io\"]' WHERE hash = (SELECT hash FROM names WHERE name = 'twice')"),
-        ("defs.kind", "UPDATE defs SET kind = 'test' WHERE hash = (SELECT hash FROM names WHERE name = 'twice')"),
-        ("defs.local_names", "UPDATE defs SET local_names = '[\"z\"]' WHERE hash = (SELECT hash FROM names WHERE name = 'twice')"),
+        ("names.refs", "UPDATE change_names SET refs = '[]' WHERE name = 'twice'"),
+        ("names.refs of a group member", "UPDATE change_names SET refs = '[\"is_even\",\"is_odd\"]' WHERE name = 'is_odd'"),
+        ("names.refs re-spelled", "UPDATE change_names SET refs = '[ \"f\" ]' WHERE name = 'twice'"),
+        ("names.local_names", "UPDATE change_names SET local_names = '[\"y\"]' WHERE name = 'twice'"),
+        ("defs.signature", "UPDATE defs SET signature = 'fn(Int) -> Str' WHERE hash = (SELECT hash FROM change_names WHERE name = 'twice')"),
+        ("defs.effects", "UPDATE defs SET effects = '[\"io\"]' WHERE hash = (SELECT hash FROM change_names WHERE name = 'twice')"),
+        ("defs.kind", "UPDATE defs SET kind = 'test' WHERE hash = (SELECT hash FROM change_names WHERE name = 'twice')"),
+        ("defs.local_names", "UPDATE defs SET local_names = '[\"z\"]' WHERE hash = (SELECT hash FROM change_names WHERE name = 'twice')"),
         ("groups.form", "UPDATE groups SET form = CAST(form AS BLOB) || x'00'"),
         ("groups deleted", "DELETE FROM groups"),
         ("deps deleted", "DELETE FROM deps"),
-        ("one deps row deleted", "DELETE FROM deps WHERE hash = (SELECT hash FROM names WHERE name = 'twice')"),
-        ("a deps row added", "INSERT INTO deps (hash, dep_hash) SELECT n.hash, b.hash FROM names n, names b WHERE n.name = 'f' AND b.name = 'twice'"),
+        ("one deps row deleted", "DELETE FROM deps WHERE hash = (SELECT hash FROM change_names WHERE name = 'twice')"),
+        ("a deps row added", "INSERT INTO deps (hash, dep_hash) SELECT n.hash, b.hash FROM change_names n, change_names b WHERE n.name = 'f' AND b.name = 'twice'"),
+        ("names.refs on main", "UPDATE names SET refs = '[\"x\"]' WHERE name = 'base'"),
         ("meta.team_allow", "UPDATE meta SET value = 'io,time,rand,db:mem,fs:.' WHERE key = 'team_allow'"),
         ("meta.owner", "UPDATE meta SET value = 'arch-1' WHERE key = 'owner'"),
     ];
@@ -609,7 +638,7 @@ fn a_pinned_head_finds_a_cut_off_tail() {
     assert!(s.verify(Some(&trust), 1, Some(&head)).unwrap().ok);
     // The last record and its change removed together: consistent without the pin.
     let c = raw(&s);
-    c.execute_batch("PRAGMA foreign_keys = OFF; DELETE FROM records WHERE seq = (SELECT max(seq) FROM records); DELETE FROM names WHERE name = 'g';").unwrap();
+    c.execute_batch("PRAGMA foreign_keys = OFF; DELETE FROM records WHERE seq = (SELECT max(seq) FROM records); DELETE FROM change_names WHERE name = 'g';").unwrap();
     drop(c);
     let o = verified(&mut s, Some(&trust));
     assert!(o.ok && o.warnings.iter().any(|w| w.contains("--head")), "{o:?}");
@@ -625,7 +654,7 @@ fn a_record_over_one_mib_is_refused_and_nothing_is_written() {
     let before = count(&s, "names");
     let e = s.define(&src, "x").unwrap_err();
     assert_eq!((e[0].code, e[0].kind), ("E0914", "team_limit"), "{e:?}");
-    assert_eq!((count(&s, "names"), count(&s, "records")), (before, 3));
+    assert_eq!((count(&s, "names"), count(&s, "records")), (before, 4));
     assert!(verified(&mut s, None).ok);
 }
 
@@ -683,4 +712,183 @@ fn verify_100k_records() {
     if !cfg!(debug_assertions) {
         assert!(full < std::time::Duration::from_secs(10), "{full:?}");
     }
+}
+/// [`bare_team`] plus a verifier `ver-1` and a second implementer `impl-2`, with signers.
+fn full_team() -> (Store, KeyDir, Signer, Signer, Signer, Signer, Signer) {
+    let (mut s, keys, owner, arch, imp) = bare_team();
+    let v = s.team_add(&owner, "ver-1", Role::Verifier, &keys).unwrap();
+    let i2 = s.team_add(&owner, "impl-2", Role::Implementer, &keys).unwrap();
+    let project = s.project_dir().unwrap().to_path_buf();
+    let ver = Signer { member: "ver-1".into(), session: "s000000000003".into(), key: keys.load(&project, &v.key_id).unwrap() };
+    let imp2 = Signer { member: "impl-2".into(), session: "s000000000004".into(), key: keys.load(&project, &i2.key_id).unwrap() };
+    (s, keys, owner, arch, imp, ver, imp2)
+}
+
+fn again(keys: &KeyDir, s: &Store, x: &Signer) -> Signer {
+    Signer { member: x.member.clone(), session: x.session.clone(), key: keys.load(s.project_dir().unwrap(), x.key.key_id()).unwrap() }
+}
+
+fn open(s: &mut Store, who: &Signer, title: &str, scope: &[&str], assignee: Option<&str>) -> String {
+    let a = change::OpenArgs { title: title.into(), scope: scope.iter().map(|x| x.to_string()).collect(), assignee: assignee.map(str::to_string), ..Default::default() };
+    s.change_open(who, &a).unwrap()["change"].as_str().unwrap().to_string()
+}
+
+fn write_in(s: &mut Store, keys: &KeyDir, who: &Signer, change: &str, src: &str) -> Result<Vec<crate::Defined>, Vec<qal_core::diag::Diagnostic>> {
+    let signer = again(keys, s, who);
+    s.set_signer(Some(Arc::new(signer)));
+    s.set_space(crate::Space::Change(change.to_string()));
+    s.define(src, "x")
+}
+
+#[test]
+fn change_sets_have_their_own_checked_space() {
+    let (mut s, keys, _owner, arch, imp, ver, _imp2) = full_team();
+    let trust = Trust::parse(&s.team_trust().unwrap().to_string()).unwrap();
+    let c = open(&mut s, &arch, "skeleton", &[], None);
+    // A copy of main: `base` is there, origin `base`.
+    let d = write_in(&mut s, &keys, &arch, &c, "type Order = { qty: Int }\nfn make(q: Int) -> Order req q > 0 ens r.qty == q = todo()\nfn total(q: Int) -> Int req q > 0 = make(q).qty + base()").unwrap();
+    assert_eq!(d.len(), 3);
+    assert_eq!(s.last_write().stubs, vec!["make".to_string()]);
+    assert_eq!(s.last_write().leases.iter().map(|l| l.name.as_str()).collect::<Vec<_>>(), ["Order", "make", "total"]);
+    // Main is untouched; the change set sees base and its own names.
+    s.set_space(crate::Space::Main);
+    assert!(s.view(&["make".into()]).is_err());
+    assert_eq!(s.query(&crate::Query::default()).unwrap().len(), 1);
+    s.set_space(crate::Space::Change(c.clone()));
+    assert_eq!(s.query(&crate::Query::default()).unwrap().len(), 4);
+    assert_eq!(s.history("make").unwrap()[0].agent, "arch-1");
+    let diff = s.change_diff(&c).unwrap();
+    assert_eq!(diff["diff"].as_array().unwrap().len(), 3);
+    assert_eq!(diff["diff"][0]["origin"], "added");
+    // Replacing `base` relinks `total` in the change set only.
+    write_in(&mut s, &keys, &arch, &c, "fn base() -> Int = 5").unwrap();
+    let origin = |s: &Store, n: &str| -> String { raw(s).query_row("SELECT origin FROM change_names WHERE change = ?1 AND name = ?2", [&c, n], |r| r.get(0)).unwrap() };
+    assert_eq!((origin(&s, "base").as_str(), origin(&s, "total").as_str()), ("edited", "added"));
+    // Rename and delete in the change set.
+    write_in(&mut s, &keys, &arch, &c, "fn tmp() -> Int = 1").unwrap();
+    s.rename("tmp", "tmp2", "x").unwrap();
+    s.delete(&["tmp2".into()], "x").unwrap();
+    s.rename("base", "base0", "x").unwrap();
+    let h: Option<String> = raw(&s).query_row("SELECT hash FROM change_names WHERE change = ?1 AND name = 'base'", [&c], |r| r.get(0)).unwrap();
+    assert_eq!((h, origin(&s, "base").as_str(), origin(&s, "base0").as_str()), (None, "renamed", "added"));
+    s.set_space(crate::Space::Main);
+    assert_eq!(s.query(&crate::Query::default()).unwrap()[0].name, "base", "main keeps its names");
+    // Submit; a write of the owner reopens it.
+    s.change_submit(&arch, &c).unwrap();
+    assert_eq!(s.change(&c).unwrap().unwrap().status, "submitted");
+    assert!(s.has_notices(&s.team_log().unwrap(), "ver-1").unwrap());
+    write_in(&mut s, &keys, &arch, &c, "fn total(q: Int) -> Int req q > 0 = make(q).qty + base0() + 1").unwrap();
+    assert_eq!(s.change(&c).unwrap().unwrap().status, "open");
+    // Others cannot write it; nobody writes main.
+    assert_eq!(write_in(&mut s, &keys, &imp, &c, "fn x() -> Int = 1").unwrap_err()[0].code, "E0903");
+    s.set_space(crate::Space::Main);
+    assert_eq!(s.define("fn x() -> Int = 1", "x").unwrap_err()[0].code, "E0903");
+    // A verifier contributes tests to a submitted change set, nothing else.
+    s.change_submit(&arch, &c).unwrap();
+    write_in(&mut s, &keys, &ver, &c, "test total_one = total(1) == 7").unwrap();
+    assert_eq!(s.change(&c).unwrap().unwrap().status, "submitted", "a contribution keeps the status");
+    let e = write_in(&mut s, &keys, &ver, &c, "fn y() -> Int = 1").unwrap_err();
+    assert!(e[0].code == "E0903" && e[0].message.contains("only `test`"), "{e:?}");
+    // Abandon: leases free, writes refused (E0908).
+    s.change_abandon(&arch, &c).unwrap();
+    assert!(s.leases(&c).unwrap().is_empty());
+    assert_eq!(write_in(&mut s, &keys, &arch, &c, "fn z() -> Int = 1").unwrap_err()[0].code, "E0908");
+    let o = verified(&mut s, Some(&trust));
+    assert!(o.ok, "{o:?}");
+}
+
+#[test]
+fn leases_are_all_or_nothing_and_never_wait() {
+    let (mut s, keys, _owner, arch, imp, _ver, imp2) = full_team();
+    let trust = Trust::parse(&s.team_trust().unwrap().to_string()).unwrap();
+    let a = open(&mut s, &imp, "a", &[], None);
+    let b = open(&mut s, &imp2, "b", &[], None);
+    write_in(&mut s, &keys, &imp, &a, "fn shared() -> Int = 1").unwrap();
+    // The same name in another change set: the whole define is refused, with the holder.
+    let e = write_in(&mut s, &keys, &imp2, &b, "fn mine() -> Int = 2\nfn shared() -> Int = 3").unwrap_err();
+    assert_eq!(e.len(), 1);
+    assert_eq!((e[0].code, e[0].kind), ("E0901", "lease_held"));
+    let detail = e[0].detail.clone().unwrap();
+    assert_eq!((detail["name"].as_str(), detail["change"].as_str(), detail["member"].as_str()), (Some("shared"), Some(a.as_str()), Some("impl-1")));
+    assert!(s.leases(&b).unwrap().is_empty(), "nothing was taken");
+    // Explicit acquire: all or nothing.
+    let names = |xs: &[&str]| xs.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+    let e = s.lease("impl-2", "acquire", &b, &names(&["free1", "shared"]), None).unwrap_err();
+    assert_eq!(e[0].code, "E0901");
+    assert!(s.leases(&b).unwrap().is_empty());
+    let got = s.lease("impl-2", "acquire", &b, &names(&["free1", "free2"]), Some(120_000)).unwrap();
+    assert_eq!(got["leases"].as_array().unwrap().len(), 2);
+    assert_eq!(s.lease("impl-1", "acquire", &b, &names(&["x"]), None).unwrap_err()[0].code, "E0909", "only in an own change set");
+    assert_eq!(s.lease("impl-2", "acquire", &b, &names(&["x"]), Some(1000)).unwrap_err()[0].code, "E0914");
+    assert_eq!(s.lease("impl-2", "renew", &b, &names(&["shared"]), None).unwrap_err()[0].code, "E0901");
+    s.lease("impl-2", "renew", &b, &names(&["free1"]), Some(3_600_000)).unwrap();
+    let r = s.lease("impl-2", "release", &b, &names(&["free1", "shared"]), None).unwrap();
+    assert_eq!(r["released"], json!(["free1"]));
+    // An expired lease counts as free.
+    raw(&s).execute("UPDATE leases SET expires_at = 1 WHERE name = 'shared'", []).unwrap();
+    write_in(&mut s, &keys, &imp2, &b, "fn shared() -> Int = 3").unwrap();
+    assert_eq!(s.leases(&b).unwrap().iter().filter(|l| l.name == "shared").count(), 1);
+    // The architect breaks it: signed, the holder hears of it, its change set needs a rebase.
+    assert_eq!(s.lease_break(&imp, &names(&["shared"])).unwrap_err()[0].code, "E0903");
+    let broken = s.lease_break(&arch, &names(&["shared"])).unwrap();
+    assert_eq!(broken["broken"][0]["holder"], "impl-2");
+    assert!(s.change(&b).unwrap().unwrap().needs_rebase);
+    let (n, _) = s.take_notices(&s.team_log().unwrap(), "impl-2", 10).unwrap();
+    assert!(n.iter().any(|n| n.kind == "lease_broken"), "{n:?}");
+    let o = verified(&mut s, Some(&trust));
+    assert!(o.ok, "{o:?}");
+}
+
+#[test]
+fn implementers_keep_scope_and_interfaces() {
+    let (mut s, keys, _owner, arch, imp, _ver, imp2) = full_team();
+    let trust = Trust::parse(&s.team_trust().unwrap().to_string()).unwrap();
+    // The skeleton lands in main only by merge (4c); here a work package built on stubs the architect writes into it.
+    let p = open(&mut s, &arch, "orders", &["make"], Some("impl-1"));
+    write_in(&mut s, &keys, &arch, &p, "fn make(q: Int) -> Int req q > 0 ens r == q = todo()\nfn other() -> Int = 1").unwrap();
+    assert!(s.change(&p).unwrap().unwrap().is_package());
+    // Only the assignee claims it; it takes the scope's leases.
+    assert_eq!(s.change_claim(&imp2, &p).unwrap_err()[0].code, "E0909");
+    assert_eq!(s.change_claim(&arch, &p).unwrap_err()[0].code, "E0903");
+    // The architect's stubs hold leases for the package itself: the claim may take them.
+    let c = s.change_claim(&imp, &p).unwrap();
+    assert_eq!(c["owner"], "impl-1");
+    assert_eq!(s.change_claim(&imp, &p).unwrap_err()[0].code, "E0908");
+    // The body may change; the signature, contracts and type not; outside the scope nothing existing.
+    write_in(&mut s, &keys, &imp, &p, "fn make(q: Int) -> Int req q > 0 ens r == q = q").unwrap();
+    for (src, code) in [
+        ("fn make(q: Int) -> Str req q > 0 = \"x\"", "E0906"),
+        ("fn make(q: Int) -> Int req q >= 0 ens r == q = q", "E0906"),
+        ("fn other() -> Int = 2", "E0905"),
+    ] {
+        let e = write_in(&mut s, &keys, &imp, &p, src).unwrap_err();
+        assert_eq!(e[0].code, code, "{src}: {e:?}");
+    }
+    // New names are free, and its own new names it may reshape.
+    write_in(&mut s, &keys, &imp, &p, "fn helper(x: Int) -> Int = x").unwrap();
+    write_in(&mut s, &keys, &imp, &p, "fn helper(x: Int, y: Int) -> Int = x + y").unwrap();
+    s.change_scope(&arch, &p, &["other".into()], &[]).unwrap();
+    write_in(&mut s, &keys, &imp, &p, "fn other() -> Int = 2").unwrap();
+    assert_eq!(s.change_scope(&imp, &p, &["x".into()], &[]).unwrap_err()[0].code, "E0903");
+    let o = verified(&mut s, Some(&trust));
+    assert!(o.ok, "{o:?}");
+}
+
+#[test]
+fn a_stale_base_is_refused() {
+    let (mut s, keys, _owner, _arch, imp, ver, _imp2) = full_team();
+    let c = open(&mut s, &imp, "work", &[], None);
+    write_in(&mut s, &keys, &imp, &c, "fn f() -> Int = 1").unwrap();
+    s.change_submit(&imp, &c).unwrap();
+    write_in(&mut s, &keys, &ver, &c, "test f_one = f() == 1").unwrap();
+    // The owner did not see the verifier's test: E0904; after viewing it, the write goes through.
+    let e = write_in(&mut s, &keys, &imp, &c, "test f_one = f() >= 1").unwrap_err();
+    assert_eq!((e[0].code, e[0].kind), ("E0904", "stale_base"));
+    let h = s.view(&["f_one".into()]).unwrap()[0].hash.clone();
+    s.mark_seen(&imp.session, &crate::Space::Change(c.clone()), &[("f_one".into(), h)]).unwrap();
+    write_in(&mut s, &keys, &imp, &c, "test f_one = f() >= 1").unwrap();
+    // Its own names are never stale for the writer; the verifier now has not seen the owner's version.
+    write_in(&mut s, &keys, &imp, &c, "fn f() -> Int = 2").unwrap();
+    s.change_submit(&imp, &c).unwrap();
+    assert_eq!(write_in(&mut s, &keys, &ver, &c, "test f_one = f() == 2").unwrap_err()[0].code, "E0904");
 }

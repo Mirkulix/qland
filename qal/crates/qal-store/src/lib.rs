@@ -14,9 +14,11 @@ pub mod package;
 mod pattern;
 mod schema;
 mod snapshot;
+pub mod space;
 pub mod team;
 
-pub use define::{Release, StdNames};
+pub use define::{last_lock_held, Release, StdNames};
+pub use space::Space;
 pub use ops::{Deleted, DepView, Entry, HistoryEntry, Query, Renamed, View};
 pub use package::{Exported, Imported};
 pub use pattern::matches as signature_matches;
@@ -62,6 +64,10 @@ pub struct Store {
     breaking: bool,
     /// Team mode: who signs the records of writes (see [`team`]).
     signer: Option<std::sync::Arc<team::Signer>>,
+    /// The space every operation works in (`main` unless a change set is chosen).
+    space: Space,
+    /// What the last team write reported besides its result (leases taken, stubs).
+    last: team::WriteReport,
 }
 
 /// The checked codebase and the (name, hash) of the definitions to verify.
@@ -131,17 +137,31 @@ impl Store {
                 schema::SCHEMA_VERSION
             ))]);
         }
-        Ok(Store { conn, path, release: None, breaking: false, signer: None })
+        Ok(Store { conn, path, release: None, breaking: false, signer: None, space: Space::Main, last: team::WriteReport::default() })
     }
 
     pub fn path(&self) -> &Path {
         &self.path
     }
 
+    /// Every following operation works in `space` (a change set must exist; checked by each operation).
+    pub fn set_space(&mut self, space: Space) {
+        self.space = space;
+    }
+
+    pub fn space(&self) -> &Space {
+        &self.space
+    }
+
+    /// The leases the last write took and the stubs it defined (team mode).
+    pub fn last_write(&self) -> &team::WriteReport {
+        &self.last
+    }
+
     /// The whole named codebase as a program (checked when it was stored).
     pub fn program(&mut self) -> Result<Program, Vec<Diagnostic>> {
         let tx = self.conn.transaction().map_err(sql)?;
-        let snap = Snapshot::load(&tx)?;
+        let snap = Snapshot::load(&tx, &self.space)?;
         snap.program(&tx, &|_| false)
     }
 
@@ -149,7 +169,7 @@ impl Store {
     /// are those of exactly these definitions, whatever another writer does meanwhile.
     pub fn program_with_hashes(&mut self) -> Result<(Program, std::collections::HashMap<String, String>), Vec<Diagnostic>> {
         let tx = self.conn.transaction().map_err(sql)?;
-        let snap = Snapshot::load(&tx)?;
+        let snap = Snapshot::load(&tx, &self.space)?;
         let hashes = snap.names.iter().map(|(n, e)| (n.clone(), e.hash.to_hex())).collect();
         Ok((snap.program(&tx, &|_| false)?, hashes))
     }
@@ -169,11 +189,24 @@ impl Store {
 
     fn define_with(&mut self, src: &str, agent: &str, verify: Option<&mut Verify>) -> Result<Vec<Defined>, Vec<Diagnostic>> {
         let signer = self.signer.as_deref();
-        team::require_signer(&self.conn, signer)?;
+        let team = team::require_signer(&self.conn, signer)?;
         let agent = signer.map_or(agent, |s| s.member.as_str());
         let rules = define::Rules { std: StdNames::Refuse, release: self.release.as_ref(), breaking: self.breaking };
-        let record = |out: &[Defined], tx: &rusqlite::Transaction, before: &team::Rows| team::record_write(tx, signer, "define", before, &team::Entry::of_defined(out), serde_json::Map::new());
-        define::define_checked(&mut self.conn, src, agent, &rules, verify, &record)
+        let space = self.space.clone();
+        let report = std::cell::RefCell::new(team::WriteReport::default());
+        // What the session viewed is in the team log (reads never write store.db).
+        let log = if team { self.team_log().ok() } else { None };
+        let guard = |tx: &rusqlite::Transaction, snap: &Snapshot, input: &Program, typed: &TProgram, dry: bool| -> Result<(), Vec<Diagnostic>> {
+            let names: std::collections::BTreeSet<&str> = input.defs.iter().map(|d| d.name()).collect();
+            let stubs: Vec<String> = typed.stubs().into_iter().filter(|n| names.contains(n.as_str())).collect();
+            let leases = if team { team::guard_define(tx, log.as_ref(), signer, &space, snap, input, dry)? } else { Vec::new() };
+            *report.borrow_mut() = team::WriteReport { leases, stubs };
+            Ok(())
+        };
+        let record = |out: &[Defined], tx: &rusqlite::Transaction, before: &team::Rows| team::record_write(tx, signer, "define", &space, before, &team::Entry::of_defined(out), serde_json::Map::new());
+        let out = define::define_checked(&mut self.conn, src, agent, &rules, &self.space, verify, &guard, &record);
+        self.last = report.into_inner();
+        out
     }
 
     /// Renames a definition. No hash changes; the history of `old` moves to `new`.
@@ -182,8 +215,12 @@ impl Store {
         team::require_signer(&self.conn, signer)?;
         let agent = signer.map_or(agent, |s| s.member.as_str());
         let rules = define::Rules { std: StdNames::Refuse, release: self.release.as_ref(), breaking: self.breaking };
-        let record = |tx: &rusqlite::Transaction, labels: &[team::Entry], before: &team::Rows| team::record_write(tx, signer, "rename", before, labels, serde_json::Map::new());
-        ops::rename(&mut self.conn, old, new, agent, &rules, &record)
+        let space = self.space.clone();
+        let record = |tx: &rusqlite::Transaction, labels: &[team::Entry], before: &team::Rows| {
+            team::guard_names(tx, signer, &space, "qal_rename", labels)?;
+            team::record_write(tx, signer, "rename", &space, before, labels, serde_json::Map::new())
+        };
+        ops::rename(&mut self.conn, &self.space, old, new, agent, &rules, &record)
     }
 
     /// Removes names nothing else refers to (see [`ops::delete`]); their history stays.
@@ -192,18 +229,22 @@ impl Store {
         team::require_signer(&self.conn, signer)?;
         let agent = signer.map_or(agent, |s| s.member.as_str());
         let rules = define::Rules { std: StdNames::Refuse, release: self.release.as_ref(), breaking: self.breaking };
-        let record = |tx: &rusqlite::Transaction, labels: &[team::Entry], before: &team::Rows| team::record_write(tx, signer, "delete", before, labels, serde_json::Map::new());
-        ops::delete(&mut self.conn, names, agent, &rules, &record)
+        let space = self.space.clone();
+        let record = |tx: &rusqlite::Transaction, labels: &[team::Entry], before: &team::Rows| {
+            team::guard_names(tx, signer, &space, "qal_delete", labels)?;
+            team::record_write(tx, signer, "delete", &space, before, labels, serde_json::Map::new())
+        };
+        ops::delete(&mut self.conn, &self.space, names, agent, &rules, &record)
     }
 
     /// Text, signature and direct dependencies of each name (or `#<hash>`).
     pub fn view(&mut self, names: &[String]) -> Result<Vec<View>, Vec<Diagnostic>> {
-        ops::view(&mut self.conn, names)
+        ops::view(&mut self.conn, &self.space, names)
     }
 
     /// Named definitions matching every given filter, sorted by name.
     pub fn query(&mut self, q: &Query) -> Result<Vec<Entry>, Vec<Diagnostic>> {
-        ops::query(&mut self.conn, q)
+        ops::query(&mut self.conn, &self.space, q)
     }
 
     /// The current name of a definition that was renamed from `old` (None if it was not, or if
@@ -212,8 +253,9 @@ impl Store {
     /// do not exist.
     pub fn renamed_to(&mut self, old: &str) -> Result<Option<String>, Vec<Diagnostic>> {
         let conn = &self.conn;
-        let current = |n: &str| conn.query_row("SELECT 1 FROM names WHERE name = ?1", [n], |_| Ok(())).is_ok();
-        ops::renamed_to(conn, &current, old)
+        let space = &self.space;
+        let current = |n: &str| space::hash_of(conn, space, n).ok().flatten().is_some();
+        ops::renamed_to(conn, space, &current, old)
     }
 
     /// Stored proof results (JSON) of definition `hash` for prover key `prover`.
@@ -278,7 +320,7 @@ impl Store {
         let mut extra = serde_json::Map::new();
         extra.insert("package".into(), serde_json::Value::from(pkg.name.clone()));
         extra.insert("hash".into(), serde_json::Value::from(pkg.hash.clone()));
-        let record = |out: &[Defined], tx: &rusqlite::Transaction, before: &team::Rows| team::record_write(tx, signer, "import", before, &team::Entry::of_defined(out), extra.clone());
+        let record = |out: &[Defined], tx: &rusqlite::Transaction, before: &team::Rows| team::record_write(tx, signer, "import", &Space::Main, before, &team::Entry::of_defined(out), extra.clone());
         package::import(&mut self.conn, file, verify, self.release.as_ref(), &record)
     }
 
@@ -347,7 +389,7 @@ impl Store {
 
     /// Every recorded change of `name`, oldest first.
     pub fn history(&mut self, name: &str) -> Result<Vec<HistoryEntry>, Vec<Diagnostic>> {
-        ops::history(&mut self.conn, name)
+        ops::history(&mut self.conn, &self.space, name)
     }
 }
 

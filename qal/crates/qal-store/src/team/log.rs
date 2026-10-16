@@ -3,6 +3,9 @@
 //! `.qal/team-log.db`, so that a read tool call never writes to (and never waits for the write
 //! lock of) `store.db`: writers there hold their lock for a whole `define`.
 //!
+//! What a session viewed (`qal_view`, spec §5.3) is noted here too; what it wrote is noted in
+//! `store.db` by the write itself, and a write's stale-base check (E0904) reads both.
+//!
 //! Notices themselves stay in `store.db` (written by the writes that cause them); a member's
 //! seen-mark is a cursor here (the highest notice id it was given). Writes to this file are short
 //! and wait at most [`BUSY_TIMEOUT`]; callers treat them as best effort.
@@ -34,6 +37,13 @@ CREATE TABLE IF NOT EXISTS calls (
 CREATE TABLE IF NOT EXISTS notice_cursor (
     member TEXT PRIMARY KEY,
     seen   INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS seen (
+    session TEXT NOT NULL,
+    space   TEXT NOT NULL,
+    name    TEXT NOT NULL,
+    hash    TEXT NOT NULL,
+    PRIMARY KEY (session, space, name)
 );
 CREATE TABLE IF NOT EXISTS flags (
     member TEXT NOT NULL,
@@ -91,6 +101,19 @@ impl TeamLog {
             .execute("INSERT INTO notice_cursor (member, seen) VALUES (?1, ?2) ON CONFLICT(member) DO UPDATE SET seen = max(seen, excluded.seen)", params![member, seen])
             .map(|_| ())
             .map_err(sql)
+    }
+
+    /// Notes that `session` saw `hash` of `name` in `space` (a view).
+    pub fn mark_seen(&self, session: &str, space: &str, name: &str, hash: &str) -> Result<(), Vec<Diagnostic>> {
+        self.conn
+            .execute("INSERT INTO seen (session, space, name, hash) VALUES (?1, ?2, ?3, ?4) ON CONFLICT(session, space, name) DO UPDATE SET hash = excluded.hash", params![session, space, name, hash])
+            .map(|_| ())
+            .map_err(sql)
+    }
+
+    /// The hash of `name` in `space` that `session` last viewed.
+    pub fn seen(&self, session: &str, space: &str, name: &str) -> Result<Option<String>, Vec<Diagnostic>> {
+        self.conn.query_row("SELECT hash FROM seen WHERE session = ?1 AND space = ?2 AND name = ?3", params![session, space, name], |r| r.get(0)).optional().map_err(sql)
     }
 
     /// Sets `flag` for `member`; true if it was not set before.

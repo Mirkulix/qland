@@ -71,17 +71,13 @@ pub enum Rule {
     AnyChange,
 }
 
-/// Until Phase 4b brings change sets, `define`, `rename` and `delete` in a team store write
-/// directly to `main`, and only for architects (spec §21, 4a). 4b turns this off: `main` then
-/// changes only by merge.
-pub const ARCHITECTS_WRITE_MAIN: bool = true;
-
 impl Rule {
-    fn allows(self, role: Role, space: Space) -> bool {
+    fn allows(self, space: Space) -> bool {
         match self {
             Rule::Yes => true,
             Rule::No => false,
-            Rule::Own => space == Space::Own || (space == Space::Main && ARCHITECTS_WRITE_MAIN && role == Role::Architect),
+            // `main` changes only by merge (Phase 4c): code is written in change sets.
+            Rule::Own => space == Space::Own,
             Rule::OwnOrContribution => matches!(space, Space::Own | Space::ForeignSubmitted),
             Rule::AnyChange => space != Space::Main,
         }
@@ -95,7 +91,7 @@ impl Rule {
 
 /// One row: a tool, optionally one of its actions, and the rule per role (architect,
 /// implementer, verifier, reviewer). `available`: the tool exists in this build (the others come
-/// with Phase 4b/4c and are part of the table already).
+/// with Phase 4c and are part of the table already).
 #[derive(Debug, Clone, Copy)]
 pub struct Row {
     pub tool: &'static str,
@@ -126,18 +122,18 @@ pub const POLICY: &[Row] = &[
     row("qal_define", None, [Own, Own, OwnOrContribution, No], true),
     row("qal_rename", None, [Own, No, No, No], true),
     row("qal_delete", None, [Own, No, No, No], true),
-    row("qal_lease", Some("acquire"), [Yes, Yes, Yes, No], false),
-    row("qal_lease", Some("renew"), [Yes, Yes, Yes, No], false),
-    row("qal_lease", Some("release"), [Yes, Yes, Yes, No], false),
-    row("qal_lease", Some("break"), [Yes, No, No, No], false),
-    row("qal_change", Some("list"), [Yes, Yes, Yes, Yes], false),
-    row("qal_change", Some("show"), [Yes, Yes, Yes, Yes], false),
-    row("qal_change", Some("diff"), [Yes, Yes, Yes, Yes], false),
-    row("qal_change", Some("open"), [Yes, Yes, Yes, No], false),
-    row("qal_change", Some("claim"), [No, Yes, Yes, No], false),
-    row("qal_change", Some("submit"), [Own, Own, Own, No], false),
-    row("qal_change", Some("abandon"), [AnyChange, Own, Own, No], false),
-    row("qal_change", Some("scope"), [Yes, No, No, No], false),
+    row("qal_lease", Some("acquire"), [Yes, Yes, Yes, No], true),
+    row("qal_lease", Some("renew"), [Yes, Yes, Yes, No], true),
+    row("qal_lease", Some("release"), [Yes, Yes, Yes, No], true),
+    row("qal_lease", Some("break"), [Yes, No, No, No], true),
+    row("qal_change", Some("list"), [Yes, Yes, Yes, Yes], true),
+    row("qal_change", Some("show"), [Yes, Yes, Yes, Yes], true),
+    row("qal_change", Some("diff"), [Yes, Yes, Yes, Yes], true),
+    row("qal_change", Some("open"), [Yes, Yes, Yes, No], true),
+    row("qal_change", Some("claim"), [No, Yes, Yes, No], true),
+    row("qal_change", Some("submit"), [Own, Own, Own, No], true),
+    row("qal_change", Some("abandon"), [AnyChange, Own, Own, No], true),
+    row("qal_change", Some("scope"), [Yes, No, No, No], true),
     row("qal_rebase", None, [Own, Own, Own, No], false),
     row("qal_review", Some("comment"), [Yes, No, No, No], false),
     row("qal_review", Some("verified"), [No, No, Yes, No], false),
@@ -162,7 +158,7 @@ pub fn rule(tool: &str, action: Option<&str>, role: Role) -> Option<Rule> {
 
 /// May `role` call `tool` (with `action`) in `space`?
 pub fn allows(tool: &str, action: Option<&str>, role: Role, space: Space) -> bool {
-    rule(tool, action, role).is_some_and(|r| r.allows(role, space))
+    rule(tool, action, role).is_some_and(|r| r.allows(space))
 }
 
 /// The roles that may call `tool`/`action` in `space`.
@@ -199,7 +195,7 @@ pub fn forbidden(tool: &str, action: Option<&str>, role: Role, space: Space) -> 
     d.expected = Some(if names.is_empty() { "nobody".into() } else { names.join(", ") });
     d.found = Some(role.as_str().into());
     let hint = if space == Space::Main && rule(tool, action, role).is_some_and(|r| r == Rule::Own || r == Rule::OwnOrContribution) {
-        format!("{}s write only in their own change set (qal_change, coming with Phase 4b); until then only architects write on main", role.as_str())
+        format!("{}s write only in their own change set: open one (qal_change {{\"action\": \"open\"}}) or claim one, then pass `change` (or it becomes your current one); main changes only by merge", role.as_str())
     } else if names.is_empty() && anywhere.is_empty() {
         "no agent role may do this; the owner can, on the command line".to_string()
     } else if names.is_empty() {
@@ -210,12 +206,15 @@ pub fn forbidden(tool: &str, action: Option<&str>, role: Role, space: Space) -> 
     d.hint(hint)
 }
 
-/// What a record of operation `op` needs from its signer (checked when a record is written and
-/// again by `qal verify`): the owner's operations, the code writes of 4a, nothing else.
-pub fn record_allowed(op: &str, role: &str) -> bool {
+/// What a record of operation `op` (with `action`, for `change`) in a space of kind `space` needs
+/// from its signer (checked when a record is written and again by `qal verify`).
+pub fn record_allowed(op: &str, action: Option<&str>, role: &str, space: Space) -> bool {
+    let agent = |tool: &str, action: Option<&str>| Role::parse(role).is_some_and(|r| allows(tool, action, r, space));
     match op {
         "genesis" | "member_add" | "member_key" | "member_revoke" | "import" => role == OWNER,
-        "define" | "rename" | "delete" => Role::parse(role).is_some_and(|r| allows(&format!("qal_{op}"), None, r, Space::Main)),
+        "define" | "rename" | "delete" => agent(&format!("qal_{op}"), None),
+        "change" => action.is_some_and(|a| a != "list" && a != "show" && a != "diff" && agent("qal_change", Some(a))),
+        "lease_break" => agent("qal_lease", Some("break")),
         _ => false,
     }
 }

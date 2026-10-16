@@ -8,11 +8,13 @@
 //! 3. the rights of each record (§8, as far as records decide them) (E0924);
 //! 4. replaying every entry from the genesis gives exactly the current `names` rows (hash, refs,
 //!    local names), the full-state digest of the last record (`names_after`, which also binds each
-//!    named definition's kind, signature, effects and local names in `defs`), and, in 4a, no
-//!    `change_names`, the `members` table and the team's `meta` as recorded (E0923);
+//!    named definition's kind, signature, effects and local names in `defs`), the same for every
+//!    change set's space (`change_names`), the `changes` (owner, status, scope), the `members`
+//!    table and the team's `meta` as recorded (E0923);
 //! 5. every definition the names and records refer to is stored and self-verifying: its canonical
 //!    form (and group form) match their hashes, its `deps` rows are exactly its references (E0923).
-//! Merge gates and leases are not checked here (Phase 4c; leases are not signed).
+//! Rights in change sets are checked as far as the records decide them (role, owner, status of the
+//! change set); scope and interface rules and merge gates come with Phase 4c; leases are not signed.
 //!
 //! Signatures are checked in parallel, in batches, alongside the sequential replay; the first
 //! failure by sequence number is reported either way.
@@ -20,12 +22,13 @@
 use super::canonical::{self, unhex};
 use super::keys::{key_id, parse_public};
 use super::policy::{self, Role, OWNER};
-use super::{main_rows, names_digest, valid_member_id, Entry, NameRow, Rows, META_OWNER, META_TEAM_ALLOW, RECORD_PREFIX, ZERO_HASH};
+use super::{main_rows, names_digest, space_rows, valid_member_id, Entry, NameRow, Rows, META_OWNER, META_TEAM_ALLOW, RECORD_PREFIX, ZERO_HASH};
+use crate::space::Space;
 use crate::snapshot::Snapshot;
 use ed25519_dalek::{Signature, VerifyingKey};
 use qal_core::canon::Hash;
 use qal_core::diag::Diagnostic;
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
@@ -130,22 +133,50 @@ fn strings(v: Option<&Value>) -> Option<Vec<String>> {
     v.and_then(|v| serde_json::from_value(v.clone()).ok())
 }
 
+/// A replayed change set.
+#[derive(Debug, Clone)]
+struct Change {
+    owner: String,
+    assignee: Option<String>,
+    status: String,
+    claimed: bool,
+    scope: BTreeSet<String>,
+}
+
 /// The replayed state.
 struct State {
     members: BTreeMap<String, Known>,
-    rows: Rows,
-    /// The root of `rows`, kept up to date (records that change no name do not recompute it).
-    root: String,
+    /// The rows of every space (`main` and each change set).
+    spaces: BTreeMap<String, Rows>,
+    /// The root of each space, kept up to date (records that change no name do not recompute it).
+    roots: BTreeMap<String, String>,
+    changes: BTreeMap<String, Change>,
+    /// The `names_after` of the last record about each space.
+    digests: BTreeMap<String, String>,
     /// Every hash a record names.
     hashes: BTreeSet<String>,
     /// From the genesis record.
     owner: String,
     team_allow: Option<String>,
-    /// The last record's `names_after` and hash.
-    names_after: String,
+    /// The last record's hash.
     head: String,
     /// Every record hash (for `--head`), only collected when asked for.
     seen_head: bool,
+}
+
+impl State {
+    fn rows(&self, space: &str) -> Rows {
+        self.spaces.get(space).cloned().unwrap_or_default()
+    }
+
+    fn root(&self, space: &str) -> String {
+        self.roots.get(space).cloned().unwrap_or_else(|| canonical::root(&BTreeMap::new()))
+    }
+
+    fn set(&mut self, space: &str, rows: Rows) {
+        self.roots.insert(space.to_string(), super::root_of(&rows));
+        self.spaces.insert(space.to_string(), rows);
+    }
 }
 
 /// A signature to check: the record, its signer and key.
@@ -186,12 +217,13 @@ fn first_bad_signature(jobs: &[Job]) -> Option<(i64, Bad)> {
 pub fn verify(conn: &Connection, trust: Option<&Trust>, from: i64, head: Option<&str>) -> Result<Outcome, Vec<Diagnostic>> {
     let mut st = State {
         members: BTreeMap::new(),
-        rows: Rows::new(),
-        root: canonical::root(&BTreeMap::new()),
+        spaces: BTreeMap::new(),
+        roots: BTreeMap::new(),
+        changes: BTreeMap::new(),
+        digests: BTreeMap::new(),
         hashes: BTreeSet::new(),
         owner: String::new(),
         team_allow: None,
-        names_after: String::new(),
         head: ZERO_HASH.to_string(),
         seen_head: false,
     };
@@ -351,28 +383,44 @@ fn after_signature(st: &mut State, p: &Parsed) -> Result<(), Bad> {
     let (op, member) = (text(body, "op")?, text(body, "member")?);
     let args = body.get("args").filter(|a| a.is_object()).ok_or_else(|| chain(format!("record {seq} has no arguments")))?;
     let (before, after) = (text(body, "root_before")?, text(body, "root_after")?);
-    if !policy::record_allowed(op, role) {
-        return Err(unauthorized(format!("record {seq}: `{member}` (role {role}) may not make `{op}` records")));
+    // Rights: the matrix for the space as the record found it.
+    let space = text(body, "space")?.to_string();
+    let action = args.get("action").and_then(Value::as_str);
+    let opening = op == "change" && action == Some("open");
+    if space != "main" && !opening && !st.changes.contains_key(&space) {
+        return Err(unauthorized(format!("record {seq} is about change set {space}, which no record opened")));
     }
-    if text(body, "space")? != "main" {
-        return Err(unauthorized(format!("record {seq} writes to a change set, which this version does not have")));
+    let kind = match st.changes.get(&space) {
+        _ if opening => policy::Space::Own,
+        None => policy::Space::Main,
+        Some(c) if c.owner == member => policy::Space::Own,
+        Some(c) if c.status == "submitted" => policy::Space::ForeignSubmitted,
+        Some(_) => policy::Space::ForeignOther,
+    };
+    if !policy::record_allowed(op, action, role, kind) {
+        return Err(unauthorized(format!("record {seq}: `{member}` (role {role}) may not make `{op}` records{} {}", action.map(|a| format!(" ({a})")).unwrap_or_default(), if space == "main" { "on main".to_string() } else { format!("in change set {space}") })));
     }
-    if op != "genesis" && st.root != before {
-        return Err(replay(format!("record {seq}: the names before it do not have the recorded root (changed without a record?)")));
+    let live = st.changes.get(&space).is_some_and(|c| c.status == "open" || c.status == "submitted");
+    if space != "main" && !opening && op != "lease_break" && !live {
+        return Err(unauthorized(format!("record {seq} changes change set {space}, which is no longer open")));
+    }
+    if op != "genesis" && st.root(&space) != before {
+        return Err(replay(format!("record {seq}: the names of {space} before it do not have the recorded root (changed without a record?)")));
     }
     let id = || args.get("id").and_then(Value::as_str).filter(|i| valid_member_id(i)).ok_or_else(|| unauthorized(format!("record {seq} names no valid member")));
     match op {
         "genesis" => {
             let main = args.get("main").and_then(Value::as_array).ok_or_else(|| chain("the genesis record has no `main` list".into()))?;
+            let mut rows = Rows::new();
             for item in main {
                 let (Some(n), Some(h), Some(refs), Some(locals)) = (item.get(0).and_then(Value::as_str), item.get(1).and_then(Value::as_str), strings(item.get(2)), strings(item.get(3))) else {
                     return Err(chain("the genesis record's `main` list is malformed".into()));
                 };
                 st.hashes.insert(h.to_string());
-                st.rows.insert(n.to_string(), NameRow { hash: h.to_string(), refs, locals });
+                rows.insert(n.to_string(), NameRow { hash: h.to_string(), refs, locals });
             }
-            st.root = super::root_of(&st.rows);
-            if st.root != before {
+            st.set("main", rows);
+            if st.root("main") != before {
                 return Err(replay("the genesis record's names do not have its root".into()));
             }
         }
@@ -404,34 +452,119 @@ fn after_signature(st: &mut State, p: &Parsed) -> Result<(), Bad> {
             if op == "import" && args.get("package").and_then(Value::as_str) != Some(crate::package::STD_PACKAGE_NAME) {
                 return Err(unauthorized(format!("record {seq} imports a package other than the standard library")));
             }
+            if op == "import" && space != "main" {
+                return Err(unauthorized(format!("record {seq} imports into a change set")));
+            }
             let entries: Vec<Entry> = args.get("entries").cloned().map(serde_json::from_value).transpose().ok().flatten().ok_or_else(|| chain(format!("record {seq} has no valid `entries`")))?;
+            let mut rows = st.rows(&space);
             for e in &entries {
-                let had = st.rows.get(&e.name).map(|r| &r.hash);
+                let had = rows.get(&e.name).map(|r| &r.hash);
                 if had != e.old.as_ref() {
                     return Err(replay(format!("record {seq}: `{}` had {} before it, the record says {}", e.name, had.map_or("no definition", |s| s.as_str()), e.old.as_deref().unwrap_or("none"))));
                 }
                 st.hashes.extend(e.old.iter().chain(e.new.iter()).cloned());
                 match (&e.new, &e.refs, &e.locals) {
                     (Some(h), Some(refs), Some(locals)) => {
-                        st.rows.insert(e.name.clone(), NameRow { hash: h.clone(), refs: refs.clone(), locals: locals.clone() });
+                        rows.insert(e.name.clone(), NameRow { hash: h.clone(), refs: refs.clone(), locals: locals.clone() });
                     }
                     (None, _, _) => {
-                        st.rows.remove(&e.name);
+                        rows.remove(&e.name);
                     }
                     _ => return Err(chain(format!("record {seq}: the entry of `{}` has no refs or local names", e.name))),
                 }
             }
             if !entries.is_empty() {
-                st.root = super::root_of(&st.rows);
+                st.set(&space, rows);
+            }
+            // The owner writing a submitted change set reopens it (§6.2).
+            if let Some(c) = st.changes.get_mut(&space) {
+                if c.owner == member && c.status == "submitted" {
+                    c.status = "open".into();
+                }
+            }
+        }
+        "change" => change_op(st, seq, member, &space, action.unwrap_or(""), args)?,
+        "lease_break" => {
+            if args.get("name").and_then(Value::as_str).is_none() || args.get("change").and_then(Value::as_str) != Some(space.as_str()) {
+                return Err(chain(format!("record {seq} is not a valid lease break")));
             }
         }
         other => return Err(unauthorized(format!("record {seq} has the unknown operation `{other}`"))),
     }
-    if st.root != after {
+    if st.root(&space) != after {
         return Err(replay(format!("record {seq}: replaying it does not give its recorded root")));
     }
-    st.names_after = text(body, "names_after")?.to_string();
+    st.digests.insert(space, text(body, "names_after")?.to_string());
     Ok(())
+}
+
+/// Replays a `change` record (open, claim, submit, abandon, scope) on `space` (= its change set).
+fn change_op(st: &mut State, seq: i64, member: &str, space: &str, action: &str, args: &Value) -> Result<(), Bad> {
+    if args.get("id").and_then(Value::as_str) != Some(space) {
+        return Err(chain(format!("record {seq} names another change set than its space")));
+    }
+    let fields = args.get("fields").filter(|f| f.is_object()).ok_or_else(|| chain(format!("record {seq} has no `fields`")))?;
+    let names_of = |key: &str| -> Vec<String> { strings(fields.get(key)).unwrap_or_default() };
+    if action == "open" {
+        if st.changes.contains_key(space) || !crate::space::is_change_id(space) {
+            return Err(unauthorized(format!("record {seq} opens change set {space} again (or with an invalid id)")));
+        }
+        if fields.get("owner").and_then(Value::as_str) != Some(member) {
+            return Err(unauthorized(format!("record {seq} opens a change set for another member")));
+        }
+        let package = fields.get("package").and_then(Value::as_bool).unwrap_or(false);
+        let assignee = fields.get("assignee").and_then(Value::as_str).map(str::to_string);
+        if (package || assignee.is_some()) && st.members.get(member).map(|m| m.role.as_str()) != Some("architect") {
+            return Err(unauthorized(format!("record {seq}: only architects open work packages")));
+        }
+        let main = st.rows("main");
+        if fields.get("base_root").and_then(Value::as_str) != Some(super::root_of(&main).as_str()) {
+            return Err(replay(format!("record {seq}: the base of change set {space} is not main at that point")));
+        }
+        st.set(space, main);
+        st.changes.insert(space.to_string(), Change { owner: member.to_string(), assignee, status: "open".into(), claimed: !package, scope: names_of("scope").into_iter().collect() });
+        return Ok(());
+    }
+    let c = st.changes.get_mut(space).ok_or_else(|| unauthorized(format!("record {seq}: no change set {space}")))?;
+    match action {
+        "claim" => {
+            if c.claimed || c.status != "open" || c.assignee.as_deref().is_some_and(|a| a != member) {
+                return Err(unauthorized(format!("record {seq} claims change set {space}, which is not a work package `{member}` may claim")));
+            }
+            c.owner = member.to_string();
+            c.claimed = true;
+        }
+        "submit" if c.status == "open" => c.status = "submitted".into(),
+        "abandon" => c.status = "abandoned".into(),
+        "scope" => {
+            c.scope.extend(names_of("add"));
+            for r in names_of("remove") {
+                c.scope.remove(&r);
+            }
+        }
+        other => return Err(unauthorized(format!("record {seq}: `{other}` does not fit change set {space} ({})", c.status))),
+    }
+    Ok(())
+}
+
+/// The first name whose rows differ, and what differs.
+fn first_difference(current: &Rows, replayed: &Rows) -> (String, &'static str) {
+    current
+        .keys()
+        .chain(replayed.keys())
+        .find_map(|n| {
+            let (c, r) = (current.get(n), replayed.get(n));
+            let what = match (c, r) {
+                (Some(c), Some(r)) if c.hash != r.hash => "hash",
+                (Some(c), Some(r)) if c.refs != r.refs => "refs",
+                (Some(c), Some(r)) if c.locals != r.locals => "local_names",
+                (Some(_), Some(_)) => return None,
+                (None, _) => "existence (missing now)",
+                (_, None) => "existence (no record made it)",
+            };
+            Some((n.clone(), what))
+        })
+        .unwrap_or_default()
 }
 
 /// Steps 4 (the tables now) and 5 (the definitions).
@@ -439,23 +572,9 @@ fn final_state(conn: &Connection, st: &State) -> Result<(), Bad> {
     let db = |e: Vec<Diagnostic>| replay(e.into_iter().next().map_or_else(|| "store error".to_string(), |d| d.message));
     let sqlerr = |e: rusqlite::Error| db(crate::sql(e));
     let current = main_rows(conn).map_err(db)?;
-    if current != st.rows {
-        let (n, what) = current
-            .keys()
-            .chain(st.rows.keys())
-            .find_map(|n| {
-                let (c, r) = (current.get(n), st.rows.get(n));
-                let what = match (c, r) {
-                    (Some(c), Some(r)) if c.hash != r.hash => "hash",
-                    (Some(c), Some(r)) if c.refs != r.refs => "refs",
-                    (Some(c), Some(r)) if c.locals != r.locals => "local_names",
-                    (Some(_), Some(_)) => return None,
-                    (None, _) => "existence (missing now)",
-                    (_, None) => "existence (no record made it)",
-                };
-                Some((n.clone(), what))
-            })
-            .unwrap_or_default();
+    let main = st.rows("main");
+    if current != main {
+        let (n, what) = first_difference(&current, &main);
         return Err(replay(format!("the current names differ from the replayed records (first at `{n}`: {what})")));
     }
     // The stored lists in their one spelling (compact JSON): no byte of a row goes unchecked.
@@ -470,13 +589,37 @@ fn final_state(conn: &Connection, st: &State) -> Result<(), Bad> {
             }
         }
     }
-    let digest = names_digest(conn, &st.rows).map_err(db)?;
-    if digest != st.names_after {
+    if st.digests.get("main").is_some_and(|d| *d != names_digest(conn, &main).unwrap_or_default()) {
         return Err(replay("the stored definitions of the names (kind, signature, effects or local names in `defs`) differ from what the last record signed".into()));
     }
-    let change_names: i64 = conn.query_row("SELECT count(*) FROM change_names", [], |r| r.get(0)).map_err(sqlerr)?;
-    if change_names > 0 {
-        return Err(replay(format!("`change_names` has {change_names} rows that no record made")));
+    // Every change set: its space, its digest, its row in `changes`.
+    let tables: Vec<String> = {
+        let mut stmt = conn.prepare("SELECT DISTINCT change FROM change_names").map_err(sqlerr)?;
+        let rows = stmt.query_map([], |r| r.get::<_, String>(0)).map_err(sqlerr)?;
+        rows.collect::<Result<_, _>>().map_err(sqlerr)?
+    };
+    if let Some(c) = tables.iter().find(|c| !st.changes.contains_key(*c)) {
+        return Err(replay(format!("`change_names` has rows of change set {c}, which no record opened")));
+    }
+    for (c, ch) in &st.changes {
+        let stored = space_rows(conn, &Space::Change(c.clone())).map_err(db)?;
+        let replayed = st.rows(c);
+        if stored != replayed {
+            let (n, what) = first_difference(&stored, &replayed);
+            return Err(replay(format!("the names of change set {c} differ from the replayed records (first at `{n}`: {what})")));
+        }
+        if st.digests.get(c).is_some_and(|d| *d != names_digest(conn, &replayed).unwrap_or_default()) {
+            return Err(replay(format!("the stored definitions of change set {c}'s names differ from what its last record signed")));
+        }
+        let row: Option<(String, String, String)> = conn.query_row("SELECT owner, status, scope FROM changes WHERE id = ?1", params![c], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).optional().map_err(sqlerr)?;
+        let scope: Option<BTreeSet<String>> = row.as_ref().and_then(|(_, _, s)| serde_json::from_str::<Vec<String>>(s).ok()).map(|v| v.into_iter().collect());
+        if row.as_ref().map(|(o, s, _)| (o.as_str(), s.as_str())) != Some((ch.owner.as_str(), ch.status.as_str())) || scope.as_ref() != Some(&ch.scope) {
+            return Err(replay(format!("change set {c} in the changes table differs from the records (owner, status or scope)")));
+        }
+    }
+    let changes: i64 = conn.query_row("SELECT count(*) FROM changes", [], |r| r.get(0)).map_err(sqlerr)?;
+    if usize::try_from(changes).unwrap_or(usize::MAX) != st.changes.len() {
+        return Err(replay("the changes table has change sets no record opened".into()));
     }
     // The team's own state as recorded.
     let meta = |k: &str| crate::package::meta(conn, k).map_err(db);
@@ -501,9 +644,9 @@ fn final_state(conn: &Connection, st: &State) -> Result<(), Bad> {
         return Err(replay("the members table lacks members the records added".into()));
     }
     // Step 5: every definition decodes from verified forms, and `deps` matches its references.
-    let snap = Snapshot::load(conn).map_err(db)?;
+    let snap = Snapshot::load(conn, &Space::Main).map_err(db)?;
     let mut deps = conn.prepare("SELECT dep_hash FROM deps WHERE hash = ?1 ORDER BY dep_hash").map_err(sqlerr)?;
-    let all: BTreeSet<&String> = current.values().map(|r| &r.hash).chain(st.hashes.iter()).collect();
+    let all: BTreeSet<&String> = st.spaces.values().flat_map(|r| r.values().map(|r| &r.hash)).chain(st.hashes.iter()).collect();
     for h in all {
         let hash = Hash::from_hex(h).ok_or_else(|| replay(format!("`{h}` is not a hash")))?;
         let row = snap.row(conn, &hash).map_err(db)?.ok_or_else(|| replay(format!("the definition #{h} is not stored")))?;

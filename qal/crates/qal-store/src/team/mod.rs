@@ -4,9 +4,11 @@
 //! A store is a team store once `qal team init` set `meta.team = 1`. From then on every write of
 //! code (define, rename, delete, import) needs a [`Signer`] and appends, in the same transaction, a
 //! signed record to one hash chain (`records`); a write without a signer is refused (E0903).
-//! Until Phase 4b only architects write, directly on `main` ([`policy::ARCHITECTS_WRITE_MAIN`]).
+//! Code is written in change sets (Phase 4b, [`change`]); `main` changes only by merge (4c), by the
+//! owner's `qal team sync-std`, and by nothing else.
 
 pub mod canonical;
+pub mod change;
 pub mod keys;
 pub mod log;
 pub mod policy;
@@ -69,15 +71,15 @@ pub fn team_limit(message: impl Into<String>) -> Diagnostic {
 }
 
 /// E0908 `change_state` (an action that does not fit the current state).
-fn state(message: impl Into<String>) -> Diagnostic {
+pub(crate) fn state(message: impl Into<String>) -> Diagnostic {
     Diagnostic::new("E0908", "change_state", "", "", message)
 }
 
-fn bad(message: impl Into<String>) -> Diagnostic {
+pub(crate) fn bad(message: impl Into<String>) -> Diagnostic {
     Diagnostic::new("E0701", "bad_arguments", "", "", message)
 }
 
-fn one(d: Diagnostic) -> Vec<Diagnostic> {
+pub(crate) fn one(d: Diagnostic) -> Vec<Diagnostic> {
     vec![d]
 }
 
@@ -160,6 +162,17 @@ pub fn main_rows(conn: &Connection) -> Result<Rows, Vec<Diagnostic>> {
     Ok(out)
 }
 
+/// The current rows of a space (`main`, or a change set's names that have a hash).
+pub fn space_rows(conn: &Connection, space: &Space) -> Result<Rows, Vec<Diagnostic>> {
+    let Space::Change(_) = space else { return main_rows(conn) };
+    let mut out = Rows::new();
+    for (name, hash, locals, refs) in crate::space::rows(conn, space)? {
+        let row = NameRow { hash, refs: list(&refs, "change_names.refs", &name)?, locals: list(&locals, "change_names.local_names", &name)? };
+        out.insert(name, row);
+    }
+    Ok(out)
+}
+
 /// The rows of a snapshot (the state a write started from, inside its transaction).
 pub(crate) fn rows_of(snap: &crate::snapshot::Snapshot) -> Rows {
     snap.names.iter().map(|(n, e)| (n.clone(), NameRow { hash: e.hash.to_hex(), refs: e.refs.clone(), locals: e.locals.clone() })).collect()
@@ -227,7 +240,7 @@ pub struct Member {
     pub revoked_at: Option<i64>,
 }
 
-fn member(conn: &Connection, id: &str) -> Result<Option<Member>, Vec<Diagnostic>> {
+pub(crate) fn member(conn: &Connection, id: &str) -> Result<Option<Member>, Vec<Diagnostic>> {
     conn.query_row("SELECT id, role, key, key_id, revoked_at FROM members WHERE id = ?1", params![id], |r| {
         Ok(Member { id: r.get(0)?, role: r.get(1)?, key: r.get(2)?, key_id: r.get(3)?, revoked_at: r.get(4)? })
     })
@@ -254,6 +267,12 @@ pub(crate) fn require_signer(conn: &Connection, signer: Option<&Signer>) -> Resu
 /// rows of this transaction to it. Refuses (and so rolls back the write) if the signer may not
 /// make this record. Returns its sequence number.
 pub(crate) fn append(tx: &Transaction, signer: &Signer, op: &str, args: Value, before: &Rows, after: &Rows) -> Result<i64, Vec<Diagnostic>> {
+    append_in(tx, signer, op, args, &Space::Main, before, after)
+}
+
+/// [`append`] for a record about `space` (its `space` field; the roots and `names_after` are of
+/// that space).
+pub(crate) fn append_in(tx: &Transaction, signer: &Signer, op: &str, args: Value, space: &Space, before: &Rows, after: &Rows) -> Result<i64, Vec<Diagnostic>> {
     let m = member(tx, &signer.member)?.ok_or_else(|| one(no_session(format!("`{}` is not a member of this team", signer.member))))?;
     if m.revoked_at.is_some() {
         return Err(one(no_session(format!("the member `{}` was revoked", m.id))));
@@ -261,8 +280,10 @@ pub(crate) fn append(tx: &Transaction, signer: &Signer, op: &str, args: Value, b
     if m.key_id != signer.key.key_id() {
         return Err(one(keys::unusable(format!("key {} is not the current key of `{}` (that is {})", signer.key.key_id(), m.id, m.key_id)).hint("the member was rekeyed: restart the server so it loads the new key")));
     }
-    if !policy::record_allowed(op, &m.role) {
-        let mut d = Diagnostic::new("E0903", "role_forbidden", "", "", format!("the role {} may not make `{op}` records", m.role));
+    let kind = change::kind_of(tx, space, &m.id)?;
+    let action = args.get("action").and_then(Value::as_str);
+    if !policy::record_allowed(op, action, &m.role, kind) {
+        let mut d = Diagnostic::new("E0903", "role_forbidden", "", "", format!("the role {} may not make `{op}` records {}", m.role, if space.is_main() { "on main".to_string() } else { format!("in change set {space}") }));
         d.expected = Some(if op.starts_with("member") || op == "import" || op == "genesis" { OWNER.to_string() } else { "architect".to_string() });
         d.found = Some(m.role.clone());
         return Err(one(d));
@@ -274,7 +295,7 @@ pub(crate) fn append(tx: &Transaction, signer: &Signer, op: &str, args: Value, b
     };
     let body = json!({
         "v": 1, "seq": seq, "prev": prev, "at": now_ms(), "member": m.id, "key": m.key_id, "session": signer.session,
-        "op": op, "space": "main", "args": args, "root_before": root_of(before), "root_after": root_of(after),
+        "op": op, "space": space.id(), "args": args, "root_before": root_of(before), "root_after": root_of(after),
         "names_after": names_digest(tx, after)?,
     });
     let bytes = record_bytes(&body).map_err(|e| one(Diagnostic::store_error(e)))?;
@@ -295,20 +316,33 @@ pub fn record_bytes(body: &Value) -> Result<Vec<u8>, String> {
     Ok([RECORD_PREFIX.as_bytes(), text.as_bytes()].concat())
 }
 
-/// The record of a code write (`define`, `rename`, `delete`, `import`), written after it in `tx`
-/// (only in a team store; `signer` was required before). `before` is the state the write started
-/// from (in the same transaction); `labels` name the action per name; `extra` are more arguments.
-pub(crate) fn record_write(tx: &Transaction, signer: Option<&Signer>, op: &str, before: &Rows, labels: &[Entry], extra: serde_json::Map<String, Value>) -> Result<(), Vec<Diagnostic>> {
+/// The record of a code write (`define`, `rename`, `delete`, `import`) in `space`, written after it
+/// in `tx` (only in a team store; `signer` was required before). `before` is the state the write
+/// started from (in the same transaction); `labels` name the action per name; `extra` are more
+/// arguments. The signer's session has seen what it wrote (§5.3); a change set stays within its
+/// delta limit; on `main`, the holders of leases on relinked names get the notice `relinked`.
+pub(crate) fn record_write(tx: &Transaction, signer: Option<&Signer>, op: &str, space: &Space, before: &Rows, labels: &[Entry], extra: serde_json::Map<String, Value>) -> Result<(), Vec<Diagnostic>> {
     if !is_team(tx)? {
         return Ok(());
     }
     let Some(signer) = signer else { return require_signer(tx, None).map(|_| ()) };
-    let after = main_rows(tx)?;
+    let after = space_rows(tx, space)?;
     let entries = diff(before, &after, labels);
     let mut args = extra;
     args.insert("entries".into(), serde_json::to_value(&entries).map_err(|e| one(Diagnostic::store_error(format!("cannot serialize a record: {e}"))))?);
-    append(tx, signer, op, Value::Object(args), before, &after).map(|_| ())
+    append_in(tx, signer, op, Value::Object(args), space, before, &after)?;
+    change::after_write(tx, signer, space, &entries)
 }
+
+/// What a team write reports besides its result: the leases it took and the stubs it defined.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct WriteReport {
+    pub leases: Vec<change::Lease>,
+    pub stubs: Vec<String>,
+}
+
+pub(crate) use change::{guard_define, guard_names};
+use crate::space::Space;
 
 /// An agent's identity, resolved from its session.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -318,6 +352,8 @@ pub struct Identity {
     pub session: String,
     pub key_id: String,
     pub expires_at: i64,
+    /// The session's current change set (open or submitted), if any.
+    pub change: Option<String>,
 }
 
 /// SHA-256 of a session token (what `sessions.token_sha256` holds).
@@ -328,11 +364,15 @@ pub fn token_hash(token: &str) -> String {
 /// The identity of the session whose token hashes to `token_sha256`: E0902 if there is none, it
 /// expired or was revoked, or its member was revoked.
 pub fn resolve(conn: &Connection, token_sha256: &str) -> Result<Identity, Diagnostic> {
-    let row: Option<(String, String, i64, Option<i64>)> = conn
-        .query_row("SELECT id, member, expires_at, revoked_at FROM sessions WHERE token_sha256 = ?1", params![token_sha256], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
+    let row: Option<(String, String, i64, Option<i64>, Option<String>)> = conn
+        .query_row(
+            "SELECT s.id, s.member, s.expires_at, s.revoked_at, (SELECT c.id FROM changes c WHERE c.id = s.current_change AND c.status IN ('open', 'submitted')) FROM sessions s WHERE s.token_sha256 = ?1",
+            params![token_sha256],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+        )
         .optional()
         .map_err(|e| Diagnostic::store_error(format!("store database error: {e}")))?;
-    let Some((session, member_id, expires_at, revoked_at)) = row else {
+    let Some((session, member_id, expires_at, revoked_at, change)) = row else {
         return Err(no_session("the session token is not a session of this team store"));
     };
     if revoked_at.is_some() {
@@ -345,7 +385,7 @@ pub fn resolve(conn: &Connection, token_sha256: &str) -> Result<Identity, Diagno
     if m.revoked_at.is_some() {
         return Err(no_session(format!("the member `{}` was revoked", m.id)));
     }
-    Ok(Identity { member: m.id, role: m.role, session, key_id: m.key_id, expires_at })
+    Ok(Identity { member: m.id, role: m.role, session, key_id: m.key_id, expires_at, change })
 }
 
 /// A notice for an agent (spec §10.3).
@@ -783,7 +823,7 @@ impl Store {
 }
 
 /// All members, by id.
-fn members_of(conn: &Connection) -> Result<Vec<Member>, Vec<Diagnostic>> {
+pub(crate) fn members_of(conn: &Connection) -> Result<Vec<Member>, Vec<Diagnostic>> {
     let mut stmt = conn.prepare("SELECT id, role, key, key_id, revoked_at FROM members ORDER BY id").map_err(sql)?;
     let rows = stmt.query_map([], |r| Ok(Member { id: r.get(0)?, role: r.get(1)?, key: r.get(2)?, key_id: r.get(3)?, revoked_at: r.get(4)? })).map_err(sql)?;
     rows.collect::<Result<Vec<_>, _>>().map_err(sql)
