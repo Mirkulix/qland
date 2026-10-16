@@ -178,7 +178,7 @@ pub(crate) fn show(sig: &(Kind, String)) -> String {
 
 /// Hashes a checked program; interchangeable recursive definitions are a diagnostic.
 pub(crate) fn hash(p: &Program) -> Result<Hashed, Vec<Diagnostic>> {
-    canon::hash_program(p).map_err(|e| match e {
+    qal_compiler::hash_program(p).map_err(|e| match e {
         HashError::Symmetric(names) => vec![Diagnostic::symmetric_group(&names)],
         HashError::TooLarge(names) => vec![Diagnostic::group_too_large(&names)],
         HashError::Internal(m) => vec![Diagnostic::store_error(format!("cannot hash a checked program: {m}"))],
