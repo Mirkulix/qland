@@ -127,6 +127,25 @@ pub enum Rt {
     BytesFrom,
     /// (b) -> List[Int]
     BytesToList,
+    /// (a: i64, n: i64, func, site) -> a shifted by n: `shl` (Shl), arithmetic `shr` (ShrS) or
+    /// logical `ushr` (ShrU); fails with `contract_violation` unless 0 <= n < 64
+    Shift(Shift),
+    /// (xs, i: i64, func, site) -> slot i of xs; fails with `index` unless 0 <= i < len
+    ListAt,
+    /// (b, i: i64, func, site) -> byte i of b (i64); fails with `index` unless 0 <= i < len
+    BytesAt,
+    /// (acc: Accum[T]) -> List[T] in append order: [AccPush(AccPush(AccEnd, a), b)] -> [a, b]
+    AccList,
+    /// (bs: List[Bytes]) -> Bytes: all of them, concatenated with one copy each
+    BytesJoin,
+}
+
+/// The shift of [`Rt::Shift`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Shift {
+    Shl,
+    ShrS,
+    ShrU,
 }
 
 /// Pushes the address of slot `k` of list `xs` (use with offset 8).
@@ -180,6 +199,9 @@ impl Rt {
             Rt::MapFill => (&[I32, I32, I32], &[I32]),
             Rt::BytesSlice => (&[I32, I64, I64, I32, I32], &[I32]),
             Rt::BytesFrom => (&[I32, I32, I32], &[I32]),
+            Rt::Shift(_) => (&[I64, I64, I32, I32], &[I64]),
+            Rt::ListAt | Rt::BytesAt => (&[I32, I64, I32, I32], &[I64]),
+            Rt::AccList | Rt::BytesJoin => (&[I32], &[I32]),
         };
         (p.to_vec(), r.to_vec())
     }
@@ -630,6 +652,81 @@ impl Rt {
                 a.all([I::I64Load(m64(8)), I::LocalTee(x), I::I64Const(0), I::I64LtS, I::LocalGet(x), I::I64Const(255), I::I64GtS, I::I32Or, I::If(BlockType::Empty)]);
                 m.emit_fail(&mut a, FAIL_BUILTIN, Arg::Local(1), Arg::Local(2), &[(x, Repr::I64)]);
                 a.all([I::End, I::LocalGet(p), I::LocalGet(k), I::I32Add, I::LocalGet(x), I::I64Store8(m8(4))]);
+                loop_next(&mut a, k);
+                a.i(I::LocalGet(p));
+            }
+            Rt::Shift(kind) => {
+                // n <u 64 also rejects every negative n.
+                a.all([I::LocalGet(1), I::I64Const(64), I::I64GeU, I::If(BlockType::Empty)]);
+                m.emit_fail(&mut a, FAIL_BUILTIN, Arg::Local(2), Arg::Local(3), &[(0, Repr::I64), (1, Repr::I64)]);
+                a.all([I::End, I::LocalGet(0), I::LocalGet(1)]);
+                a.i(match kind {
+                    Shift::Shl => I::I64Shl,
+                    Shift::ShrS => I::I64ShrS,
+                    Shift::ShrU => I::I64ShrU,
+                });
+            }
+            Rt::ListAt | Rt::BytesAt => {
+                let n = a.local(I64);
+                a.all([I::LocalGet(0), I::I32Load(m32(0)), I::I64ExtendI32U, I::LocalSet(n)]);
+                // i <u len also rejects every negative i.
+                a.all([I::LocalGet(1), I::LocalGet(n), I::I64GeU, I::If(BlockType::Empty)]);
+                m.emit_fail(&mut a, FAIL_INDEX, Arg::Local(2), Arg::Local(3), &[(1, Repr::I64), (n, Repr::I64)]);
+                a.i(I::End);
+                if self == Rt::ListAt {
+                    a.all([I::LocalGet(0), I::LocalGet(1), I::I32WrapI64, I::I32Const(3), I::I32Shl, I::I32Add, I::I64Load(m64(8))]);
+                } else {
+                    a.all([I::LocalGet(0), I::LocalGet(1), I::I32WrapI64, I::I32Add, I::I32Load8U(m8(4)), I::I64ExtendI32U]);
+                }
+            }
+            Rt::AccList => {
+                // Accum[T] = AccEnd (tag 0, in the static tag table) | AccPush(rest, x) (tag 1):
+                // count the pushes, then fill the list from its end while walking back to AccEnd.
+                let (n, p, k, xs) = (a.local(I32), a.local(I32), a.local(I32), a.local(I32));
+                let walk = |a: &mut Asm, body: &[I<'static>]| {
+                    a.all([I::LocalGet(0), I::LocalSet(p), I::Block(BlockType::Empty), I::Loop(BlockType::Empty)]);
+                    a.all([I::LocalGet(p), I::I32Load(m32(0)), I::I32Eqz, I::BrIf(1)]);
+                    for x in body {
+                        a.i(x.clone());
+                    }
+                    a.all([I::LocalGet(p), I::I64Load(m64(8)), I::I32WrapI64, I::LocalSet(p), I::Br(0), I::End, I::End]);
+                };
+                walk(&mut a, &[I::LocalGet(n), I::I32Const(1), I::I32Add, I::LocalSet(n)]);
+                a.all([I::LocalGet(n), I::Call(m.rt(Rt::ListNew)), I::LocalSet(xs), I::LocalGet(n), I::LocalSet(k)]);
+                walk(
+                    &mut a,
+                    &[
+                        I::LocalGet(k),
+                        I::I32Const(1),
+                        I::I32Sub,
+                        I::LocalTee(k),
+                        I::I32Const(3),
+                        I::I32Shl,
+                        I::LocalGet(xs),
+                        I::I32Add,
+                        I::LocalGet(p),
+                        I::I64Load(m64(16)),
+                        I::I64Store(m64(8)),
+                    ],
+                );
+                a.i(I::LocalGet(xs));
+            }
+            Rt::BytesJoin => {
+                // One allocation of the total size (summed in i64: a list may hold one large Bytes
+                // many times; a total beyond the memory limit reports out_of_memory), one copy each.
+                let (n, k, total, p, at, b) = (a.local(I32), a.local(I32), a.local(I64), a.local(I32), a.local(I32), a.local(I32));
+                a.all([I::LocalGet(0), I::I32Load(m32(0)), I::LocalSet(n)]);
+                loop_until(&mut a, k, n);
+                slot_addr(&mut a, 0, k);
+                a.all([I::I64Load(m64(8)), I::I32WrapI64, I::I32Load(m32(0)), I::I64ExtendI32U, I::LocalGet(total), I::I64Add, I::LocalSet(total)]);
+                loop_next(&mut a, k);
+                a.all([I::LocalGet(total), I::I64Const(4), I::I64Add, I::Call(m.rt(Rt::Alloc)), I::LocalTee(p), I::LocalGet(total), I::I32WrapI64, I::I32Store(m32(0))]);
+                a.all([I::LocalGet(p), I::I32Const(4), I::I32Add, I::LocalSet(at), I::I32Const(0), I::LocalSet(k)]);
+                loop_until(&mut a, k, n);
+                slot_addr(&mut a, 0, k);
+                a.all([I::I64Load(m64(8)), I::I32WrapI64, I::LocalSet(b)]);
+                a.all([I::LocalGet(at), I::LocalGet(b), I::I32Const(4), I::I32Add, I::LocalGet(b), I::I32Load(m32(0)), copy()]);
+                a.all([I::LocalGet(at), I::LocalGet(b), I::I32Load(m32(0)), I::I32Add, I::LocalSet(at)]);
                 loop_next(&mut a, k);
                 a.i(I::LocalGet(p));
             }

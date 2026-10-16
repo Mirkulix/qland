@@ -13,7 +13,7 @@ impl Cx<'_> {
         }
         let (a, b) = (self.sub.fresh(), self.sub.fresh());
         let (builtin, params, ret) = signature(name, a, b)?;
-        if !self.g.prelude && matches!(builtin, Builtin::Http | Builtin::DbExec | Builtin::DbQuery) {
+        if !self.g.prelude && matches!(builtin, Builtin::Http | Builtin::DbExec | Builtin::DbQuery | Builtin::AccList) {
             self.diags.push(Diagnostic::prelude_shadowed(self.def, path, name));
             self.infer_all(args, path);
             return Some(self.poison());
@@ -165,6 +165,21 @@ fn signature(name: &str, a: Type, b: Type) -> Option<(Builtin, Vec<Type>, Type)>
         "http" => (B::Http, vec![named("HttpCall")], Type::result(named("HttpResponse"), named("NetError"))),
         "db_exec" => (B::DbExec, vec![Type::Str, list(named("SqlValue"))], Type::result(Type::Int, named("DbError"))),
         "db_query" => (B::DbQuery, vec![Type::Str, list(named("SqlValue"))], Type::result(named("DbRows"), named("DbError"))),
+        // Phase 5a (self-hosting spec §5.2): pure, allocation-free or linear building blocks.
+        "bit_and" => (B::BitAnd, vec![Type::Int, Type::Int], Type::Int),
+        "bit_or" => (B::BitOr, vec![Type::Int, Type::Int], Type::Int),
+        "bit_xor" => (B::BitXor, vec![Type::Int, Type::Int], Type::Int),
+        "bit_not" => (B::BitNot, vec![Type::Int], Type::Int),
+        "shl" => (B::Shl, vec![Type::Int, Type::Int], Type::Int),
+        "shr" => (B::Shr, vec![Type::Int, Type::Int], Type::Int),
+        "ushr" => (B::Ushr, vec![Type::Int, Type::Int], Type::Int),
+        "float_bits" => (B::FloatBits, vec![Type::Float], Type::Int),
+        "float_of_bits" => (B::FloatOfBits, vec![Type::Int], Type::Float),
+        "list_at" => (B::ListAt, vec![list(a.clone()), Type::Int], a),
+        "bytes_at" => (B::BytesAt, vec![Type::Bytes, Type::Int], Type::Int),
+        "acc_list" => (B::AccList, vec![Type::App(qal_core::prelude::ACCUM.into(), vec![a.clone()])], list(a)),
+        "bytes_join" => (B::BytesJoin, vec![list(Type::Bytes)], Type::Bytes),
+        "sha256" => (B::Sha256, vec![Type::Bytes], Type::Bytes),
         _ => return None,
     })
 }

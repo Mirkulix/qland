@@ -15,7 +15,8 @@ pub const TAG_ERR: u32 = 1;
 /// Declares `Builtin` with its source names from one list, so `Builtin::ALL` cannot miss a variant.
 macro_rules! builtins {
     ($($variant:ident => $name:literal,)*) => {
-        /// Built-in functions (spec §3.5, plus `int_to_float` / `float_to_int`).
+        /// Built-in functions (spec §3.5, plus `int_to_float` / `float_to_int`; Phase 5a §5.2 appends
+        /// the bit operations, float bits, allocation-free indexing, `acc_list`, `bytes_join` and `sha256`).
         #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
         pub enum Builtin {
             $($variant,)*
@@ -93,6 +94,20 @@ builtins! {
     Http => "http",
     DbExec => "db_exec",
     DbQuery => "db_query",
+    BitAnd => "bit_and",
+    BitOr => "bit_or",
+    BitXor => "bit_xor",
+    BitNot => "bit_not",
+    Shl => "shl",
+    Shr => "shr",
+    Ushr => "ushr",
+    FloatBits => "float_bits",
+    FloatOfBits => "float_of_bits",
+    ListAt => "list_at",
+    BytesAt => "bytes_at",
+    AccList => "acc_list",
+    BytesJoin => "bytes_join",
+    Sha256 => "sha256",
 }
 
 impl Builtin {
@@ -116,7 +131,9 @@ impl Builtin {
         "float_to_int", "print", "read_line", "read_file", "write_file", "now_ms", "rand_int", "read_all", "sort_str",
         "char_code", "from_char_code", "to_upper", "to_lower", "replace", "index_of", "map_new", "map_get", "map_put",
         "map_del", "map_has", "map_size", "map_keys", "map_values", "to_bytes", "bytes_len", "bytes_get", "bytes_slice",
-        "bytes_from", "bytes_to_list", "bytes_to_str", "compare", "http", "db_exec", "db_query",
+        "bytes_from", "bytes_to_list", "bytes_to_str", "compare", "http", "db_exec", "db_query", "bit_and", "bit_or",
+        "bit_xor", "bit_not", "shl", "shr", "ushr", "float_bits", "float_of_bits", "list_at", "bytes_at", "acc_list",
+        "bytes_join", "sha256",
     ];
 }
 
@@ -334,7 +351,10 @@ mod tests {
         names.sort_unstable();
         assert_eq!(names.len(), Builtin::NAMES.len(), "Builtin::NAMES has duplicates");
         assert_eq!(names, from_variants);
-        assert_eq!(Builtin::ALL.len(), 57);
+        // 57 up to Phase 4, plus the 14 self-hosting built-ins of Phase 5a (appended, so the
+        // order of the earlier ones, which fixes import order in modules, is unchanged).
+        assert_eq!(Builtin::ALL.len(), 71);
+        assert_eq!(Builtin::ALL[57], Builtin::BitAnd);
         assert_eq!(Builtin::ALL[0], Builtin::StrLen);
         assert_eq!(Builtin::ReadAll.effect(), Some("io"));
         assert_eq!((Builtin::SortStr.effect(), Builtin::Replace.effect()), (None, None));

@@ -508,11 +508,16 @@ fn net_call(c: &mut Caller<'_, HostState>, ptr: i32) -> Result<i32, wasmtime::Er
 
 /// Allocates a Str in guest memory via the exported allocator (which may fail with out_of_memory).
 pub fn new_str(c: &mut Caller<'_, HostState>, s: &str) -> Result<i32, wasmtime::Error> {
+    new_bytes(c, s.as_bytes())
+}
+
+/// Allocates `[len: i32][bytes]` (the layout of Str and Bytes) in guest memory.
+pub fn new_bytes(c: &mut Caller<'_, HostState>, s: &[u8]) -> Result<i32, wasmtime::Error> {
     let alloc = c.get_export("qal_alloc").and_then(Extern::into_func).ok_or_else(|| wasmtime::Error::msg("no qal_alloc"))?;
     let p = alloc.typed::<i64, i32>(&c)?.call(&mut *c, 4 + s.len() as i64)?;
     let mem = memory(c)?;
     mem.write(&mut *c, p as usize, &(s.len() as u32).to_le_bytes())?;
-    mem.write(&mut *c, p as usize + 4, s.as_bytes())?;
+    mem.write(&mut *c, p as usize + 4, s)?;
     Ok(p)
 }
 
@@ -590,6 +595,21 @@ pub fn link(linker: &mut Linker<HostState>, perms: &Permissions) -> Result<(), w
             .and_then(|len| data.get(at + 4..at + 4 + len))
             .ok_or_else(|| wasmtime::Error::msg("invalid bytes pointer"))?;
         Ok(std::str::from_utf8(bytes).is_ok() as i32)
+    })?;
+    linker.func_wrap(HOST_MODULE, host::SHA256, |mut c: Caller<'_, HostState>, p: i32| -> Result<i32, wasmtime::Error> {
+        let digest = {
+            let mem = memory(&mut c)?;
+            let data = mem.data(&c);
+            let at = p as u32 as usize;
+            let bytes = data
+                .get(at..at + 4)
+                .and_then(|l| <[u8; 4]>::try_from(l).ok())
+                .map(|l| u32::from_le_bytes(l) as usize)
+                .and_then(|len| data.get(at + 4..at + 4 + len))
+                .ok_or_else(|| wasmtime::Error::msg("invalid bytes pointer"))?;
+            qal_core::canon::Hash::of(bytes).0
+        };
+        new_bytes(&mut c, &digest)
     })?;
     linker.func_wrap(HOST_MODULE, host::STR_TO_FLOAT, |mut c: Caller<'_, HostState>, p: i32| {
         Ok(match guest_str(&mut c, p)?.parse::<f64>() {

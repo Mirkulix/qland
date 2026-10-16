@@ -503,3 +503,84 @@ fn a_candidate_run_stopped_by_the_clock_is_not_stored() {
     assert!(ps[0].reports[0].reason.as_deref().unwrap_or("").contains("wall-clock"), "{:#?}", ps[0].reports);
     assert_eq!(ps[0].record, None);
 }
+
+#[test]
+fn self_hosting_builtin_facts_prove_what_holds() {
+    // Phase 5a: facts about bytes_at and the bit operations make simple bounds provable.
+    for src in [
+        "fn lo(b: Bytes, i: Int) -> Int ens r >= 0 && r <= 255 = bytes_at(b, i)",
+        "fn m(a: Int) -> Int ens r >= 0 && r <= 255 = bit_and(a, 255)",
+        "fn n(a: Int) -> Int ens r + a == -1 = bit_not(a)",
+        "fn u(a: Int) -> Int ens r >= 0 = ushr(a, 1)",
+        "fn s(a: Int) -> Int req a >= 0 ens r >= 0 && r <= a = shr(a, 3)",
+        "fn o(a: Int) -> Int req a >= 0 ens r >= a = bit_or(a, 1)",
+        "fn x(a: Int) -> Int req a >= 0 ens r >= 0 = bit_xor(a, 12345)",
+        "fn z(a: Int) -> Int ens r == a = shl(a, 0)",
+        // A shift by a constant distance below 64 cannot trap: callers' obligations hold.
+        "fn k(a: Int) -> Int ens r == a = shr(shl(a, 0), 0)",
+    ] {
+        let rs = reports(src);
+        assert!(!rs.is_empty() && rs.iter().all(|r| r.status == Status::Proven), "{src}: {rs:#?}");
+    }
+}
+
+#[test]
+fn self_hosting_builtins_never_prove_what_can_fail() {
+    // Soundness: false bounds are refuted (or unknown), and a contract whose evaluation can trap in
+    // a new built-in (a shift distance outside 0..64, an index outside the list) is never proven.
+    for src in [
+        "fn f(a: Int) -> Int ens r >= 0 = bit_or(a, 1)",
+        "fn f(a: Int) -> Int ens r > 0 = ushr(a, 0)",
+        "fn f(a: Int, b: Int) -> Int ens r >= 0 = bit_xor(a, b)",
+        "fn f(a: Int) -> Int req a >= 0 ens r >= 0 = shl(a, 1)",
+        "fn f(a: Int) -> Int req a >= 0 ens r >= a = shl(a, 1)",
+        "fn f(a: Int) -> Int ens r < 0 = shr(a, 63)",
+        "fn f(b: Bytes) -> Int ens r < 255 = bytes_at(b, 0)",
+        "fn f(n: Int) -> Int ens shl(1, n) != 0 || true = 0",
+        "fn f(n: Int) -> Int ens ushr(1, n) >= 0 = 0",
+        "fn f(xs: List[Int]) -> Int ens list_at(xs, 0) == list_at(xs, 0) = 0",
+        "fn f(b: Bytes) -> Int ens bytes_at(b, 5) <= 255 = 0",
+        "fn f(b: Bytes, i: Int) -> Int req i >= 0 ens bytes_at(b, i) >= 0 = 0",
+        "fn f(x: Float) -> Int ens r >= 0 = float_bits(x)",
+    ] {
+        let rs = reports(src);
+        assert!(!rs.is_empty() && rs.iter().all(|r| r.status != Status::Proven), "{src}: {rs:#?}");
+    }
+    // A call's `req` is not established by an unmodelled index either.
+    let rs = reports("fn g(n: Int) -> Int req n >= 0 = n\nfn f(xs: List[Int]) -> Int = g(list_at(xs, 0))");
+    assert!(rs.iter().any(|r| r.def == "f" && r.status != Status::Proven), "{rs:#?}");
+}
+
+#[test]
+fn bit_facts_hold_for_the_real_results() {
+    use qal_core::tast::Builtin as B;
+    use z3::ast::{Ast, Int as ZInt};
+    let samples = [0i64, 1, -1, 2, -2, 255, -256, 0x5555, i64::MAX, i64::MIN, i64::MIN + 1, 1 << 62, -(1 << 62)];
+    let real = |b: B, a: i64, c: i64| -> Option<i64> {
+        Some(match b {
+            B::BitAnd => a & c,
+            B::BitOr => a | c,
+            B::BitXor => a ^ c,
+            B::BitNot => !a,
+            B::Shl if (0..64).contains(&c) => a.wrapping_shl(c as u32),
+            B::Shr if (0..64).contains(&c) => a >> c,
+            B::Ushr if (0..64).contains(&c) => ((a as u64) >> c) as i64,
+            B::BytesAt => a & 255,
+            _ => return None,
+        })
+    };
+    let mut checked = 0;
+    for b in [B::BitAnd, B::BitOr, B::BitXor, B::BitNot, B::Shl, B::Shr, B::Ushr, B::BytesAt] {
+        for &a in &samples {
+            for &c in samples.iter().chain(&[3, 31, 63, 64]) {
+                let Some(x) = real(b, a, c) else { continue };
+                let vals = [Some(vc::Term::I(ZInt::from_i64(a))), Some(vc::Term::I(ZInt::from_i64(c)))];
+                for f in vc::bit_facts(b, &ZInt::from_i64(x), &vals) {
+                    assert_eq!(f.simplify().as_bool(), Some(true), "{b:?}({a}, {c}) = {x}: {f}");
+                    checked += 1;
+                }
+            }
+        }
+    }
+    assert!(checked > 1000, "{checked}");
+}

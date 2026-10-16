@@ -66,6 +66,8 @@ pub mod host {
     pub const STR_TO_FLOAT: &str = "str_to_float";
     /// `(b: Bytes) -> 1 if valid UTF-8, else 0` (pure)
     pub const UTF8_VALID: &str = "utf8_valid";
+    /// `(b: Bytes) -> Bytes` of the 32-byte SHA-256 digest (pure; Phase 5a)
+    pub const SHA256: &str = "sha256";
     pub const PRINT: &str = "io.print";
     /// `() -> Str ptr, or -1 at end of input`
     pub const READ_LINE: &str = "io.read_line";
@@ -93,7 +95,7 @@ pub mod host {
             FAIL => (&[I32, I32, I32, I32], &[]),
             FLOAT_TO_STR => (&[F64], &[I32]),
             STR_TO_FLOAT => (&[I32], &[I32, F64]),
-            UTF8_VALID => (&[I32], &[I32]),
+            UTF8_VALID | SHA256 => (&[I32], &[I32]),
             PRINT => (&[I32], &[]),
             NET_HTTP => (&[I32], &[I32]),
             DB_EXEC | DB_QUERY => (&[I32, I32], &[I32]),
@@ -207,6 +209,7 @@ pub fn compile(p: &TProgram, entry: &Entry) -> Result<CompiledModule, String> {
             Builtin::FromFloat => host::FLOAT_TO_STR,
             Builtin::ToFloat => host::STR_TO_FLOAT,
             Builtin::BytesToStr => host::UTF8_VALID,
+            Builtin::Sha256 => host::SHA256,
             Builtin::Print => host::PRINT,
             Builtin::ReadLine => host::READ_LINE,
             Builtin::ReadAll => host::READ_ALL,

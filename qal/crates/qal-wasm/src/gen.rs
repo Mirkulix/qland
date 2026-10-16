@@ -2,7 +2,7 @@
 
 use crate::asm::{from_slot, m32, m64, to_slot, val, Asm, Repr};
 use crate::module::{Arg, Mb};
-use crate::rt::Rt;
+use crate::rt::{Rt, Shift};
 use crate::{host, Site, FAIL_ENS, FAIL_REQ};
 use qal_core::ast::{BinOp, Type, UnOp, RESULT_VAR};
 use qal_core::tast::*;
@@ -546,6 +546,37 @@ impl<'g, 'p> FnGen<'g, 'p> {
                 self.site_args(site);
                 self.call_rt(Rt::RandChecked);
             }
+            // Phase 5a (self-hosting spec §5.2).
+            B::BitAnd => self.a.i(I::I64And),
+            B::BitOr => self.a.i(I::I64Or),
+            B::BitXor => self.a.i(I::I64Xor),
+            B::BitNot => self.a.all([I::I64Const(-1), I::I64Xor]),
+            B::Shl | B::Shr | B::Ushr => {
+                let (name, kind) = match b {
+                    B::Shl => ("shl", Shift::Shl),
+                    B::Shr => ("shr", Shift::ShrS),
+                    _ => ("ushr", Shift::ShrU),
+                };
+                let site = self.site(path, &format!("{name}: req 0 <= n && n < 64"), &[("a", Type::Int), ("n", Type::Int)], None);
+                self.site_args(site);
+                self.call_rt(Rt::Shift(kind));
+            }
+            B::FloatBits => self.a.i(I::I64ReinterpretF64),
+            B::FloatOfBits => self.a.i(I::F64ReinterpretI64),
+            B::ListAt => {
+                let site = self.site(path, "list_at", &[("i", Type::Int), ("len", Type::Int)], None);
+                self.site_args(site);
+                self.call_rt(Rt::ListAt);
+                self.a.opt(from_slot(Repr::of(ret)));
+            }
+            B::BytesAt => {
+                let site = self.site(path, "bytes_at", &[("i", Type::Int), ("len", Type::Int)], None);
+                self.site_args(site);
+                self.call_rt(Rt::BytesAt);
+            }
+            B::AccList => self.call_rt(Rt::AccList),
+            B::BytesJoin => self.call_rt(Rt::BytesJoin),
+            B::Sha256 => self.a.i(I::Call(self.m.import(host::SHA256))),
         }
     }
 

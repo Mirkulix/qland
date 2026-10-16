@@ -131,6 +131,59 @@ fn tdiv(a: &Int, b: &Int) -> Int {
     a.ge(&zero).ite(&a.div(b), &a.unary_minus().div(b).unary_minus())
 }
 
+/// Facts about the Int result `x` of a Phase 5a built-in that hold for every evaluation that
+/// returns (two's complement on 64 bits; `x` itself is fresh and in range).
+pub(crate) fn bit_facts(b: Builtin, x: &Int, vals: &[Option<Term>]) -> Vec<Bool> {
+    let int = |k: usize| match vals.get(k) {
+        Some(Some(Term::I(i))) => Some(i.clone()),
+        _ => None,
+    };
+    let zero = Int::from_i64(0);
+    let nonneg = |t: &Int| t.ge(&zero);
+    match b {
+        Builtin::BytesAt => vec![x.ge(&zero), x.le(Int::from_i64(255))],
+        // ~a = -a - 1 exactly.
+        Builtin::BitNot => int(0).map(|a| vec![x.eq(Int::sub(&[a.unary_minus(), Int::from_i64(1)]))]).unwrap_or_default(),
+        Builtin::BitAnd | Builtin::BitOr | Builtin::BitXor => {
+            let (Some(a), Some(c)) = (int(0), int(1)) else { return Vec::new() };
+            match b {
+                // a & c has a sign bit only if both do; it keeps no bit that a (or c) lacks.
+                Builtin::BitAnd => vec![
+                    Bool::or(&[nonneg(&a), nonneg(&c)]).implies(nonneg(x)),
+                    nonneg(&a).implies(x.le(&a)),
+                    nonneg(&c).implies(x.le(&c)),
+                    Bool::and(&[a.lt(&zero), c.lt(&zero)]).implies(x.lt(&zero)),
+                ],
+                // a | c has every bit of a and of c.
+                Builtin::BitOr => vec![
+                    Bool::and(&[nonneg(&a), nonneg(&c)]).implies(Bool::and(&[x.ge(&a), x.ge(&c)])),
+                    Bool::or(&[a.lt(&zero), c.lt(&zero)]).implies(x.lt(&zero)),
+                ],
+                _ => vec![nonneg(x).eq(nonneg(&a).eq(nonneg(&c)))],
+            }
+        }
+        // Arithmetic shift keeps the sign and never grows the magnitude; n = 0 is the identity.
+        Builtin::Shr => {
+            let (Some(a), Some(n)) = (int(0), int(1)) else { return Vec::new() };
+            vec![
+                nonneg(&a).implies(Bool::and(&[nonneg(x), x.le(&a)])),
+                a.lt(&zero).implies(Bool::and(&[x.ge(&a), x.lt(&zero)])),
+                n.eq(&zero).implies(x.eq(&a)),
+            ]
+        }
+        // A logical shift by at least one clears the sign bit.
+        Builtin::Ushr => {
+            let (Some(a), Some(n)) = (int(0), int(1)) else { return Vec::new() };
+            vec![n.gt(&zero).implies(nonneg(x)), n.eq(&zero).implies(x.eq(&a)), nonneg(&a).implies(x.le(&a))]
+        }
+        Builtin::Shl => {
+            let (Some(a), Some(n)) = (int(0), int(1)) else { return Vec::new() };
+            vec![n.eq(&zero).implies(x.eq(&a))]
+        }
+        _ => Vec::new(),
+    }
+}
+
 /// A fresh value of a modelled type and the facts every value of the type satisfies.
 fn havoc(ty: &Type) -> (Option<Term>, Bool) {
     match ty {
@@ -408,9 +461,10 @@ impl<'p> Enc<'p> {
                                 facts.push(x.le(hi));
                             }
                         }
-                        _ => {}
+                        _ => facts.extend(bit_facts(*b, x, &vals)),
                     }
                 }
+                facts.extend(self.builtin_traps(*b, &vals));
                 (v, and(&facts))
             }
             TKind::Call(i, args) => {
@@ -423,6 +477,37 @@ impl<'p> Enc<'p> {
             }
             TKind::Match(s, arms) => self.match_expr(s, arms, env, pc, path),
         }
+    }
+
+    /// The conditions under which a Phase 5a built-in returns instead of trapping: they are part of
+    /// `ok`, so a contract that may trap in one of them is never proven. What the encoding cannot
+    /// state (an index below a length it does not model) is a fresh condition: `ok` then never
+    /// claims more than every real evaluation satisfies.
+    fn builtin_traps(&mut self, b: Builtin, vals: &[Option<Term>]) -> Vec<Bool> {
+        let int = |k: usize| match vals.get(k) {
+            Some(Some(Term::I(i))) => Some(i.clone()),
+            _ => None,
+        };
+        match b {
+            Builtin::Shl | Builtin::Shr | Builtin::Ushr => match int(1) {
+                Some(n) => vec![n.ge(Int::from_i64(0)), n.lt(Int::from_i64(64))],
+                None => vec![self.untracked(b)],
+            },
+            Builtin::ListAt | Builtin::BytesAt => {
+                let mut c = vec![self.untracked(b)];
+                if let Some(i) = int(1) {
+                    c.push(i.ge(Int::from_i64(0)));
+                }
+                c
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    /// A fresh condition standing for a precondition of built-in `b` the encoding does not model.
+    fn untracked(&mut self, b: Builtin) -> Bool {
+        self.approx.insert(format!("the precondition of built-in `{}`", b.name()));
+        Bool::fresh_const("pre")
     }
 
     #[allow(clippy::too_many_arguments)]

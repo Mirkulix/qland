@@ -218,9 +218,13 @@ fn globals(p: &Program, diags: &mut Vec<Diagnostic>, is_new: &dyn Fn(&str) -> bo
         g.type_index.insert(t.name.clone(), g.tp.types.len());
         g.tp.types.push(t.clone());
     }
+    let prelude_types = if legacy { 0 } else { prelude::ALL_TYPE_NAMES.len() };
     for k in 0..g.tp.types.len() {
         let t = g.tp.types[k].clone();
-        check_tparams(&g, &t.name, &t.params, diags);
+        // The prelude's own type parameters (`Accum[T]`) may share a name with a user type.
+        if k >= prelude_types {
+            check_tparams(&g, &t.name, &t.params, diags);
+        }
         let body = match &t.body {
             TypeBody::Record(fields) => TypeBody::Record(
                 fields

@@ -471,7 +471,8 @@ impl Enc<'_, '_> {
             }
             Type::App(n, args) => {
                 self.v2 = true;
-                if !self.env.types.contains(n.as_str()) {
+                // A generic prelude type (`Accum`, Phase 5a) is applied like a declared one.
+                if !self.env.types.contains(n.as_str()) && !(self.is_prelude_type(n) && prelude::arity(n).is_some_and(|k| k > 0)) {
                     self.fail(format!("unknown type `{n}`"));
                 }
                 self.byte(T_APP);
@@ -1707,14 +1708,26 @@ impl<'b> Dec<'b> {
                 let a = self.ty(own, name_of)?;
                 Type::Result(Box::new(a), Box::new(self.ty(own, name_of)?))
             }
-            T_NAMED => Type::Named(self.reference(own, name_of)?),
+            T_NAMED => {
+                let is_prelude = self.b.get(self.pos) == Some(&R_PRELUDE);
+                let n = self.reference(own, name_of)?;
+                // A generic prelude type is only ever applied (`T_APP`).
+                if is_prelude && prelude::arity(&n) != Some(0) {
+                    return Err(format!("the prelude type `{n}` needs type arguments"));
+                }
+                Type::Named(n)
+            }
             T_FN => return self.ty_fn(own, name_of),
             T_APP => {
                 self.v2()?;
+                let is_prelude = self.b.get(self.pos) == Some(&R_PRELUDE);
                 let n = self.reference(own, name_of)?;
                 let k = self.count()?;
                 if k == 0 {
                     return Err("type application without arguments".into());
+                }
+                if is_prelude && prelude::arity(&n) != Some(k) {
+                    return Err(format!("the prelude type `{n}` takes {} type arguments, not {k}", prelude::arity(&n).unwrap_or(0)));
                 }
                 let args = (0..k).map(|_| self.ty(own, name_of)).collect::<R<Vec<_>>>()?;
                 Type::App(n, args)
@@ -2166,6 +2179,55 @@ mod tests {
         assert!(decode(Form::new(&wrong_owner, None), "f", &c["f"].local_names, &mut |_| "?".into()).unwrap_err().contains("does not belong"));
         let unknown = swap(&c["h"].canonical, "HttpHeader", "HttpHeadeX");
         assert!(decode(Form::new(&unknown, None), "h", &[], &mut |_| "?".into()).unwrap_err().contains("not a prelude type"));
+    }
+
+    #[test]
+    fn the_generic_prelude_accumulator_is_applied_by_name() {
+        // fn f(a: Accum[Int], x: Int) -> List[Int] = acc_list(AccPush(a, x))   (Phase 5a)
+        let acc = |t: Type| Type::App("Accum".into(), vec![t]);
+        let f = Def::Fn(FnDef {
+            name: "f".into(),
+            tparams: vec![],
+            params: vec![Param { name: "a".into(), ty: acc(Type::Int) }, Param { name: "x".into(), ty: Type::Int }],
+            ret: Type::list(Type::Int),
+            effects: vec![],
+            req: vec![],
+            ens: vec![],
+            body: Expr::Call("acc_list".into(), vec![Expr::Call("AccPush".into(), vec![Expr::Var("a".into()), Expr::Var("x".into())])]),
+        });
+        let g = Def::Fn(FnDef {
+            name: "g".into(),
+            tparams: vec![],
+            params: vec![],
+            ret: acc(Type::Str),
+            effects: vec![],
+            req: vec![],
+            ens: vec![],
+            body: Expr::Match(Box::new(Expr::Var("AccEnd".into())), vec![Arm { pat: Pat::Variant("AccPush".into(), vec![Pat::Wild, Pat::Wild]), guard: None, body: Expr::Var("AccEnd".into()) }, Arm { pat: Pat::Wild, guard: None, body: Expr::Var("AccEnd".into()) }]),
+        });
+        let p = Program { defs: vec![f.clone(), g.clone()] };
+        let c = by_name(&p);
+        for (name, def) in [("f", &f), ("g", &g)] {
+            assert_eq!(c[name].canonical[4], 2, "a type application is a version 2 construct");
+            assert!(c[name].deps.is_empty() && c[name].refs.is_empty(), "prelude types are not dependencies");
+            let back = decode(single(&c[name]), name, &c[name].local_names, &mut |_| "?".into()).unwrap();
+            assert_eq!(&back, def);
+        }
+        assert_eq!(c["f"].signature, "fn(Accum[Int], Int) -> List[Int]");
+        // T_APP R_PRELUDE "Accum" 1 T_INT
+        let app = [&[T_APP, R_PRELUDE, 5][..], b"Accum", &[1, T_INT]].concat();
+        let at = c["f"].canonical.windows(app.len()).position(|w| w == app.as_slice()).unwrap();
+        // Wrong arity, and the generic type unapplied, do not decode.
+        let mut two = c["f"].canonical.clone();
+        two[at + 8] = 2;
+        two.insert(at + 10, T_INT);
+        assert!(decode(Form::new(&two, None), "f", &c["f"].local_names, &mut |_| "?".into()).unwrap_err().contains("takes 1 type arguments"));
+        let mut bare = c["f"].canonical.clone();
+        bare.splice(at..at + 10, [&[T_NAMED, R_PRELUDE, 5][..], b"Accum"].concat());
+        assert!(decode(Form::new(&bare, None), "f", &c["f"].local_names, &mut |_| "?".into()).unwrap_err().contains("needs type arguments"));
+        // A service prelude type is not generic.
+        let p = Program { defs: vec![Def::Fn(FnDef { name: "h".into(), tparams: vec![], params: vec![Param { name: "x".into(), ty: Type::App("DbRows".into(), vec![Type::Int]) }], ret: Type::Int, effects: vec![], req: vec![], ens: vec![], body: Expr::Int(0) })] };
+        assert!(hash_program(&p).is_err());
     }
 
     #[test]

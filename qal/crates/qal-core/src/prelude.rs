@@ -3,11 +3,21 @@
 //! Like `Option` and `Result`, these types exist in every program without being defined: their
 //! names and variant names are reserved, and the host knows their layout (declaration order).
 //! In canonical forms they are referenced by name, never by hash (see `canon`).
+//!
+//! Phase 5a (self-hosting spec §5.2) adds one generic prelude type, the append-only accumulator
+//! `Accum[T]` (the spec's `Acc`, renamed because `bench/solutions/qal/03-csv-sum.qal` defines a
+//! type `Acc`), used with `acc_list` to build lists in O(1) per element.
 
 use crate::ast::{Type, TypeBody, TypeDef, Variant};
 
-/// The prelude type names, in declaration order.
+/// The service prelude type names (Phase 3), in declaration order.
 pub const TYPE_NAMES: [&str; 8] = ["HttpHeader", "HttpRequest", "HttpResponse", "HttpCall", "NetError", "SqlValue", "DbRows", "DbError"];
+
+/// The accumulator type of Phase 5a: `type Accum[T] = AccEnd | AccPush(Accum[T], T)`.
+pub const ACCUM: &str = "Accum";
+
+/// Every prelude type name, in declaration order (the service types, then `Accum`).
+pub const ALL_TYPE_NAMES: [&str; 9] = ["HttpHeader", "HttpRequest", "HttpResponse", "HttpCall", "NetError", "SqlValue", "DbRows", "DbError", ACCUM];
 
 fn named(n: &str) -> Type {
     Type::Named(n.to_string())
@@ -32,6 +42,7 @@ fn enumeration(name: &str, variants: &[(&str, &[Type])]) -> TypeDef {
 /// type SqlValue     = SqlNull | SqlInt(Int) | SqlFloat(Float) | SqlText(Str)
 /// type DbRows       = { columns: List[Str], rows: List[List[SqlValue]] }
 /// type DbError      = DbConstraint(Str) | DbSql(Str) | DbBusy | DbFull | DbTooLarge
+/// type Accum[T]     = AccEnd | AccPush(Accum[T], T)
 /// ```
 pub fn types() -> Vec<TypeDef> {
     let headers = Type::list(named("HttpHeader"));
@@ -44,12 +55,29 @@ pub fn types() -> Vec<TypeDef> {
         enumeration("SqlValue", &[("SqlNull", &[]), ("SqlInt", &[Type::Int]), ("SqlFloat", &[Type::Float]), ("SqlText", &[Type::Str])]),
         record("DbRows", &[("columns", Type::list(Type::Str)), ("rows", Type::list(Type::list(named("SqlValue"))))]),
         enumeration("DbError", &[("DbConstraint", &[Type::Str]), ("DbSql", &[Type::Str]), ("DbBusy", &[]), ("DbFull", &[]), ("DbTooLarge", &[])]),
+        TypeDef {
+            name: ACCUM.into(),
+            params: vec!["T".into()],
+            body: TypeBody::Enum(vec![
+                Variant { name: "AccEnd".into(), fields: vec![] },
+                Variant { name: "AccPush".into(), fields: vec![Type::App(ACCUM.into(), vec![named("T")]), named("T")] },
+            ]),
+        },
     ]
+}
+
+/// Number of type parameters of the prelude type `name` (None if it is not one).
+pub fn arity(name: &str) -> Option<usize> {
+    match name {
+        ACCUM => Some(1),
+        _ if TYPE_NAMES.contains(&name) => Some(0),
+        _ => None,
+    }
 }
 
 /// True if `name` is a prelude type.
 pub fn is_type(name: &str) -> bool {
-    TYPE_NAMES.contains(&name)
+    ALL_TYPE_NAMES.contains(&name)
 }
 
 /// The prelude enum a variant name belongs to.
@@ -58,6 +86,7 @@ pub fn variant_owner(name: &str) -> Option<&'static str> {
         "NetDenied" | "NetInvalid" | "NetConnect" | "NetTimeout" | "NetTooLarge" => "NetError",
         "SqlNull" | "SqlInt" | "SqlFloat" | "SqlText" => "SqlValue",
         "DbConstraint" | "DbSql" | "DbBusy" | "DbFull" | "DbTooLarge" => "DbError",
+        "AccEnd" | "AccPush" => ACCUM,
         _ => return None,
     })
 }
@@ -74,17 +103,22 @@ mod tests {
     #[test]
     fn names_and_variants_match_the_definitions() {
         let ts = types();
-        assert_eq!(ts.iter().map(|t| t.name.as_str()).collect::<Vec<_>>(), TYPE_NAMES.to_vec());
+        assert_eq!(ts.iter().map(|t| t.name.as_str()).collect::<Vec<_>>(), ALL_TYPE_NAMES.to_vec());
+        assert_eq!(&ALL_TYPE_NAMES[..8], &TYPE_NAMES);
         for t in &ts {
             assert!(is_type(&t.name) && is_reserved(&t.name));
             if let TypeBody::Enum(vs) = &t.body {
                 for v in vs {
-                    assert_eq!(variant_owner(&v.name), Some(TYPE_NAMES.iter().copied().find(|n| *n == t.name).unwrap()), "{}", v.name);
+                    assert_eq!(variant_owner(&v.name), Some(ALL_TYPE_NAMES.iter().copied().find(|n| *n == t.name).unwrap()), "{}", v.name);
                 }
             }
         }
         let variants: usize = ts.iter().map(|t| if let TypeBody::Enum(vs) = &t.body { vs.len() } else { 0 }).sum();
-        assert_eq!(variants, 14);
+        assert_eq!(variants, 16);
+        assert_eq!((arity("Accum"), arity("DbRows"), arity("Option")), (Some(1), Some(0), None));
+        for t in &ts {
+            assert_eq!(arity(&t.name), Some(t.params.len()));
+        }
         assert!(!is_reserved("Point") && variant_owner("Some").is_none() && !is_type("Option"));
     }
 }
