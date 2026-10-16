@@ -1,0 +1,4 @@
+fn base() -> Int = 1
+fn spare() -> Int = 2
+fn main(args: List[Str]) -> Int = 0
+test base_works = base() == 1

@@ -1,0 +1,1 @@
+fn twice(x: Int) -> Int = f() + x + x
