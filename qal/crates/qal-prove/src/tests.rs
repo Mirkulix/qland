@@ -191,7 +191,7 @@ fn results_are_deterministic_and_limited() {
     assert!(!slow[0].is_stable());
     let only = prove(&typed(src), Some(&["bad".to_string()]), &Options::default());
     assert_eq!(only.iter().map(|r| r.def.as_str()).collect::<Vec<_>>(), vec!["bad"]);
-    assert!(Options::default().key().starts_with("qal-prove/2 z3-"));
+    assert!(Options::default().key().starts_with("qal-prove/3 z3-"));
 }
 
 #[test]
@@ -583,4 +583,45 @@ fn bit_facts_hold_for_the_real_results() {
         }
     }
     assert!(checked > 1000, "{checked}");
+}
+
+#[test]
+fn contracts_that_can_trap_in_any_builtin_are_never_proven() {
+    // Final review I1 (predates Phase 5a): a built-in that can trap contributes its trap
+    // condition to `ok`, in `ens`, in `req` at call sites, and through function arguments.
+    for src in [
+        "fn g(s: Str) -> Int ens let t = slice(s, 5, 3) in true = 0",
+        "fn h(s: Str) -> Int ens slice(s, 5, 3) == slice(s, 5, 3) || true = 0",
+        "fn h(s: Str) -> Int ens slice(s, 0, 1) == slice(s, 0, 1) || true = 0",
+        "fn k(n: Int) -> Int ens from_char_code(n) == from_char_code(n) || true = 0",
+        "fn k(n: Int) -> Int req n >= 0 ens let c = from_char_code(n) in true = 0",
+        "fn m(b: Bytes) -> Int ens bytes_slice(b, 3, 1) == b || true = 0",
+        "fn m(b: Bytes) -> Int ens bytes_slice(b, 0, 1) == b || true = 0",
+        "fn c(s: Str) -> Int ens let x = char_code(s) in true = 0",
+        "fn s(t: Str, sep: Str) -> Int ens let xs = split(t, sep) in true = 0",
+        "fn rp(t: Str, a: Str) -> Int ens let x = replace(t, a, \"b\") in true = 0",
+        "fn b(xs: List[Int]) -> Int ens let x = bytes_from(xs) in true = 0",
+        "fn f(xs: List[Int]) -> Int ens let ys = map(xs, fn(x) => 10 / x) in true = 0",
+        "fn f(xs: List[Int]) -> Int ens let ys = filter(xs, fn(x) => 10 / x > 0) in true = 0",
+        "fn f(xs: List[Int]) -> Int ens let y = fold(xs, 0, fn(a, x) => a / x) in true = 0",
+        "fn f(xs: List[Int], i: Int) -> Int ens let y = list_at(xs, i) in true = 0",
+        "fn f(b: Bytes, i: Int) -> Int ens let y = bytes_at(b, i) in true = 0",
+        "fn f(a: Int, n: Int) -> Int ens let y = shl(a, n) in true = 0",
+    ] {
+        let rs = reports(src);
+        assert!(!rs.is_empty() && rs.iter().all(|r| r.status != Status::Proven), "{src}: {rs:#?}");
+    }
+    // A callee's `req` that may trap is not established at the call either.
+    let rs = reports("fn g2(s: Str) -> Int req slice(s, 5, 3) == \"\" || true = 0\nfn f(s: Str) -> Int = g2(s)");
+    assert!(rs.iter().filter(|r| r.def == "f").all(|r| r.status != Status::Proven) && rs.iter().any(|r| r.def == "f"), "{rs:#?}");
+    // Exact conditions where the arguments are modelled: these cannot trap and stay proven.
+    for src in [
+        "fn k(n: Int) -> Int ens let c = from_char_code(65) in true = 0",
+        "fn k(n: Int) -> Int req n >= 0 && n < 55296 ens let c = from_char_code(n) in true = 0",
+        "fn t(s: Str) -> Int ens let x = trim(s) ++ to_upper(s) in true = 0",
+        "fn t(xs: List[Int]) -> Int ens let x = get(xs, 3) in true = 0",
+    ] {
+        let rs = reports(src);
+        assert!(!rs.is_empty() && rs.iter().all(|r| r.status == Status::Proven), "{src}: {rs:#?}");
+    }
 }

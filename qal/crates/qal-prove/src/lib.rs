@@ -46,7 +46,7 @@ use z3::{Config, Params, SatResult, Solver};
 
 /// Changes whenever the encoding or the stored form changes (stored results of another version are
 /// not reused).
-pub const PROVER_VERSION: &str = "qal-prove/2";
+pub const PROVER_VERSION: &str = "qal-prove/3";
 
 /// Reasons of results that depend on the machine's speed or load, not only on the definition.
 const NOT_ATTEMPTED: &str = "not attempted:";

@@ -479,28 +479,65 @@ impl<'p> Enc<'p> {
         }
     }
 
-    /// The conditions under which a Phase 5a built-in returns instead of trapping: they are part of
-    /// `ok`, so a contract that may trap in one of them is never proven. What the encoding cannot
-    /// state (an index below a length it does not model) is a fresh condition: `ok` then never
-    /// claims more than every real evaluation satisfies.
+    /// The conditions under which a built-in call returns instead of trapping. They are part of
+    /// `ok`, so a contract whose evaluation may trap in a built-in is never proven (in bodies they
+    /// only add assumptions). Where the encoding models the arguments, the condition is exact or a
+    /// necessary part of it; what it cannot state (a length, a separator, the body of a function
+    /// argument) is a fresh condition, so `ok` never claims more than every real evaluation
+    /// satisfies. Resource limits (memory, fuel, stack) are not contract failures and are not
+    /// modelled for any expression. The match is exhaustive: a new built-in must be classified.
     fn builtin_traps(&mut self, b: Builtin, vals: &[Option<Term>]) -> Vec<Bool> {
+        use Builtin as B;
         let int = |k: usize| match vals.get(k) {
             Some(Some(Term::I(i))) => Some(i.clone()),
             _ => None,
         };
+        let zero = Int::from_i64(0);
         match b {
-            Builtin::Shl | Builtin::Shr | Builtin::Ushr => match int(1) {
-                Some(n) => vec![n.ge(Int::from_i64(0)), n.lt(Int::from_i64(64))],
+            // Never trap (besides resource limits).
+            B::StrLen | B::ListLen | B::Join | B::Trim | B::Contains | B::StartsWith | B::ToInt | B::ToFloat | B::FromInt | B::FromFloat | B::Chars | B::Get | B::Push | B::Concat | B::Range
+            | B::Reverse | B::SortInt | B::SortStr | B::IntToFloat | B::FloatToInt | B::ToUpper | B::ToLower | B::IndexOf | B::MapNew | B::MapGet | B::MapPut | B::MapDel | B::MapHas | B::MapSize
+            | B::MapKeys | B::MapValues | B::ToBytes | B::BytesLen | B::BytesGet | B::BytesToList | B::BytesToStr | B::Compare | B::BitAnd | B::BitOr | B::BitXor | B::BitNot | B::FloatBits
+            | B::FloatOfBits | B::AccList | B::BytesJoin | B::Sha256 => Vec::new(),
+            // Exact where the distance is modelled.
+            B::Shl | B::Shr | B::Ushr => match int(1) {
+                Some(n) => vec![n.ge(&zero), n.lt(Int::from_i64(64))],
                 None => vec![self.untracked(b)],
             },
-            Builtin::ListAt | Builtin::BytesAt => {
+            // from_char_code: a Unicode scalar value.
+            B::FromCharCode => match int(0) {
+                Some(n) => vec![n.ge(&zero), n.le(Int::from_i64(0x10FFFF)), Bool::or(&[n.lt(Int::from_i64(0xD800)), n.gt(Int::from_i64(0xDFFF))])],
+                None => vec![self.untracked(b)],
+            },
+            // rand_int: lo <= hi.
+            B::RandInt => match (int(0), int(1)) {
+                (Some(lo), Some(hi)) => vec![lo.le(&hi)],
+                _ => vec![self.untracked(b)],
+            },
+            // An index below a length the encoding does not model: the index is at least 0.
+            B::ListAt | B::BytesAt => {
                 let mut c = vec![self.untracked(b)];
                 if let Some(i) = int(1) {
-                    c.push(i.ge(Int::from_i64(0)));
+                    c.push(i.ge(&zero));
                 }
                 c
             }
-            _ => Vec::new(),
+            // slice/bytes_slice(x, from, to): 0 <= from <= to <= length (the length is not modelled).
+            B::Slice | B::BytesSlice => {
+                let mut c = vec![self.untracked(b)];
+                if let Some(from) = int(1) {
+                    c.push(from.ge(&zero));
+                    if let Some(to) = int(2) {
+                        c.push(from.le(&to));
+                    }
+                }
+                c
+            }
+            // Conditions on values the encoding does not model (a non-empty separator or string,
+            // bytes in 0..=255), and calls of a function argument, which may trap themselves.
+            B::Split | B::Replace | B::CharCode | B::BytesFrom | B::Map | B::Filter | B::Fold => vec![self.untracked(b)],
+            // Effects: never in a contract (contracts are pure); in a body they may fail in many ways.
+            B::Print | B::ReadLine | B::ReadFile | B::WriteFile | B::NowMs | B::ReadAll | B::Http | B::DbExec | B::DbQuery => vec![self.untracked(b)],
         }
     }
 
