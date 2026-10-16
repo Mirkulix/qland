@@ -298,11 +298,134 @@ impl Diagnostic {
         Diagnostic::new("E0206", "type_mismatch", def, path, format!("`{record}` needs field `{field}`"))
             .hint(format!("add `{field}: ...` to the `{record} {{ ... }}` literal"))
     }
+
+    /// `--compiler both`: the backends' outputs differ (self-hosting spec §11); `level` is text,
+    /// hash, diagnostics, typed form or WASM, `detail` the first difference.
+    pub fn compiler_divergence(level: &str, detail: &str) -> Self {
+        Diagnostic::new("E0950", "compiler_divergence", "", "", format!("the Rust and QAL compilers disagree on the {level}: {detail}"))
+            .hint("this is a compiler bug, not a problem of the program; report it with the program")
+    }
+
+    /// The QAL compiler trapped, exceeded a limit or reported a broken invariant (`INTERNAL`).
+    pub fn compiler_failed(stage: &str, op: &str, item: &str, error: &str) -> Self {
+        Diagnostic::new("E0951", "compiler_failed", "", "", format!("the compiler ({stage}) failed on {op}, work item {item}: {error}"))
+            .hint("this is a compiler bug or limit, not a problem of the program; the host keeps running")
+    }
+
+    /// The compiler's response violates `QALR` (strict host-side decoding).
+    pub fn bad_compiler_response(error: &str) -> Self {
+        Diagnostic::new("E0952", "bad_compiler_response", "", "", format!("the compiler's response is malformed: {error}"))
+    }
+
+    /// The embedded seed does not match `qalc.wasm.sha256`, or is not a fixpoint.
+    pub fn seed_mismatch(detail: &str) -> Self {
+        Diagnostic::new("E0953", "seed_mismatch", "", "", format!("the compiler seed does not verify: {detail}"))
+    }
+
+    /// The fork/join protocol exceeded its limits (rounds, items, bytes or time; spec §4.3).
+    pub fn protocol_limit(detail: &str) -> Self {
+        Diagnostic::new("E0954", "protocol_limit", "", "", format!("the compiler exceeded a protocol limit: {detail}"))
+    }
+}
+
+/// Every `(code, kind)` pair a diagnostic can carry. Diagnostics that cross the compiler boundary
+/// (`QALR`, self-hosting spec §4.2) are decoded against this list: `code` and `kind` stay
+/// `&'static str` (no `Cow` needed, and the ~100 places that compare them keep working), and a
+/// compiler cannot invent codes — an unknown pair is a malformed response (E0952).
+pub const KNOWN: &[(&str, &str)] = &[
+    ("E0100", "parse"),
+    ("E0102", "bad_pattern"),
+    ("E0201", "unknown_name"),
+    ("E0202", "duplicate_name"),
+    ("E0203", "type_mismatch"),
+    ("E0204", "type_mismatch"),
+    ("E0205", "non_exhaustive_match"),
+    ("E0206", "type_mismatch"),
+    ("E0207", "type_too_deep"),
+    ("E0208", "type_too_large"),
+    ("E0209", "duplicate_name"),
+    ("E0210", "group_too_large"),
+    ("E0211", "unused_type_parameter"),
+    ("E0212", "irregular_recursion"),
+    ("E0213", "polymorphic_recursion"),
+    ("E0214", "instantiation_limit"),
+    ("E0240", "reserved_name"),
+    ("E0241", "sql_not_literal"),
+    ("E0242", "sql_invalid"),
+    ("E0243", "package_mismatch"),
+    ("E0244", "std_signature_change"),
+    ("E0301", "effect_violation"),
+    ("E0401", "signature_change"),
+    ("E0402", "missing_dep"),
+    ("E0404", "alias_reference"),
+    ("E0405", "kind_change"),
+    ("E0406", "has_dependents"),
+    ("E0601", "store_error"),
+    ("E0701", "bad_arguments"),
+    ("E0702", "result_too_large"),
+    ("E0801", "contract_refuted"),
+    ("E0802", "contract_unproven"),
+    ("E0950", "compiler_divergence"),
+    ("E0951", "compiler_failed"),
+    ("E0952", "bad_compiler_response"),
+    ("E0953", "seed_mismatch"),
+    ("E0954", "protocol_limit"),
+];
+
+/// The static `(code, kind)` of a known pair (see [`KNOWN`]).
+pub fn known(code: &str, kind: &str) -> Option<(&'static str, &'static str)> {
+    KNOWN.iter().copied().find(|(c, k)| *c == code && *k == kind)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_diagnostic_constructed_anywhere_is_known() {
+        // Scans the workspace sources for calls of Diagnostic::new with a literal code and kind, so a new code cannot
+        // be forgotten in KNOWN (and so become undecodable from the self-hosted compiler).
+        fn walk(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+            for e in std::fs::read_dir(dir).unwrap().flatten() {
+                let p = e.path();
+                if p.is_dir() && p.file_name().is_some_and(|n| n != "target") {
+                    walk(&p, out);
+                } else if p.extension().is_some_and(|x| x == "rs") {
+                    out.push(p);
+                }
+            }
+        }
+        let mut files = Vec::new();
+        walk(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(".."), &mut files);
+        let mut found = 0;
+        for f in files {
+            let src = std::fs::read_to_string(&f).unwrap();
+            for (at, _) in src.match_indices("Diagnostic::new(") {
+                let rest = &src[at + 16..];
+                let lit = |s: &str| -> Option<(String, usize)> {
+                    let s0 = s.trim_start();
+                    let skipped = s.len() - s0.len();
+                    let body = s0.strip_prefix('"')?;
+                    let end = body.find('"')?;
+                    Some((body[..end].to_string(), skipped + end + 2))
+                };
+                let Some((code, n)) = lit(rest) else { continue };
+                let Some(after) = rest[n..].trim_start().strip_prefix(',') else { continue };
+                let Some((kind, _)) = lit(after) else { continue };
+                assert!(known(&code, &kind).is_some(), "{}: ({code}, {kind}) is not in diag::KNOWN", f.display());
+                found += 1;
+            }
+        }
+        assert!(found >= 40, "{found}");
+        let mut sorted = KNOWN.to_vec();
+        sorted.sort();
+        sorted.dedup();
+        assert_eq!(sorted.len(), KNOWN.len(), "duplicates in KNOWN");
+        assert_eq!(known("E0203", "type_mismatch"), Some(("E0203", "type_mismatch")));
+        assert_eq!((known("E0203", "parse"), known("E9999", "x")), (None, None));
+        let d = Diagnostic::protocol_limit("9 rounds");
+        assert_eq!((d.code, d.kind), ("E0954", "protocol_limit"));
+    }
 
     #[test]
     fn alias_reference_hints_depend_on_where_the_referrer_is() {
