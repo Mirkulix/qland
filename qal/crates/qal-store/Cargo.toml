@@ -11,3 +11,6 @@ qal-check = { workspace = true }
 rusqlite = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+ed25519-dalek = { workspace = true }
+getrandom = { workspace = true }
+zeroize = { workspace = true }

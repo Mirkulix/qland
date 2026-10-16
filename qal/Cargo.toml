@@ -39,6 +39,9 @@ url = "=2.5.8"
 httparse = "=1.10.1"
 signal-hook = "=0.4.4"
 z3 = { version = "=0.21.1", features = ["vendored"] }
+ed25519-dalek = { version = "=3.0.0", default-features = false, features = ["fast", "zeroize"] }
+getrandom = "=0.4.3"
+zeroize = "=1.9.0"
 
 # Z3 is compiled from source (C++, several minutes, once) and linked statically. Build it optimized
 # in debug and test builds too: a Debug build of Z3 is many times slower and writes `.z3-trace` files.
