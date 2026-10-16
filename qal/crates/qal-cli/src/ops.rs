@@ -275,9 +275,11 @@ pub struct Ctx {
     pub max_stdout: Option<usize>,
     /// Team mode: who signs the records of writes (an agent's session over MCP).
     pub signer: Option<std::sync::Arc<qal_store::team::Signer>>,
-    /// Team mode: the space the operations work in (`main` until Phase 4b); `build` writes to
+    /// Team mode: the space the operations work in (`main` or a change set); `build` writes to
     /// `.qal/build/<space>/`.
     pub space: Option<String>,
+    /// Team mode: the agent's session (what it views is recorded as seen, §5.3).
+    pub session: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -306,12 +308,20 @@ impl Ctx {
     /// The CLI context: the store around the current directory, no limits beyond the runtime's.
     pub fn cli() -> Result<Ctx, Vec<Diagnostic>> {
         let cwd = std::env::current_dir().map_err(|e| vec![Diagnostic::store_error(format!("no current directory: {e}"))])?;
-        Ok(Ctx { store: StoreAt::Discover(cwd), stdin: None, timeout: None, test_budget: None, max_stdout: None, signer: None, space: None })
+        Ok(Ctx { store: StoreAt::Discover(cwd), stdin: None, timeout: None, test_budget: None, max_stdout: None, signer: None, space: None, session: None })
     }
 
     /// The store; `create` makes it under `Root` if it does not exist yet (only `define` does,
     /// so reading never leaves a store behind).
     pub fn open_store(&self, create: bool) -> Result<Store, Vec<Diagnostic>> {
+        let mut store = self.open_any(create)?;
+        if let Some(space) = &self.space {
+            store.set_space(qal_store::Space::parse(space));
+        }
+        Ok(store)
+    }
+
+    fn open_any(&self, create: bool) -> Result<Store, Vec<Diagnostic>> {
         match &self.store {
             StoreAt::Discover(dir) => Store::discover(dir),
             StoreAt::Root(root) if create => Store::init(root),
@@ -492,9 +502,26 @@ pub fn define(ctx: &Ctx, src: &str, agent: &str, breaking: bool) -> Reply {
             let mut out = Output { defined: Some(d), ..Output::default() };
             out.set_proofs(reports);
             std.report(&mut out);
+            team_report(store.last_write(), &mut out);
             Reply::new(out, 0)
         }
         Err(d) => std.failed(d),
+    }
+}
+
+/// What a write reports besides its result (Phase 4 §10.2): the leases it took (team mode) and the
+/// stubs it defined, each stub also as the warning E0930 `stub_present`.
+fn team_report(w: &qal_store::team::WriteReport, out: &mut Output) {
+    if !w.leases.is_empty() {
+        out.extra.insert("leases".into(), serde_json::to_value(&w.leases).unwrap_or(serde_json::Value::Null));
+    }
+    if w.stubs.is_empty() {
+        return;
+    }
+    out.extra.insert("stubs".into(), serde_json::Value::from(w.stubs.clone()));
+    let warnings = out.warnings.get_or_insert_with(Vec::new);
+    for n in &w.stubs {
+        warnings.push(Diagnostic::new("E0930", "stub_present", n, "body", format!("`{n}` is a stub: calling it reaches `todo()` (runtime error todo_reached)")).hint(format!("replace the `todo()` in `{n}` with its implementation (keep the signature, and its users relink)")));
     }
 }
 
@@ -717,11 +744,28 @@ pub fn view(ctx: &Ctx, names: &[String]) -> Reply {
         Ok(s) => s,
         Err(d) => return Reply::diagnostics(d),
     };
+    let here = store.space().clone();
     let mut seen = std::collections::HashSet::new();
     let (mut views, mut diags, mut bytes) = (Vec::new(), Vec::new(), 0usize);
     for n in names.iter().filter(|n| seen.insert(n.as_str())) {
-        match store.view(std::slice::from_ref(n)) {
-            Ok(v) => {
+        // Team mode: `name@main` or `name@<change>` shows the name in another space.
+        let (name, space) = match n.rsplit_once('@').filter(|_| ctx.space.is_some() && !n.starts_with('#')) {
+            Some((name, sp)) => (name.to_string(), Some(qal_store::Space::parse(sp))),
+            None => (n.clone(), None),
+        };
+        store.set_space(space.clone().unwrap_or_else(|| here.clone()));
+        match store.view(std::slice::from_ref(&name)) {
+            Ok(mut v) => {
+                if let Some(session) = &ctx.session {
+                    let pairs: Vec<(String, String)> = v.iter().filter(|_| !name.starts_with('#')).map(|x| (x.name.clone(), x.hash.clone())).collect();
+                    // Best effort: a failure only means a later write may be refused as stale (E0904).
+                    let _ = store.mark_seen(session, &store.space().clone(), &pairs);
+                }
+                if let Some(sp) = &space {
+                    for x in &mut v {
+                        x.space = Some(sp.id().to_string());
+                    }
+                }
                 bytes += v.iter().map(|v| serde_json::to_vec(v).map_or(usize::MAX, |b| b.len())).fold(0, usize::saturating_add);
                 if bytes > crate::mcp::MAX_RESULT_BYTES {
                     let limit = crate::mcp::MAX_RESULT_BYTES;

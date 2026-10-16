@@ -541,7 +541,15 @@ fn serve(args: &[String]) -> ExitCode {
         return start_failed(&log, &qal_run::RunError::new("listen_failed", handler, format!("cannot install the signal handlers: {e}")));
     }
     let addr = listener.local_addr().map(|a| a.to_string()).unwrap_or_default();
-    log.line(&serde_json::json!({"event": "listening", "addr": addr, "entry": handler, "hash": hash, "workers": srv.workers, "pooling": service.pooled()}));
+    let mut listening = serde_json::json!({"event": "listening", "addr": addr, "entry": handler, "hash": hash, "workers": srv.workers, "pooling": service.pooled()});
+    // Stubs the handler (or init) can reach: they answer with todo_reached (Phase 4 §11).
+    let roots: Vec<usize> = [Some(handler), s.one("init")].into_iter().flatten().filter_map(|n| loaded.typed.fn_index(n)).collect();
+    let stubs = loaded.typed.reachable_stubs(&roots);
+    if !stubs.is_empty() {
+        listening["warning"] = serde_json::json!(format!("the service reaches {} stub(s) (todo()): requests that reach them fail with todo_reached (E0540)", stubs.len()));
+        listening["stubs"] = serde_json::json!(stubs);
+    }
+    log.line(&listening);
     let served = qal_serve::serve(listener, service, srv, log.clone(), shutdown, workers);
     log.line(&serde_json::json!({"event": "stopped", "served": served}));
     ExitCode::SUCCESS

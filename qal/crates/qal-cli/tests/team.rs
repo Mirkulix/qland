@@ -1,4 +1,4 @@
-//! Phase 4a end to end: `qal team`, `qal verify` and `qal mcp --session-file` as real processes.
+//! Phase 4a/4b end to end: `qal team`, `qal verify` and `qal mcp --session-file` as real processes.
 //! Every output of these runs (stdout, stderr, MCP lines) is kept and searched for secrets.
 
 use serde_json::{json, Value};
@@ -152,6 +152,13 @@ impl Client {
         let (_, v) = self.call(tool, args);
         v["diagnostics"][0]["code"].as_str().unwrap_or("ok").to_string()
     }
+
+    /// Opens an own change set (it becomes the session's current one); returns its id.
+    fn open(&mut self, title: &str) -> String {
+        let (err, v) = self.call("qal_change", json!({"action": "open", "title": title}));
+        assert!(!err, "{v}");
+        v["change"].as_str().unwrap().to_string()
+    }
 }
 
 impl Drop for Client {
@@ -284,15 +291,20 @@ fn team_commands_need_a_team_store_and_keys_outside_the_project() {
 #[test]
 fn sessions_decide_identity_and_roles_decide_tools() {
     let t = Team::new();
-    let all = ["qal_define", "qal_test", "qal_prove", "qal_run", "qal_call", "qal_request", "qal_view", "qal_query", "qal_rename", "qal_delete", "qal_history", "qal_build", "qal_whoami", "qal_verify"];
-    let reads = ["qal_test", "qal_prove", "qal_run", "qal_call", "qal_request", "qal_view", "qal_query", "qal_history", "qal_build", "qal_whoami", "qal_verify"];
+    let all = ["qal_define", "qal_test", "qal_prove", "qal_run", "qal_call", "qal_request", "qal_view", "qal_query", "qal_rename", "qal_delete", "qal_history", "qal_build", "qal_change", "qal_lease", "qal_whoami", "qal_verify"];
+    let reads = ["qal_test", "qal_prove", "qal_run", "qal_call", "qal_request", "qal_view", "qal_query", "qal_history", "qal_build"];
     let mut arch = t.agent("arch-1");
     assert_eq!(arch.tools(), all);
     let mut imp = t.agent("impl-1");
-    let with_define: Vec<&str> = std::iter::once("qal_define").chain(reads).collect();
+    let with_define: Vec<&str> = std::iter::once("qal_define").chain(reads).chain(["qal_change", "qal_lease", "qal_whoami", "qal_verify"]).collect();
     assert_eq!(imp.tools(), with_define);
     let mut rev = t.agent("rev-1");
-    assert_eq!(rev.tools(), reads);
+    let rev_tools: Vec<&str> = reads.into_iter().chain(["qal_change", "qal_whoami", "qal_verify"]).collect();
+    assert_eq!(rev.tools(), rev_tools);
+    // Every space tool takes `change` in a team store.
+    let listed = arch.request("tools/list", json!({}));
+    let view = listed["result"]["tools"].as_array().unwrap().iter().find(|t| t["name"] == "qal_view").unwrap().clone();
+    assert!(view["inputSchema"]["properties"]["change"].is_object(), "{view}");
     // The role's rules are in qal_define's reference.
     let r = imp.request("tools/list", json!({}));
     let reference = r["result"]["tools"][0]["description"].as_str().unwrap();
@@ -303,27 +315,35 @@ fn sessions_decide_identity_and_roles_decide_tools() {
     assert_eq!((who["member"].as_str(), who["role"].as_str(), who["space"].as_str()), (Some("arch-1"), Some("architect"), Some("main")));
     assert!(who["session"].as_str().unwrap().starts_with('s') && who["leases"] == json!([]));
 
-    // The architect writes on main: signed records, history names the member.
+    // The architect writes in its own change set: signed records, history names the member.
+    let c = arch.open("work");
     let (err, v) = arch.call("qal_define", json!({"source": "fn f() -> Int = base() + 1", "agent": "someone-else"}));
     assert!(!err, "{v}");
-    assert_eq!(v["space"], "main");
+    assert_eq!((v["space"].as_str(), v["leases"][0]["name"].as_str()), (Some(c.as_str()), Some("f")));
     let (_, h) = arch.call("qal_history", json!({"name": "f"}));
     assert_eq!(h["history"][0]["agent"], "arch-1");
-    // Others may not write on main; the refusal names the role that may.
+    assert_eq!(arch.call("qal_whoami", json!({})).1["change"], c.as_str());
+    // Nobody writes on main (main changes only by merge); the refusal says where to write.
     let (err, v) = imp.call("qal_define", json!({"source": "fn g() -> Int = 1"}));
     assert!(err);
-    assert_eq!(diag(&v), ("E0903", "architect"));
+    assert_eq!(diag(&v), ("E0903", "nobody"));
     assert!(v["diagnostics"][0]["hints"][0].as_str().unwrap().contains("change set"));
     assert_eq!(rev.code("qal_define", json!({"source": "fn g() -> Int = 1"})), "E0903");
     assert_eq!(rev.code("qal_rename", json!({"old": "f", "new": "g"})), "E0903");
     assert_eq!(imp.code("qal_delete", json!({"name": "f"})), "E0903");
-    // Reads for everyone.
-    assert_eq!(rev.code("qal_view", json!({"names": ["f"]})), "ok");
+    // Nor in another member's change set.
+    assert_eq!(imp.code("qal_define", json!({"source": "fn g() -> Int = 1", "change": c})), "E0903");
+    // Reads for everyone, in any space; `name@space` in views.
+    assert_eq!(rev.code("qal_view", json!({"names": ["f"]})), "E0201", "f is not on main");
+    let (err, v) = rev.call("qal_view", json!({"names": [format!("f@{c}"), "base@main"]}));
+    assert!(!err && v["views"][0]["space"] == c.as_str() && v["views"][1]["space"] == "main", "{v}");
+    assert_eq!(rev.code("qal_view", json!({"names": ["f"], "change": c})), "ok");
     assert_eq!(rev.code("qal_test", json!({})), "ok");
+    assert_eq!(rev.code("qal_view", json!({"names": ["f"], "change": "c000000000000"})), "E0201");
 
     // Verify over MCP.
     let (err, v) = rev.call("qal_verify", json!({}));
-    assert!(!err && v["ok"] == true && v["records"] == 6 && v["trust"] == "store", "{v}");
+    assert!(!err && v["ok"] == true && v["records"] == 7 && v["trust"] == "store", "{v}");
     let (err, v) = rev.call("qal_verify", json!({"from": 0}));
     assert!(err && v["diagnostics"][0]["code"] == "E0701", "{v}");
 
@@ -359,61 +379,93 @@ fn sessions_decide_identity_and_roles_decide_tools() {
     let (_, stats) = t.qal(&["team", "stats"]);
     let total = &stats["stats"]["total"];
     assert!(total["calls"].as_i64().unwrap() >= 15, "{stats}");
-    assert!(total["failed_by_code"]["E0903"].as_i64().unwrap() >= 4 && total["failed_by_code"]["E0902"].as_i64().unwrap() >= 5, "{stats}");
+    assert!(total["failed_by_code"]["E0903"].as_i64().unwrap() >= 5 && total["failed_by_code"]["E0902"].as_i64().unwrap() >= 5, "{stats}");
     assert_eq!(stats["stats"]["members"]["arch-1"]["tools"]["qal_define"], 1);
 }
 
-/// Criterion 2 for the tools of 4a: every tool with every agent role, compared with the matrix
-/// (writes on main for architects only until change sets exist).
+/// Criterion 2 for the tools of 4a and 4b: every tool (with each of its actions) with every agent
+/// role, compared with the matrix. Each role works in an own change set (the reviewer, who opens
+/// none, on main); work packages exist for claims.
 #[test]
 fn every_tool_with_every_role_follows_the_matrix() {
+    use qal_store::team::policy::{self, Role, Space};
     let t = Team::new();
-    let args = |tool: &str, role: &str| -> Value {
-        match tool {
-            "qal_define" => json!({"source": format!("fn by_{}() -> Int = 1", role)}),
-            "qal_view" => json!({"names": ["base"]}),
-            "qal_query" => json!({"name": "ba"}),
-            "qal_history" => json!({"name": "base"}),
-            "qal_test" => json!({"names": ["base_works"]}),
-            "qal_prove" => json!({"names": ["base"]}),
-            "qal_run" => json!({"entry": "main"}),
-            "qal_call" => json!({"fn": "base"}),
-            "qal_request" => json!({"handler": "base", "requests": [{"path": "/"}]}),
-            "qal_build" => json!({"entry": "base"}),
-            "qal_rename" => json!({"old": "spare", "new": "spare2"}),
-            "qal_delete" => json!({"name": "spare2"}),
+    let mut arch0 = t.agent("arch-1");
+    let mut packages = std::collections::BTreeMap::new();
+    for who in ["impl-1", "ver-1", "arch-1", "rev-1"] {
+        let (err, v) = arch0.call("qal_change", json!({"action": "open", "title": format!("for {who}"), "package": true}));
+        assert!(!err, "{v}");
+        packages.insert(who, v["change"].as_str().unwrap().to_string());
+    }
+    let args = |tool: &str, action: Option<&str>, role: &str, package: &str| -> Value {
+        match (tool, action) {
+            // A verifier writes only tests.
+            ("qal_define", _) if role == "verifier" => json!({"source": "test by_verifier = base() == 1"}),
+            ("qal_define", _) => json!({"source": format!("fn by_{}() -> Int = 1", role)}),
+            ("qal_view", _) => json!({"names": ["base"]}),
+            ("qal_query", _) => json!({"name": "ba"}),
+            ("qal_history", _) => json!({"name": "base"}),
+            ("qal_test", _) => json!({"names": ["base_works"]}),
+            ("qal_prove", _) => json!({"names": ["base"]}),
+            ("qal_run", _) => json!({"entry": "main"}),
+            ("qal_call", _) => json!({"fn": "base"}),
+            ("qal_request", _) => json!({"handler": "base", "requests": [{"path": "/"}]}),
+            ("qal_build", _) => json!({"entry": "base"}),
+            ("qal_rename", _) => json!({"old": "spare", "new": "spare2"}),
+            ("qal_delete", _) => json!({"name": "spare2"}),
+            ("qal_change", Some("open")) => json!({"action": "open", "title": "another"}),
+            ("qal_change", Some("claim")) => json!({"action": "claim", "change": package}),
+            ("qal_change", Some(a @ ("show" | "diff"))) => json!({"action": a, "change": package}),
+            ("qal_change", Some("scope")) => json!({"action": "scope", "add": ["base"]}),
+            ("qal_change", Some(a)) => json!({"action": a}),
+            ("qal_lease", Some(a)) => json!({"action": a, "names": [format!("lease_{role}")]}),
             _ => json!({}),
         }
     };
-    let tools = ["qal_view", "qal_query", "qal_history", "qal_whoami", "qal_verify", "qal_test", "qal_prove", "qal_run", "qal_call", "qal_request", "qal_build", "qal_define", "qal_rename", "qal_delete"];
-    // The architect last: its rename and delete change the store.
-    for (member, role) in [("rev-1", "reviewer"), ("ver-1", "verifier"), ("impl-1", "implementer"), ("arch-1", "architect")] {
+    let rows: Vec<&policy::Row> = policy::POLICY.iter().filter(|r| r.available).collect();
+    let mut checked = 0;
+    for (member, role) in [("arch-1", "architect"), ("impl-1", "implementer"), ("ver-1", "verifier"), ("rev-1", "reviewer")] {
+        let r = Role::parse(role).unwrap();
         let mut c = t.agent(member);
         let listed = c.tools();
-        for tool in tools {
-            let allowed = qal_store::team::policy::allows(tool, None, qal_store::team::policy::Role::parse(role).unwrap(), qal_store::team::policy::Space::Main);
-            let (_, v) = c.call(tool, args(tool, role));
+        let space = if r == Role::Reviewer { Space::Main } else { c.open(&format!("own of {member}")); Space::Own };
+        // Claim and abandon change the session's change set: they come last.
+        let order = |row: &&policy::Row| match row.action {
+            Some("claim") => 2,
+            Some("abandon") => 3,
+            _ => 1,
+        };
+        let mut rows = rows.clone();
+        rows.sort_by_key(order);
+        for row in rows {
+            let allowed = policy::allows(row.tool, row.action, r, space);
+            let (_, v) = c.call(row.tool, args(row.tool, row.action, role, &packages[member]));
             let code = v["diagnostics"][0]["code"].as_str().unwrap_or("ok");
-            assert_eq!(code == "E0903", !allowed, "{role} {tool}: {v}");
+            assert_eq!(code == "E0903", !allowed, "{role} {} {:?}: {v}", row.tool, row.action);
             if allowed {
-                assert!(listed.contains(&tool.to_string()), "{role} {tool} is allowed but not listed");
-                assert!(!matches!(code, "E0902" | "E0920" | "E0915"), "{role} {tool}: {v}");
+                assert_eq!(code, "ok", "{role} {} {:?}: {v}", row.tool, row.action);
+                assert!(listed.contains(&row.tool.to_string()), "{role} {} is allowed but not listed", row.tool);
             }
-            if !allowed && role == "reviewer" {
-                assert!(!listed.contains(&tool.to_string()), "{role} {tool} is listed");
+            if policy::tools_for(r).contains(&row.tool) != listed.contains(&row.tool.to_string()) {
+                panic!("{role} {}: tools/list differs from the matrix", row.tool);
             }
+            checked += 1;
         }
     }
-    // The architect's writes happened and are signed.
+    assert_eq!(checked, 4 * rows.len());
+    // Every write happened in change sets and is signed.
     let (code, v) = t.qal(&["verify"]);
-    assert_eq!((code, v["records"].as_i64()), (0, Some(5 + 3)), "{v}");
-    assert!(t.project.join(".qal/build/main/base.wasm").is_file(), "team builds go to .qal/build/<space>/");
+    assert_eq!((code, v["ok"].as_bool()), (0, Some(true)), "{v}");
+    assert!(t.project.join(".qal/build/main/base.wasm").is_file(), "the reviewer builds main");
+    let spaces: Vec<_> = std::fs::read_dir(t.project.join(".qal/build")).unwrap().flatten().map(|e| e.file_name().into_string().unwrap()).collect();
+    assert!(spaces.iter().filter(|s| s.starts_with('c')).count() >= 3, "team builds go to .qal/build/<space>/: {spaces:?}");
 }
 
 #[test]
 fn agents_grant_only_the_team_effects() {
     let t = Team::new();
     let mut arch = t.agent("arch-1");
+    arch.open("hello");
     assert_eq!(arch.code("qal_define", json!({"source": "fn hello() -> Int !io = { print(\"hi\"); 0 }"})), "ok");
     let (err, v) = arch.call("qal_call", json!({"fn": "hello", "allow": ["io"]}));
     assert!(!err, "{v}");
@@ -431,8 +483,10 @@ fn without_its_key_a_member_reads_but_cannot_write() {
     let (_, status) = t.qal(&["team", "status"]);
     let key_id = status["status"]["members"].as_array().unwrap().iter().find(|m| m["id"] == "arch-1").unwrap()["key_id"].as_str().unwrap().to_string();
     let mut arch = t.agent("arch-1");
+    let c = arch.open("work");
     std::fs::remove_file(t.keys.join(format!("{key_id}.ed25519"))).unwrap();
     assert_eq!(arch.code("qal_view", json!({"names": ["base"]})), "ok");
+    assert_eq!(arch.code("qal_change", json!({"action": "submit"})), "E0920");
     let (err, v) = arch.call("qal_define", json!({"source": "fn x() -> Int = 1"}));
     assert!(err && v["diagnostics"][0]["code"] == "E0920", "{v}");
     let message = v["diagnostics"][0]["message"].as_str().unwrap();
@@ -440,7 +494,7 @@ fn without_its_key_a_member_reads_but_cannot_write() {
     // The owner rekeys; a new server loads the new key.
     assert_eq!(t.qal(&["team", "rekey", "arch-1"]).0, 0);
     let mut again = t.agent("arch-1");
-    assert_eq!(again.code("qal_define", json!({"source": "fn x() -> Int = 1"})), "ok");
+    assert_eq!(again.code("qal_define", json!({"source": "fn x() -> Int = 1", "change": c})), "ok");
     assert_eq!(t.qal(&["verify"]).1["ok"], true);
 }
 
@@ -518,6 +572,7 @@ fn is_hex(b: &[u8]) -> bool {
 fn secrets_never_leave_their_files() {
     let t = Team::new();
     let mut arch = t.agent("arch-1");
+    arch.open("secrets");
     arch.call("qal_define", json!({"source": "fn f() -> Int = 1"}));
     arch.call("qal_whoami", json!({}));
     arch.call("qal_verify", json!({}));
@@ -582,18 +637,20 @@ fn the_standard_library_comes_only_by_a_signed_sync() {
     assert_eq!(t.qal(&["team", "add", "arch-1", "--role", "architect"]).0, 0);
     let mut arch = t.agent("arch-1");
     // No automatic import on a write; agents are told instead (once).
+    let (err, v) = arch.call("qal_change", json!({"action": "open", "title": "work"}));
+    assert!(!err && v["notices"][0]["kind"] == "std_outdated", "{v}");
     let (err, v) = arch.call("qal_define", json!({"source": "fn f() -> Int = 1"}));
-    assert!(!err && v["notices"][0]["kind"] == "std_outdated" && v.get("std_imported").is_none(), "{v}");
-    let (_, v) = arch.call("qal_query", json!({"name": "std."}));
+    assert!(!err && v.get("std_imported").is_none(), "{v}");
+    let (_, v) = arch.call("qal_query", json!({"name": "std.", "change": "main"}));
     assert_eq!(v["results"], json!([]));
     let (_, status) = t.qal(&["team", "status"]);
-    assert_eq!(status["status"]["records"], 3);
+    assert_eq!(status["status"]["records"], 4);
     let (code, v) = t.qal(&["team", "sync-std"]);
     assert_eq!((code, v["std"]["status"].as_str()), (0, Some("imported")), "{v}");
-    let (_, v) = arch.call("qal_query", json!({"name": "std."}));
+    let (_, v) = arch.call("qal_query", json!({"name": "std.", "change": "main"}));
     assert!(!v["results"].as_array().unwrap().is_empty());
     let (code, v) = t.qal(&["verify"]);
-    assert_eq!((code, v["records"].as_i64()), (0, Some(4)), "{v}");
+    assert_eq!((code, v["records"].as_i64()), (0, Some(5)), "{v}");
     assert_eq!(t.qal(&["team", "sync-std"]).1["std"]["status"], "up_to_date");
 }
 

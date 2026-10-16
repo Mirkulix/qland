@@ -37,6 +37,9 @@ pub struct View {
     pub effects: Vec<String>,
     pub text: String,
     pub deps: Vec<DepView>,
+    /// The space shown (team mode, `name@space`); absent for the space the call works in.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub space: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -360,6 +363,7 @@ pub fn view(conn: &mut Connection, space: &Space, names: &[String]) -> Result<Ve
             effects: effects(&def),
             text: text(&def),
             deps,
+            space: None,
         });
     }
     if diags.is_empty() {

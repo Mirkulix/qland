@@ -927,3 +927,39 @@ fn released_std_names_are_renamed_only_with_breaking() {
     let (code, v) = qal_in(&dir, &["rename", "--breaking", "std.db.test_first", "std.db.test_first2"]);
     assert_eq!((code, v["renamed"]["name"].as_str()), (0, Some("std.db.test_first2")), "{v}");
 }
+
+/// Phase 4 §11: `define` reports stubs (and warns E0930), runs and requests that reach `todo()`
+/// fail with todo_reached (E0540), and `qal serve` names the stubs its handler reaches.
+#[test]
+fn stubs_are_reported_and_trap_when_reached() {
+    use std::io::{BufRead, BufReader};
+    let p = project("stubs");
+    assert_eq!(qal_in(&p, &["init"]).0, 0);
+    std::fs::write(
+        p.join("s.qal"),
+        "fn create(body: Str) -> HttpResponse = todo()\nfn handle(q: HttpRequest) -> HttpResponse = if q.method == \"POST\" then create(q.body) else HttpResponse { status: 200, headers: [], body: \"ok\" }",
+    )
+    .unwrap();
+    let (code, v) = qal_in(&p, &["define", "s.qal"]);
+    assert_eq!((code, v["stubs"].clone()), (0, json!(["create"])), "{v}");
+    let w = v["warnings"].as_array().unwrap();
+    assert!(w.iter().any(|d| d["code"] == "E0930" && d["kind"] == "stub_present" && d["def"] == "create"), "{v}");
+    // A define without stubs has no `stubs` field (existing results are unchanged).
+    std::fs::write(p.join("t.qal"), "fn plain() -> Int = 1").unwrap();
+    let (_, v) = qal_in(&p, &["define", "t.qal"]);
+    assert!(v.get("stubs").is_none() && v.get("leases").is_none(), "{v}");
+    let (code, v) = qal_in(&p, &["call", "create", "x"]);
+    assert_eq!((code, v["error"]["code"].as_str(), v["error"]["kind"].as_str()), (1, Some("E0540"), Some("todo_reached")), "{v}");
+    std::fs::write(p.join("r.json"), r#"[{"path": "/"}, {"method": "POST", "path": "/", "body": "x"}]"#).unwrap();
+    let (_, v) = qal_in(&p, &["request", "r.json"]);
+    assert_eq!((v["responses"][0]["status"].as_u64(), v["responses"][1]["status"].as_u64()), (Some(200), Some(500)), "{v}");
+    assert_eq!(v["responses"][1]["error"]["kind"], "todo_reached");
+    let mut child = Command::new(env!("CARGO_BIN_EXE_qal")).current_dir(&p).args(["serve", "--listen", "127.0.0.1:0"]).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::piped()).spawn().unwrap();
+    let mut line = String::new();
+    BufReader::new(child.stderr.take().unwrap()).read_line(&mut line).unwrap();
+    let _ = child.kill();
+    let _ = child.wait();
+    let listening: Value = serde_json::from_str(&line).unwrap();
+    assert_eq!((listening["event"].as_str(), listening["stubs"].clone()), (Some("listening"), json!(["create"])), "{line}");
+    assert!(listening["warning"].as_str().unwrap().contains("todo_reached"));
+}

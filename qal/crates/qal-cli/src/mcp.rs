@@ -111,7 +111,10 @@ pub const MAX_WAIT_S: u64 = 45;
 const POLL: Duration = Duration::from_millis(200);
 
 /// The tools only a team store has.
-const TEAM_TOOLS: [&str; 2] = ["qal_whoami", "qal_verify"];
+const TEAM_TOOLS: [&str; 4] = ["qal_whoami", "qal_verify", "qal_change", "qal_lease"];
+
+/// The tools that work in a space (`change` argument, Phase 4 §10.2).
+const SPACE_TOOLS: [&str; 12] = ["qal_define", "qal_rename", "qal_delete", "qal_view", "qal_query", "qal_history", "qal_test", "qal_prove", "qal_run", "qal_call", "qal_request", "qal_build"];
 
 #[derive(Serialize)]
 struct Response<'a, R: Serialize> {
@@ -426,7 +429,8 @@ impl Server {
             test_budget: Some(TEST_BUDGET),
             max_stdout: Some(MAX_STDOUT_BYTES),
             signer: team.and_then(|t| t.signer.clone()),
-            space: team.map(|_| "main".to_string()),
+            space: team.map(|t| t.space.id().to_string()),
+            session: team.map(|t| t.session.clone()),
         }
     }
 
@@ -440,14 +444,16 @@ impl Server {
         let log = team.as_ref().and_then(|s| s.team_log().ok());
         let mut who = None;
         let mut pending = None;
+        let mut space = qal_store::Space::Main;
         let result = match &team {
             None if TEAM_TOOLS.contains(&name) => Ok(Reply::diagnostics(vec![qal_store::team::not_a_team(&format!("`{name}`"))])),
+            None if args.get("change").is_some_and(|c| !c.is_null()) => Ok(Reply::diagnostics(vec![qal_store::team::not_a_team("`change`")])),
             None => self.tool(name, args, client, None),
             Some(store) => match self.identity(store) {
                 Err(d) => Ok(Reply::diagnostics(vec![d])),
                 Ok(id) => {
                     pending = log.as_ref().and_then(|l| std_notice(store, l, &id));
-                    let r = self.team_tool(store, log.as_ref(), &id, name, args, &mut pending);
+                    let r = self.team_tool(store, log.as_ref(), &id, name, args, &mut pending, &mut space);
                     who = Some(id);
                     r
                 }
@@ -475,22 +481,44 @@ impl Server {
             }
         }
         if let Some(store) = &team {
-            team_envelope(store, log.as_ref(), who.as_ref(), pending, name, &mut reply, start);
+            team_envelope(store, log.as_ref(), who.as_ref(), pending, name, &space, &mut reply, start);
         }
         reply
     }
 
     /// A tool call in a team store by the session's member: the matrix (E0903), the grants
     /// (E0915), the member's key for writes (E0920), then the tool itself, signed.
-    fn team_tool(&self, store: &Store, log: Option<&TeamLog>, who: &Identity, name: &str, args: &Map<String, J>, pending: &mut Option<Notice>) -> Result<Reply, String> {
+    #[allow(clippy::too_many_arguments)]
+    fn team_tool(&self, store: &Store, log: Option<&TeamLog>, who: &Identity, name: &str, args: &Map<String, J>, pending: &mut Option<Notice>, space: &mut qal_store::Space) -> Result<Reply, String> {
         let Some(role) = Role::parse(&who.role) else {
             return Ok(Reply::diagnostics(vec![qal_store::team::no_session(format!("the member `{}` has no agent role", who.member))]));
         };
-        if !policy::allows(name, None, role, Space::Main) {
-            return Ok(Reply::diagnostics(vec![policy::forbidden(name, None, role, Space::Main)]));
+        // The space: the `change` argument, else the session's current change set, else main.
+        let a = Args::new(name, args)?;
+        let kind = if SPACE_TOOLS.contains(&name) {
+            let chosen = a.string("change")?.or_else(|| who.change.clone());
+            match chosen {
+                None => Space::Main,
+                Some(c) if c == qal_store::space::MAIN => Space::Main,
+                Some(c) => match store.change(&c) {
+                    Ok(Some(row)) => {
+                        *space = qal_store::Space::Change(c);
+                        row.kind_for(&who.member)
+                    }
+                    Ok(None) => return Ok(Reply::diagnostics(vec![qal_store::space::unknown_change(&c)])),
+                    Err(d) => return Ok(Reply::diagnostics(d)),
+                },
+            }
+        } else {
+            Space::Main
+        };
+        // `qal_change` and `qal_lease` check their actions themselves (per change set).
+        if !TEAM_ACTION_TOOLS.contains(&name) && !policy::allows(name, None, role, kind) {
+            return Ok(Reply::diagnostics(vec![policy::forbidden(name, None, role, kind)]));
         }
         match name {
-            "qal_whoami" => return whoami(store, log, who, &Args::new(name, args)?, pending.take()),
+            "qal_whoami" => return whoami(store, log, who, &a, pending.take()),
+            "qal_change" | "qal_lease" => return Ok(team_action(store, who, name, &a)),
             "qal_verify" => {
                 let a = Args::new(name, args)?;
                 let from = match a.get("from") {
@@ -517,15 +545,14 @@ impl Server {
             }
         }
         let signer = if policy::WRITE_TOOLS.contains(&name) {
-            let signed = KeyDir::from_env().map_err(|d| vec![d]).and_then(|keys| store.member_signer(&keys, who));
-            match signed {
+            match signer_of(store, who) {
                 Ok(s) => Some(Arc::new(s)),
                 Err(d) => return Ok(Reply::diagnostics(d)),
             }
         } else {
             None
         };
-        self.tool(name, args, None, Some(&TeamCall { signer, member: who.member.clone() }))
+        self.tool(name, args, None, Some(&TeamCall { signer, member: who.member.clone(), session: who.session.clone(), space: space.clone() }))
     }
 
     fn tool(&self, name: &str, args: &Map<String, J>, client: Option<&str>, team: Option<&TeamCall>) -> Result<Reply, String> {
@@ -681,7 +708,9 @@ impl<'a> Args<'a> {
     fn new(tool: &str, map: &'a Map<String, J>) -> Result<Args<'a>, String> {
         let known = tool_params(tool);
         if let Some(k) = map.keys().find(|k| !known.contains(&k.as_str())) {
-            return Err(format!("unknown argument `{k}` (`{tool}` takes: {})", known.join(", ")));
+            // `change` is listed only by the schemas of team stores.
+            let shown: Vec<&str> = known.iter().copied().filter(|k| *k != "change").collect();
+            return Err(format!("unknown argument `{k}` (`{tool}` takes: {})", shown.join(", ")));
         }
         Ok(Args { map })
     }
@@ -724,6 +753,112 @@ impl<'a> Args<'a> {
 struct TeamCall {
     signer: Option<Arc<Signer>>,
     member: String,
+    session: String,
+    space: qal_store::Space,
+}
+
+/// The tools whose rights depend on their action and change set (checked by the store).
+const TEAM_ACTION_TOOLS: [&str; 2] = ["qal_change", "qal_lease"];
+
+/// The signer of the session's member (its key from the key directory; E0920 without one).
+fn signer_of(store: &Store, who: &Identity) -> Result<Signer, Vec<Diagnostic>> {
+    KeyDir::from_env().map_err(|d| vec![d]).and_then(|keys| store.member_signer(&keys, who))
+}
+
+/// `qal_change` and `qal_lease` (Phase 4 §10.1). Each store operation checks the rights of the
+/// action for its change set and writes in one transaction.
+fn team_action(store: &Store, who: &Identity, tool: &str, a: &Args) -> Reply {
+    let mut store = match Store::open(store.path()) {
+        Ok(s) => s,
+        Err(d) => return Reply::diagnostics(d),
+    };
+    match team_action_inner(&mut store, who, tool, a) {
+        Ok(Ok(v)) => {
+            let mut out = ops::Output::default();
+            if let J::Object(m) = v {
+                out.extra = m;
+            }
+            Reply { out, code: 0 }
+        }
+        Ok(Err(d)) => Reply::diagnostics(d),
+        Err(message) => Reply::diagnostics(vec![Diagnostic::new("E0701", "bad_arguments", "", "", message).hint(format!("see the input schema of `{tool}` in tools/list"))]),
+    }
+}
+
+type Answer = Result<J, Vec<Diagnostic>>;
+
+fn team_action_inner(store: &mut Store, who: &Identity, tool: &str, a: &Args) -> Result<Answer, String> {
+    let action = a.required("action")?;
+    // A role that may do this action nowhere is refused before anything else (E0903).
+    if let Some(role) = Role::parse(&who.role) {
+        if policy::rule(tool, Some(&action), role).is_some() && !policy::SPACES.into_iter().any(|sp| policy::allows(tool, Some(&action), role, sp)) {
+            return Ok(Err(vec![policy::forbidden(tool, Some(&action), role, Space::Main)]));
+        }
+    }
+    let change = |a: &Args| -> Result<Result<String, Vec<Diagnostic>>, String> {
+        Ok(match a.string("change")?.or_else(|| who.change.clone()) {
+            Some(c) => Ok(c),
+            None => Err(vec![Diagnostic::new("E0701", "bad_arguments", "", "change", format!("`{tool}` with action `{action}` needs `change` (this session has no current change set)")).hint("qal_change {\"action\": \"list\"} shows the change sets")]),
+        })
+    };
+    let signed = || signer_of(store, who);
+    if tool == "qal_lease" {
+        let names = a.names("names")?;
+        if names.is_empty() {
+            return Err("`names` must list at least one name".into());
+        }
+        let ttl = match a.get("ttl_s") {
+            None => None,
+            Some(J::Number(n)) => Some(n.as_i64().filter(|n| *n > 0).ok_or("`ttl_s` must be a positive number of seconds")?.saturating_mul(1000)),
+            Some(_) => return Err("`ttl_s` must be a positive number of seconds".into()),
+        };
+        return Ok(match action.as_str() {
+            "break" => signed().and_then(|s| store.lease_break(&s, &names)),
+            "acquire" | "renew" | "release" => match change(a)? {
+                Ok(c) => store.lease(&who.member, &action, &c, &names, ttl),
+                Err(d) => Err(d),
+            },
+            other => return Err(format!("`action` must be acquire, renew, release or break, not `{other}`")),
+        });
+    }
+    Ok(match action.as_str() {
+        "list" => {
+            let statuses = a.strings("status")?.unwrap_or_default();
+            let mine = match a.get("mine") {
+                None => false,
+                Some(J::Bool(b)) => *b,
+                Some(_) => return Err("`mine` must be true or false".into()),
+            };
+            store.change_list(&who.member, &statuses, mine)
+        }
+        "open" => {
+            let package = match a.get("package") {
+                None => None,
+                Some(J::Bool(b)) => Some(*b),
+                Some(_) => return Err("`package` must be true or false".into()),
+            };
+            let args = qal_store::team::change::OpenArgs { title: a.required("title")?, description: a.string("description")?.unwrap_or_default(), scope: a.names("scope")?, assignee: a.string("assignee")?, package };
+            signed().and_then(|s| store.change_open(&s, &args))
+        }
+        "show" | "diff" | "claim" | "submit" | "abandon" | "scope" => {
+            let c = match change(a)? {
+                Ok(c) => c,
+                Err(d) => return Ok(Err(d)),
+            };
+            match action.as_str() {
+                "show" => store.change_show(&c),
+                "diff" => store.change_diff(&c),
+                "claim" => signed().and_then(|s| store.change_claim(&s, &c)),
+                "submit" => signed().and_then(|s| store.change_submit(&s, &c)),
+                "abandon" => signed().and_then(|s| store.change_abandon(&s, &c)),
+                _ => {
+                    let (add, remove) = (a.names("add")?, a.names("remove")?);
+                    signed().and_then(|s| store.change_scope(&s, &c, &add, &remove))
+                }
+            }
+        }
+        other => return Err(format!("`action` must be open, list, show, diff, claim, submit, abandon or scope, not `{other}`")),
+    })
 }
 
 /// The first error code of a reply, for the call log.
@@ -740,7 +875,14 @@ fn error_code(reply: &Reply) -> Option<String> {
 /// Team mode around every tool result: notices not given yet (at most 10, `notices_more` counts
 /// the rest; `pending` first), the space, and the call log entry (spec §10.2-10.4). Nothing here
 /// writes to `store.db` (spec §5.1): seen-marks and the log go to the team log file.
-fn team_envelope(store: &Store, log: Option<&TeamLog>, who: Option<&Identity>, pending: Option<Notice>, tool: &str, reply: &mut Reply, start: Instant) {
+#[allow(clippy::too_many_arguments)]
+fn team_envelope(store: &Store, log: Option<&TeamLog>, who: Option<&Identity>, pending: Option<Notice>, tool: &str, space: &qal_store::Space, reply: &mut Reply, start: Instant) {
+    // A write lock held longer than the busy timeout: E0907 `store_busy`, retry (§5.1).
+    for d in reply.out.diagnostics.iter_mut().flatten() {
+        if d.kind == "store_error" && (d.message.contains("database is locked") || d.message.contains("database is busy")) {
+            *d = Diagnostic::new("E0907", "store_busy", "", "", "another agent held the store's write lock for longer than 10 s").hint("retry the call; nothing was written");
+        }
+    }
     if let Some(w) = who {
         if tool != "qal_whoami" {
             let mut notices: Vec<Notice> = pending.into_iter().collect();
@@ -758,7 +900,7 @@ fn team_envelope(store: &Store, log: Option<&TeamLog>, who: Option<&Identity>, p
                 reply.out.extra.insert("notices_more".into(), J::from(more));
             }
         }
-        reply.out.extra.insert("space".into(), J::from("main"));
+        reply.out.extra.insert("space".into(), J::from(space.id()));
     }
     let code = error_code(reply);
     let call = qal_store::team::Call {
@@ -826,7 +968,14 @@ fn whoami(store: &Store, log: Option<&TeamLog>, who: &Identity, a: &Args, pendin
         }
     }
     let mut out = ops::Output::default();
-    let mut fields = json!({"member": who.member, "role": who.role, "session": who.session, "expires_at": who.expires_at, "change": null, "leases": [], "notices": notices});
+    let leases = match &who.change {
+        Some(c) => match store.leases(c) {
+            Ok(l) => serde_json::to_value(l).unwrap_or(J::Null),
+            Err(d) => return Ok(Reply::diagnostics(d)),
+        },
+        None => json!([]),
+    };
+    let mut fields = json!({"member": who.member, "role": who.role, "session": who.session, "expires_at": who.expires_at, "change": who.change, "leases": leases, "notices": notices});
     if more > 0 {
         fields["notices_more"] = J::from(more);
     }
@@ -839,23 +988,50 @@ fn whoami(store: &Store, log: Option<&TeamLog>, who: &Identity, a: &Args, pendin
 /// The ≤ 12-line „Team“ section of `qal_define`'s reference for a role (spec §8).
 fn team_reference(role: Role) -> String {
     let rule = match role {
-        Role::Architect => "You are an architect: you own the interfaces (types, signatures, contracts) and, until change sets exist (Phase 4b), you are the only role that writes on main (define, rename, delete).",
-        Role::Implementer => "You are an implementer: you replace bodies in your own change set (Phase 4b) and never change a type, signature, contract or kind of an existing name. On main, qal_define is refused (E0903) until then.",
-        Role::Verifier => "You are a verifier: you add `test` definitions to your own and to submitted change sets (Phase 4b), and run qal_test, qal_prove, qal_request. On main, qal_define is refused (E0903) until then.",
-        Role::Reviewer => "You are a reviewer: you read, test and review; you do not write code.",
+        Role::Architect => "You are an architect: you own the interfaces (types, signatures, contracts). Write them, with `todo()` bodies, in your own change set; open work packages for others with qal_change open {title, scope, assignee}.",
+        Role::Implementer => "You are an implementer: claim a work package (qal_change claim) or open your own; replace bodies there. Existing names: only those in the scope (E0905), never their type, signature, contracts or kind (E0906); new names are free.",
+        Role::Verifier => "You are a verifier: add `test` definitions to your own and to submitted change sets (pass `change`), and run qal_test, qal_prove, qal_request with \"db:mem\".",
+        Role::Reviewer => "You are a reviewer: you read, test and review change sets (qal_change list/show/diff, `change` on the read tools, `name@<change>` in qal_view); you do not write code.",
     };
     format!(
-        "## Team\n{rule}\nYour identity is the server's session, not an argument (`agent` is ignored). Every write is an Ed25519-signed record (qal_verify checks the chain).\nqal_whoami {{\"wait_s\": 30}} shows your role and waits for notices instead of polling; every result carries unseen `notices`.\n`allow` is limited to the team's grants (default io, time, rand, db:mem; more is E0915). A refusal names the role that may (E0903)."
+        "## Team\n{rule}\nCode is written only in change sets; main changes only by merge. Tools work in your current change set (from open or claim), or in `change`; `name@main` views main.\nqal_define takes leases on the names it writes; a name another change set holds is E0901 (with the holder); view a name another session changed before you replace it (E0904).\nYour identity is the server's session, not an argument (`agent` is ignored). Every write is an Ed25519-signed record (qal_verify checks the chain).\nqal_whoami {{\"wait_s\": 30}} shows your role, change set and leases and waits for notices instead of polling; every result carries unseen `notices`.\n`allow` is limited to the team's grants (default io, time, rand, db:mem; more is E0915). A refusal names the role that may (E0903)."
     )
 }
 
-/// The tool list including the team tools (`qal_whoami`, `qal_verify`).
+/// The tool list including the team tools (`qal_whoami`, `qal_verify`, `qal_change`, `qal_lease`),
+/// every space tool with the `change` argument.
 fn tools_with_team() -> Vec<J> {
     let mut all = match tools() {
         J::Array(xs) => xs,
         _ => Vec::new(),
     };
+    for t in &mut all {
+        if t["name"].as_str().is_some_and(|n| SPACE_TOOLS.contains(&n)) {
+            if let Some(J::Object(props)) = t.get_mut("inputSchema").and_then(|s| s.get_mut("properties")) {
+                props.insert("change".into(), json!({"type": "string", "description": "The change set to work in (`main` for the main state, read-only). Default: your current change set (from open or claim), else main."}));
+            }
+        }
+    }
     let read_only = json!({"readOnlyHint": true, "openWorldHint": false});
+    let writes = json!({"readOnlyHint": false, "destructiveHint": false, "idempotentHint": false, "openWorldHint": false});
+    let list = |d: &str| json!({"type": "array", "items": {"type": "string"}, "description": d});
+    let text = |d: &str| json!({"type": "string", "description": d});
+    all.push(json!({"name": "qal_change", "title": "Change sets (team)", "annotations": writes,
+        "description": "Change sets are where code is written; main changes only by merge. open {title, description?, scope?} opens your own (a copy of main; it becomes your current change set); an architect opens work packages with `assignee` (or `package`: true for anyone), which implementers/verifiers `claim` (taking the leases of its scope). list {status?, mine?} is the board; show/diff {change?} show one (diff: name, origin, base, ours, main); submit/abandon {change?}; scope {change, add, remove} (architect). `scope` names the existing names an implementer may change (new names are always allowed). Notices tell others (change_opened, change_submitted).",
+        "inputSchema": {"type": "object", "properties": {
+            "action": {"type": "string", "enum": ["open", "list", "show", "diff", "claim", "submit", "abandon", "scope"]},
+            "change": text("Change set id (default: your current one)."), "title": text("open: a short title."), "description": text("open: what is to be done."),
+            "scope": list("open: existing names that may be changed."), "assignee": text("open (architect): the member the work package is for."),
+            "package": {"type": "boolean", "description": "open (architect): a claimable work package (default: true with an assignee)."},
+            "status": list("list: only these statuses (open, submitted, merged, abandoned)."), "mine": {"type": "boolean", "description": "list: only yours (owned or assigned)."},
+            "add": list("scope: names to add."), "remove": list("scope: names to remove.")},
+          "required": ["action"], "additionalProperties": false}}));
+    all.push(json!({"name": "qal_lease", "title": "Leases on names (team)", "annotations": writes,
+        "description": "A lease reserves a name for one change set, so two agents do not change it at once; qal_define takes the leases of the names it writes by itself, so use this only to reserve names ahead. acquire is all or nothing (E0901 names the holders; nothing is taken then; never waits), renew extends your leases, release frees them; break (architect) removes another change set's lease (signed; its owner is told). Default TTL 900 s (60 s to 2 h).",
+        "inputSchema": {"type": "object", "properties": {
+            "action": {"type": "string", "enum": ["acquire", "renew", "release", "break"]}, "names": list("Definition names (up to 64)."),
+            "ttl_s": {"type": "integer", "minimum": 60, "maximum": 7200, "description": "Lease time in seconds (default 900)."}, "change": text("Your change set (default: your current one).")},
+          "required": ["action", "names"], "additionalProperties": false}}));
     all.push(json!({"name": "qal_whoami", "title": "Who am I (team)", "annotations": read_only,
         "description": "Your member id, role, session and unseen notices (change sets opened for you, merges, ...), marked seen once returned. With `wait_s` (up to 45) it waits for the first new notice instead of returning at once: use it to wait for work instead of polling.",
         "inputSchema": {"type": "object", "properties": {"wait_s": {"type": "integer", "minimum": 0, "maximum": MAX_WAIT_S, "description": "Seconds to wait for a new notice (default 0)."}}, "additionalProperties": false}}));
@@ -869,20 +1045,22 @@ const TOOL_NAMES: [&str; 12] = ["qal_define", "qal_test", "qal_prove", "qal_run"
 
 fn tool_params(tool: &str) -> &'static [&'static str] {
     match tool {
-        "qal_define" => &["source", "agent"],
-        "qal_view" => &["names"],
-        "qal_query" => &["name", "type", "uses"],
-        "qal_test" => &["names", "seed"],
-        "qal_prove" => &["names"],
-        "qal_run" => &["entry", "args", "stdin", "allow"],
-        "qal_call" => &["fn", "args", "stdin", "allow"],
-        "qal_build" => &["entry"],
-        "qal_rename" => &["old", "new", "agent"],
-        "qal_history" => &["name"],
-        "qal_delete" => &["name", "with", "agent"],
-        "qal_request" => &["handler", "init", "allow", "requests"],
+        "qal_define" => &["source", "agent", "change"],
+        "qal_view" => &["names", "change"],
+        "qal_query" => &["name", "type", "uses", "change"],
+        "qal_test" => &["names", "seed", "change"],
+        "qal_prove" => &["names", "change"],
+        "qal_run" => &["entry", "args", "stdin", "allow", "change"],
+        "qal_call" => &["fn", "args", "stdin", "allow", "change"],
+        "qal_build" => &["entry", "change"],
+        "qal_rename" => &["old", "new", "agent", "change"],
+        "qal_history" => &["name", "change"],
+        "qal_delete" => &["name", "with", "agent", "change"],
+        "qal_request" => &["handler", "init", "allow", "requests", "change"],
         "qal_whoami" => &["wait_s"],
         "qal_verify" => &["from", "head"],
+        "qal_change" => &["action", "change", "title", "description", "scope", "assignee", "package", "status", "mine", "add", "remove"],
+        "qal_lease" => &["action", "names", "ttl_s", "change"],
         _ => &[],
     }
 }
