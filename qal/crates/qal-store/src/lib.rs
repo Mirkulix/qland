@@ -14,6 +14,7 @@ pub mod package;
 mod pattern;
 mod schema;
 mod snapshot;
+pub mod team;
 
 pub use define::{Release, StdNames};
 pub use ops::{Deleted, DepView, Entry, HistoryEntry, Query, Renamed, View};
@@ -59,6 +60,8 @@ pub struct Store {
     release: Option<define::Release>,
     /// The std store only: changing or deleting released names is allowed.
     breaking: bool,
+    /// Team mode: who signs the records of writes (see [`team`]).
+    signer: Option<std::sync::Arc<team::Signer>>,
 }
 
 /// The checked codebase and the (name, hash) of the definitions to verify.
@@ -128,7 +131,7 @@ impl Store {
                 schema::SCHEMA_VERSION
             ))]);
         }
-        Ok(Store { conn, path, release: None, breaking: false })
+        Ok(Store { conn, path, release: None, breaking: false, signer: None })
     }
 
     pub fn path(&self) -> &Path {
@@ -154,27 +157,43 @@ impl Store {
     /// Adds or replaces the definitions in `src` (spec §6). Either everything is stored and the
     /// result lists every name that changed or was given, or nothing is stored and the diagnostics
     /// say why. `agent` is recorded in the history.
+    /// In a team store, `agent` is ignored: the history names the signer's member.
     pub fn define(&mut self, src: &str, agent: &str) -> Result<Vec<Defined>, Vec<Diagnostic>> {
-        let rules = define::Rules { std: StdNames::Refuse, release: self.release.as_ref(), breaking: self.breaking };
-        define::define(&mut self.conn, src, agent, &rules, None)
+        self.define_with(src, agent, None)
     }
 
     /// Like `define`, with a verification step before anything is committed (see [`Verify`]).
     pub fn define_verified(&mut self, src: &str, agent: &str, verify: &mut Verify) -> Result<Vec<Defined>, Vec<Diagnostic>> {
+        self.define_with(src, agent, Some(verify))
+    }
+
+    fn define_with(&mut self, src: &str, agent: &str, verify: Option<&mut Verify>) -> Result<Vec<Defined>, Vec<Diagnostic>> {
+        let signer = self.signer.as_deref();
+        team::require_signer(&self.conn, signer)?;
+        let agent = signer.map_or(agent, |s| s.member.as_str());
         let rules = define::Rules { std: StdNames::Refuse, release: self.release.as_ref(), breaking: self.breaking };
-        define::define(&mut self.conn, src, agent, &rules, Some(verify))
+        let record = |out: &[Defined], tx: &rusqlite::Transaction| team::record_write(tx, signer, "define", &team::Entry::of_defined(out));
+        define::define_checked(&mut self.conn, src, agent, &rules, verify, &record)
     }
 
     /// Renames a definition. No hash changes; the history of `old` moves to `new`.
     pub fn rename(&mut self, old: &str, new: &str, agent: &str) -> Result<Renamed, Vec<Diagnostic>> {
+        let signer = self.signer.as_deref();
+        team::require_signer(&self.conn, signer)?;
+        let agent = signer.map_or(agent, |s| s.member.as_str());
         let rules = define::Rules { std: StdNames::Refuse, release: self.release.as_ref(), breaking: self.breaking };
-        ops::rename(&mut self.conn, old, new, agent, &rules)
+        let record = |tx: &rusqlite::Transaction, entries: &[team::Entry]| team::record_write(tx, signer, "rename", entries);
+        ops::rename(&mut self.conn, old, new, agent, &rules, &record)
     }
 
     /// Removes names nothing else refers to (see [`ops::delete`]); their history stays.
     pub fn delete(&mut self, names: &[String], agent: &str) -> Result<Vec<Deleted>, Vec<Diagnostic>> {
+        let signer = self.signer.as_deref();
+        team::require_signer(&self.conn, signer)?;
+        let agent = signer.map_or(agent, |s| s.member.as_str());
         let rules = define::Rules { std: StdNames::Refuse, release: self.release.as_ref(), breaking: self.breaking };
-        ops::delete(&mut self.conn, names, agent, &rules)
+        let record = |tx: &rusqlite::Transaction, entries: &[team::Entry]| team::record_write(tx, signer, "delete", entries);
+        ops::delete(&mut self.conn, names, agent, &rules, &record)
     }
 
     /// Text, signature and direct dependencies of each name (or `#<hash>`).
@@ -226,12 +245,19 @@ impl Store {
 
     /// Imports a package file atomically, verifying its checksum and every hash.
     pub fn import(&mut self, file: &str) -> Result<Imported, Vec<Diagnostic>> {
-        package::import(&mut self.conn, file, None, self.release.as_ref())
+        self.import_with(file, None)
     }
 
     /// [`Store::import`] with the verification step of [`Store::define_verified`].
     pub fn import_verified(&mut self, file: &str, verify: &mut Verify) -> Result<Imported, Vec<Diagnostic>> {
-        package::import(&mut self.conn, file, Some(verify), self.release.as_ref())
+        self.import_with(file, Some(verify))
+    }
+
+    fn import_with(&mut self, file: &str, verify: Option<&mut Verify>) -> Result<Imported, Vec<Diagnostic>> {
+        let signer = self.signer.as_deref();
+        team::require_signer(&self.conn, signer)?;
+        let record = |out: &[Defined], tx: &rusqlite::Transaction| team::record_write(tx, signer, "import", &team::Entry::of_defined(out));
+        package::import(&mut self.conn, file, verify, self.release.as_ref(), &record)
     }
 
     /// Sets the released standard library: the std package embedded in the binary (`file`). Only
@@ -279,7 +305,8 @@ impl Store {
     pub fn ensure_std(&mut self, file: &str, verify: Option<&mut Verify>) -> Result<Option<Imported>, Vec<Diagnostic>> {
         // The package this is called with is the release (the one embedded in the binary).
         let release = define::Release::of(file)?;
-        if self.is_std()? {
+        // A team store imports std only by a signed `qal team sync-std` (Phase 4 spec §4.1).
+        if self.is_std()? || team::is_team(&self.conn)? {
             self.release = Some(release);
             return Ok(None);
         }
@@ -288,7 +315,7 @@ impl Store {
             return Ok(None);
         }
         self.release = Some(release);
-        package::import(&mut self.conn, file, verify, self.release.as_ref()).map(Some)
+        package::import(&mut self.conn, file, verify, self.release.as_ref(), &|_, _| Ok(())).map(Some)
     }
 
     /// A value of the store's `meta` table.

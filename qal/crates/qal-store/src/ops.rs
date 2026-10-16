@@ -2,6 +2,7 @@
 
 use crate::pattern;
 use crate::snapshot::Snapshot;
+use crate::team::Entry as Change;
 use crate::{now_ms, sql};
 use qal_core::ast::{Def, Program};
 use qal_core::canon::{self, Hash, Kind};
@@ -180,7 +181,8 @@ fn valid_name(name: &str, kind: Kind) -> Result<(), Vec<Diagnostic>> {
 /// of them (E0406 `has_dependents` otherwise), and only names the store's namespace rule allows
 /// (no `std.` names in a project; in the std project every name is one). Each gets a `deleted`
 /// history entry; the definitions stay stored by hash but have no name any more.
-pub fn delete(conn: &mut Connection, names: &[String], agent: &str, rules: &crate::define::Rules) -> Result<Vec<Deleted>, Vec<Diagnostic>> {
+/// `post` runs last inside the transaction with the changes (the signed record of a team store).
+pub fn delete(conn: &mut Connection, names: &[String], agent: &str, rules: &crate::define::Rules, post: &Post) -> Result<Vec<Deleted>, Vec<Diagnostic>> {
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(sql)?;
     let snap = Snapshot::load(&tx)?;
     let std_store = crate::define::is_std_store(&tx)?;
@@ -228,11 +230,18 @@ pub fn delete(conn: &mut Connection, names: &[String], agent: &str, rules: &crat
         )
         .map_err(sql)?;
     }
+    let entries: Vec<Change> = out.iter().map(|d| Change { name: d.name.clone(), old: Some(d.hash.clone()), new: None, action: "deleted".into() }).collect();
+    post(&tx, &entries)?;
     tx.commit().map_err(sql)?;
     Ok(out)
 }
 
-pub fn rename(conn: &mut Connection, old: &str, new: &str, agent: &str, rules: &crate::define::Rules) -> Result<Renamed, Vec<Diagnostic>> {
+/// A step run last inside the write transaction of `rename`/`delete`, with the name changes.
+pub type Post<'c> = dyn Fn(&rusqlite::Transaction, &[Change]) -> Result<(), Vec<Diagnostic>> + 'c;
+
+/// `post` runs last inside the transaction (the signed record of a team store): the old name goes
+/// (`renamed`), the new one comes (`added`), with the same hash.
+pub fn rename(conn: &mut Connection, old: &str, new: &str, agent: &str, rules: &crate::define::Rules, post: &Post) -> Result<Renamed, Vec<Diagnostic>> {
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(sql)?;
     let snap = Snapshot::load(&tx)?;
     let Some(hash) = snap.names.get(old).map(|e| e.hash) else {
@@ -296,6 +305,8 @@ pub fn rename(conn: &mut Connection, old: &str, new: &str, agent: &str, rules: &
         params![new, hash.to_hex(), old, agent, now],
     )
     .map_err(sql)?;
+    let h = hash.to_hex();
+    post(&tx, &[Change { name: old.into(), old: Some(h.clone()), new: None, action: "renamed".into() }, Change { name: new.into(), old: None, new: Some(h), action: "added".into() }])?;
     tx.commit().map_err(sql)?;
     Ok(Renamed { name: new.to_string(), kind: kind.as_str(), hash: hash.to_hex() })
 }

@@ -188,10 +188,6 @@ pub(crate) fn hash(p: &Program) -> Result<Hashed, Vec<Diagnostic>> {
 /// How often `define` verifies on a snapshot, outside the write lock, before it verifies inside it.
 const ATTEMPTS: usize = 3;
 
-pub fn define(conn: &mut Connection, src: &str, agent: &str, rules: &Rules, verify: Option<&mut Verify>) -> Result<Vec<Defined>, Vec<Diagnostic>> {
-    define_checked(conn, src, agent, rules, verify, &|_, _| Ok(()))
-}
-
 /// A check of a `define` before it is committed, inside the write transaction that would commit it
 /// (it can also write more in the same transaction; used by package imports).
 pub type Check<'c> = dyn Fn(&[Defined], &Transaction) -> Result<(), Vec<Diagnostic>> + 'c;

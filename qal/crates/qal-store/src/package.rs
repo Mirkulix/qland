@@ -213,8 +213,9 @@ pub fn export(conn: &mut Connection, prefix: &str, package: &str) -> Result<Expo
 /// Imports a package: one atomic `define` of its text (agent `qal-<package>@<hash prefix>`), kept
 /// only if every name gets the recorded hash (`package_mismatch`, E0243, otherwise; nothing is
 /// written). Records `package:<name>` in `meta`. With `verify`, the definitions are verified (the
-/// contracts proven) exactly as by `define`.
-pub fn import(conn: &mut Connection, file: &str, verify: Option<&mut Verify>, release: Option<&Release>) -> Result<Imported, Vec<Diagnostic>> {
+/// contracts proven) exactly as by `define`. `post` runs last inside the write transaction (the
+/// signed record of a team store).
+pub fn import(conn: &mut Connection, file: &str, verify: Option<&mut Verify>, release: Option<&Release>, post: &define::Check) -> Result<Imported, Vec<Diagnostic>> {
     let pkg = parse(file)?;
     if !valid_package_name(&pkg.name) {
         return Err(mismatch(format!("`{}` is not a package name", pkg.name)));
@@ -276,7 +277,7 @@ pub fn import(conn: &mut Connection, file: &str, verify: Option<&mut Verify>, re
                 .map_err(sql)?;
             }
         }
-        Ok(())
+        post(defined, tx)
     };
     let rules = Rules { std: if is_std { StdNames::Package } else { StdNames::Unchanged }, release, breaking: false };
     let ours = meta(conn, META_STD_PACKAGE)?;
