@@ -45,7 +45,8 @@ fn gate_puts(n: Int, keys: Int) -> Int = map_size(puts(0, n, keys, map_new()))
 fn uint_bytes(n: Int, a: Accum[Int]) -> Accum[Int] =
   if n < 128 then AccPush(a, n) else uint_bytes(ushr(n, 7), AccPush(a, bit_or(bit_and(n, 127), 128)))
 
-fn piece(i: Int) -> Bytes = bytes_from(acc_list(uint_bytes(bit_and(i * 7919, 1048575), AccPush(AccPush(AccEnd, 32), 65))))
+# About 10 bytes: an opcode-like prefix of 7 bytes and a LEB128 immediate (10^5 pieces ~ 1 MB).
+fn piece(i: Int) -> Bytes = bytes_from(acc_list(uint_bytes(bit_and(i * 7919, 1048575), AccPush(AccPush(AccPush(AccPush(AccPush(AccPush(AccPush(AccEnd, 32), 65), 0), 11), 16), 1), 4))))
 
 fn pieces(i: Int, n: Int, a: Accum[Bytes]) -> Accum[Bytes] = if i == n then a else pieces(i + 1, n, AccPush(a, piece(i)))
 
@@ -53,4 +54,4 @@ fn gate_module(n: Int) -> Int = bytes_len(bytes_join(acc_list(pieces(0, n, AccEn
 
 test lexes = gate_lex(to_bytes("fn f(x: Int) -> Int = x + 1 # c\ntest t = \"a\\\"b\" == \"c\"")) == 19
 test puts_keep_distinct_keys = gate_puts(100, 10) == 10
-test module_pieces = gate_module(3) == 11
+test module_pieces = gate_module(3) == 26

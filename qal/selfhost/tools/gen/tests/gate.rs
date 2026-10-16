@@ -80,14 +80,66 @@ fn measurement_gate() {
             r.mib * (1 << 20) as f64 / tokens as f64
         );
     }
+    // The same lexing loop in Rust (byte classes, tokens kept in a Vec): the QAL/Rust factor of
+    // one workload that both sides really do.
+    let bytes = text.as_bytes();
+    let t = Instant::now();
+    let mut rust_tokens = 0usize;
+    for _ in 0..20 {
+        rust_tokens = rust_lex(bytes).len();
+    }
+    let rust_lex_ms = t.elapsed().as_secs_f64() * 1000.0 / 20.0;
+    eprintln!("GATE rust lex of the corpus: {rust_tokens} tokens, {rust_lex_ms:.2} ms");
     // (2) 10^6 map_put on Str keys: 10^4 distinct keys (a symbol table) and 10^5.
     for keys in [10_000i64, 100_000] {
         let r = run("gate_puts", vec![Value::Int(1_000_000), Value::Int(keys)]);
         eprintln!("GATE 1e6 map_put, {keys} keys -> size {:?}: {:.1} ms, fuel {} ({:.0}/put), memory {:.1} MiB ({:.0} B/put)", r.value, r.ms, r.fuel, r.fuel as f64 / 1e6, r.mib, r.mib * (1 << 20) as f64 / 1e6);
     }
+    // Per-definition work item: the global signature table of 2 000 definitions.
+    let r = run("gate_puts", vec![Value::Int(2_000), Value::Int(2_000)]);
+    eprintln!("GATE signature table, 2000 map_put -> {:?}: {:.2} ms, fuel {}, memory {:.2} MiB", r.value, r.ms, r.fuel, r.mib);
     // (3) A 1 MiB module from 10^5 pieces (Accum + bytes_join).
     let r = run("gate_module", vec![Value::Int(100_000)]);
     eprintln!("GATE module of 1e5 pieces -> {:?} bytes: {:.1} ms, fuel {}, memory {:.1} MiB", r.value, r.ms, r.fuel, r.mib);
-    let r = run("gate_module", vec![Value::Int(350_000)]);
-    eprintln!("GATE module of 3.5e5 pieces -> {:?} bytes: {:.1} ms, fuel {}, memory {:.1} MiB", r.value, r.ms, r.fuel, r.mib);
+    let r = run("gate_module", vec![Value::Int(400_000)]);
+    eprintln!("GATE module of 4e5 pieces -> {:?} bytes: {:.1} ms, fuel {}, memory {:.1} MiB", r.value, r.ms, r.fuel, r.mib);
+}
+
+/// The gate lexer's loop in Rust: (kind, start, end) per token.
+fn rust_lex(b: &[u8]) -> Vec<(u8, usize, usize)> {
+    let alpha = |c: u8| c.is_ascii_alphabetic() || c == b'_';
+    let digit = |c: u8| c.is_ascii_digit();
+    let mut out = Vec::new();
+    let (mut i, n) = (0, b.len());
+    while i < n {
+        let c = b[i];
+        if matches!(c, b' ' | b'\n' | b'\t' | b'\r') {
+            i += 1;
+        } else if c == b'#' {
+            while i < n && b[i] != b'\n' {
+                i += 1;
+            }
+        } else if alpha(c) || digit(c) {
+            let j0 = i;
+            i += 1;
+            while i < n && (alpha(b[i]) || digit(b[i]) || b[i] == b'.') {
+                i += 1;
+            }
+            out.push((if alpha(c) { 1 } else { 2 }, j0, i));
+        } else if c == b'"' {
+            let j0 = i;
+            i += 1;
+            while i < n && b[i] != b'"' {
+                i += if b[i] == b'\\' { 2 } else { 1 };
+            }
+            i = (i + 1).min(n);
+            out.push((3, j0, i));
+        } else {
+            let two = i + 1 < n && matches!((c, b[i + 1]), (b'=' | b'-', b'>') | (b'=' | b'!' | b'<' | b'>', b'=') | (b'&', b'&') | (b'|', b'|') | (b'+', b'+'));
+            let k = if two { 2 } else { 1 };
+            out.push((4, i, i + k));
+            i += k;
+        }
+    }
+    out
 }
