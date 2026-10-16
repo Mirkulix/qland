@@ -1,0 +1,2 @@
+fn g(x: Int) -> Str = from_int(x * 1000000000000)
+fn f(x: Int) -> Int ens let s = g(x) in true = 0

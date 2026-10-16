@@ -1,0 +1,1 @@
+fn f(x: Int) -> Int ens let g = fn(y) => [10 / y] in let z = g(0) in true = 0

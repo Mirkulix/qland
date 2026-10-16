@@ -1,0 +1,2 @@
+fn d(n: Int) -> Str req n > 0 = "d"
+fn f(x: Int) -> Int ens let h = d in let z = h(0) in true = 0

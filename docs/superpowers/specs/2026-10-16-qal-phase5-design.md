@@ -245,7 +245,7 @@ Prüfung  sha256(qalc1) == sha256(qalc2) == sha256(qalc3) und byteweiser Verglei
 2. alle QAL-Quelltexte aus Rust-Tests, extrahiert per Skript `qal/selfhost/tools/extract_corpus.py` (String-Literale, die an `parse_program`, `define`, `qal_define` usw. gehen), dedupliziert nach SHA-256, als Dateien `qal/selfhost/corpus/<sha-präfix>.qal` versioniert; sie decken die Diagnosepfade ab;
 3. generierte Programme: Generator `qal/selfhost/tools/gen` (Rust, nur Test) erzeugt pro CI-Lauf 10 000 zufällige Programme (Seed im Log) — wohltypisierte aus einer Grammatik mit Typen und ill-typisierte durch Mutation (Token löschen/tauschen, Namen ersetzen, Typen vertauschen) von Korpusprogrammen.
 
-Die Zahl der Programme aus (1) und (2) wird in 5a festgeschrieben (erwartet ≥ 1 000; festgeschrieben: 27 + 683 = 710, §16).
+Die Zahl der Programme aus (1) und (2) wird in 5a festgeschrieben (erwartet ≥ 1 000; festgeschrieben: 27 + 689 = 716, §16).
 
 ### 10.2 Ebenen des Differenztests
 
@@ -357,7 +357,7 @@ Abweichungen von dieser Spezifikation, die 5a getroffen hat; 5b–5e bauen auf i
 | `options` von `QALQ` v1 | `memory_max_pages entry_kind tparams-limits …` | nur `memory_max_pages`; Prüfergrenzen (z. B. `MAX_INSTANCES`) sind Konstanten der Sprache |
 | `--jobs`, `--compiler` | CLI-Optionen | `jobs` ist Parameter von `selfhost::drive` (`default_jobs()`); die CLI-Optionen kommen mit `qal selfhost bootstrap` (5e) bzw. dem Backend `Qal` (5b) |
 | Feature `reference` | in 5a angelegt | noch nicht: `CompiledModule`, `FuncMeta`, `host`, `FAIL_*` müssen dafür erst nach `qal-core` |
-| Korpus | ≥ 1 000 erwartet | 27 Dateien + 683 extrahierte = 710 (660 parsen, 465 prüfen; Stand nach Phase 4a); `extract_corpus.py --check` ist ein Test |
+| Korpus | ≥ 1 000 erwartet | 27 Dateien + 689 extrahierte = 716 (666 parsen, 471 prüfen; Stand nach Phase 4a); `extract_corpus.py --check` ist ein Test |
 | Messgate | — | Speicher eines Ganzprogramm-Pakets hochgerechnet 0,4–1,7 GB → Teilen in Arbeitspakete ist ab 5b verbindlich; Zeit nur für das Lexen gemessen (QAL/Rust ≈ 37×) |
-| Beweiser | — | jedes Built-in, das trappen kann, trägt seine Bedingung zu `ok` bei (`PROVER_VERSION` `qal-prove/3`) |
+| Beweiser | — | jedes Built-in, das trappen kann, trägt seine Bedingung zu `ok` bei; jeder Aufruf einer Nutzerfunktion oder eines Funktionswerts trägt eine unbekannte Bedingung bei (ein Contract mit einem solchen Aufruf ist nie `proven`; `PROVER_VERSION` `qal-prove/4`) |
 
