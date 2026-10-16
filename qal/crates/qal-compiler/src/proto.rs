@@ -253,7 +253,7 @@ impl Get for Reader<'_> {
 
     fn state(&mut self) -> R<StoreState> {
         let n = self.count()?;
-        let mut entries: Vec<StateEntry> = Vec::with_capacity(n);
+        let mut entries: Vec<StateEntry> = Vec::new();
         for _ in 0..n {
             let name = self.str()?;
             if entries.last().is_some_and(|p| p.name >= name) {
@@ -267,7 +267,7 @@ impl Get for Reader<'_> {
             entries.push(StateEntry { name, hash, kind, canonical, local_names, refs });
         }
         let m = self.count()?;
-        let mut groups: Vec<(Hash, Vec<u8>)> = Vec::with_capacity(m);
+        let mut groups: Vec<(Hash, Vec<u8>)> = Vec::new();
         for _ in 0..m {
             let h = self.hash()?;
             if groups.last().is_some_and(|(p, _)| *p >= h) {
@@ -539,7 +539,7 @@ pub fn encode_texts(xs: &[(String, String)]) -> Vec<u8> {
 pub fn decode_texts(b: &[u8]) -> R<Vec<(String, String)>> {
     let mut r = Reader::new(b);
     let n = r.count()?;
-    let mut out = Vec::with_capacity(n);
+    let mut out = Vec::new();
     for _ in 0..n {
         let name = r.str()?;
         out.push((name, r.str()?));
@@ -602,7 +602,7 @@ fn put_module(w: &mut Writer, m: &CompiledModule) {
 fn get_module(r: &mut Reader) -> R<CompiledModule> {
     let wasm = r.blob()?;
     let n = r.count()?;
-    let mut imports = Vec::with_capacity(n);
+    let mut imports = Vec::new();
     for _ in 0..n {
         let s = r.str()?;
         imports.push(host_name(&s).ok_or_else(|| format!("unknown host function `{s}`"))?);
@@ -611,13 +611,13 @@ fn get_module(r: &mut Reader) -> R<CompiledModule> {
     let n = r.count()?;
     let types = (0..n).map(|_| r.typedef()).collect::<R<Vec<_>>>()?;
     let n = r.count()?;
-    let mut funcs = Vec::with_capacity(n);
+    let mut funcs = Vec::new();
     for _ in 0..n {
         let name = r.str()?;
         let export = r.str()?;
         let is_test = r.bool()?;
         let k = r.count()?;
-        let mut params = Vec::with_capacity(k);
+        let mut params = Vec::new();
         for _ in 0..k {
             let n = r.str()?;
             params.push((n, r.ty()?));
@@ -627,13 +627,13 @@ fn get_module(r: &mut Reader) -> R<CompiledModule> {
         let req = r.exprs()?;
         let ens = r.exprs()?;
         let k = r.count()?;
-        let mut sites = Vec::with_capacity(k);
+        let mut sites = Vec::new();
         for _ in 0..k {
             let path = r.str()?;
             let label = r.str()?;
             let contract = if r.bool()? { Some(r.usize()?) } else { None };
             let j = r.count()?;
-            let mut values = Vec::with_capacity(j);
+            let mut values = Vec::new();
             for _ in 0..j {
                 let n = r.str()?;
                 values.push((n, r.ty()?));
@@ -731,7 +731,7 @@ pub fn decode_prepared(b: &[u8]) -> R<Prepared> {
     let mut r = Reader::new(b);
     let typed = r.blob()?;
     let n = r.count()?;
-    let mut canons = Vec::with_capacity(n);
+    let mut canons = Vec::new();
     for _ in 0..n {
         let name = r.str()?;
         let kind = kind_of(r.byte()?)?;
@@ -747,13 +747,13 @@ pub fn decode_prepared(b: &[u8]) -> R<Prepared> {
         canons.push(PreparedCanon { name, kind, hash, canonical, signature, effects, local_names, refs, deps, group });
     }
     let m = r.count()?;
-    let mut groups = Vec::with_capacity(m);
+    let mut groups = Vec::new();
     for _ in 0..m {
         let h = r.hash()?;
         groups.push((h, r.blob()?));
     }
     let k = r.count()?;
-    let mut sig_old = Vec::with_capacity(k);
+    let mut sig_old = Vec::new();
     for _ in 0..k {
         let n = r.str()?;
         let kind = kind_of(r.byte()?)?;

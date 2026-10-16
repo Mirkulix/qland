@@ -1003,7 +1003,7 @@ impl<'b> Reader<'b> {
             E_RECORD => {
                 let n = self.str()?;
                 let k = self.count()?;
-                let mut fs = Vec::with_capacity(k);
+                let mut fs = Vec::new();
                 for _ in 0..k {
                     let f = self.str()?;
                     fs.push((f, self.expr()?));
@@ -1017,7 +1017,7 @@ impl<'b> Reader<'b> {
             E_MATCH => {
                 let s = self.expr()?;
                 let k = self.count()?;
-                let mut arms = Vec::with_capacity(k);
+                let mut arms = Vec::new();
                 for _ in 0..k {
                     let pat = self.pat()?;
                     let guard = if self.bool()? { Some(self.expr()?) } else { None };
@@ -1028,7 +1028,7 @@ impl<'b> Reader<'b> {
             E_SEQ => Expr::Seq(self.exprs()?),
             E_LAMBDA => {
                 let k = self.count()?;
-                let mut ps = Vec::with_capacity(k);
+                let mut ps = Vec::new();
                 for _ in 0..k {
                     let n = self.str()?;
                     ps.push((n, self.opt_ty()?));
@@ -1067,7 +1067,7 @@ impl<'b> Reader<'b> {
             P_RECORD => {
                 let n = self.str()?;
                 let k = self.count()?;
-                let mut fs = Vec::with_capacity(k);
+                let mut fs = Vec::new();
                 for _ in 0..k {
                     let f = self.str()?;
                     fs.push((f, self.pat()?));
@@ -1082,7 +1082,7 @@ impl<'b> Reader<'b> {
         let name = self.str()?;
         let tparams = self.strs()?;
         let k = self.count()?;
-        let mut params = Vec::with_capacity(k);
+        let mut params = Vec::new();
         for _ in 0..k {
             let n = self.str()?;
             params.push(Param { name: n, ty: self.ty()? });
@@ -1168,7 +1168,7 @@ impl<'b> Reader<'b> {
             }
             K_RECORD => {
                 let k = self.count()?;
-                let mut fs = Vec::with_capacity(k);
+                let mut fs = Vec::new();
                 for _ in 0..k {
                     let i = self.u32()?;
                     fs.push((i, self.texpr()?));
@@ -1182,7 +1182,7 @@ impl<'b> Reader<'b> {
             K_MATCH => {
                 let s = self.texpr()?;
                 let k = self.count()?;
-                let mut arms = Vec::with_capacity(k);
+                let mut arms = Vec::new();
                 for _ in 0..k {
                     let pat = self.tpat()?;
                     let guard = if self.bool()? { Some(self.texpr()?) } else { None };
@@ -1228,7 +1228,7 @@ impl<'b> Reader<'b> {
             }
             P_RECORD => {
                 let k = self.count()?;
-                let mut fs = Vec::with_capacity(k);
+                let mut fs = Vec::new();
                 for _ in 0..k {
                     let i = self.u32()?;
                     fs.push((i, self.tpat()?));
@@ -1258,7 +1258,7 @@ impl<'b> Reader<'b> {
         let body = match self.byte()? {
             0 => {
                 let k = self.count()?;
-                let mut fs = Vec::with_capacity(k);
+                let mut fs = Vec::new();
                 for _ in 0..k {
                     let f = self.str()?;
                     fs.push((f, self.ty()?));
@@ -1267,7 +1267,7 @@ impl<'b> Reader<'b> {
             }
             1 => {
                 let k = self.count()?;
-                let mut vs = Vec::with_capacity(k);
+                let mut vs = Vec::new();
                 for _ in 0..k {
                     let name = self.str()?;
                     vs.push(Variant { name, fields: self.types()? });
@@ -1331,7 +1331,7 @@ pub fn decode_here(bytes: &[u8]) -> Result<TProgram, String> {
     let n = r.count()?;
     let fns = (0..n).map(|_| r.tfn()).collect::<R<Vec<_>>>()?;
     let n = r.count()?;
-    let mut tests = Vec::with_capacity(n);
+    let mut tests = Vec::new();
     for _ in 0..n {
         let name = r.str()?;
         let locals = r.types()?;
