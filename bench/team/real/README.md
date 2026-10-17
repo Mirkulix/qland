@@ -53,6 +53,5 @@ The controller writes no QAL body and does not measure by estimate.
 ## Known limits of the setup (be honest in the report)
 
 - Roles are guard rails: all agents run as the same OS user and could read each other's directories and the key files; the prompts forbid it.
-- The text of review comments is stored and signed but no tool returns it (notices carry the verdict and a comment count): authors learn of
-  defects through the verdict, the board and the verifier's failing tests. The prompts say so. Count it as a finding in the discussion.
+- Review comment text is readable through `qal_change show` (notices carry only the verdict and a comment count); the prompts say so.
 - `qal_whoami {wait_s}` waits are not counted against the 150-call cap (separate cap of 120 waits per agent).
