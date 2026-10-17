@@ -169,6 +169,30 @@ struct Interface {
     new_names: BTreeMap<String, String>,
 }
 
+/// A merge or rebase says a name's definition `hash` is the same text as one of the `alts` (hash,
+/// names its references were written against): decided against `defs` at the end.
+struct SameText {
+    seq: i64,
+    name: String,
+    hash: String,
+    names: BTreeMap<String, String>,
+    alts: Vec<(String, BTreeMap<String, String>)>,
+    why: &'static str,
+}
+
+/// The names a row's references are written against (hash -> name).
+fn ref_names(rows: &Rows, row: &NameRow) -> BTreeMap<String, String> {
+    row.refs.iter().filter_map(|r| rows.get(r).map(|x| (x.hash.clone(), r.clone()))).collect()
+}
+
+/// Claims that `row` (in `rows`) reads like one of `alts` (row, rows), unless a hash is equal.
+fn claim_same(st: &mut State, seq: i64, name: &str, (rows, row): (&Rows, &NameRow), alts: &[(&Rows, &NameRow)], why: &'static str) {
+    if alts.iter().any(|(_, a)| a.hash == row.hash) {
+        return;
+    }
+    st.same_text.push(SameText { seq, name: name.into(), hash: row.hash.clone(), names: ref_names(rows, row), alts: alts.iter().map(|(r, a)| (a.hash.clone(), ref_names(r, a))).collect(), why });
+}
+
 /// The replayed state.
 struct State {
     members: BTreeMap<String, Known>,
@@ -199,6 +223,11 @@ struct State {
     interfaces: Vec<Interface>,
     /// (seq, hash) of what verifiers defined: must be tests (checked against `defs` at the end).
     verifier_defs: Vec<(i64, String)>,
+    /// What `main` changed, record by record: (seq, name, action). A rebase's conflict marks
+    /// follow from it (the signed twin of the unsigned `history` table).
+    main_log: Vec<(i64, String, String)>,
+    /// Claims that two stored definitions read the same (merge and rebase content rules).
+    same_text: Vec<SameText>,
     /// Every hash a record names.
     hashes: BTreeSet<String>,
     /// From the genesis record.
@@ -277,6 +306,8 @@ pub fn verify(conn: &Connection, trust: Option<&Trust>, from: i64, head: Option<
         first_adder: BTreeMap::new(),
         interfaces: Vec::new(),
         verifier_defs: Vec::new(),
+        main_log: Vec::new(),
+        same_text: Vec::new(),
         hashes: BTreeSet::new(),
         owner: String::new(),
         team_allow: None,
@@ -563,6 +594,9 @@ fn after_signature(st: &mut State, p: &Parsed) -> Result<(), Bad> {
                     }
                     _ => return Err(chain(format!("record {seq}: the entry of `{}` has no refs or local names", e.name))),
                 }
+            }
+            if space == "main" {
+                st.main_log.extend(entries.iter().map(|e| (seq, e.name.clone(), e.action.clone())));
             }
             if !entries.is_empty() {
                 st.set(&space, rows);
@@ -863,6 +897,23 @@ fn final_state(conn: &Connection, st: &State) -> Result<(), Bad> {
             }
         }
     }
+    // A merge or rebase moved only text its change set (or main) had (review I1, I2).
+    if !st.same_text.is_empty() {
+        let snap = Snapshot::load(conn, &Space::Main).map_err(db)?;
+        for c in &st.same_text {
+            let mine = decode_named(&snap, conn, &c.hash, &c.name, &c.names)?;
+            let mut same = false;
+            for (h, names) in &c.alts {
+                if decode_named(&snap, conn, h, &c.name, names)? == mine {
+                    same = true;
+                    break;
+                }
+            }
+            if !same {
+                return Err(unauthorized(format!("record {}: {} `{}`: its definition #{} is not the text it had", c.seq, c.why, c.name, c.hash)));
+            }
+        }
+    }
     // Verifiers write only tests (§8), decided by the kind of what their records defined.
     for (seq, h) in &st.verifier_defs {
         let kind: Option<String> = conn.query_row("SELECT kind FROM defs WHERE hash = ?1", params![h], |r| r.get(0)).optional().map_err(sqlerr)?;
@@ -908,6 +959,134 @@ fn apply_entries(st: &mut State, seq: i64, space: &str, entries: &[Entry]) -> Re
     }
     if !entries.is_empty() {
         st.set(space, rows);
+    }
+    Ok(())
+}
+
+/// A replayed merge (not a fast-forward) did what replaying the change set `c` onto main does and
+/// nothing else (review I1): the names it wrote or removed are the change set's (its delta, the
+/// users that follow its renames, the names it removed), with its text; every name of its delta is
+/// in main afterwards, every name it removed is gone; main's other changes are relinks of users
+/// (transitively) of those names, with the text they had.
+fn bind_replay(st: &mut State, seq: i64, c: &str, before: &Rows, entries: &[Entry]) -> Result<(), Bad> {
+    let Some(meta) = st.meta.get(c).cloned() else { return Ok(()) };
+    let (crows, after) = (st.rows(c), st.rows("main"));
+    let bad = |m: String| unauthorized(format!("record {seq} merges change set {c}: {m}"));
+    let with_hash = |origins: &[&str]| -> BTreeSet<String> { meta.rows.iter().filter(|(_, r)| r.hash.is_some() && origins.contains(&r.origin.as_str())).map(|(n, _)| n.clone()).collect() };
+    let delta = with_hash(&["edited", "added", "renamed"]);
+    let followers = with_hash(&["relinked"]);
+    let removed: BTreeSet<String> = meta.rows.iter().filter(|(_, r)| r.hash.is_none()).map(|(n, _)| n.clone()).collect();
+    let mut seeds: BTreeSet<String> = BTreeSet::new();
+    let mut carried: Vec<&Entry> = Vec::new();
+    for e in entries {
+        if matches!(e.action.as_str(), "relinked" | "updated") {
+            carried.push(e);
+            continue;
+        }
+        if e.new.is_none() {
+            if !removed.contains(&e.name) {
+                return Err(bad(format!("it removes `{}`, which the change set did not remove", e.name)));
+            }
+        } else if !delta.contains(&e.name) && !followers.contains(&e.name) {
+            return Err(bad(format!("it writes `{}`, which is not in the change set's delta", e.name)));
+        }
+        seeds.insert(e.name.clone());
+    }
+    for n in &delta {
+        let (Some(mine), Some(now)) = (crows.get(n), after.get(n)) else { return Err(bad(format!("`{n}` of the change set is not in main afterwards"))) };
+        claim_same(st, seq, n, (&after, now), &[(&crows, mine)], "a merge changed the text of");
+    }
+    if let Some(n) = removed.iter().find(|n| after.contains_key(*n)) {
+        return Err(bad(format!("`{n}`, which the change set removed, is still in main")));
+    }
+    for e in entries.iter().filter(|e| matches!(e.action.as_str(), "added" | "replaced") && followers.contains(&e.name)) {
+        if let (Some(mine), Some(now)) = (crows.get(&e.name), after.get(&e.name)) {
+            claim_same(st, seq, &e.name, (&after, now), &[(&crows, mine)], "a merge changed the text of");
+        }
+    }
+    // Main's other names it changed: users, one after the other, of what the merge wrote.
+    let mut pending: Vec<&Entry> = carried;
+    loop {
+        let (ok, rest): (Vec<&Entry>, Vec<&Entry>) = pending.into_iter().partition(|e| after.get(&e.name).is_some_and(|r| r.refs.iter().any(|x| seeds.contains(x))));
+        if ok.is_empty() {
+            pending = rest;
+            break;
+        }
+        for e in ok {
+            seeds.insert(e.name.clone());
+            if let (Some(old), Some(now)) = (before.get(&e.name), after.get(&e.name)) {
+                claim_same(st, seq, &e.name, (&after, now), &[(before, old)], "a merge changed the text of the user");
+            }
+        }
+        pending = rest;
+    }
+    if let Some(e) = pending.first() {
+        return Err(bad(format!("it changes `{}`, which is no user of the names it merges", e.name)));
+    }
+    Ok(())
+}
+
+/// A rebase did what rebasing the change set `space` onto main does and nothing else (review I2):
+/// every name of its delta stays in it with its text, those it removed stay removed, every other
+/// name it changes is main's row, or reads as main's or the change set's version (a relink), and
+/// its conflict marks include the ones the classification of §7.2 demands.
+fn bind_rebase(st: &mut State, seq: i64, space: &str, pre: &Rows, entries: &[Entry], marks: &BTreeMap<String, String>) -> Result<(), Bad> {
+    let Some(meta) = st.meta.get(space).cloned() else { return Ok(()) };
+    let (main, after) = (st.rows("main"), st.rows(space));
+    let bad = |m: String| unauthorized(format!("record {seq} rebases change set {space}: {m}"));
+    let edited = |o: &str| matches!(o, "edited" | "added" | "renamed");
+    let delta: BTreeSet<&str> = meta.rows.iter().filter(|(_, r)| r.hash.is_some() && edited(&r.origin)).map(|(n, _)| n.as_str()).collect();
+    let removed: BTreeSet<&str> = meta.rows.iter().filter(|(_, r)| r.hash.is_none()).map(|(n, _)| n.as_str()).collect();
+    for n in &delta {
+        let (Some(mine), Some(now)) = (pre.get(*n), after.get(*n)) else { return Err(bad(format!("it drops `{n}`, which the change set wrote"))) };
+        claim_same(st, seq, n, (&after, now), &[(pre, mine)], "a rebase changed the text of");
+    }
+    if let Some(n) = removed.iter().find(|n| after.contains_key(**n)) {
+        return Err(bad(format!("it brings back `{n}`, which the change set removed")));
+    }
+    for e in entries {
+        let n = e.name.as_str();
+        let Some(now) = after.get(n) else {
+            if main.contains_key(n) || delta.contains(n) {
+                return Err(bad(format!("it drops `{n}`")));
+            }
+            continue;
+        };
+        if main.get(n) == Some(now) || delta.contains(n) {
+            continue;
+        }
+        let alts: Vec<(&Rows, &NameRow)> = main.get(n).map(|r| (&main, r)).into_iter().chain(pre.get(n).map(|r| (pre, r))).collect();
+        if alts.is_empty() {
+            return Err(bad(format!("it introduces `{n}`, which neither main nor the change set has")));
+        }
+        claim_same(st, seq, n, (&after, now), &alts, "a rebase changed the text of");
+    }
+    // The conflict marks the classification demands (§7.2): a name of the delta (or a user that
+    // follows a removed name) that main changed since the base, differently from the change set.
+    let base_seq = meta.head.as_ref().map_or(0, |h| h.base_seq);
+    let main_wrote = |n: &str| st.main_log.iter().any(|(s, x, a)| *s > base_seq && x == n && matches!(a.as_str(), "added" | "replaced" | "renamed" | "deleted"));
+    let mut required: BTreeMap<String, String> = BTreeMap::new();
+    for (n, r) in &meta.rows {
+        let follower = r.origin == "relinked" && r.hash.is_some() && main.get(n).is_some_and(|m| m.refs.iter().any(|x| removed.contains(x.as_str())));
+        if !edited(&r.origin) && !follower {
+            continue;
+        }
+        let theirs = main.get(n).map(|m| m.hash.clone());
+        if (r.hash == theirs && !follower) || theirs == r.base_hash || !main_wrote(n) {
+            continue;
+        }
+        required.insert(n.clone(), super::merge::conflict_mark(r.base_hash.as_deref(), theirs.as_deref()));
+    }
+    for (n, r) in &meta.rows {
+        let converged = edited(&r.origin) && r.hash == main.get(n).map(|m| m.hash.clone());
+        if let (Some(mark), false, true) = (&r.conflict, converged, r.hash.is_some() || main.contains_key(n)) {
+            required.entry(n.clone()).or_insert_with(|| mark.clone());
+        }
+    }
+    for (n, mark) in &required {
+        if marks.get(n) != Some(mark) {
+            return Err(bad(format!("it does not mark the conflict on `{n}` as the classification of §7.2 requires")));
+        }
     }
     Ok(())
 }
@@ -1015,7 +1194,12 @@ fn merge_op(st: &mut State, seq: i64, member: &str, args: &Value) -> Result<(), 
         return Err(replay(format!("record {seq} says it is a {} merge, but main {} since the base of change set {c}", kind.unwrap_or("?"), if fast_forward { "had not moved" } else { "had moved" })));
     }
     let entries = entries_of(args, seq)?;
+    let main_before = st.rows("main");
     apply_entries(st, seq, "main", &entries)?;
+    st.main_log.extend(entries.iter().map(|e| (seq, e.name.clone(), e.action.clone())));
+    if !fast_forward {
+        bind_replay(st, seq, &c, &main_before, &entries)?;
+    }
     if fast_forward && st.rows("main") != st.rows(&c) {
         return Err(replay(format!("record {seq}: the fast-forward of change set {c} does not give exactly its names")));
     }
@@ -1038,7 +1222,9 @@ fn rebase_op(st: &mut State, seq: i64, space: &str, args: &Value) -> Result<(), 
     }
     let root_before = st.root(space);
     let entries = entries_of(args, seq)?;
+    let pre = st.rows(space);
     apply_entries(st, seq, space, &entries)?;
+    bind_rebase(st, seq, space, &pre, &entries, &marks)?;
     let changed_root = st.root(space) != root_before;
     let (main, after) = (st.rows("main"), st.rows(space));
     if let Some(m) = st.meta.get_mut(space) {
