@@ -328,12 +328,12 @@ fn plan(tx: &Transaction, signer: &Signer, id: &str) -> Result<Plan, Vec<Diagnos
     if !row.is_live() {
         return Err(one(change::not_live(&row)));
     }
-    if row.status != "submitted" {
-        return Err(one(gate_unmet(id, "the status `submitted` (it is open: its owner submits it with qal_change submit)")));
-    }
     let marks: i64 = tx.query_row("SELECT count(*) FROM change_names WHERE change = ?1 AND conflict IS NOT NULL", params![id], |r| r.get(0)).map_err(sql)?;
     if marks > 0 {
         return Err(one(state(format!("change set {id} has {marks} conflict mark(s) from its rebase")).hint("resolve each marked name by defining it again in the change set (qal_change diff shows them), then submit again")));
+    }
+    if row.status != "submitted" {
+        return Err(one(gate_unmet(id, "the status `submitted` (it is open: its owner submits it with qal_change submit)")));
     }
     let space = Space::Change(id.to_string());
     let c_rows = space_rows(tx, &space)?;
