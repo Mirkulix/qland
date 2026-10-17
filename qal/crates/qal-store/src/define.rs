@@ -443,7 +443,7 @@ pub(crate) fn replay(tx: &Transaction, snap: &Snapshot, input: &Program, removed
         };
         if is_input || differs {
             let old_hash = old.map(|e| e.hash.to_hex()).filter(|_| matches!(status, "replaced" | "relinked"));
-            by_name.insert(&c.name, Defined { name: c.name.clone(), kind: c.kind.as_str(), hash: c.hash.to_hex(), status, old_hash });
+            by_name.insert(&c.name, Defined { name: c.name.clone(), kind: c.kind.as_str(), hash: c.hash.to_hex(), status, old_hash, resolved: false });
         }
         rows.insert(c.name.clone(), row);
     }
@@ -637,8 +637,13 @@ fn write(tx: &Transaction, snap: &Snapshot, input: &Program, hashed: &Hashed, ag
             continue;
         }
         let old_hash = old.map(|e| e.hash.to_hex());
+        // An input that restates a conflict-marked name of its change set resolves the mark even
+        // when nothing else changes (the owner keeps its own version).
+        let resolved = is_input && status == "unchanged" && marked(tx, space, &c.name)?;
         if !dry {
-            if status != "unchanged" || old.is_some_and(|e| e.locals != c.local_names || e.refs != refs) {
+            if resolved {
+                crate::space::put(tx, space, &c.name, &c.hash.to_hex(), &json(&c.local_names), &json(&refs), true, now)?;
+            } else if status != "unchanged" || old.is_some_and(|e| e.locals != c.local_names || e.refs != refs) {
                 // An input whose hash did not change (only its local names or refs) counts like a
                 // relink in a change set: verify replays it from an `updated` entry.
                 crate::space::put(tx, space, &c.name, &c.hash.to_hex(), &json(&c.local_names), &json(&refs), is_input && status != "unchanged", now)?;
@@ -651,7 +656,7 @@ fn write(tx: &Transaction, snap: &Snapshot, input: &Program, hashed: &Hashed, ag
                 .map_err(sql)?;
             }
         }
-        results.insert(&c.name, Defined { name: c.name.clone(), kind: c.kind.as_str(), hash: c.hash.to_hex(), status, old_hash: if matches!(status, "replaced" | "relinked") { old_hash } else { None } });
+        results.insert(&c.name, Defined { name: c.name.clone(), kind: c.kind.as_str(), hash: c.hash.to_hex(), status, old_hash: if matches!(status, "replaced" | "relinked") { old_hash } else { None }, resolved });
     }
     let mut out = Vec::new();
     for d in &input.defs {
@@ -663,6 +668,13 @@ fn write(tx: &Transaction, snap: &Snapshot, input: &Program, hashed: &Hashed, ag
     relinked.sort_by(|a, b| a.name.cmp(&b.name));
     out.extend(relinked);
     Ok(out)
+}
+
+/// True if `name` has a conflict mark in the change set `space` (never on `main`).
+fn marked(tx: &Transaction, space: &Space, name: &str) -> Result<bool, Vec<Diagnostic>> {
+    let Space::Change(c) = space else { return Ok(false) };
+    let n: i64 = tx.query_row("SELECT count(*) FROM change_names WHERE change = ?1 AND name = ?2 AND conflict IS NOT NULL", params![c, name], |r| r.get(0)).map_err(sql)?;
+    Ok(n > 0)
 }
 
 /// Stores the groups, definitions and dependencies of a hashed program (those already stored stay).

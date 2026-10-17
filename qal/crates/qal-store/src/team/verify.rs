@@ -583,6 +583,18 @@ fn after_signature(st: &mut State, p: &Parsed) -> Result<(), Bad> {
                         (None, _) => m.remove(&e.name, "edited"),
                     }
                 }
+                // A define that kept a marked name's own version cleared its conflict mark (§7.3).
+                if op == "define" {
+                    if let Some(v) = args.get("resolved") {
+                        for n in strings(Some(v)).ok_or_else(|| chain(format!("record {seq} has an invalid `resolved` list")))? {
+                            let row = m.rows.get(&n).filter(|r| r.conflict.is_some()).cloned();
+                            let Some((h, r)) = row.and_then(|r| Some((r.hash.clone()?, r))) else {
+                                return Err(replay(format!("record {seq} resolves `{n}`, which has no conflict mark in change set {space}")));
+                            };
+                            m.put(&n, &h, r.locals, r.refs, true);
+                        }
+                    }
+                }
                 if let (Some(h), Some(c)) = (m.head.as_mut(), st.changes.get(&space)) {
                     h.status = c.status.clone();
                 }

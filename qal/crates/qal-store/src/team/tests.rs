@@ -1297,6 +1297,39 @@ fn a_rebase_marks_conflicts_and_their_resolution_merges() {
     ok_verify(&mut s);
 }
 
+/// Review I3: a conflict mark is cleared by defining the name again with the change set's own
+/// text (keep ours): the hash does not change, the define still signs the resolution, `qal verify`
+/// replays it, and the merge goes through.
+#[test]
+fn a_conflict_mark_is_cleared_by_keeping_the_own_version() {
+    let (mut s, keys, _owner, arch, _imp, ver, rev) = seeded();
+    let (a, b) = two_from_one_base(&mut s, &arch);
+    write_in(&mut s, &keys, &arch, &b, "fn mine() -> Int = 1").unwrap();
+    write_in(&mut s, &keys, &arch, &a, "fn spare() -> Int = 5").unwrap();
+    pass_gate(&mut s, &arch, &ver, &rev, &a);
+    merge_as(&mut s, &keys, &rev, &a).unwrap();
+    write_in(&mut s, &keys, &arch, &b, "fn spare() -> Int = 6").unwrap();
+    let ours = change_hash(&s, &b, "spare");
+    let r = s.rebase(&again(&keys, &s, &arch), &b, None).unwrap();
+    assert_eq!(r["conflicts"][0]["name"], "spare", "{r}");
+    let marks = |s: &Store| -> i64 { raw(s).query_row("SELECT count(*) FROM change_names WHERE change = ?1 AND conflict IS NOT NULL", [&b], |r| r.get(0)).unwrap() };
+    assert_eq!(marks(&s), 1);
+    ok_verify(&mut s);
+    // The same text again: the hash stays, the mark goes, and a signed record says so.
+    let records = count(&s, "records");
+    let d = write_in(&mut s, &keys, &arch, &b, "fn spare() -> Int = 6").unwrap();
+    assert_eq!((d[0].status, d[0].resolved), ("unchanged", true), "{d:?}");
+    assert_eq!(change_hash(&s, &b, "spare"), ours);
+    assert_eq!(marks(&s), 0);
+    assert_eq!(count(&s, "records"), records + 1);
+    ok_verify(&mut s);
+    pass_gate(&mut s, &arch, &ver, &rev, &b);
+    merge_as(&mut s, &keys, &rev, &b).unwrap();
+    s.set_space(crate::Space::Main);
+    assert!(s.view(&["spare".into()]).unwrap()[0].text.contains('6'));
+    ok_verify(&mut s);
+}
+
 /// §7.3: a rebase whose replay does not check changes nothing and names what to adapt.
 #[test]
 fn a_rebase_that_does_not_check_changes_nothing() {
