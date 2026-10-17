@@ -1,3 +1,5 @@
+> **Superseded:** these numbers come from a script with hardcoded QAL source and estimated tokens. See `bench/team/real/report.md` for the real agent-team run.
+
 # QAL Phase 4 Benchmark Report: Team vs. Solo
 
 **Date:** 2026-10-16  
