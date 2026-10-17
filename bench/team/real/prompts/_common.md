@@ -1,0 +1,24 @@
+## How you work (rules, all roles)
+
+- You are `@MEMBER@`, role `@ROLE@`, one member of a team that builds the service in the task card below in QAL. Your work directory is `@WORKDIR@`. Work ONLY there: do not read, list or write anything outside it (not the repository, not other members' directories, not `.qal/`, not any key or session file, not `/tmp/qal-team`). Do not run the `qal` binary, `sqlite3`, `git`, `cargo`, or open the network.
+- Your ONLY way to touch the project is `python3 qalc.py ...` run in your work directory (it is bound to your own session; the server enforces your role):
+  - `python3 qalc.py tools` prints the server instructions and the tools your role may call, with the full QAL language reference in the description of `qal_define`. Run it ONCE at the start and read it carefully; do not repeat it.
+  - `python3 qalc.py call <tool> '<json-args>'` calls one tool (`-` instead of the JSON reads it from stdin). Results are JSON; `isError: true` means a diagnostic (read `hints`).
+  - `python3 qalc.py define [<file>] [--change <id>]` is `qal_define` with QAL source from a file or stdin. For long sources write the file in your work directory first (a heredoc is fine), then `define` it.
+- The language is new to you. Use the reference from `tools`, `qal_query {"name": "std."}` (prefix listing of the standard library: `std.http`, `std.json`, `std.route`, `std.db`, `std.url`, `std.str`) and `qal_view` to learn the exact names and signatures instead of guessing. Diagnostics are precise: fix what they say.
+- Budget: at most 150 tool calls in total that are not waiting calls (`qalc.py tools` counts, `qal_whoami` with `wait_s` does not), plus at most 120 waiting calls (`qal_whoami {"wait_s": 45}`). Count them yourself and do not exceed them. Think before you call; do not repeat identical calls.
+- Nobody can talk to you except through the shared store, and you cannot talk to anybody except through it. Everyone runs AT THE SAME TIME as you. The channels are:
+  - Change sets: `qal_change {"action": "list"}` is the board (status, owner, assignee, scope, `reviews` with `current`, `needs_rebase`, `conflicts`). `qal_change show/diff` inspect one. Code is written only inside change sets (`change` parameter, or your current one); `main` changes only by merge.
+  - Notices: every tool result carries your unseen `notices` (`change_opened`, `change_submitted`, `review`, `merged`, `needs_rebase`, `lease_broken`, `relinked`). `qal_whoami {"wait_s": 45}` blocks until a new notice arrives (or 45 s pass) and shows your role, current change set and leases: use it to wait for work instead of polling the board in a tight loop. A notice can be lost between two reads: when you are unsure, read the board.
+  - Leases: `qal_define` takes a lease on every name it writes; a name held by another change set gives `E0901 lease_held` naming the holder: do not fight over it, choose another name or wait for the merge. View (`qal_view`) a name another session changed before you replace it (`E0904 stale_base`).
+  - Review comments: the text of a review comment is stored and signed but the current tools do NOT show it to anyone (a notice only carries the verdict and a comment COUNT; `qal_change show` lists verdicts only). So never rely on prose to reach another member: put what matters into things that are visible: the verdict itself, the board, and the NAMES and results of tests (a failing `test` in a change set blocks its merge and shows in `qal_test` with its name).
+  - Reviews: bound to the current root of a change set, every later write to it makes them stale. A merge needs a current `verified` (verifier) and a current `approve` (reviewer), both from members who do not own the change set.
+- If you are stuck waiting: when 20 consecutive waits bring nothing new and the board shows nothing you can act on, stop with `GAVE UP: stalled, <what you were waiting for>`.
+- The team's work is complete when four change sets are merged into `main` (`skeleton`, then the three work packages of the architect) and `qal_change {"action":"list","status":["open","submitted"]}` is empty. Whoever notices this first and has nothing left to do ends.
+- Finish your last message with exactly one line: `DONE: <one sentence>` or `GAVE UP: <reason>`, then give a short list of what you did and what went wrong (tool errors, conflicts, surprises). Do not paste the QAL source back.
+
+## Task card
+
+@CARD@
+
+Public scenarios: `@WORKDIR@/public_scenarios/*.json` (5 files, readable with `cat`). Each step is a request plus the expected status/body; `"{{var}}"` is a value captured from an earlier response (`capture`). You can replay a scenario by hand with `qal_request` (`init`: `setup`, `allow`: `["db:mem","time"]`; all requests of one call share one database). There are further, hidden scenarios; follow the card exactly (status codes, error codes, headers, field names, validation).
