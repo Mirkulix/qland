@@ -1,0 +1,251 @@
+# AST types and basic helpers for QAL self-hosting compiler (spec §7: qc_ast)
+
+type QcType =
+  | QcTInt
+  | QcTFloat
+  | QcTBool
+  | QcTUnit
+  | QcTStr
+  | QcTBytes
+  | QcTNamed(Str)
+  | QcTParam(Str)
+  | QcTList(QcType)
+  | QcTOption(QcType)
+  | QcTResult(QcType, QcType)
+  | QcTMap(QcType, QcType)
+  | QcTApp(Str, List[QcType])
+  | QcTFn(List[QcType], QcType, List[Str])
+  | QcTVar(Int)
+
+type QcBinOp =
+  | QcOpAdd
+  | QcOpSub
+  | QcOpMul
+  | QcOpDiv
+  | QcOpRem
+  | QcOpConcat
+  | QcOpEq
+  | QcOpNe
+  | QcOpLt
+  | QcOpLe
+  | QcOpGt
+  | QcOpGe
+  | QcOpAnd
+  | QcOpOr
+
+type QcUnOp =
+  | QcUnNeg
+  | QcUnNot
+
+type QcFieldPat = {
+  name: Str,
+  pat: QcPat
+}
+
+type QcPat =
+  | QcPWild
+  | QcPBind(Str)
+  | QcPInt(Int)
+  | QcPStr(Str)
+  | QcPBool(Bool)
+  | QcPUnit
+  | QcPVariant(Str, List[QcPat])
+  | QcPRecord(Str, List[QcFieldPat])
+
+type QcFieldExpr = {
+  name: Str,
+  expr: QcExpr
+}
+
+type QcLambdaParam = {
+  name: Str,
+  ty: Option[QcType]
+}
+
+type QcArm = {
+  pat: QcPat,
+  guard: Option[QcExpr],
+  body: QcExpr
+}
+
+type QcExpr =
+  | QcEInt(Int)
+  | QcEFloat(Float)
+  | QcEBool(Bool)
+  | QcEStr(Str)
+  | QcEUnit
+  | QcEVar(Str)
+  | QcEBin(QcBinOp, QcExpr, QcExpr)
+  | QcEUn(QcUnOp, QcExpr)
+  | QcEIf(QcExpr, QcExpr, QcExpr)
+  | QcELet(Str, Option[QcType], QcExpr, QcExpr)
+  | QcECall(Str, List[QcExpr])
+  | QcEList(List[QcExpr])
+  | QcERecord(Str, List[QcFieldExpr])
+  | QcEField(QcExpr, Str)
+  | QcEMatch(QcExpr, List[QcArm])
+  | QcESeq(List[QcExpr])
+  | QcELambda(List[QcLambdaParam], QcExpr)
+
+type QcParam = {
+  name: Str,
+  ty: QcType
+}
+
+type QcFnDef = {
+  name: Str,
+  tparams: List[Str],
+  params: List[QcParam],
+  ret: QcType,
+  effects: List[Str],
+  reqs: List[QcExpr],
+  enss: List[QcExpr],
+  body: QcExpr
+}
+
+type QcTestDef = {
+  name: Str,
+  body: QcExpr
+}
+
+type QcVariant = {
+  name: Str,
+  fields: List[QcType]
+}
+
+type QcFieldType = {
+  name: Str,
+  ty: QcType
+}
+
+type QcTypeBody =
+  | QcBodyRecord(List[QcFieldType])
+  | QcBodyEnum(List[QcVariant])
+
+type QcTypeDef = {
+  name: Str,
+  params: List[Str],
+  body: QcTypeBody
+}
+
+type QcDef =
+  | QcDefType(QcTypeDef)
+  | QcDefFn(QcFnDef)
+  | QcDefTest(QcTestDef)
+
+type QcProgram = {
+  defs: List[QcDef]
+}
+
+type QcTok =
+  | QcTokIdent(Str)
+  | QcTokInt(Int)
+  | QcTokFloat(Float)
+  | QcTokStr(Str)
+  | QcTokSym(Str)
+  | QcTokEof
+
+type QcToken = {
+  tok: QcTok,
+  line: Int,
+  col: Int
+}
+
+type QcDiag = {
+  code: Str,
+  kind: Str,
+  def: Str,
+  path: Str,
+  message: Str,
+  expected: Option[Str],
+  found: Option[Str],
+  hints: List[Str],
+  dependents: List[Str],
+  counterexample: Option[Str]
+}
+
+fn qc_binop_symbol(op: QcBinOp) -> Str =
+  match op {
+    QcOpAdd => "+",
+    QcOpSub => "-",
+    QcOpMul => "*",
+    QcOpDiv => "/",
+    QcOpRem => "%",
+    QcOpConcat => "++",
+    QcOpEq => "==",
+    QcOpNe => "!=",
+    QcOpLt => "<",
+    QcOpLe => "<=",
+    QcOpGt => ">",
+    QcOpGe => ">=",
+    QcOpAnd => "&&",
+    QcOpOr => "||"
+  }
+
+fn qc_binop_prec(op: QcBinOp) -> Int =
+  match op {
+    QcOpOr => 1,
+    QcOpAnd => 2,
+    QcOpEq => 3,
+    QcOpNe => 3,
+    QcOpLt => 3,
+    QcOpLe => 3,
+    QcOpGt => 3,
+    QcOpGe => 3,
+    QcOpAdd => 4,
+    QcOpSub => 4,
+    QcOpConcat => 4,
+    QcOpMul => 5,
+    QcOpDiv => 5,
+    QcOpRem => 5
+  }
+
+fn qc_binop_is_comparison(op: QcBinOp) -> Bool =
+  match op {
+    QcOpEq => true,
+    QcOpNe => true,
+    QcOpLt => true,
+    QcOpLe => true,
+    QcOpGt => true,
+    QcOpGe => true,
+    _ => false
+  }
+
+fn qc_unop_symbol(op: QcUnOp) -> Str =
+  match op {
+    QcUnNeg => "-",
+    QcUnNot => "!"
+  }
+
+fn qc_is_upper_char(c: Int) -> Bool = c >= 65 && c <= 90
+
+fn qc_last_segment_rec(b: Bytes, i: Int, n: Int, last_dot: Int) -> Str =
+  if i >= n then
+    (if last_dot < 0 then match bytes_to_str(b) { Some(s) => s, None => "" }
+     else match bytes_to_str(bytes_slice(b, last_dot + 1, n)) { Some(s) => s, None => "" })
+  else if bytes_at(b, i) == 46 then qc_last_segment_rec(b, i + 1, n, i)
+  else qc_last_segment_rec(b, i + 1, n, last_dot)
+
+fn qc_last_segment(s: Str) -> Str =
+  let b = to_bytes(s) in
+  qc_last_segment_rec(b, 0, bytes_len(b), -1)
+
+fn qc_is_upper(name: Str) -> Bool =
+  let seg = qc_last_segment(name) in
+  if len(seg) == 0 then false
+  else qc_is_upper_char(bytes_at(to_bytes(seg), 0))
+
+fn qc_def_name(d: QcDef) -> Str =
+  match d {
+    QcDefType(t) => t.name,
+    QcDefFn(f) => f.name,
+    QcDefTest(t) => t.name
+  }
+
+test qc_ast_test =
+  qc_binop_symbol(QcOpAdd) == "+" &&
+  qc_binop_prec(QcOpMul) == 5 &&
+  qc_binop_is_comparison(QcOpEq) == true &&
+  qc_is_upper("Dot") == true &&
+  qc_is_upper("std.json.Str") == true &&
+  qc_is_upper("area") == false

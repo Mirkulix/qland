@@ -109,9 +109,40 @@ fn emit(reply: Reply) -> ExitCode {
     ExitCode::from(reply.code)
 }
 
+fn extract_compiler_arg(args: &[String]) -> Result<(Option<String>, Vec<String>), String> {
+    let mut compiler = None;
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < args.len() {
+        if args[i] == "--compiler" {
+            if i + 1 >= args.len() {
+                return Err("missing argument to --compiler".into());
+            }
+            compiler = Some(args[i + 1].clone());
+            i += 2;
+        } else if let Some(c) = args[i].strip_prefix("--compiler=") {
+            compiler = Some(c.to_string());
+            i += 1;
+        } else {
+            out.push(args[i].clone());
+            i += 1;
+        }
+    }
+    Ok((compiler, out))
+}
+
 fn main() -> ExitCode {
     // Arguments that are not valid UTF-8 are converted lossily instead of panicking.
-    let args: Vec<String> = std::env::args_os().skip(1).map(|a| a.to_string_lossy().into_owned()).collect();
+    let raw_args: Vec<String> = std::env::args_os().skip(1).map(|a| a.to_string_lossy().into_owned()).collect();
+    let (compiler_opt, args) = match extract_compiler_arg(&raw_args) {
+        Ok(res) => res,
+        Err(e) => return bad_usage(&e),
+    };
+    if let Some(ref c) = compiler_opt {
+        if let Err(e) = qal_compiler::set_backend(c) {
+            return bad_usage(&e);
+        }
+    }
     let Some(cmd) = args.first() else {
         return usage();
     };

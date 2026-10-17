@@ -1,0 +1,4955 @@
+# AST types and basic helpers for QAL self-hosting compiler (spec §7: qc_ast)
+
+type QcType =
+  | QcTInt
+  | QcTFloat
+  | QcTBool
+  | QcTUnit
+  | QcTStr
+  | QcTBytes
+  | QcTNamed(Str)
+  | QcTParam(Str)
+  | QcTList(QcType)
+  | QcTOption(QcType)
+  | QcTResult(QcType, QcType)
+  | QcTMap(QcType, QcType)
+  | QcTApp(Str, List[QcType])
+  | QcTFn(List[QcType], QcType, List[Str])
+  | QcTVar(Int)
+
+type QcBinOp =
+  | QcOpAdd
+  | QcOpSub
+  | QcOpMul
+  | QcOpDiv
+  | QcOpRem
+  | QcOpConcat
+  | QcOpEq
+  | QcOpNe
+  | QcOpLt
+  | QcOpLe
+  | QcOpGt
+  | QcOpGe
+  | QcOpAnd
+  | QcOpOr
+
+type QcUnOp =
+  | QcUnNeg
+  | QcUnNot
+
+type QcFieldPat = {
+  name: Str,
+  pat: QcPat
+}
+
+type QcPat =
+  | QcPWild
+  | QcPBind(Str)
+  | QcPInt(Int)
+  | QcPStr(Str)
+  | QcPBool(Bool)
+  | QcPUnit
+  | QcPVariant(Str, List[QcPat])
+  | QcPRecord(Str, List[QcFieldPat])
+
+type QcFieldExpr = {
+  name: Str,
+  expr: QcExpr
+}
+
+type QcLambdaParam = {
+  name: Str,
+  ty: Option[QcType]
+}
+
+type QcArm = {
+  pat: QcPat,
+  guard: Option[QcExpr],
+  body: QcExpr
+}
+
+type QcExpr =
+  | QcEInt(Int)
+  | QcEFloat(Float)
+  | QcEBool(Bool)
+  | QcEStr(Str)
+  | QcEUnit
+  | QcEVar(Str)
+  | QcEBin(QcBinOp, QcExpr, QcExpr)
+  | QcEUn(QcUnOp, QcExpr)
+  | QcEIf(QcExpr, QcExpr, QcExpr)
+  | QcELet(Str, Option[QcType], QcExpr, QcExpr)
+  | QcECall(Str, List[QcExpr])
+  | QcEList(List[QcExpr])
+  | QcERecord(Str, List[QcFieldExpr])
+  | QcEField(QcExpr, Str)
+  | QcEMatch(QcExpr, List[QcArm])
+  | QcESeq(List[QcExpr])
+  | QcELambda(List[QcLambdaParam], QcExpr)
+
+type QcParam = {
+  name: Str,
+  ty: QcType
+}
+
+type QcFnDef = {
+  name: Str,
+  tparams: List[Str],
+  params: List[QcParam],
+  ret: QcType,
+  effects: List[Str],
+  reqs: List[QcExpr],
+  enss: List[QcExpr],
+  body: QcExpr
+}
+
+type QcTestDef = {
+  name: Str,
+  body: QcExpr
+}
+
+type QcVariant = {
+  name: Str,
+  fields: List[QcType]
+}
+
+type QcFieldType = {
+  name: Str,
+  ty: QcType
+}
+
+type QcTypeBody =
+  | QcBodyRecord(List[QcFieldType])
+  | QcBodyEnum(List[QcVariant])
+
+type QcTypeDef = {
+  name: Str,
+  params: List[Str],
+  body: QcTypeBody
+}
+
+type QcDef =
+  | QcDefType(QcTypeDef)
+  | QcDefFn(QcFnDef)
+  | QcDefTest(QcTestDef)
+
+type QcProgram = {
+  defs: List[QcDef]
+}
+
+type QcTok =
+  | QcTokIdent(Str)
+  | QcTokInt(Int)
+  | QcTokFloat(Float)
+  | QcTokStr(Str)
+  | QcTokSym(Str)
+  | QcTokEof
+
+type QcToken = {
+  tok: QcTok,
+  line: Int,
+  col: Int
+}
+
+type QcDiag = {
+  code: Str,
+  kind: Str,
+  def: Str,
+  path: Str,
+  message: Str,
+  expected: Option[Str],
+  found: Option[Str],
+  hints: List[Str],
+  dependents: List[Str],
+  counterexample: Option[Str]
+}
+
+fn qc_binop_symbol(op: QcBinOp) -> Str =
+  match op {
+    QcOpAdd => "+",
+    QcOpSub => "-",
+    QcOpMul => "*",
+    QcOpDiv => "/",
+    QcOpRem => "%",
+    QcOpConcat => "++",
+    QcOpEq => "==",
+    QcOpNe => "!=",
+    QcOpLt => "<",
+    QcOpLe => "<=",
+    QcOpGt => ">",
+    QcOpGe => ">=",
+    QcOpAnd => "&&",
+    QcOpOr => "||"
+  }
+
+fn qc_binop_prec(op: QcBinOp) -> Int =
+  match op {
+    QcOpOr => 1,
+    QcOpAnd => 2,
+    QcOpEq => 3,
+    QcOpNe => 3,
+    QcOpLt => 3,
+    QcOpLe => 3,
+    QcOpGt => 3,
+    QcOpGe => 3,
+    QcOpAdd => 4,
+    QcOpSub => 4,
+    QcOpConcat => 4,
+    QcOpMul => 5,
+    QcOpDiv => 5,
+    QcOpRem => 5
+  }
+
+fn qc_binop_is_comparison(op: QcBinOp) -> Bool =
+  match op {
+    QcOpEq => true,
+    QcOpNe => true,
+    QcOpLt => true,
+    QcOpLe => true,
+    QcOpGt => true,
+    QcOpGe => true,
+    _ => false
+  }
+
+fn qc_unop_symbol(op: QcUnOp) -> Str =
+  match op {
+    QcUnNeg => "-",
+    QcUnNot => "!"
+  }
+
+fn qc_is_upper_char(c: Int) -> Bool = c >= 65 && c <= 90
+
+fn qc_last_segment_rec(b: Bytes, i: Int, n: Int, last_dot: Int) -> Str =
+  if i >= n then
+    (if last_dot < 0 then match bytes_to_str(b) { Some(s) => s, None => "" }
+     else match bytes_to_str(bytes_slice(b, last_dot + 1, n)) { Some(s) => s, None => "" })
+  else if bytes_at(b, i) == 46 then qc_last_segment_rec(b, i + 1, n, i)
+  else qc_last_segment_rec(b, i + 1, n, last_dot)
+
+fn qc_last_segment(s: Str) -> Str =
+  let b = to_bytes(s) in
+  qc_last_segment_rec(b, 0, bytes_len(b), -1)
+
+fn qc_is_upper(name: Str) -> Bool =
+  let seg = qc_last_segment(name) in
+  if len(seg) == 0 then false
+  else qc_is_upper_char(bytes_at(to_bytes(seg), 0))
+
+fn qc_def_name(d: QcDef) -> Str =
+  match d {
+    QcDefType(t) => t.name,
+    QcDefFn(f) => f.name,
+    QcDefTest(t) => t.name
+  }
+
+test qc_ast_test =
+  qc_binop_symbol(QcOpAdd) == "+" &&
+  qc_binop_prec(QcOpMul) == 5 &&
+  qc_binop_is_comparison(QcOpEq) == true &&
+  qc_is_upper("Dot") == true &&
+  qc_is_upper("std.json.Str") == true &&
+  qc_is_upper("area") == false
+# Lexer for QAL self-hosting compiler (spec §7: qc_lex, port of qal-text/src/lexer.rs)
+
+fn qc_diag_parse(line: Int, col: Int, msg: Str) -> QcDiag =
+  QcDiag {
+    code: "E0100",
+    kind: "parse",
+    def: "",
+    path: from_int(line) ++ ":" ++ from_int(col),
+    message: msg,
+    expected: None,
+    found: None,
+    hints: [],
+    dependents: [],
+    counterexample: None
+  }
+
+fn qc_diag_parse_hint(line: Int, col: Int, msg: Str, hint: Str) -> QcDiag =
+  QcDiag {
+    code: "E0100",
+    kind: "parse",
+    def: "",
+    path: from_int(line) ++ ":" ++ from_int(col),
+    message: msg,
+    expected: None,
+    found: None,
+    hints: [hint],
+    dependents: [],
+    counterexample: None
+  }
+
+fn qc_is_digit(c: Int) -> Bool = c >= 48 && c <= 57
+
+fn qc_is_lower(c: Int) -> Bool = c >= 97 && c <= 122
+
+fn qc_is_alpha(c: Int) -> Bool = (c >= 97 && c <= 122) || (c >= 65 && c <= 90)
+
+fn qc_is_ident_start(c: Int) -> Bool = qc_is_alpha(c) || c == 95
+
+fn qc_is_ident_char(c: Int) -> Bool = qc_is_alpha(c) || qc_is_digit(c) || c == 95
+
+fn qc_is_hexdigit(c: Int) -> Bool = qc_is_digit(c) || (c >= 97 && c <= 102) || (c >= 65 && c <= 70)
+
+fn qc_hex_val(c: Int) -> Int =
+  if qc_is_digit(c) then c - 48
+  else if c >= 97 && c <= 102 then c - 97 + 10
+  else c - 65 + 10
+
+fn qc_is_keyword(s: Str) -> Bool =
+  s == "fn" || s == "type" || s == "test" || s == "let" || s == "in" ||
+  s == "if" || s == "then" || s == "else" || s == "match" || s == "req" ||
+  s == "ens" || s == "true" || s == "false" || s == "std"
+
+fn qc_scan_digits(b: Bytes, i: Int, n: Int) -> Int =
+  if i < n && qc_is_digit(bytes_at(b, i)) then qc_scan_digits(b, i + 1, n)
+  else i
+
+fn qc_scan_ident(b: Bytes, i: Int, n: Int) -> Int =
+  if i < n && qc_is_ident_char(bytes_at(b, i)) then qc_scan_ident(b, i + 1, n)
+  else i
+
+fn qc_skip_comment(b: Bytes, i: Int, n: Int) -> Int =
+  if i < n && bytes_at(b, i) != 10 then qc_skip_comment(b, i + 1, n)
+  else i
+
+type QcStrRes = {
+  res: Result[Str, QcDiag],
+  next_i: Int,
+  next_line: Int,
+  next_col: Int
+}
+
+fn qc_lex_escape(b: Bytes, i: Int, n: Int, line: Int, col: Int, acc: Accum[Int]) -> QcStrRes =
+  if i >= n then
+    QcStrRes { res: Err(qc_diag_parse(line, col, "unterminated string literal")), next_i: n, next_line: line, next_col: col }
+  else
+    let e = bytes_at(b, i) in
+    if e == 110 then qc_lex_str_body(b, i + 1, n, line, col + 1, AccPush(acc, 10))
+    else if e == 116 then qc_lex_str_body(b, i + 1, n, line, col + 1, AccPush(acc, 9))
+    else if e == 114 then qc_lex_str_body(b, i + 1, n, line, col + 1, AccPush(acc, 13))
+    else if e == 48 then qc_lex_str_body(b, i + 1, n, line, col + 1, AccPush(acc, 0))
+    else if e == 92 then qc_lex_str_body(b, i + 1, n, line, col + 1, AccPush(acc, 92))
+    else if e == 34 then qc_lex_str_body(b, i + 1, n, line, col + 1, AccPush(acc, 34))
+    else if e == 117 then qc_lex_unicode(b, i + 1, n, line, col + 1, acc)
+    else
+      let ch = match bytes_to_str(bytes_slice(b, i, i + 1)) { Some(s) => s, None => "?" } in
+      let bad = "\\" ++ ch in
+      QcStrRes { res: Err(qc_diag_parse(line, col - 1, "invalid escape `" ++ bad ++ "` in string literal")), next_i: i + 1, next_line: line, next_col: col + 1 }
+
+fn qc_scan_hex(b: Bytes, i: Int, n: Int, count: Int, acc: Int) -> Int =
+  if count < 6 && i < n && qc_is_hexdigit(bytes_at(b, i)) then
+    qc_scan_hex(b, i + 1, n, count + 1, bit_or(shl(acc, 4), qc_hex_val(bytes_at(b, i))))
+  else acc
+
+fn qc_count_hex(b: Bytes, i: Int, n: Int, count: Int) -> Int =
+  if count < 6 && i < n && qc_is_hexdigit(bytes_at(b, i)) then
+    qc_count_hex(b, i + 1, n, count + 1)
+  else count
+
+fn qc_utf8_encode(cp: Int, acc: Accum[Int]) -> Accum[Int] =
+  if cp < 128 then AccPush(acc, cp)
+  else if cp < 2048 then
+    AccPush(AccPush(acc, bit_or(192, shr(cp, 6))), bit_or(128, bit_and(cp, 63)))
+  else if cp < 65536 then
+    AccPush(AccPush(AccPush(acc, bit_or(224, shr(cp, 12))), bit_or(128, bit_and(shr(cp, 6), 63))), bit_or(128, bit_and(cp, 63)))
+  else
+    AccPush(AccPush(AccPush(AccPush(acc, bit_or(240, shr(cp, 18))), bit_or(128, bit_and(shr(cp, 12), 63))), bit_or(128, bit_and(shr(cp, 6), 63))), bit_or(128, bit_and(cp, 63)))
+
+fn qc_lex_unicode(b: Bytes, i: Int, n: Int, line: Int, col: Int, acc: Accum[Int]) -> QcStrRes =
+  if i >= n || bytes_at(b, i) != 123 then
+    QcStrRes { res: Err(qc_diag_parse(line, col - 2, "invalid escape `\\u` in string literal")), next_i: i, next_line: line, next_col: col }
+  else
+    let start = i + 1 in
+    let cnt = qc_count_hex(b, start, n, 0) in
+    let end_pos = start + cnt in
+    if cnt == 0 || end_pos >= n || bytes_at(b, end_pos) != 125 then
+      let hex_str = match bytes_to_str(bytes_slice(b, start, end_pos)) { Some(s) => s, None => "" } in
+      QcStrRes { res: Err(qc_diag_parse(line, col - 2, "invalid escape `\\u{" ++ hex_str ++ "` in string literal")), next_i: end_pos + 1, next_line: line, next_col: col + cnt + 2 }
+    else
+      let cp = qc_scan_hex(b, start, n, 0, 0) in
+      if cp < 0 || cp > 1114111 || (cp >= 55296 && cp <= 57343) then
+        let hex_str = match bytes_to_str(bytes_slice(b, start, end_pos)) { Some(s) => s, None => "" } in
+        QcStrRes { res: Err(qc_diag_parse(line, col - 2, "invalid escape `\\u{" ++ hex_str ++ "}` in string literal")), next_i: end_pos + 1, next_line: line, next_col: col + cnt + 2 }
+      else
+        let acc2 = qc_utf8_encode(cp, acc) in
+        qc_lex_str_body(b, end_pos + 1, n, line, col + cnt + 2, acc2)
+
+fn qc_lex_str_body(b: Bytes, i: Int, n: Int, line: Int, col: Int, acc: Accum[Int]) -> QcStrRes =
+  if i >= n then
+    QcStrRes { res: Err(qc_diag_parse(line, col, "unterminated string literal")), next_i: n, next_line: line, next_col: col }
+  else
+    let c = bytes_at(b, i) in
+    if c == 34 then
+      let out_str = match bytes_to_str(bytes_from(acc_list(acc))) { Some(s) => s, None => "" } in
+      QcStrRes { res: Ok(out_str), next_i: i + 1, next_line: line, next_col: col + 1 }
+    else if c == 10 then
+      qc_lex_str_body(b, i + 1, n, line + 1, 1, AccPush(acc, 10))
+    else if c == 92 then
+      qc_lex_escape(b, i + 1, n, line, col + 1, acc)
+    else
+      qc_lex_str_body(b, i + 1, n, line, col + 1, AccPush(acc, c))
+
+type QcQualRes = {
+  res: Result[Str, QcDiag],
+  next_i: Int
+}
+
+fn qc_is_std_name_parts(mod_str: Str, last_str: Str, full_len: Int) -> Bool =
+  full_len <= 128 &&
+  len(mod_str) > 0 &&
+  qc_is_lower(bytes_at(to_bytes(mod_str), 0)) &&
+  !qc_is_keyword(mod_str) &&
+  len(last_str) > 0 &&
+  qc_is_ident_start(bytes_at(to_bytes(last_str), 0)) &&
+  last_str != "_" &&
+  !qc_is_keyword(last_str)
+
+fn qc_lex_qualified(b: Bytes, i: Int, n: Int, line: Int, col: Int) -> QcQualRes =
+  let p1 = i + 1 in
+  let end1 = qc_scan_ident(b, p1, n) in
+  if end1 == p1 then
+    QcQualRes { res: Err(qc_diag_parse_hint(line, col, "`std` is not a standard library name", "standard library names have the form `std.<module>.<name>`: a lowercase module (e.g. `std.json.parse`, `std.json.Json`, `std.json.Str(\"a\")`)")), next_i: p1 }
+  else if end1 >= n || bytes_at(b, end1) != 46 then
+    let mod_s = match bytes_to_str(bytes_slice(b, p1, end1)) { Some(s) => s, None => "" } in
+    QcQualRes { res: Err(qc_diag_parse_hint(line, col, "`std." ++ mod_s ++ "` is not a standard library name", "standard library names have the form `std.<module>.<name>`: a lowercase module (e.g. `std.json.parse`, `std.json.Json`, `std.json.Str(\"a\")`)")), next_i: end1 }
+  else
+    let p2 = end1 + 1 in
+    let end2 = qc_scan_ident(b, p2, n) in
+    let mod_s = match bytes_to_str(bytes_slice(b, p1, end1)) { Some(s) => s, None => "" } in
+    let last_s = match bytes_to_str(bytes_slice(b, p2, end2)) { Some(s) => s, None => "" } in
+    let full = "std." ++ mod_s ++ "." ++ last_s in
+    if end2 - (i - 3) > 128 then
+      QcQualRes { res: Err(qc_diag_parse(line, col, "identifier longer than 128 characters")), next_i: end2 }
+    else if !qc_is_std_name_parts(mod_s, last_s, len(full)) then
+      QcQualRes { res: Err(qc_diag_parse_hint(line, col, "`" ++ full ++ "` is not a standard library name", "standard library names have the form `std.<module>.<name>`: a lowercase module (e.g. `std.json.parse`, `std.json.Json`, `std.json.Str(\"a\")`)")), next_i: end2 }
+    else
+      QcQualRes { res: Ok(full), next_i: end2 }
+
+fn qc_match_2sym(c1: Int, c2: Int) -> Option[Str] =
+  if c1 == 45 && c2 == 62 then Some("->")
+  else if c1 == 61 && c2 == 62 then Some("=>")
+  else if c1 == 61 && c2 == 61 then Some("==")
+  else if c1 == 33 && c2 == 61 then Some("!=")
+  else if c1 == 60 && c2 == 61 then Some("<=")
+  else if c1 == 62 && c2 == 61 then Some(">=")
+  else if c1 == 38 && c2 == 38 then Some("&&")
+  else if c1 == 124 && c2 == 124 then Some("||")
+  else if c1 == 43 && c2 == 43 then Some("++")
+  else None
+
+fn qc_match_1sym(c: Int) -> Option[Str] =
+  if c == 40 then Some("(")
+  else if c == 41 then Some(")")
+  else if c == 91 then Some("[")
+  else if c == 93 then Some("]")
+  else if c == 123 then Some("{")
+  else if c == 125 then Some("}")
+  else if c == 44 then Some(",")
+  else if c == 59 then Some(";")
+  else if c == 58 then Some(":")
+  else if c == 46 then Some(".")
+  else if c == 124 then Some("|")
+  else if c == 61 then Some("=")
+  else if c == 60 then Some("<")
+  else if c == 62 then Some(">")
+  else if c == 43 then Some("+")
+  else if c == 45 then Some("-")
+  else if c == 42 then Some("*")
+  else if c == 47 then Some("/")
+  else if c == 37 then Some("%")
+  else if c == 33 then Some("!")
+  else None
+
+type QcLexRes = {
+  tokens: List[QcToken],
+  diag: Option[QcDiag]
+}
+
+fn qc_lex_loop(b: Bytes, i: Int, n: Int, line: Int, col: Int, prev_dot: Bool, acc: Accum[QcToken]) -> QcLexRes =
+  if i >= n then
+    let eof_tok = QcToken { tok: QcTokEof, line: line, col: col } in
+    QcLexRes { tokens: acc_list(AccPush(acc, eof_tok)), diag: None }
+  else
+    let c = bytes_at(b, i) in
+    if c == 10 then
+      qc_lex_loop(b, i + 1, n, line + 1, 1, false, acc)
+    else if c == 32 || c == 9 || c == 13 then
+      qc_lex_loop(b, i + 1, n, line, col + 1, false, acc)
+    else if c == 35 then
+      let j = qc_skip_comment(b, i + 1, n) in
+      qc_lex_loop(b, j, n, line, col + (j - i), false, acc)
+    else if qc_is_digit(c) then
+      qc_lex_number(b, i, n, line, col, acc)
+    else if qc_is_ident_start(c) then
+      qc_lex_identifier(b, i, n, line, col, prev_dot, acc)
+    else if c == 34 then
+      let sr = qc_lex_str_body(b, i + 1, n, line, col + 1, AccEnd) in
+      match sr.res {
+        Err(d) => QcLexRes { tokens: [], diag: Some(d) },
+        Ok(s) =>
+          let t = QcToken { tok: QcTokStr(s), line: line, col: col } in
+          qc_lex_loop(b, sr.next_i, n, sr.next_line, sr.next_col, false, AccPush(acc, t))
+      }
+    else
+      let sym2 = if i + 1 < n then qc_match_2sym(c, bytes_at(b, i + 1)) else None in
+      match sym2 {
+        Some(s) =>
+          let t = QcToken { tok: QcTokSym(s), line: line, col: col } in
+          qc_lex_loop(b, i + 2, n, line, col + 2, false, AccPush(acc, t)),
+        None =>
+          match qc_match_1sym(c) {
+            Some(s) =>
+              let is_dot = c == 46 in
+              let t = QcToken { tok: QcTokSym(s), line: line, col: col } in
+              qc_lex_loop(b, i + 1, n, line, col + 1, is_dot, AccPush(acc, t)),
+            None =>
+              let bad_ch = match bytes_to_str(bytes_slice(b, i, i + 1)) { Some(s) => s, None => "?" } in
+              QcLexRes { tokens: [], diag: Some(qc_diag_parse(line, col, "unexpected character `" ++ bad_ch ++ "`")) }
+          }
+      }
+
+fn qc_skip_leading_zeros(b: Bytes, i: Int, n: Int) -> Int =
+  if i + 1 < n && bytes_at(b, i) == 48 then qc_skip_leading_zeros(b, i + 1, n)
+  else i
+
+fn qc_is_i64_min_mag(s: Str) -> Bool =
+  let b = to_bytes(s) in
+  let start = qc_skip_leading_zeros(b, 0, bytes_len(b)) in
+  match bytes_to_str(bytes_slice(b, start, bytes_len(b))) {
+    Some(trimmed) => trimmed == "9223372036854775808",
+    None => false
+  }
+
+fn qc_lex_number(b: Bytes, i: Int, n: Int, line: Int, col: Int, acc: Accum[QcToken]) -> QcLexRes =
+  let int_end = qc_scan_digits(b, i, n) in
+  let has_dot = int_end + 1 < n && bytes_at(b, int_end) == 46 && qc_is_digit(bytes_at(b, int_end + 1)) in
+  let frac_end = if has_dot then qc_scan_digits(b, int_end + 2, n) else int_end in
+  let has_exp = frac_end < n && (bytes_at(b, frac_end) == 101 || bytes_at(b, frac_end) == 69) in
+  let exp_sign = if has_exp && frac_end + 1 < n && (bytes_at(b, frac_end + 1) == 43 || bytes_at(b, frac_end + 1) == 45) then 1 else 0 in
+  let has_exp_digits = has_exp && frac_end + 1 + exp_sign < n && qc_is_digit(bytes_at(b, frac_end + 1 + exp_sign)) in
+  let num_end = if has_exp_digits then qc_scan_digits(b, frac_end + 1 + exp_sign, n) else frac_end in
+  let is_float = has_dot || has_exp_digits in
+  if num_end < n && (qc_is_ident_char(bytes_at(b, num_end))) then
+    let bad_end = qc_scan_ident(b, num_end, n) in
+    let bad_text = match bytes_to_str(bytes_slice(b, i, bad_end)) { Some(s) => s, None => "" } in
+    QcLexRes { tokens: [], diag: Some(qc_diag_parse(line, col, "invalid number literal `" ++ bad_text ++ "`")) }
+  else
+    let num_str = match bytes_to_str(bytes_slice(b, i, num_end)) { Some(s) => s, None => "" } in
+    let len_num = num_end - i in
+    if is_float then
+      match to_float(num_str) {
+        Some(f) =>
+          let t = QcToken { tok: QcTokFloat(f), line: line, col: col } in
+          qc_lex_loop(b, num_end, n, line, col + len_num, false, AccPush(acc, t)),
+        None =>
+          QcLexRes { tokens: [], diag: Some(qc_diag_parse(line, col, "float literal `" ++ num_str ++ "` is out of range")) }
+      }
+    else
+      match to_int(num_str) {
+        Some(v) =>
+          let t = QcToken { tok: QcTokInt(v), line: line, col: col } in
+          qc_lex_loop(b, num_end, n, line, col + len_num, false, AccPush(acc, t)),
+        None =>
+          if qc_is_i64_min_mag(num_str) then
+            let t = QcToken { tok: QcTokInt(shl(1, 63)), line: line, col: col } in
+            qc_lex_loop(b, num_end, n, line, col + len_num, false, AccPush(acc, t))
+          else
+            QcLexRes { tokens: [], diag: Some(qc_diag_parse(line, col, "integer literal `" ++ num_str ++ "` does not fit in Int (64-bit)")) }
+      }
+
+fn qc_lex_identifier(b: Bytes, i: Int, n: Int, line: Int, col: Int, prev_dot: Bool, acc: Accum[QcToken]) -> QcLexRes =
+  let end_pos = qc_scan_ident(b, i, n) in
+  let id_len = end_pos - i in
+  if id_len > 128 then
+    QcLexRes { tokens: [], diag: Some(qc_diag_parse(line, col, "identifier longer than 128 characters")) }
+  else
+    let text = match bytes_to_str(bytes_slice(b, i, end_pos)) { Some(s) => s, None => "" } in
+    if text == "std" && !prev_dot && end_pos < n && bytes_at(b, end_pos) == 46 then
+      let qr = qc_lex_qualified(b, end_pos, n, line, col) in
+      match qr.res {
+        Err(d) => QcLexRes { tokens: [], diag: Some(d) },
+        Ok(qname) =>
+          let t = QcToken { tok: QcTokIdent(qname), line: line, col: col } in
+          qc_lex_loop(b, qr.next_i, n, line, col + (qr.next_i - i), false, AccPush(acc, t))
+      }
+    else
+      let t = QcToken { tok: QcTokIdent(text), line: line, col: col } in
+      qc_lex_loop(b, end_pos, n, line, col + id_len, false, AccPush(acc, t))
+
+fn qc_lex(src: Str) -> Result[List[QcToken], QcDiag] =
+  let b = to_bytes(src) in
+  let r = qc_lex_loop(b, 0, bytes_len(b), 1, 1, false, AccEnd) in
+  match r.diag {
+    Some(d) => Err(d),
+    None => Ok(r.tokens)
+  }
+
+test qc_lex_test =
+  match qc_lex("fn f(x: Int) -> Int = x + 1\ntest t = f(1) == 2") {
+    Ok(toks) => len(toks) == 23,
+    Err(_) => false
+  }
+# Recursive-descent parser for QAL self-hosting compiler (spec §7: qc_parse, port of qal-text/src/parser.rs)
+
+type QcPState = {
+  toks: List[QcToken],
+  pos: Int,
+  depth: Int,
+  no_struct: Bool
+}
+
+type QcPRes[T] = {
+  val: Option[T],
+  err: Option[QcDiag],
+  state: QcPState
+}
+
+fn qc_pres_ok[T](v: T, s: QcPState) -> QcPRes[T] =
+  QcPRes { val: Some(v), err: None, state: s }
+
+fn qc_pres_err[T](d: QcDiag, s: QcPState) -> QcPRes[T] =
+  QcPRes { val: None, err: Some(d), state: s }
+
+fn qc_peek(s: QcPState) -> QcTok =
+  if s.pos < len(s.toks) then (list_at(s.toks, s.pos)).tok else QcTokEof
+
+fn qc_peek_tok(s: QcPState) -> QcToken =
+  if s.pos < len(s.toks) then list_at(s.toks, s.pos)
+  else QcToken { tok: QcTokEof, line: 1, col: 1 }
+
+fn qc_peek_at(s: QcPState, offset: Int) -> QcTok =
+  let idx = s.pos + offset in
+  if idx < len(s.toks) then (list_at(s.toks, idx)).tok else QcTokEof
+
+fn qc_next(s: QcPState) -> QcPState =
+  if s.pos < len(s.toks) then
+    QcPState { toks: s.toks, pos: s.pos + 1, depth: s.depth, no_struct: s.no_struct }
+  else s
+
+fn qc_err_here[T](s: QcPState, msg: Str) -> QcPRes[T] =
+  let t = qc_peek_tok(s) in
+  qc_pres_err(qc_diag_parse(t.line, t.col, msg), s)
+
+fn qc_err_here_hint[T](s: QcPState, msg: Str, hint: Str) -> QcPRes[T] =
+  let t = qc_peek_tok(s) in
+  qc_pres_err(qc_diag_parse_hint(t.line, t.col, msg, hint), s)
+
+fn qc_check_sym(s: QcPState, sym: Str) -> Bool =
+  match qc_peek(s) {
+    QcTokSym(op) => op == sym,
+    _ => false
+  }
+
+fn qc_check_ident(s: QcPState, id: Str) -> Bool =
+  match qc_peek(s) {
+    QcTokIdent(name) => name == id,
+    _ => false
+  }
+
+fn qc_tok_describe(tok: QcTok) -> Str =
+  match tok {
+    QcTokIdent(s) => "`" ++ s ++ "`",
+    QcTokInt(n) => if n < 0 then "`9223372036854775808`" else "`" ++ from_int(n) ++ "`",
+    QcTokFloat(f) => "`" ++ from_float(f) ++ "`",
+    QcTokStr(s) => "\"" ++ s ++ "\"",
+    QcTokSym(s) => "`" ++ s ++ "`",
+    QcTokEof => "end of input"
+  }
+
+fn qc_expect_kw(s: QcPState, kw: Str) -> Result[QcPState, QcDiag] =
+  match qc_peek(s) {
+    QcTokIdent(name) =>
+      if name == kw then Ok(qc_next(s))
+      else
+        let t = qc_peek_tok(s) in
+        Err(qc_diag_parse(t.line, t.col, "expected `" ++ kw ++ "`, found " ++ qc_tok_describe(t.tok))),
+    _ =>
+      let t = qc_peek_tok(s) in
+      Err(qc_diag_parse(t.line, t.col, "expected `" ++ kw ++ "`, found " ++ qc_tok_describe(t.tok)))
+  }
+
+fn qc_expect_sym(s: QcPState, sym: Str) -> Result[QcPState, QcDiag] =
+  match qc_peek(s) {
+    QcTokSym(op) =>
+      if op == sym then Ok(qc_next(s))
+      else
+        let t = qc_peek_tok(s) in
+        Err(qc_diag_parse(t.line, t.col, "expected `" ++ sym ++ "`, found " ++ qc_tok_describe(t.tok))),
+    _ =>
+      let t = qc_peek_tok(s) in
+      Err(qc_diag_parse(t.line, t.col, "expected `" ++ sym ++ "`, found " ++ qc_tok_describe(t.tok)))
+  }
+
+fn qc_expect_ident(s: QcPState) -> QcPRes[Str] =
+  match qc_peek(s) {
+    QcTokIdent(id) =>
+      if qc_is_keyword(id) then
+        let t = qc_peek_tok(s) in
+        if id == "std" then
+          qc_pres_err(qc_diag_parse_hint(t.line, t.col, "expected a name, found `std`", "`std` is a keyword since Phase 3b (standard library names are `std.<module>.<name>`); rename the parameter, local or field, e.g. to `std_`"), s)
+        else
+          qc_pres_err(qc_diag_parse(t.line, t.col, "expected a name, found `" ++ id ++ "`"), s)
+      else qc_pres_ok(id, qc_next(s)),
+    _ =>
+      let t = qc_peek_tok(s) in
+      qc_pres_err(qc_diag_parse(t.line, t.col, "expected a name, found " ++ qc_tok_describe(t.tok)), s)
+  }
+
+fn qc_is_qual_std(id: Str) -> Bool =
+  len(id) > 4 && slice(id, 0, 4) == "std."
+
+fn qc_expect_lower_what(s: QcPState, what: Str) -> QcPRes[Str] =
+  match qc_peek(s) {
+    QcTokIdent(id) =>
+      if qc_is_upper(id) then
+        let t = qc_peek_tok(s) in
+        qc_pres_err(qc_diag_parse(t.line, t.col, what ++ " names start with a lowercase letter, found `" ++ id ++ "`"), s)
+      else qc_expect_ident(s),
+    _ => qc_expect_ident(s)
+  }
+
+fn qc_expect_local(s: QcPState, what: Str) -> QcPRes[Str] =
+  match qc_peek(s) {
+    QcTokIdent(id) =>
+      if qc_is_qual_std(id) then
+        let t = qc_peek_tok(s) in
+        qc_pres_err(qc_diag_parse_hint(t.line, t.col, what ++ " names cannot be qualified, found `" ++ id ++ "`", "only definitions (functions, tests, types and variants) have `std.<module>.<name>` names"), s)
+      else qc_expect_lower_what(s, what),
+    _ => qc_expect_lower_what(s, what)
+  }
+
+fn qc_expect_upper_what(s: QcPState, what: Str, allow_qual: Bool) -> QcPRes[Str] =
+  match qc_peek(s) {
+    QcTokIdent(id) =>
+      if !allow_qual && qc_is_qual_std(id) then
+        let t = qc_peek_tok(s) in
+        qc_pres_err(qc_diag_parse_hint(t.line, t.col, what ++ " names cannot be qualified, found `" ++ id ++ "`", "only definitions (functions, tests, types and variants) have `std.<module>.<name>` names"), s)
+      else if !qc_is_upper(id) then
+        let t = qc_peek_tok(s) in
+        qc_pres_err(qc_diag_parse(t.line, t.col, what ++ " names start with an uppercase letter, found `" ++ id ++ "`"), s)
+      else qc_expect_ident(s),
+    _ => qc_expect_ident(s)
+  }
+
+fn qc_enter(s: QcPState) -> Result[QcPState, QcDiag] =
+  if s.depth >= 256 then
+    let t = qc_peek_tok(s) in
+    Err(qc_diag_parse(t.line, t.col, "expression nested too deeply (max 256 levels)"))
+  else
+    Ok(QcPState { toks: s.toks, pos: s.pos, depth: s.depth + 1, no_struct: s.no_struct })
+
+fn qc_leave(s: QcPState) -> QcPState =
+  QcPState { toks: s.toks, pos: s.pos, depth: s.depth - 1, no_struct: s.no_struct }
+
+# -----------------------------------------------------------------------------
+# Type parsing
+
+fn qc_parse_type(s: QcPState) -> QcPRes[QcType] =
+  match qc_enter(s) {
+    Err(d) => qc_pres_err(d, s),
+    Ok(s1) =>
+      let r = qc_parse_type_inner(s1) in
+      QcPRes { val: r.val, err: r.err, state: qc_leave(r.state) }
+  }
+
+fn qc_parse_type_inner(s: QcPState) -> QcPRes[QcType] =
+  match qc_peek(s) {
+    QcTokSym("(") =>
+      let s1 = qc_next(s) in
+      let r = qc_parse_type(s1) in
+      match r.err {
+        Some(d) => qc_pres_err(d, r.state),
+        None =>
+          match qc_expect_sym(r.state, ")") {
+            Err(d) => qc_pres_err(d, r.state),
+            Ok(s2) => qc_pres_ok(match r.val { Some(t) => t, None => QcTUnit }, s2)
+          }
+      },
+    QcTokIdent("Int") => qc_pres_ok(QcTInt, qc_next(s)),
+    QcTokIdent("Float") => qc_pres_ok(QcTFloat, qc_next(s)),
+    QcTokIdent("Bool") => qc_pres_ok(QcTBool, qc_next(s)),
+    QcTokIdent("Unit") => qc_pres_ok(QcTUnit, qc_next(s)),
+    QcTokIdent("Str") => qc_pres_ok(QcTStr, qc_next(s)),
+    QcTokIdent("Bytes") => qc_pres_ok(QcTBytes, qc_next(s)),
+    QcTokIdent("List") =>
+      let s1 = qc_next(s) in
+      match qc_expect_sym(s1, "[") {
+        Err(d) => qc_pres_err(d, s1),
+        Ok(s2) =>
+          let elem_r = qc_parse_type(s2) in
+          match elem_r.err {
+            Some(d) => qc_pres_err(d, elem_r.state),
+            None =>
+              match qc_expect_sym(elem_r.state, "]") {
+                Err(d) => qc_pres_err(d, elem_r.state),
+                Ok(s3) => qc_pres_ok(QcTList(match elem_r.val { Some(t) => t, None => QcTUnit }), s3)
+              }
+          }
+      },
+    QcTokIdent("Option") =>
+      let s1 = qc_next(s) in
+      match qc_expect_sym(s1, "[") {
+        Err(d) => qc_pres_err(d, s1),
+        Ok(s2) =>
+          let elem_r = qc_parse_type(s2) in
+          match elem_r.err {
+            Some(d) => qc_pres_err(d, elem_r.state),
+            None =>
+              match qc_expect_sym(elem_r.state, "]") {
+                Err(d) => qc_pres_err(d, elem_r.state),
+                Ok(s3) => qc_pres_ok(QcTOption(match elem_r.val { Some(t) => t, None => QcTUnit }), s3)
+              }
+          }
+      },
+    QcTokIdent("Result") =>
+      let s1 = qc_next(s) in
+      match qc_expect_sym(s1, "[") {
+        Err(d) => qc_pres_err(d, s1),
+        Ok(s2) =>
+          let ok_r = qc_parse_type(s2) in
+          match ok_r.err {
+            Some(d) => qc_pres_err(d, ok_r.state),
+            None =>
+              match qc_expect_sym(ok_r.state, ",") {
+                Err(d) => qc_pres_err(d, ok_r.state),
+                Ok(s3) =>
+                  let err_r = qc_parse_type(s3) in
+                  match err_r.err {
+                    Some(d) => qc_pres_err(d, err_r.state),
+                    None =>
+                      match qc_expect_sym(err_r.state, "]") {
+                        Err(d) => qc_pres_err(d, err_r.state),
+                        Ok(s4) =>
+                          qc_pres_ok(QcTResult(match ok_r.val { Some(t) => t, None => QcTUnit },
+                                              match err_r.val { Some(t) => t, None => QcTUnit }), s4)
+                      }
+                  }
+              }
+          }
+      },
+    QcTokIdent("Map") =>
+      let s1 = qc_next(s) in
+      match qc_expect_sym(s1, "[") {
+        Err(d) => qc_pres_err(d, s1),
+        Ok(s2) =>
+          let k_r = qc_parse_type(s2) in
+          match k_r.err {
+            Some(d) => qc_pres_err(d, k_r.state),
+            None =>
+              match qc_expect_sym(k_r.state, ",") {
+                Err(d) => qc_pres_err(d, k_r.state),
+                Ok(s3) =>
+                  let v_r = qc_parse_type(s3) in
+                  match v_r.err {
+                    Some(d) => qc_pres_err(d, v_r.state),
+                    None =>
+                      match qc_expect_sym(v_r.state, "]") {
+                        Err(d) => qc_pres_err(d, v_r.state),
+                        Ok(s4) =>
+                          qc_pres_ok(QcTMap(match k_r.val { Some(t) => t, None => QcTUnit },
+                                           match v_r.val { Some(t) => t, None => QcTUnit }), s4)
+                      }
+                  }
+              }
+          }
+      },
+    QcTokIdent("fn") =>
+      qc_parse_fn_type(qc_next(s)),
+    QcTokIdent(name) =>
+      if !qc_is_upper(name) then
+        qc_err_here(s, "expected a type (e.g. Int, Str, List[Int]), found `" ++ name ++ "`")
+      else
+        let s1 = qc_next(s) in
+        if qc_check_sym(s1, "[") then
+          let s2 = qc_next(s1) in
+          if qc_check_sym(s2, "]") then
+            qc_err_here(s2, "`" ++ name ++ "[]` needs at least one type argument")
+          else
+            let args_r = qc_parse_type_args(s2, AccEnd) in
+            match args_r.err {
+              Some(d) => qc_pres_err(d, args_r.state),
+              None => qc_pres_ok(QcTApp(name, match args_r.val { Some(l) => l, None => [] }), args_r.state)
+            }
+        else
+          qc_pres_ok(QcTNamed(name), s1),
+    _ => qc_err_here(s, "expected a type")
+  }
+
+fn qc_parse_type_args(s: QcPState, acc: Accum[QcType]) -> QcPRes[List[QcType]] =
+  if qc_check_sym(s, "]") then
+    qc_pres_ok(acc_list(acc), qc_next(s))
+  else
+    let r = qc_parse_type(s) in
+    match r.err {
+      Some(d) => qc_pres_err(d, r.state),
+      None =>
+        let t = match r.val { Some(x) => x, None => QcTUnit } in
+        let s2 = r.state in
+        if qc_check_sym(s2, ",") then
+          let s3 = qc_next(s2) in
+          if qc_check_sym(s3, "]") then qc_pres_ok(acc_list(AccPush(acc, t)), qc_next(s3))
+          else qc_parse_type_args(s3, AccPush(acc, t))
+        else if qc_check_sym(s2, "]") then
+          qc_pres_ok(acc_list(AccPush(acc, t)), qc_next(s2))
+        else
+          qc_err_here(s2, "expected `,` or `]`")
+    }
+
+fn qc_parse_fn_type(s: QcPState) -> QcPRes[QcType] =
+  match qc_expect_sym(s, "(") {
+    Err(d) => qc_pres_err(d, s),
+    Ok(s1) =>
+      let params_r = qc_parse_fn_type_params(s1, AccEnd) in
+      match params_r.err {
+        Some(d) => qc_pres_err(d, params_r.state),
+        None =>
+          match qc_expect_sym(params_r.state, "->") {
+            Err(d) => qc_pres_err(d, params_r.state),
+            Ok(s2) =>
+              let ret_r = qc_parse_type(s2) in
+              match ret_r.err {
+                Some(d) => qc_pres_err(d, ret_r.state),
+                None =>
+                  let eff_r = qc_parse_effects(ret_r.state, AccEnd) in
+                  qc_pres_ok(QcTFn(match params_r.val { Some(p) => p, None => [] },
+                                  match ret_r.val { Some(r) => r, None => QcTUnit },
+                                  match eff_r.val { Some(e) => e, None => [] }), eff_r.state)
+              }
+          }
+      }
+  }
+
+fn qc_parse_fn_type_params(s: QcPState, acc: Accum[QcType]) -> QcPRes[List[QcType]] =
+  if qc_check_sym(s, ")") then
+    qc_pres_ok(acc_list(acc), qc_next(s))
+  else
+    let r = qc_parse_type(s) in
+    match r.err {
+      Some(d) => qc_pres_err(d, r.state),
+      None =>
+        let t = match r.val { Some(x) => x, None => QcTUnit } in
+        let s2 = r.state in
+        if qc_check_sym(s2, ",") then
+          let s3 = qc_next(s2) in
+          if qc_check_sym(s3, ")") then qc_pres_ok(acc_list(AccPush(acc, t)), qc_next(s3))
+          else qc_parse_fn_type_params(s3, AccPush(acc, t))
+        else if qc_check_sym(s2, ")") then
+          qc_pres_ok(acc_list(AccPush(acc, t)), qc_next(s2))
+        else
+          qc_err_here(s2, "expected `,` or `)`")
+    }
+
+fn qc_insert_sorted_str_rec(xs: List[Str], s: Str, idx: Int, acc: Accum[Str]) -> List[Str] =
+  if idx >= len(xs) then acc_list(AccPush(acc, s))
+  else
+    let cur = list_at(xs, idx) in
+    if s == cur then xs
+    else if s < cur then
+      qc_append_rest_str(xs, idx, AccPush(acc, s))
+    else
+      qc_insert_sorted_str_rec(xs, s, idx + 1, AccPush(acc, cur))
+
+fn qc_append_rest_str(xs: List[Str], idx: Int, acc: Accum[Str]) -> List[Str] =
+  if idx >= len(xs) then acc_list(acc)
+  else qc_append_rest_str(xs, idx + 1, AccPush(acc, list_at(xs, idx)))
+
+fn qc_insert_sorted_str(xs: List[Str], s: Str) -> List[Str] =
+  qc_insert_sorted_str_rec(xs, s, 0, AccEnd)
+
+fn qc_sort_dedup_strs(xs: List[Str]) -> List[Str] =
+  fold(xs, [], qc_insert_sorted_str)
+
+fn qc_parse_effects(s: QcPState, acc: Accum[Str]) -> QcPRes[List[Str]] =
+  if qc_check_sym(s, "!") then
+    let s1 = qc_next(s) in
+    let id_r = qc_expect_local(s1, "effect") in
+    match id_r.err {
+      Some(d) => qc_pres_err(d, id_r.state),
+      None => qc_parse_effects(id_r.state, AccPush(acc, match id_r.val { Some(id) => id, None => "" }))
+    }
+  else
+    qc_pres_ok(qc_sort_dedup_strs(acc_list(acc)), s)
+
+# -----------------------------------------------------------------------------
+# Expressions
+
+fn qc_parse_expr(s: QcPState) -> QcPRes[QcExpr] =
+  match qc_enter(s) {
+    Err(d) => qc_pres_err(d, s),
+    Ok(s1) =>
+      let r = qc_parse_expr_inner(s1) in
+      QcPRes { val: r.val, err: r.err, state: qc_leave(r.state) }
+  }
+
+fn qc_parse_expr_inner(s: QcPState) -> QcPRes[QcExpr] =
+  match qc_peek(s) {
+    QcTokIdent("let") => qc_parse_let(qc_next(s)),
+    QcTokIdent("if") => qc_parse_if(qc_next(s)),
+    QcTokIdent("match") => qc_parse_match(qc_next(s)),
+    _ => qc_parse_binary(s, 1)
+  }
+
+fn qc_parse_let(s: QcPState) -> QcPRes[QcExpr] =
+  let name_r = qc_expect_local(s, "variable") in
+  match name_r.err {
+    Some(d) => qc_pres_err(d, name_r.state),
+    None =>
+      let name = match name_r.val { Some(n) => n, None => "" } in
+      let s1 = name_r.state in
+      let ty_r =
+        if qc_check_sym(s1, ":") then
+          let tr = qc_parse_type(qc_next(s1)) in
+          match tr.err {
+            Some(d) => QcPRes { val: None, err: Some(d), state: tr.state },
+            None => QcPRes { val: Some(tr.val), err: None, state: tr.state }
+          }
+        else
+          QcPRes { val: Some(None), err: None, state: s1 } in
+      match ty_r.err {
+        Some(d) => qc_pres_err(d, ty_r.state),
+        None =>
+          let ann = match ty_r.val { Some(opt) => opt, None => None } in
+          match qc_expect_sym(ty_r.state, "=") {
+            Err(d) => qc_pres_err(d, ty_r.state),
+            Ok(s2) =>
+              let val_r = qc_parse_expr(s2) in
+              match val_r.err {
+                Some(d) => qc_pres_err(d, val_r.state),
+                None =>
+                  match qc_expect_kw(val_r.state, "in") {
+                    Err(d) => qc_pres_err(d, val_r.state),
+                    Ok(s3) =>
+                      let body_r = qc_parse_expr(s3) in
+                      match body_r.err {
+                        Some(d) => qc_pres_err(d, body_r.state),
+                        None =>
+                          qc_pres_ok(QcELet(name, ann,
+                                           match val_r.val { Some(v) => v, None => QcEUnit },
+                                           match body_r.val { Some(b) => b, None => QcEUnit }), body_r.state)
+                      }
+                  }
+              }
+          }
+      }
+  }
+
+fn qc_parse_if(s: QcPState) -> QcPRes[QcExpr] =
+  let c_r = qc_parse_expr(s) in
+  match c_r.err {
+    Some(d) => qc_pres_err(d, c_r.state),
+    None =>
+      match qc_expect_kw(c_r.state, "then") {
+        Err(d) => qc_pres_err(d, c_r.state),
+        Ok(s1) =>
+          let t_r = qc_parse_expr(s1) in
+          match t_r.err {
+            Some(d) => qc_pres_err(d, t_r.state),
+            None =>
+              match qc_expect_kw(t_r.state, "else") {
+                Err(d) => qc_pres_err(d, t_r.state),
+                Ok(s2) =>
+                  let e_r = qc_parse_expr(s2) in
+                  match e_r.err {
+                    Some(d) => qc_pres_err(d, e_r.state),
+                    None =>
+                      qc_pres_ok(QcEIf(match c_r.val { Some(c) => c, None => QcEUnit },
+                                      match t_r.val { Some(t) => t, None => QcEUnit },
+                                      match e_r.val { Some(e) => e, None => QcEUnit }), e_r.state)
+                  }
+              }
+          }
+      }
+  }
+
+fn qc_parse_match(s: QcPState) -> QcPRes[QcExpr] =
+  let s_scrut = QcPState { toks: s.toks, pos: s.pos, depth: s.depth, no_struct: true } in
+  let scrut_r = qc_parse_expr(s_scrut) in
+  match scrut_r.err {
+    Some(d) => qc_pres_err(d, scrut_r.state),
+    None =>
+      let s1 = QcPState { toks: scrut_r.state.toks, pos: scrut_r.state.pos, depth: scrut_r.state.depth, no_struct: s.no_struct } in
+      match qc_expect_sym(s1, "{") {
+        Err(d) => qc_pres_err(d, s1),
+        Ok(s2) =>
+          let arms_r = qc_parse_arms(s2, AccEnd) in
+          match arms_r.err {
+            Some(d) => qc_pres_err(d, arms_r.state),
+            None =>
+              qc_pres_ok(QcEMatch(match scrut_r.val { Some(sc) => sc, None => QcEUnit },
+                                 match arms_r.val { Some(ar) => ar, None => [] }), arms_r.state)
+          }
+      }
+  }
+
+fn qc_parse_arms(s: QcPState, acc: Accum[QcArm]) -> QcPRes[List[QcArm]] =
+  if qc_check_sym(s, "}") then
+    qc_pres_ok(acc_list(acc), qc_next(s))
+  else
+    let pat_r = qc_parse_pat(s) in
+    match pat_r.err {
+      Some(d) => qc_pres_err(d, pat_r.state),
+      None =>
+        let pat = match pat_r.val { Some(p) => p, None => QcPWild } in
+        let s1 = pat_r.state in
+        let guard_r =
+          if qc_check_ident(s1, "if") then
+            let gr = qc_parse_expr(qc_next(s1)) in
+            match gr.err {
+              Some(d) => QcPRes { val: None, err: Some(d), state: gr.state },
+              None => QcPRes { val: Some(gr.val), err: None, state: gr.state }
+            }
+          else QcPRes { val: Some(None), err: None, state: s1 } in
+        match guard_r.err {
+          Some(d) => qc_pres_err(d, guard_r.state),
+          None =>
+            let guard = match guard_r.val { Some(g) => g, None => None } in
+            match qc_expect_sym(guard_r.state, "=>") {
+              Err(d) => qc_pres_err(d, guard_r.state),
+              Ok(s2) =>
+                let body_r = qc_parse_expr(s2) in
+                match body_r.err {
+                  Some(d) => qc_pres_err(d, body_r.state),
+                  None =>
+                    let body = match body_r.val { Some(b) => b, None => QcEUnit } in
+                    let arm = QcArm { pat: pat, guard: guard, body: body } in
+                    let s3 = body_r.state in
+                    if qc_check_sym(s3, ",") then
+                      let s4 = qc_next(s3) in
+                      if qc_check_sym(s4, "}") then qc_pres_ok(acc_list(AccPush(acc, arm)), qc_next(s4))
+                      else qc_parse_arms(s4, AccPush(acc, arm))
+                    else if qc_check_sym(s3, "}") then
+                      qc_pres_ok(acc_list(AccPush(acc, arm)), qc_next(s3))
+                    else
+                      qc_err_here(s3, "expected `,` or `}`")
+                }
+            }
+        }
+    }
+
+fn qc_parse_closure(s: QcPState) -> QcPRes[QcExpr] =
+  match qc_expect_sym(s, "(") {
+    Err(d) => qc_pres_err(d, s),
+    Ok(s1) =>
+      let ps_r = qc_parse_closure_params(s1, AccEnd) in
+      match ps_r.err {
+        Some(d) => qc_pres_err(d, ps_r.state),
+        None =>
+          match qc_expect_sym(ps_r.state, "=>") {
+            Err(d) => qc_pres_err(d, ps_r.state),
+            Ok(s2) =>
+              let body_r = qc_parse_expr(s2) in
+              match body_r.err {
+                Some(d) => qc_pres_err(d, body_r.state),
+                None =>
+                  qc_pres_ok(QcELambda(match ps_r.val { Some(p) => p, None => [] },
+                                      match body_r.val { Some(b) => b, None => QcEUnit }), body_r.state)
+              }
+          }
+      }
+  }
+
+fn qc_parse_closure_params(s: QcPState, acc: Accum[QcLambdaParam]) -> QcPRes[List[QcLambdaParam]] =
+  if qc_check_sym(s, ")") then
+    qc_pres_ok(acc_list(acc), qc_next(s))
+  else
+    let id_r = qc_expect_local(s, "parameter") in
+    match id_r.err {
+      Some(d) => qc_pres_err(d, id_r.state),
+      None =>
+        let name = match id_r.val { Some(n) => n, None => "" } in
+        let s1 = id_r.state in
+        let ty_r =
+          if qc_check_sym(s1, ":") then
+            let tr = qc_parse_type(qc_next(s1)) in
+            match tr.err {
+              Some(d) => QcPRes { val: None, err: Some(d), state: tr.state },
+              None => QcPRes { val: Some(tr.val), err: None, state: tr.state }
+            }
+          else QcPRes { val: Some(None), err: None, state: s1 } in
+        match ty_r.err {
+          Some(d) => qc_pres_err(d, ty_r.state),
+          None =>
+            let p = QcLambdaParam { name: name, ty: match ty_r.val { Some(opt) => opt, None => None } } in
+            let s2 = ty_r.state in
+            if qc_check_sym(s2, ",") then
+              let s3 = qc_next(s2) in
+              if qc_check_sym(s3, ")") then qc_pres_ok(acc_list(AccPush(acc, p)), qc_next(s3))
+              else qc_parse_closure_params(s3, AccPush(acc, p))
+            else if qc_check_sym(s2, ")") then
+              qc_pres_ok(acc_list(AccPush(acc, p)), qc_next(s2))
+            else
+              qc_err_here(s2, "expected `,` or `)`")
+        }
+    }
+
+fn qc_parse_binary(s: QcPState, min_prec: Int) -> QcPRes[QcExpr] =
+  let left_r = qc_parse_unary(s) in
+  match left_r.err {
+    Some(d) => qc_pres_err(d, left_r.state),
+    None => qc_climb_precedence(left_r.state, match left_r.val { Some(l) => l, None => QcEUnit }, min_prec)
+  }
+
+fn qc_peek_binop(s: QcPState) -> Option[QcBinOp] =
+  match qc_peek(s) {
+    QcTokSym("+") => Some(QcOpAdd),
+    QcTokSym("-") => Some(QcOpSub),
+    QcTokSym("*") => Some(QcOpMul),
+    QcTokSym("/") => Some(QcOpDiv),
+    QcTokSym("%") => Some(QcOpRem),
+    QcTokSym("++") => Some(QcOpConcat),
+    QcTokSym("==") => Some(QcOpEq),
+    QcTokSym("!=") => Some(QcOpNe),
+    QcTokSym("<") => Some(QcOpLt),
+    QcTokSym("<=") => Some(QcOpLe),
+    QcTokSym(">") => Some(QcOpGt),
+    QcTokSym(">=") => Some(QcOpGe),
+    QcTokSym("&&") => Some(QcOpAnd),
+    QcTokSym("||") => Some(QcOpOr),
+    _ => None
+  }
+
+fn qc_climb_precedence(s: QcPState, left: QcExpr, min_prec: Int) -> QcPRes[QcExpr] =
+  match qc_peek_binop(s) {
+    None => qc_pres_ok(left, s),
+    Some(op) =>
+      let prec = qc_binop_prec(op) in
+      if prec < min_prec then qc_pres_ok(left, s)
+      else
+        let s1 = qc_next(s) in
+        let next_min = prec + 1 in
+        let right_r = qc_parse_binary(s1, next_min) in
+        match right_r.err {
+          Some(d) => qc_pres_err(d, right_r.state),
+          None =>
+            let right = match right_r.val { Some(r) => r, None => QcEUnit } in
+            let new_left = QcEBin(op, left, right) in
+            let s2 = right_r.state in
+            if qc_binop_is_comparison(op) && (match qc_peek_binop(s2) { Some(next_op) => qc_binop_is_comparison(next_op), None => false }) then
+              qc_err_here(s2, "comparisons cannot be chained; use `&&`")
+            else
+              qc_climb_precedence(s2, new_left, min_prec)
+        }
+  }
+
+fn qc_parse_unary(s: QcPState) -> QcPRes[QcExpr] =
+  match qc_peek(s) {
+    QcTokSym("-") =>
+      let s1 = qc_next(s) in
+      match qc_enter(s1) {
+        Err(d) => qc_pres_err(d, s1),
+        Ok(s2) =>
+          let r = qc_parse_unary(s2) in
+          let s_out = qc_leave(r.state) in
+          match r.err {
+            Some(d) => qc_pres_err(d, s_out),
+            None => qc_pres_ok(QcEUn(QcUnNeg, match r.val { Some(e) => e, None => QcEUnit }), s_out)
+          }
+      },
+    QcTokSym("!") =>
+      let s1 = qc_next(s) in
+      match qc_enter(s1) {
+        Err(d) => qc_pres_err(d, s1),
+        Ok(s2) =>
+          let r = qc_parse_unary(s2) in
+          let s_out = qc_leave(r.state) in
+          match r.err {
+            Some(d) => qc_pres_err(d, s_out),
+            None => qc_pres_ok(QcEUn(QcUnNot, match r.val { Some(e) => e, None => QcEUnit }), s_out)
+          }
+      },
+    _ => qc_parse_postfix(s)
+  }
+
+fn qc_parse_postfix(s: QcPState) -> QcPRes[QcExpr] =
+  let atom_r = qc_parse_atom(s) in
+  match atom_r.err {
+    Some(d) => qc_pres_err(d, atom_r.state),
+    None => qc_postfix_fields(atom_r.state, match atom_r.val { Some(e) => e, None => QcEUnit })
+  }
+
+fn qc_postfix_fields(s: QcPState, target: QcExpr) -> QcPRes[QcExpr] =
+  if qc_check_sym(s, ".") then
+    let s1 = qc_next(s) in
+    let id_r = qc_expect_local(s1, "field") in
+    match id_r.err {
+      Some(d) => qc_pres_err(d, id_r.state),
+      None =>
+        let f = match id_r.val { Some(n) => n, None => "" } in
+        qc_postfix_fields(id_r.state, QcEField(target, f))
+    }
+  else
+    qc_pres_ok(target, s)
+
+fn qc_parse_atom(s: QcPState) -> QcPRes[QcExpr] =
+  match qc_peek(s) {
+    QcTokInt(n) =>
+      if n >= 0 then qc_pres_ok(QcEInt(n), qc_next(s))
+      else qc_err_here(s, "integer literal `9223372036854775808` does not fit in Int (64-bit); write `-9223372036854775807 - 1` for the minimum"),
+    QcTokFloat(f) => qc_pres_ok(QcEFloat(f), qc_next(s)),
+    QcTokStr(str_val) => qc_pres_ok(QcEStr(str_val), qc_next(s)),
+    QcTokIdent("true") => qc_pres_ok(QcEBool(true), qc_next(s)),
+    QcTokIdent("false") => qc_pres_ok(QcEBool(false), qc_next(s)),
+    QcTokSym("(") =>
+      let s1 = QcPState { toks: s.toks, pos: s.pos + 1, depth: s.depth, no_struct: false } in
+      if qc_check_sym(s1, ")") then qc_pres_ok(QcEUnit, QcPState { toks: s1.toks, pos: s1.pos + 1, depth: s1.depth, no_struct: s.no_struct })
+      else
+        let r = qc_parse_expr(s1) in
+        match r.err {
+          Some(d) => qc_pres_err(d, r.state),
+          None =>
+            match qc_expect_sym(r.state, ")") {
+              Err(d) => qc_pres_err(d, r.state),
+              Ok(s2) => qc_pres_ok(match r.val { Some(e) => e, None => QcEUnit }, QcPState { toks: s2.toks, pos: s2.pos, depth: s2.depth, no_struct: s.no_struct })
+            }
+        },
+    QcTokSym("[") =>
+      let s1 = QcPState { toks: s.toks, pos: s.pos + 1, depth: s.depth, no_struct: false } in
+      if qc_check_sym(s1, "]") then qc_pres_ok(QcEList([]), QcPState { toks: s1.toks, pos: s1.pos + 1, depth: s1.depth, no_struct: s.no_struct })
+      else
+        let items_r = qc_parse_expr_list(s1, AccEnd) in
+        match items_r.err {
+          Some(d) => qc_pres_err(d, items_r.state),
+          None => qc_pres_ok(QcEList(match items_r.val { Some(l) => l, None => [] }), QcPState { toks: items_r.state.toks, pos: items_r.state.pos, depth: items_r.state.depth, no_struct: s.no_struct })
+        },
+    QcTokSym("{") =>
+      let s1 = QcPState { toks: s.toks, pos: s.pos + 1, depth: s.depth, no_struct: false } in
+      let seq_r = qc_parse_seq_exprs(s1, AccEnd) in
+      match seq_r.err {
+        Some(d) => qc_pres_err(d, seq_r.state),
+        None => qc_pres_ok(QcESeq(match seq_r.val { Some(l) => l, None => [] }), QcPState { toks: seq_r.state.toks, pos: seq_r.state.pos, depth: seq_r.state.depth, no_struct: s.no_struct })
+      },
+    QcTokIdent(id) =>
+      if id == "fn" && qc_check_sym(qc_next(s), "(") then
+        let s1 = QcPState { toks: s.toks, pos: s.pos + 1, depth: s.depth, no_struct: false } in
+        let r = qc_parse_closure(s1) in
+        match r.err {
+          Some(d) => qc_pres_err(d, r.state),
+          None => qc_pres_ok(match r.val { Some(v) => v, None => QcEUnit }, QcPState { toks: r.state.toks, pos: r.state.pos, depth: r.state.depth, no_struct: s.no_struct })
+        }
+      else if qc_is_keyword(id) then
+        let t = qc_peek_tok(s) in
+        let extra = if id == "if" || id == "let" || id == "match" then " (wrap the `" ++ id ++ "` expression in parentheses here)" else "" in
+        qc_pres_err(qc_diag_parse(t.line, t.col, "expected an expression, found `" ++ id ++ "`" ++ extra), s)
+      else if qc_is_upper(id) && !s.no_struct && qc_check_sym(qc_next(s), "{") then
+        let s2 = QcPState { toks: s.toks, pos: s.pos + 2, depth: s.depth, no_struct: false } in
+        let r = qc_parse_record_literal(s2, id, AccEnd) in
+        match r.err {
+          Some(d) => qc_pres_err(d, r.state),
+          None => qc_pres_ok(match r.val { Some(v) => v, None => QcEUnit }, QcPState { toks: r.state.toks, pos: r.state.pos, depth: r.state.depth, no_struct: s.no_struct })
+        }
+      else
+        let s1 = qc_next(s) in
+        if qc_check_sym(s1, "(") then
+          let s2 = QcPState { toks: s1.toks, pos: s1.pos + 1, depth: s1.depth, no_struct: false } in
+          if qc_check_sym(s2, ")") then qc_pres_ok(QcECall(id, []), QcPState { toks: s2.toks, pos: s2.pos + 1, depth: s2.depth, no_struct: s.no_struct })
+          else
+            let args_r = qc_parse_call_args(s2, AccEnd) in
+            match args_r.err {
+              Some(d) => qc_pres_err(d, args_r.state),
+              None => qc_pres_ok(QcECall(id, match args_r.val { Some(a) => a, None => [] }), QcPState { toks: args_r.state.toks, pos: args_r.state.pos, depth: args_r.state.depth, no_struct: s.no_struct })
+            }
+        else
+          qc_pres_ok(QcEVar(id), s1),
+    _ => qc_err_here(s, "expected an expression")
+  }
+
+fn qc_parse_record_literal(s: QcPState, name: Str, acc: Accum[QcFieldExpr]) -> QcPRes[QcExpr] =
+  if qc_check_sym(s, "}") then
+    qc_pres_ok(QcERecord(name, acc_list(acc)), qc_next(s))
+  else
+    let fn_r = qc_expect_local(s, "field") in
+    match fn_r.err {
+      Some(d) => qc_pres_err(d, fn_r.state),
+      None =>
+        let fname = match fn_r.val { Some(n) => n, None => "" } in
+        match qc_expect_sym(fn_r.state, ":") {
+          Err(d) => qc_pres_err(d, fn_r.state),
+          Ok(s1) =>
+            let val_r = qc_parse_expr(s1) in
+            match val_r.err {
+              Some(d) => qc_pres_err(d, val_r.state),
+              None =>
+                let fe = QcFieldExpr { name: fname, expr: match val_r.val { Some(e) => e, None => QcEUnit } } in
+                let s2 = val_r.state in
+                if qc_check_sym(s2, ",") then
+                  let s3 = qc_next(s2) in
+                  if qc_check_sym(s3, "}") then qc_pres_ok(QcERecord(name, acc_list(AccPush(acc, fe))), qc_next(s3))
+                  else qc_parse_record_literal(s3, name, AccPush(acc, fe))
+                else if qc_check_sym(s2, "}") then
+                  qc_pres_ok(QcERecord(name, acc_list(AccPush(acc, fe))), qc_next(s2))
+                else
+                  qc_err_here(s2, "expected `,` or `}`")
+            }
+        }
+    }
+
+fn qc_parse_call_args(s: QcPState, acc: Accum[QcExpr]) -> QcPRes[List[QcExpr]] =
+  if qc_check_sym(s, ")") then
+    qc_pres_ok(acc_list(acc), qc_next(s))
+  else
+    let r = qc_parse_expr(s) in
+    match r.err {
+      Some(d) => qc_pres_err(d, r.state),
+      None =>
+        let e = match r.val { Some(x) => x, None => QcEUnit } in
+        let s1 = r.state in
+        if qc_check_sym(s1, ",") then
+          let s2 = qc_next(s1) in
+          if qc_check_sym(s2, ")") then qc_pres_ok(acc_list(AccPush(acc, e)), qc_next(s2))
+          else qc_parse_call_args(s2, AccPush(acc, e))
+        else if qc_check_sym(s1, ")") then
+          qc_pres_ok(acc_list(AccPush(acc, e)), qc_next(s1))
+        else
+          qc_err_here(s1, "expected `,` or `)`")
+    }
+
+fn qc_parse_expr_list(s: QcPState, acc: Accum[QcExpr]) -> QcPRes[List[QcExpr]] =
+  if qc_check_sym(s, "]") then
+    qc_pres_ok(acc_list(acc), qc_next(s))
+  else
+    let r = qc_parse_expr(s) in
+    match r.err {
+      Some(d) => qc_pres_err(d, r.state),
+      None =>
+        let e = match r.val { Some(x) => x, None => QcEUnit } in
+        let s1 = r.state in
+        if qc_check_sym(s1, ",") then
+          let s2 = qc_next(s1) in
+          if qc_check_sym(s2, "]") then qc_pres_ok(acc_list(AccPush(acc, e)), qc_next(s2))
+          else qc_parse_expr_list(s2, AccPush(acc, e))
+        else if qc_check_sym(s1, "]") then
+          qc_pres_ok(acc_list(AccPush(acc, e)), qc_next(s1))
+        else
+          qc_err_here(s1, "expected `,` or `]`")
+    }
+
+fn qc_parse_seq_exprs(s: QcPState, acc: Accum[QcExpr]) -> QcPRes[List[QcExpr]] =
+  let r = qc_parse_expr(s) in
+  match r.err {
+    Some(d) => qc_pres_err(d, r.state),
+    None =>
+      let e = match r.val { Some(x) => x, None => QcEUnit } in
+      let s1 = r.state in
+      if qc_check_sym(s1, ";") then
+        let s2 = qc_next(s1) in
+        qc_parse_seq_exprs(s2, AccPush(acc, e))
+      else if qc_check_sym(s1, "}") then
+        qc_pres_ok(acc_list(AccPush(acc, e)), qc_next(s1))
+      else
+        qc_err_here(s1, "expected `;` or `}`")
+  }
+
+# -----------------------------------------------------------------------------
+# Patterns
+
+fn qc_parse_pat(s: QcPState) -> QcPRes[QcPat] =
+  match qc_enter(s) {
+    Err(d) => qc_pres_err(d, s),
+    Ok(s1) =>
+      let r = qc_parse_pat_inner(s1) in
+      QcPRes { val: r.val, err: r.err, state: qc_leave(r.state) }
+  }
+
+fn qc_parse_pat_inner(s: QcPState) -> QcPRes[QcPat] =
+  match qc_peek(s) {
+    QcTokIdent("_") => qc_pres_ok(QcPWild, qc_next(s)),
+    QcTokSym("_") => qc_pres_ok(QcPWild, qc_next(s)),
+    QcTokInt(n) =>
+      if n >= 0 then qc_pres_ok(QcPInt(n), qc_next(s))
+      else qc_err_here(s, "integer literal `9223372036854775808` does not fit in Int (64-bit); write `-9223372036854775807 - 1` for the minimum"),
+    QcTokStr(str_val) => qc_pres_ok(QcPStr(str_val), qc_next(s)),
+    QcTokIdent("true") => qc_pres_ok(QcPBool(true), qc_next(s)),
+    QcTokIdent("false") => qc_pres_ok(QcPBool(false), qc_next(s)),
+    QcTokSym("(") =>
+      if qc_check_sym(qc_next(s), ")") then
+        qc_pres_ok(QcPUnit, qc_next(qc_next(s)))
+      else
+        qc_err_here(s, "expected a pattern"),
+    QcTokSym("-") =>
+      let s1 = qc_next(s) in
+      match qc_peek(s1) {
+        QcTokInt(n) =>
+          let neg_n = if n < 0 then n else -n in
+          qc_pres_ok(QcPInt(neg_n), qc_next(s1)),
+        _ => qc_err_here(s, "expected a pattern")
+      },
+    QcTokIdent(id) =>
+      if qc_is_upper(id) then
+        let s1 = qc_next(s) in
+        if qc_check_sym(s1, "(") then
+          let s2 = qc_next(s1) in
+          if qc_check_sym(s2, ")") then qc_pres_ok(QcPVariant(id, []), qc_next(s2))
+          else
+            let sub_r = qc_parse_pat_list(s2, AccEnd) in
+            match sub_r.err {
+              Some(d) => qc_pres_err(d, sub_r.state),
+              None => qc_pres_ok(QcPVariant(id, match sub_r.val { Some(l) => l, None => [] }), sub_r.state)
+            }
+        else if qc_check_sym(s1, "{") then
+          qc_parse_pat_record_fields(qc_next(s1), id, AccEnd)
+        else
+          qc_pres_ok(QcPVariant(id, []), s1)
+      else
+        let vr = qc_expect_local(s, "variable") in
+        match vr.err {
+          Some(d) => qc_pres_err(d, vr.state),
+          None => qc_pres_ok(QcPBind(match vr.val { Some(v) => v, None => "" }), vr.state)
+        },
+    _ => qc_err_here(s, "expected a pattern")
+  }
+
+fn qc_parse_pat_list(s: QcPState, acc: Accum[QcPat]) -> QcPRes[List[QcPat]] =
+  if qc_check_sym(s, ")") then
+    qc_pres_ok(acc_list(acc), qc_next(s))
+  else
+    let r = qc_parse_pat(s) in
+    match r.err {
+      Some(d) => qc_pres_err(d, r.state),
+      None =>
+        let p = match r.val { Some(x) => x, None => QcPWild } in
+        let s1 = r.state in
+        if qc_check_sym(s1, ",") then
+          let s2 = qc_next(s1) in
+          if qc_check_sym(s2, ")") then qc_pres_ok(acc_list(AccPush(acc, p)), qc_next(s2))
+          else qc_parse_pat_list(s2, AccPush(acc, p))
+        else if qc_check_sym(s1, ")") then
+          qc_pres_ok(acc_list(AccPush(acc, p)), qc_next(s1))
+        else
+          qc_err_here(s1, "expected `,` or `)`")
+    }
+
+fn qc_parse_pat_record_fields(s: QcPState, name: Str, acc: Accum[QcFieldPat]) -> QcPRes[QcPat] =
+  if qc_check_sym(s, "}") then
+    qc_pres_ok(QcPRecord(name, acc_list(acc)), qc_next(s))
+  else
+    let id_r = qc_expect_local(s, "field") in
+    match id_r.err {
+      Some(d) => qc_pres_err(d, id_r.state),
+      None =>
+        let fname = match id_r.val { Some(n) => n, None => "" } in
+        let s1 = id_r.state in
+        let pat_r =
+          if qc_check_sym(s1, ":") then
+            qc_parse_pat(qc_next(s1))
+          else
+            QcPRes { val: Some(QcPBind(fname)), err: None, state: s1 } in
+        match pat_r.err {
+          Some(d) => qc_pres_err(d, pat_r.state),
+          None =>
+            let fp = QcFieldPat { name: fname, pat: match pat_r.val { Some(p) => p, None => QcPWild } } in
+            let s2 = pat_r.state in
+            if qc_check_sym(s2, ",") then
+              let s3 = qc_next(s2) in
+              if qc_check_sym(s3, "}") then qc_pres_ok(QcPRecord(name, acc_list(AccPush(acc, fp))), qc_next(s3))
+              else qc_parse_pat_record_fields(s3, name, AccPush(acc, fp))
+            else if qc_check_sym(s2, "}") then
+              qc_pres_ok(QcPRecord(name, acc_list(AccPush(acc, fp))), qc_next(s2))
+            else
+              qc_err_here(s2, "expected `,` or `}`")
+        }
+    }
+
+# -----------------------------------------------------------------------------
+# Definitions and Program
+
+fn qc_parse_tparams(s: QcPState) -> QcPRes[List[Str]] =
+  if qc_check_sym(s, "[") then
+    let s1 = qc_next(s) in
+    if qc_check_sym(s1, "]") then
+      qc_err_here(s1, "`[]` needs at least one type parameter")
+    else
+      qc_parse_tparams_loop(s1, AccEnd)
+  else
+    qc_pres_ok([], s)
+
+fn qc_parse_tparams_loop(s: QcPState, acc: Accum[Str]) -> QcPRes[List[Str]] =
+  if qc_check_sym(s, "]") then
+    qc_pres_ok(acc_list(acc), qc_next(s))
+  else
+    let id_r = qc_expect_upper_what(s, "type parameter", false) in
+    match id_r.err {
+      Some(d) => qc_pres_err(d, id_r.state),
+      None =>
+        let p = match id_r.val { Some(x) => x, None => "" } in
+        let s1 = id_r.state in
+        if qc_check_sym(s1, ",") then
+          let s2 = qc_next(s1) in
+          if qc_check_sym(s2, "]") then qc_pres_ok(acc_list(AccPush(acc, p)), qc_next(s2))
+          else qc_parse_tparams_loop(s2, AccPush(acc, p))
+        else if qc_check_sym(s1, "]") then
+          qc_pres_ok(acc_list(AccPush(acc, p)), qc_next(s1))
+        else
+          qc_err_here(s1, "expected `,` or `]`")
+    }
+
+fn qc_parse_fn_def(s: QcPState) -> QcPRes[QcDef] =
+  let name_r = qc_expect_lower_what(s, "function") in
+  match name_r.err {
+    Some(d) => qc_pres_err(d, name_r.state),
+    None =>
+      let name = match name_r.val { Some(n) => n, None => "" } in
+      let tp_r = qc_parse_tparams(name_r.state) in
+      match tp_r.err {
+        Some(d) => qc_pres_err(d, tp_r.state),
+        None =>
+          let tparams = match tp_r.val { Some(l) => l, None => [] } in
+          match qc_expect_sym(tp_r.state, "(") {
+            Err(d) => qc_pres_err(d, tp_r.state),
+            Ok(s1) =>
+              let params_r = qc_parse_fn_params(s1, AccEnd) in
+              match params_r.err {
+                Some(d) => qc_pres_err(d, params_r.state),
+                None =>
+                  match qc_expect_sym(params_r.state, "->") {
+                    Err(d) => qc_pres_err(d, params_r.state),
+                    Ok(s2) =>
+                      let ret_r = qc_parse_type(s2) in
+                      match ret_r.err {
+                        Some(d) => qc_pres_err(d, ret_r.state),
+                        None =>
+                          let eff_r = qc_parse_effects(ret_r.state, AccEnd) in
+                          match eff_r.err {
+                            Some(d) => qc_pres_err(d, eff_r.state),
+                            None =>
+                              let contracts_r = qc_parse_contracts(eff_r.state, AccEnd, AccEnd) in
+                              match contracts_r.err {
+                                Some(d) => qc_pres_err(d, contracts_r.state),
+                                None =>
+                                  match qc_expect_sym(contracts_r.state, "=") {
+                                    Err(d) => qc_pres_err(d, contracts_r.state),
+                                    Ok(s3) =>
+                                      let body_r = qc_parse_expr(s3) in
+                                      match body_r.err {
+                                        Some(d) => qc_pres_err(d, body_r.state),
+                                        None =>
+                                          let fn_def = QcFnDef {
+                                            name: name,
+                                            tparams: tparams,
+                                            params: match params_r.val { Some(p) => p, None => [] },
+                                            ret: match ret_r.val { Some(r) => r, None => QcTUnit },
+                                            effects: match eff_r.val { Some(e) => e, None => [] },
+                                            reqs: contracts_r.reqs,
+                                            enss: contracts_r.enss,
+                                            body: match body_r.val { Some(b) => b, None => QcEUnit }
+                                          } in
+                                          qc_pres_ok(QcDefFn(fn_def), body_r.state)
+                                      }
+                                  }
+                              }
+                          }
+                      }
+                  }
+              }
+          }
+      }
+  }
+
+fn qc_parse_fn_params(s: QcPState, acc: Accum[QcParam]) -> QcPRes[List[QcParam]] =
+  if qc_check_sym(s, ")") then
+    qc_pres_ok(acc_list(acc), qc_next(s))
+  else
+    let id_r = qc_expect_local(s, "parameter") in
+    match id_r.err {
+      Some(d) => qc_pres_err(d, id_r.state),
+      None =>
+        let name = match id_r.val { Some(n) => n, None => "" } in
+        match qc_expect_sym(id_r.state, ":") {
+          Err(d) => qc_pres_err(d, id_r.state),
+          Ok(s1) =>
+            let ty_r = qc_parse_type(s1) in
+            match ty_r.err {
+              Some(d) => qc_pres_err(d, ty_r.state),
+              None =>
+                let param = QcParam { name: name, ty: match ty_r.val { Some(t) => t, None => QcTUnit } } in
+                let s2 = ty_r.state in
+                if qc_check_sym(s2, ",") then
+                  let s3 = qc_next(s2) in
+                  if qc_check_sym(s3, ")") then qc_pres_ok(acc_list(AccPush(acc, param)), qc_next(s3))
+                  else qc_parse_fn_params(s3, AccPush(acc, param))
+                else if qc_check_sym(s2, ")") then
+                  qc_pres_ok(acc_list(AccPush(acc, param)), qc_next(s2))
+                else
+                  qc_err_here(s2, "expected `,` or `)`")
+            }
+        }
+    }
+
+type QcContractsRes = {
+  reqs: List[QcExpr],
+  enss: List[QcExpr],
+  err: Option[QcDiag],
+  state: QcPState
+}
+
+fn qc_parse_contracts(s: QcPState, req_acc: Accum[QcExpr], ens_acc: Accum[QcExpr]) -> QcContractsRes =
+  if qc_check_ident(s, "req") then
+    let r = qc_parse_expr(qc_next(s)) in
+    match r.err {
+      Some(d) => QcContractsRes { reqs: [], enss: [], err: Some(d), state: r.state },
+      None =>
+        let expr = match r.val { Some(e) => e, None => QcEUnit } in
+        qc_parse_contracts(r.state, AccPush(req_acc, expr), ens_acc)
+    }
+  else if qc_check_ident(s, "ens") then
+    let r = qc_parse_expr(qc_next(s)) in
+    match r.err {
+      Some(d) => QcContractsRes { reqs: [], enss: [], err: Some(d), state: r.state },
+      None =>
+        let expr = match r.val { Some(e) => e, None => QcEUnit } in
+        qc_parse_contracts(r.state, req_acc, AccPush(ens_acc, expr))
+    }
+  else
+    QcContractsRes { reqs: acc_list(req_acc), enss: acc_list(ens_acc), err: None, state: s }
+
+fn qc_parse_test_def(s: QcPState) -> QcPRes[QcDef] =
+  let name_r = qc_expect_lower_what(s, "test") in
+  match name_r.err {
+    Some(d) => qc_pres_err(d, name_r.state),
+    None =>
+      let name = match name_r.val { Some(n) => n, None => "" } in
+      match qc_expect_sym(name_r.state, "=") {
+        Err(d) => qc_pres_err(d, name_r.state),
+        Ok(s1) =>
+          let body_r = qc_parse_expr(s1) in
+          match body_r.err {
+            Some(d) => qc_pres_err(d, body_r.state),
+            None =>
+              let tdef = QcTestDef { name: name, body: match body_r.val { Some(b) => b, None => QcEUnit } } in
+              qc_pres_ok(QcDefTest(tdef), body_r.state)
+          }
+      }
+  }
+
+fn qc_parse_type_def(s: QcPState) -> QcPRes[QcDef] =
+  let name_r = qc_expect_upper_what(s, "type", true) in
+  match name_r.err {
+    Some(d) => qc_pres_err(d, name_r.state),
+    None =>
+      let name = match name_r.val { Some(n) => n, None => "" } in
+      let tp_r = qc_parse_tparams(name_r.state) in
+      match tp_r.err {
+        Some(d) => qc_pres_err(d, tp_r.state),
+        None =>
+          let params = match tp_r.val { Some(l) => l, None => [] } in
+          match qc_expect_sym(tp_r.state, "=") {
+            Err(d) => qc_pres_err(d, tp_r.state),
+            Ok(s1) =>
+              let body_r = qc_parse_type_def_body(s1) in
+              match body_r.err {
+                Some(d) => qc_pres_err(d, body_r.state),
+                None =>
+                  let body = match body_r.val { Some(b) => b, None => QcBodyEnum([]) } in
+                  let tdef = QcTypeDef { name: name, params: params, body: body } in
+                  qc_pres_ok(QcDefType(tdef), body_r.state)
+              }
+          }
+      }
+  }
+
+fn qc_wrap_enum(r: QcPRes[List[QcVariant]]) -> QcPRes[QcTypeBody] =
+  match r.err {
+    Some(d) => qc_pres_err(d, r.state),
+    None => qc_pres_ok(QcBodyEnum(match r.val { Some(v) => v, None => [] }), r.state)
+  }
+
+fn qc_parse_type_def_body(s: QcPState) -> QcPRes[QcTypeBody] =
+  if qc_check_sym(s, "{") then
+    let fields_r = qc_parse_record_type_fields(qc_next(s), AccEnd) in
+    match fields_r.err {
+      Some(d) => qc_pres_err(d, fields_r.state),
+      None => qc_pres_ok(QcBodyRecord(match fields_r.val { Some(f) => f, None => [] }), fields_r.state)
+    }
+  else if qc_check_sym(s, "|") then
+    let s1 = qc_next(s) in
+    # A lone `|` is an empty enum
+    match qc_peek(s1) {
+      QcTokIdent("fn") => qc_pres_ok(QcBodyEnum([]), s1),
+      QcTokIdent("type") => qc_pres_ok(QcBodyEnum([]), s1),
+      QcTokIdent("test") => qc_pres_ok(QcBodyEnum([]), s1),
+      QcTokEof => qc_pres_ok(QcBodyEnum([]), s1),
+      _ => qc_wrap_enum(qc_parse_enum_variants(s1, AccEnd))
+    }
+  else
+    qc_wrap_enum(qc_parse_enum_variants(s, AccEnd))
+
+fn qc_parse_record_type_fields(s: QcPState, acc: Accum[QcFieldType]) -> QcPRes[List[QcFieldType]] =
+  if qc_check_sym(s, "}") then
+    qc_pres_ok(acc_list(acc), qc_next(s))
+  else
+    let id_r = qc_expect_local(s, "field") in
+    match id_r.err {
+      Some(d) => qc_pres_err(d, id_r.state),
+      None =>
+        let fname = match id_r.val { Some(n) => n, None => "" } in
+        match qc_expect_sym(id_r.state, ":") {
+          Err(d) => qc_pres_err(d, id_r.state),
+          Ok(s1) =>
+            let ty_r = qc_parse_type(s1) in
+            match ty_r.err {
+              Some(d) => qc_pres_err(d, ty_r.state),
+              None =>
+                let ft = QcFieldType { name: fname, ty: match ty_r.val { Some(t) => t, None => QcTUnit } } in
+                let s2 = ty_r.state in
+                if qc_check_sym(s2, ",") then
+                  let s3 = qc_next(s2) in
+                  if qc_check_sym(s3, "}") then qc_pres_ok(acc_list(AccPush(acc, ft)), qc_next(s3))
+                  else qc_parse_record_type_fields(s3, AccPush(acc, ft))
+                else if qc_check_sym(s2, "}") then
+                  qc_pres_ok(acc_list(AccPush(acc, ft)), qc_next(s2))
+                else
+                  qc_err_here(s2, "expected `,` or `}`")
+            }
+        }
+    }
+
+fn qc_parse_enum_variants(s: QcPState, acc: Accum[QcVariant]) -> QcPRes[List[QcVariant]] =
+  let vname_r = qc_expect_upper_what(s, "variant", true) in
+  match vname_r.err {
+    Some(d) => qc_pres_err(d, vname_r.state),
+    None =>
+      let vname = match vname_r.val { Some(n) => n, None => "" } in
+      let s1 = vname_r.state in
+      let fields_r =
+        if qc_check_sym(s1, "(") then
+          let pfr = qc_parse_variant_fields(qc_next(s1), AccEnd) in
+          match pfr.err {
+            Some(d) => QcPRes { val: None, err: Some(d), state: pfr.state },
+            None => QcPRes { val: Some(match pfr.val { Some(l) => l, None => [] }), err: None, state: pfr.state }
+          }
+        else
+          QcPRes { val: Some([]), err: None, state: s1 } in
+      match fields_r.err {
+        Some(d) => qc_pres_err(d, fields_r.state),
+        None =>
+          let fields = match fields_r.val { Some(f) => f, None => [] } in
+          let v = QcVariant { name: vname, fields: fields } in
+          let s2 = fields_r.state in
+          if qc_check_sym(s2, "|") then
+            qc_parse_enum_variants(qc_next(s2), AccPush(acc, v))
+          else
+            qc_pres_ok(acc_list(AccPush(acc, v)), s2)
+      }
+  }
+
+fn qc_parse_variant_fields(s: QcPState, acc: Accum[QcType]) -> QcPRes[List[QcType]] =
+  if qc_check_sym(s, ")") then
+    qc_pres_ok(acc_list(acc), qc_next(s))
+  else
+    let r = qc_parse_type(s) in
+    match r.err {
+      Some(d) => qc_pres_err(d, r.state),
+      None =>
+        let t = match r.val { Some(x) => x, None => QcTUnit } in
+        let s1 = r.state in
+        if qc_check_sym(s1, ",") then
+          let s2 = qc_next(s1) in
+          if qc_check_sym(s2, ")") then qc_pres_ok(acc_list(AccPush(acc, t)), qc_next(s2))
+          else qc_parse_variant_fields(s2, AccPush(acc, t))
+        else if qc_check_sym(s1, ")") then
+          qc_pres_ok(acc_list(AccPush(acc, t)), qc_next(s1))
+        else
+          qc_err_here(s1, "expected `,` or `)`")
+    }
+
+fn qc_parse_def(s: QcPState) -> QcPRes[QcDef] =
+  match qc_peek(s) {
+    QcTokIdent("fn") => qc_parse_fn_def(qc_next(s)),
+    QcTokIdent("type") => qc_parse_type_def(qc_next(s)),
+    QcTokIdent("test") => qc_parse_test_def(qc_next(s)),
+    _ => qc_err_here(s, "expected `fn`, `type` or `test`")
+  }
+
+fn qc_parse_defs(s: QcPState, acc: Accum[QcDef]) -> Result[List[QcDef], QcDiag] =
+  match qc_peek(s) {
+    QcTokEof => Ok(acc_list(acc)),
+    _ =>
+      let r = qc_parse_def(s) in
+      match r.err {
+        Some(d) => Err(d),
+        None =>
+          let d = match r.val { Some(x) => x, None => QcDefTest(QcTestDef { name: "", body: QcEUnit }) } in
+          qc_parse_defs(r.state, AccPush(acc, d))
+      }
+  }
+
+fn qc_parse_tokens(toks: List[QcToken]) -> Result[QcProgram, QcDiag] =
+  let state = QcPState { toks: toks, pos: 0, depth: 0, no_struct: false } in
+  match qc_parse_defs(state, AccEnd) {
+    Err(d) => Err(d),
+    Ok(defs) => Ok(QcProgram { defs: defs })
+  }
+
+fn qc_parse(src: Str) -> Result[QcProgram, QcDiag] =
+  match qc_lex(src) {
+    Err(d) => Err(d),
+    Ok(toks) => qc_parse_tokens(toks)
+  }
+
+test qc_parse_test =
+  match qc_parse("type Pair[A, B] = { fst: A, snd: B }\nfn add(x: Int, y: Int) -> Int = x + y\ntest t = add(2, 3) == 5") {
+    Ok(p) => len(p.defs) == 3,
+    Err(_) => false
+  }
+# Canonical printer for QAL self-hosting compiler (spec §7: qc_print, port of qal-text/src/printer.rs)
+
+fn qc_hex_digit(d: Int) -> Str =
+  if d < 10 then from_char_code(48 + d)
+  else from_char_code(97 + (d - 10))
+
+fn qc_to_hex_loop(n: Int, acc: Str) -> Str =
+  if n == 0 then (if acc == "" then "0" else acc)
+  else
+    let d = bit_and(n, 15) in
+    qc_to_hex_loop(shr(n, 4), qc_hex_digit(d) ++ acc)
+
+fn qc_to_hex(n: Int) -> Str =
+  if n == 0 then "0" else qc_to_hex_loop(n, "")
+
+fn qc_escape_char(ch: Str) -> Str =
+  if ch == "\"" then "\\\""
+  else if ch == "\\" then "\\\\"
+  else if ch == "\n" then "\\n"
+  else if ch == "\t" then "\\t"
+  else if ch == "\r" then "\\r"
+  else if ch == "\0" then "\\0"
+  else
+    let c = char_code(ch) in
+    if c <= 31 || (c >= 127 && c <= 159) then
+      "\\u{" ++ qc_to_hex(c) ++ "}"
+    else ch
+
+fn qc_print_str(s: Str) -> Str =
+  "\"" ++ join(map(chars(s), qc_escape_char), "") ++ "\""
+
+fn qc_print_int(n: Int) -> Str =
+  if n < -9223372036854775807 then "(-9223372036854775807 - 1)"
+  else if n < 0 then "(-" ++ from_int(-n) ++ ")"
+  else from_int(n)
+
+fn qc_print_float(x: Float) -> Str =
+  let bits = float_bits(x) in
+  let is_neg = bit_and(ushr(bits, 63), 1) == 1 in
+  let exp = bit_and(ushr(bits, 52), 2047) in
+  let mant = bit_and(bits, 4503599627370495) in
+  if exp == 2047 then
+    if mant != 0 then "(0.0 / 0.0)"
+    else if is_neg then "(-1.0 / 0.0)"
+    else "(1.0 / 0.0)"
+  else if is_neg then "(-" ++ from_float(-x) ++ ")"
+  else from_float(x)
+
+fn qc_print_type(t: QcType) -> Str =
+  match t {
+    QcTInt => "Int",
+    QcTFloat => "Float",
+    QcTBool => "Bool",
+    QcTUnit => "Unit",
+    QcTStr => "Str",
+    QcTBytes => "Bytes",
+    QcTNamed(n) => n,
+    QcTParam(n) => n,
+    QcTList(elem) => "List[" ++ qc_print_type(elem) ++ "]",
+    QcTOption(elem) => "Option[" ++ qc_print_type(elem) ++ "]",
+    QcTResult(ok, err) => "Result[" ++ qc_print_type(ok) ++ ", " ++ qc_print_type(err) ++ "]",
+    QcTMap(k, v) => "Map[" ++ qc_print_type(k) ++ ", " ++ qc_print_type(v) ++ "]",
+    QcTApp(n, args) => n ++ "[" ++ join(map(args, qc_print_type), ", ") ++ "]",
+    QcTVar(_) => "_",
+    QcTFn(ps, ret, effs) =>
+      let ps_s = join(map(ps, qc_print_type), ", ") in
+      let ret_s = qc_print_type(ret) in
+      let base = match ret {
+        QcTFn(_, _, _) => "fn(" ++ ps_s ++ ") -> (" ++ ret_s ++ ")",
+        _ => "fn(" ++ ps_s ++ ") -> " ++ ret_s
+      } in
+      if len(effs) == 0 then base
+      else base ++ " !" ++ join(effs, " !")
+  }
+
+fn qc_braces(items: List[Str]) -> Str =
+  if len(items) == 0 then "{}"
+  else "{ " ++ join(items, ", ") ++ " }"
+
+fn qc_tparams(ps: List[Str]) -> Str =
+  if len(ps) == 0 then ""
+  else "[" ++ join(ps, ", ") ++ "]"
+
+fn qc_print_pat(p: QcPat) -> Str =
+  match p {
+    QcPWild => "_",
+    QcPBind(n) => n,
+    QcPInt(n) => from_int(n),
+    QcPStr(s) => qc_print_str(s),
+    QcPBool(b) => if b then "true" else "false",
+    QcPUnit => "()",
+    QcPVariant(n, ps) =>
+      if len(ps) == 0 then n
+      else n ++ "(" ++ join(map(ps, qc_print_pat), ", ") ++ ")",
+    QcPRecord(n, fs) =>
+      let fs_s = map(fs, fn(f: QcFieldPat) =>
+        match f.pat {
+          QcPBind(b) if b == f.name => f.name,
+          _ => f.name ++ ": " ++ qc_print_pat(f.pat)
+        }
+      ) in
+      n ++ " " ++ qc_braces(fs_s)
+  }
+
+fn qc_binop_sym(op: QcBinOp) -> Str =
+  match op {
+    QcOpAdd => "+",
+    QcOpSub => "-",
+    QcOpMul => "*",
+    QcOpDiv => "/",
+    QcOpRem => "%",
+    QcOpConcat => "++",
+    QcOpEq => "==",
+    QcOpNe => "!=",
+    QcOpLt => "<",
+    QcOpLe => "<=",
+    QcOpGt => ">",
+    QcOpGe => ">=",
+    QcOpAnd => "&&",
+    QcOpOr => "||"
+  }
+
+fn qc_prec(e: QcExpr) -> Int =
+  match e {
+    QcELet(_, _, _, _) => 0,
+    QcEIf(_, _, _) => 0,
+    QcEMatch(_, _) => 0,
+    QcELambda(_, _) => 0,
+    QcEBin(op, _, _) => qc_binop_prec(op),
+    QcEUn(_, _) => 6,
+    QcEField(_, _) => 8,
+    _ => 9
+  }
+
+fn qc_wrap(e: QcExpr, needs_parens: Bool) -> Str =
+  let s = qc_print_expr(e) in
+  if needs_parens then "(" ++ s ++ ")" else s
+
+fn qc_has_bare_record_arms_loop(arms: List[QcArm], idx: Int) -> Bool =
+  if idx >= len(arms) then false
+  else
+    let a = list_at(arms, idx) in
+    let g_has = match a.guard {
+      Some(g) => qc_has_bare_record(g),
+      None => false
+    } in
+    if g_has || qc_has_bare_record(a.body) then true
+    else qc_has_bare_record_arms_loop(arms, idx + 1)
+
+fn qc_has_bare_record_arms(arms: List[QcArm]) -> Bool =
+  qc_has_bare_record_arms_loop(arms, 0)
+
+fn qc_has_bare_record(e: QcExpr) -> Bool =
+  match e {
+    QcERecord(_, _) => true,
+    QcEBin(_, l, r) => qc_has_bare_record(l) || qc_has_bare_record(r),
+    QcEUn(_, x) => qc_has_bare_record(x),
+    QcEField(x, _) => qc_has_bare_record(x),
+    QcEIf(c, t, f) => qc_has_bare_record(c) || qc_has_bare_record(t) || qc_has_bare_record(f),
+    QcELet(_, _, v, b) => qc_has_bare_record(v) || qc_has_bare_record(b),
+    QcELambda(_, b) => qc_has_bare_record(b),
+    QcEMatch(s, arms) => qc_has_bare_record(s) || qc_has_bare_record_arms(arms),
+    _ => false
+  }
+
+fn qc_print_expr(e: QcExpr) -> Str =
+  match e {
+    QcEInt(n) => qc_print_int(n),
+    QcEFloat(x) => qc_print_float(x),
+    QcEBool(b) => if b then "true" else "false",
+    QcEStr(s) => qc_print_str(s),
+    QcEUnit => "()",
+    QcEVar(v) => v,
+    QcECall(f, args) => f ++ "(" ++ join(map(args, qc_print_expr), ", ") ++ ")",
+    QcEList(items) => "[" ++ join(map(items, qc_print_expr), ", ") ++ "]",
+    QcESeq(items) =>
+      if len(items) == 0 then "()"
+      else "{ " ++ join(map(items, qc_print_expr), "; ") ++ " }",
+    QcERecord(n, fs) =>
+      let fs_s = map(fs, fn(f: QcFieldExpr) => f.name ++ ": " ++ qc_print_expr(f.expr)) in
+      n ++ " " ++ qc_braces(fs_s),
+    QcEField(t, f) =>
+      qc_wrap(t, qc_prec(t) < 8) ++ "." ++ f,
+    QcEUn(op, x) =>
+      let sym = match op {
+        QcUnNeg => "-",
+        QcUnNot => "!"
+      } in
+      sym ++ qc_wrap(x, qc_prec(x) < 6),
+    QcEBin(op, l, r) =>
+      let p = qc_binop_prec(op) in
+      let lp = qc_prec(l) in
+      let rp = qc_prec(r) in
+      let left_parens = lp < p || (qc_binop_is_comparison(op) && lp == p) in
+      let right_parens = rp <= p in
+      qc_wrap(l, left_parens) ++ " " ++ qc_binop_sym(op) ++ " " ++ qc_wrap(r, right_parens),
+    QcEIf(c, t, f) =>
+      "if " ++ qc_print_expr(c) ++ " then " ++ qc_print_expr(t) ++ " else " ++ qc_print_expr(f),
+    QcELet(n, ann, v, b) =>
+      let val_s = qc_print_expr(v) in
+      let body_s = qc_print_expr(b) in
+      match ann {
+        Some(t) => "let " ++ n ++ ": " ++ qc_print_type(t) ++ " = " ++ val_s ++ " in " ++ body_s,
+        None => "let " ++ n ++ " = " ++ val_s ++ " in " ++ body_s
+      },
+    QcEMatch(s, arms) =>
+      let arms_s = map(arms, fn(a: QcArm) =>
+        let pat_s = qc_print_pat(a.pat) in
+        let body_s = qc_print_expr(a.body) in
+        match a.guard {
+          Some(g) => pat_s ++ " if " ++ qc_print_expr(g) ++ " => " ++ body_s,
+          None => pat_s ++ " => " ++ body_s
+        }
+      ) in
+      "match " ++ qc_wrap(s, qc_has_bare_record(s)) ++ " " ++ qc_braces(arms_s),
+    QcELambda(params, body) =>
+      let ps_s = map(params, fn(p: QcLambdaParam) =>
+        match p.ty {
+          Some(t) => p.name ++ ": " ++ qc_print_type(t),
+          None => p.name
+        }
+      ) in
+      "fn(" ++ join(ps_s, ", ") ++ ") => " ++ qc_print_expr(body)
+  }
+
+fn qc_print_type_def(t: QcTypeDef) -> Str =
+  let head = "type " ++ t.name ++ qc_tparams(t.params) in
+  match t.body {
+    QcBodyRecord(fields) =>
+      let fs = map(fields, fn(f: QcFieldType) => f.name ++ ": " ++ qc_print_type(f.ty)) in
+      head ++ " = " ++ qc_braces(fs),
+    QcBodyEnum(variants) =>
+      if len(variants) == 0 then head ++ " = |"
+      else
+        let vs = map(variants, fn(v: QcVariant) =>
+          if len(v.fields) == 0 then v.name
+          else v.name ++ "(" ++ join(map(v.fields, qc_print_type), ", ") ++ ")"
+        ) in
+        head ++ " = " ++ join(vs, " | ")
+  }
+
+fn qc_join_clauses(prefix: Str, exprs: List[QcExpr]) -> Str =
+  let lines = map(exprs, fn(c: QcExpr) => "\n  " ++ prefix ++ " " ++ qc_print_expr(c)) in
+  join(lines, "")
+
+fn qc_print_fn_def(f: QcFnDef) -> Str =
+  let params_s = join(map(f.params, fn(p: QcParam) => p.name ++ ": " ++ qc_print_type(p.ty)), ", ") in
+  let name_s = f.name ++ qc_tparams(f.tparams) in
+  let ret_s = qc_print_type(f.ret) in
+  let mut_s = match f.ret {
+    QcTFn(_, _, _) => "fn " ++ name_s ++ "(" ++ params_s ++ ") -> (" ++ ret_s ++ ")",
+    _ => "fn " ++ name_s ++ "(" ++ params_s ++ ") -> " ++ ret_s
+  } in
+  let with_effs =
+    if len(f.effects) == 0 then mut_s
+    else mut_s ++ " !" ++ join(f.effects, " !") in
+  let with_reqs = with_effs ++ qc_join_clauses("req", f.reqs) in
+  let with_enss = with_reqs ++ qc_join_clauses("ens", f.enss) in
+  with_enss ++ "\n= " ++ qc_print_expr(f.body)
+
+fn qc_print_test_def(t: QcTestDef) -> Str =
+  "test " ++ t.name ++ " = " ++ qc_print_expr(t.body)
+
+fn qc_print_def(d: QcDef) -> Str =
+  match d {
+    QcDefFn(f) => qc_print_fn_def(f),
+    QcDefType(t) => qc_print_type_def(t),
+    QcDefTest(t) => qc_print_test_def(t)
+  }
+
+fn qc_print_program(p: QcProgram) -> Str =
+  let parts = map(p.defs, qc_print_def) in
+  let out = join(parts, "\n\n") in
+  if out != "" then out ++ "\n" else ""
+
+test qc_print_test =
+  let src = "fn add(a: Int, b: Int) -> Int !io\n  req a >= 0\n= a + b * 2\n" in
+  match qc_parse(src) {
+    Ok(p) => qc_print_program(p) == src,
+    Err(_) => false
+  }
+# Canonical form, content hashing, and decoding for QAL self-hosting compiler (spec §7: qc_canon)
+
+type QcHash = Bytes
+
+fn qc_varint_acc(n: Int, acc: Accum[Int]) -> Accum[Int] =
+  let b = bit_and(n, 127) in
+  let rest = ushr(n, 7) in
+  if rest == 0 then AccPush(acc, b)
+  else qc_varint_acc(rest, AccPush(acc, bit_or(b, 128)))
+
+fn qc_i64_acc(n: Int, acc: Accum[Int]) -> Accum[Int] =
+  let a0 = AccPush(acc, bit_and(n, 255)) in
+  let a1 = AccPush(a0, bit_and(ushr(n, 8), 255)) in
+  let a2 = AccPush(a1, bit_and(ushr(n, 16), 255)) in
+  let a3 = AccPush(a2, bit_and(ushr(n, 24), 255)) in
+  let a4 = AccPush(a3, bit_and(ushr(n, 32), 255)) in
+  let a5 = AccPush(a4, bit_and(ushr(n, 40), 255)) in
+  let a6 = AccPush(a5, bit_and(ushr(n, 48), 255)) in
+  AccPush(a6, bit_and(ushr(n, 56), 255))
+
+fn qc_float_acc(x: Float, acc: Accum[Int]) -> Accum[Int] =
+  qc_i64_acc(float_bits(x), acc)
+
+fn qc_bytes_slice_acc(b: Bytes, pos: Int, count: Int, acc: Accum[Int]) -> Accum[Int] =
+  if count <= 0 then acc
+  else qc_bytes_slice_acc(b, pos + 1, count - 1, AccPush(acc, bytes_at(b, pos)))
+
+fn qc_str_acc(s: Str, acc: Accum[Int]) -> Accum[Int] =
+  let b = to_bytes(s) in
+  let blen = bytes_len(b) in
+  let acc2 = qc_varint_acc(blen, acc) in
+  qc_bytes_slice_acc(b, 0, blen, acc2)
+
+fn qc_raw_bytes_acc(b: Bytes, acc: Accum[Int]) -> Accum[Int] =
+  qc_bytes_slice_acc(b, 0, bytes_len(b), acc)
+
+fn qc_hash_to_hex_loop(h: Bytes, idx: Int, acc: Str) -> Str =
+  if idx >= bytes_len(h) then acc
+  else
+    let b = bytes_at(h, idx) in
+    let hi = qc_hex_digit(ushr(b, 4)) in
+    let lo = qc_hex_digit(bit_and(b, 15)) in
+    qc_hash_to_hex_loop(h, idx + 1, acc ++ hi ++ lo)
+
+fn qc_hash_to_hex(h: Bytes) -> Str =
+  qc_hash_to_hex_loop(h, 0, "")
+
+fn qc_hash_short(h: Bytes) -> Str =
+  slice(qc_hash_to_hex(h), 0, 12)
+
+fn qc_is_prelude_type(name: Str) -> Bool =
+  name == "HttpHeader" || name == "HttpRequest" || name == "HttpResponse" ||
+  name == "HttpCall" || name == "NetError" || name == "SqlValue" ||
+  name == "DbRows" || name == "DbError" || name == "Accum"
+
+fn qc_prelude_variant_owner(name: Str) -> Option[Str] =
+  if name == "NetDenied" || name == "NetInvalid" || name == "NetConnect" || name == "NetTimeout" || name == "NetTooLarge" then Some("NetError")
+  else if name == "SqlNull" || name == "SqlInt" || name == "SqlFloat" || name == "SqlText" then Some("SqlValue")
+  else if name == "DbConstraint" || name == "DbSql" || name == "DbBusy" || name == "DbFull" || name == "DbTooLarge" then Some("DbError")
+  else if name == "AccEnd" || name == "AccPush" then Some("Accum")
+  else None
+
+fn qc_is_builtin_name(name: Str) -> Bool =
+  name == "len" ||
+  name == "slice" || name == "split" || name == "join" || name == "trim" ||
+  name == "contains" || name == "starts_with" || name == "to_int" || name == "to_float" ||
+  name == "from_int" || name == "from_float" || name == "chars" || name == "get" ||
+  name == "push" || name == "concat" || name == "map" || name == "filter" ||
+  name == "fold" || name == "range" || name == "reverse" || name == "sort_int" ||
+  name == "int_to_float" || name == "float_to_int" || name == "print" || name == "read_line" ||
+  name == "read_file" || name == "write_file" || name == "now_ms" || name == "rand_int" ||
+  name == "read_all" || name == "sort_str" || name == "char_code" || name == "from_char_code" ||
+  name == "to_upper" || name == "to_lower" || name == "replace" || name == "index_of" ||
+  name == "map_new" || name == "map_get" || name == "map_put" || name == "map_del" ||
+  name == "map_has" || name == "map_size" || name == "map_keys" || name == "map_values" ||
+  name == "to_bytes" || name == "bytes_len" || name == "bytes_get" || name == "bytes_slice" ||
+  name == "bytes_from" || name == "bytes_to_list" || name == "bytes_to_str" || name == "compare" ||
+  name == "http" || name == "db_exec" || name == "db_query" ||
+  name == "bit_and" || name == "bit_or" || name == "bit_xor" || name == "bit_not" ||
+  name == "shl" || name == "shr" || name == "ushr" || name == "float_bits" ||
+  name == "float_of_bits" || name == "list_at" || name == "bytes_at" || name == "acc_list" ||
+  name == "bytes_join" || name == "sha256" || name == "todo"
+
+type QcCanonEnv = {
+  fns: Map[Str, Bool],
+  types: Map[Str, Bool],
+  variants: Map[Str, Str]
+}
+
+fn qc_canon_env_of(p: QcProgram) -> QcCanonEnv =
+  fold(p.defs, QcCanonEnv { fns: map_new(), types: map_new(), variants: map_new() },
+       fn(env: QcCanonEnv, d: QcDef) =>
+         match d {
+           QcDefFn(f) =>
+             QcCanonEnv { fns: map_put(env.fns, f.name, true), types: env.types, variants: env.variants },
+           QcDefType(t) =>
+             let types2 = map_put(env.types, t.name, true) in
+             let vars2 = match t.body {
+               QcBodyEnum(vs) => fold(vs, env.variants, fn(acc: Map[Str, Str], v: QcVariant) => map_put(acc, v.name, t.name)),
+               _ => env.variants
+             } in
+             QcCanonEnv { fns: env.fns, types: types2, variants: vars2 },
+           QcDefTest(_) => env
+         }
+  )
+
+type QcCanon = {
+  name: Str,
+  kind: Int, # 0 type, 1 fn, 2 test
+  hash: Bytes,
+  canonical: Bytes,
+  signature: Str,
+  effects: List[Str],
+  local_names: List[Str],
+  refs: List[Str],
+  deps: List[Bytes],
+  group: Option[Bytes]
+}
+
+type QcGroup = {
+  hash: Bytes,
+  form: Bytes
+}
+
+type QcHashed = {
+  canons: List[QcCanon],
+  groups: List[QcGroup]
+}
+
+fn qc_str_list_contains(xs: List[Str], target: Str) -> Bool =
+  fold(xs, false, fn(found: Bool, x: Str) => if found then true else x == target)
+
+fn qc_walk_tparams_ty(t: QcType, tps: List[Str], out: List[Str]) -> List[Str] =
+  match t {
+    QcTNamed(n) =>
+      if qc_str_list_contains(tps, n) && !qc_str_list_contains(out, n) then out ++ [n] else out,
+    QcTParam(n) =>
+      if qc_str_list_contains(tps, n) && !qc_str_list_contains(out, n) then out ++ [n] else out,
+    QcTList(x) => qc_walk_tparams_ty(x, tps, out),
+    QcTOption(x) => qc_walk_tparams_ty(x, tps, out),
+    QcTResult(a, b) => qc_walk_tparams_ty(b, tps, qc_walk_tparams_ty(a, tps, out)),
+    QcTMap(a, b) => qc_walk_tparams_ty(b, tps, qc_walk_tparams_ty(a, tps, out)),
+    QcTApp(_, args) => fold(args, out, fn(acc: List[Str], a: QcType) => qc_walk_tparams_ty(a, tps, acc)),
+    QcTFn(ps, r, _) =>
+      let acc1 = fold(ps, out, fn(acc: List[Str], p: QcType) => qc_walk_tparams_ty(p, tps, acc)) in
+      qc_walk_tparams_ty(r, tps, acc1),
+    _ => out
+  }
+
+fn qc_fn_tparams(f: QcFnDef) -> List[Str] =
+  let out1 = fold(f.params, [], fn(acc: List[Str], p: QcParam) => qc_walk_tparams_ty(p.ty, f.tparams, acc)) in
+  let out2 = qc_walk_tparams_ty(f.ret, f.tparams, out1) in
+  fold(f.tparams, out2, fn(acc: List[Str], tp: Str) =>
+    if qc_str_list_contains(acc, tp) then acc else acc ++ [tp]
+  )
+
+fn qc_map_type_named(t: QcType, tps: List[Str], refs_map: Map[Str, Bytes]) -> QcType =
+  let map_n = fn(n: Str) =>
+    if qc_str_list_contains(tps, n) then n
+    else
+      match map_get(refs_map, n) {
+        Some(h) => "#" ++ qc_hash_to_hex(h),
+        None => n
+      } in
+  match t {
+    QcTNamed(n) => QcTNamed(map_n(n)),
+    QcTApp(n, args) => QcTApp(map_n(n), map(args, fn(a: QcType) => qc_map_type_named(a, tps, refs_map))),
+    QcTMap(k, v) => QcTMap(qc_map_type_named(k, tps, refs_map), qc_map_type_named(v, tps, refs_map)),
+    QcTList(x) => QcTList(qc_map_type_named(x, tps, refs_map)),
+    QcTOption(x) => QcTOption(qc_map_type_named(x, tps, refs_map)),
+    QcTResult(a, b) => QcTResult(qc_map_type_named(a, tps, refs_map), qc_map_type_named(b, tps, refs_map)),
+    QcTFn(ps, r, effs) => QcTFn(map(ps, fn(p: QcType) => qc_map_type_named(p, tps, refs_map)), qc_map_type_named(r, tps, refs_map), qc_sort_dedup_strs(effs)),
+    _ => t
+  }
+
+fn qc_signature_text_mapped(d: QcDef, refs_map: Map[Str, Bytes]) -> Str =
+  match d {
+    QcDefTest(_) => "Bool",
+    QcDefType(t) =>
+      let head = if len(t.params) == 0 then "" else "[" ++ join(t.params, ", ") ++ "] " in
+      match t.body {
+        QcBodyRecord(fields) =>
+          let fs = map(fields, fn(f: QcFieldType) => f.name ++ ": " ++ qc_print_type(qc_map_type_named(f.ty, t.params, refs_map))) in
+          head ++ "{ " ++ join(fs, ", ") ++ " }",
+        QcBodyEnum(variants) =>
+          if len(variants) == 0 then head ++ "|"
+          else
+            let vs = map(variants, fn(v: QcVariant) =>
+              if len(v.fields) == 0 then v.name
+              else v.name ++ "(" ++ join(map(v.fields, fn(fty: QcType) => qc_print_type(qc_map_type_named(fty, t.params, refs_map))), ", ") ++ ")"
+            ) in
+            head ++ join(vs, " | ")
+      },
+    QcDefFn(f) =>
+      let fn_ty = QcTFn(map(f.params, fn(p: QcParam) => p.ty), f.ret, f.effects) in
+      let mapped_ty = qc_map_type_named(fn_ty, f.tparams, refs_map) in
+      let base = qc_print_type(mapped_ty) in
+      if len(f.tparams) == 0 then base
+      else "fn[" ++ join(qc_fn_tparams(f), ", ") ++ "]" ++ slice(base, 2, len(base))
+  }
+
+fn qc_signature_text(d: QcDef) -> Str =
+  qc_signature_text_mapped(d, map_new())
+
+fn qc_is_prelude_type_in_env(env: QcCanonEnv, name: Str) -> Bool =
+  qc_is_prelude_type(name) && !map_has(env.types, name)
+
+fn qc_is_type_in_env(env: QcCanonEnv, name: Str) -> Bool =
+  map_has(env.types, name) || qc_is_prelude_type(name)
+
+# Encoder state
+type QcEncState = {
+  env: QcCanonEnv,
+  scope: List[Str],
+  locals: Accum[Str],
+  tparams: List[Str],
+  refs_map: Map[Str, Bytes],
+  group_map: Map[Str, Int],
+  ref_names: Accum[Str],
+  resolve_refs: Bool,
+  v2: Bool,
+  err: Option[Str],
+  bytes: Accum[Int]
+}
+
+fn qc_enc_fail(s: QcEncState, msg: Str) -> QcEncState =
+  match s.err {
+    Some(_) => s,
+    None =>
+      QcEncState {
+        env: s.env,
+        scope: s.scope,
+        locals: s.locals,
+        tparams: s.tparams,
+        refs_map: s.refs_map,
+        group_map: s.group_map,
+        ref_names: s.ref_names,
+        resolve_refs: s.resolve_refs,
+        v2: s.v2,
+        err: Some(msg),
+        bytes: s.bytes
+      }
+  }
+
+fn qc_enc_set_v2(s: QcEncState) -> QcEncState =
+  QcEncState {
+    env: s.env,
+    scope: s.scope,
+    locals: s.locals,
+    tparams: s.tparams,
+    refs_map: s.refs_map,
+    group_map: s.group_map,
+    ref_names: s.ref_names,
+    resolve_refs: s.resolve_refs,
+    v2: true,
+    err: s.err,
+    bytes: s.bytes
+  }
+
+fn qc_enc_set_scope(s: QcEncState, scope: List[Str]) -> QcEncState =
+  QcEncState {
+    env: s.env,
+    scope: scope,
+    locals: s.locals,
+    tparams: s.tparams,
+    refs_map: s.refs_map,
+    group_map: s.group_map,
+    ref_names: s.ref_names,
+    resolve_refs: s.resolve_refs,
+    v2: s.v2,
+    err: s.err,
+    bytes: s.bytes
+  }
+
+fn qc_enc_set_tparams(s: QcEncState, tps: List[Str]) -> QcEncState =
+  let next_locals = fold(tps, s.locals, fn(acc: Accum[Str], tp: Str) => AccPush(acc, tp)) in
+  QcEncState {
+    env: s.env,
+    scope: s.scope,
+    locals: next_locals,
+    tparams: tps,
+    refs_map: s.refs_map,
+    group_map: s.group_map,
+    ref_names: s.ref_names,
+    resolve_refs: s.resolve_refs,
+    v2: s.v2,
+    err: s.err,
+    bytes: s.bytes
+  }
+
+fn qc_enc_byte(s: QcEncState, b: Int) -> QcEncState =
+  QcEncState {
+    env: s.env,
+    scope: s.scope,
+    locals: s.locals,
+    tparams: s.tparams,
+    refs_map: s.refs_map,
+    group_map: s.group_map,
+    ref_names: s.ref_names,
+    resolve_refs: s.resolve_refs,
+    v2: s.v2,
+    err: s.err,
+    bytes: AccPush(s.bytes, b)
+  }
+
+fn qc_enc_varint(s: QcEncState, n: Int) -> QcEncState =
+  QcEncState {
+    env: s.env,
+    scope: s.scope,
+    locals: s.locals,
+    tparams: s.tparams,
+    refs_map: s.refs_map,
+    group_map: s.group_map,
+    ref_names: s.ref_names,
+    resolve_refs: s.resolve_refs,
+    v2: s.v2,
+    err: s.err,
+    bytes: qc_varint_acc(n, s.bytes)
+  }
+
+fn qc_enc_i64(s: QcEncState, n: Int) -> QcEncState =
+  QcEncState {
+    env: s.env,
+    scope: s.scope,
+    locals: s.locals,
+    tparams: s.tparams,
+    refs_map: s.refs_map,
+    group_map: s.group_map,
+    ref_names: s.ref_names,
+    resolve_refs: s.resolve_refs,
+    v2: s.v2,
+    err: s.err,
+    bytes: qc_i64_acc(n, s.bytes)
+  }
+
+fn qc_enc_float(s: QcEncState, x: Float) -> QcEncState =
+  QcEncState {
+    env: s.env,
+    scope: s.scope,
+    locals: s.locals,
+    tparams: s.tparams,
+    refs_map: s.refs_map,
+    group_map: s.group_map,
+    ref_names: s.ref_names,
+    resolve_refs: s.resolve_refs,
+    v2: s.v2,
+    err: s.err,
+    bytes: qc_float_acc(x, s.bytes)
+  }
+
+fn qc_enc_str(s: QcEncState, str_val: Str) -> QcEncState =
+  QcEncState {
+    env: s.env,
+    scope: s.scope,
+    locals: s.locals,
+    tparams: s.tparams,
+    refs_map: s.refs_map,
+    group_map: s.group_map,
+    ref_names: s.ref_names,
+    resolve_refs: s.resolve_refs,
+    v2: s.v2,
+    err: s.err,
+    bytes: qc_str_acc(str_val, s.bytes)
+  }
+
+fn qc_enc_bind(s: QcEncState, name: Str) -> QcEncState =
+  QcEncState {
+    env: s.env,
+    scope: [name] ++ s.scope,
+    locals: AccPush(s.locals, name),
+    tparams: s.tparams,
+    refs_map: s.refs_map,
+    group_map: s.group_map,
+    ref_names: s.ref_names,
+    resolve_refs: s.resolve_refs,
+    v2: s.v2,
+    err: s.err,
+    bytes: s.bytes
+  }
+
+fn qc_lookup_scope_loop(scope: List[Str], name: Str, idx: Int) -> Option[Int] =
+  if idx >= len(scope) then None
+  else if list_at(scope, idx) == name then Some(idx)
+  else qc_lookup_scope_loop(scope, name, idx + 1)
+
+fn qc_lookup_scope(s: QcEncState, name: Str) -> Option[Int] =
+  qc_lookup_scope_loop(s.scope, name, 0)
+
+fn qc_enc_ref(s: QcEncState, name: Str) -> QcEncState =
+  if qc_is_prelude_type_in_env(s.env, name) then
+    qc_enc_str(qc_enc_byte(s, 2), name) # R_PRELUDE = 2
+  else
+    let s_rec = QcEncState {
+      env: s.env,
+      scope: s.scope,
+      locals: s.locals,
+      tparams: s.tparams,
+      refs_map: s.refs_map,
+      group_map: s.group_map,
+      ref_names: AccPush(s.ref_names, name),
+      resolve_refs: s.resolve_refs,
+      v2: s.v2,
+      err: s.err,
+      bytes: s.bytes
+    } in
+    if !s_rec.resolve_refs then
+      qc_enc_varint(qc_enc_byte(s_rec, 1), 0)
+    else
+      match map_get(s_rec.group_map, name) {
+        Some(pos) =>
+          qc_enc_varint(qc_enc_byte(s_rec, 1), pos), # R_GROUP = 1
+        None =>
+          match map_get(s_rec.refs_map, name) {
+            Some(h) =>
+              let s1 = qc_enc_byte(s_rec, 0) in # R_HASH = 0
+              QcEncState {
+                env: s1.env,
+                scope: s1.scope,
+                locals: s1.locals,
+                tparams: s1.tparams,
+                refs_map: s1.refs_map,
+                group_map: s1.group_map,
+                ref_names: s1.ref_names,
+                resolve_refs: s1.resolve_refs,
+                v2: s1.v2,
+                err: s1.err,
+                bytes: qc_raw_bytes_acc(h, s1.bytes)
+              },
+            None =>
+              qc_enc_fail(s_rec, "the reference to `" ++ name ++ "` cannot be resolved")
+          }
+      }
+
+fn qc_enc_type(s: QcEncState, t: QcType) -> QcEncState =
+  match t {
+    QcTInt => qc_enc_byte(s, 0),
+    QcTFloat => qc_enc_byte(s, 1),
+    QcTBool => qc_enc_byte(s, 2),
+    QcTUnit => qc_enc_byte(s, 3),
+    QcTStr => qc_enc_byte(s, 4),
+    QcTList(elem) => qc_enc_type(qc_enc_byte(s, 5), elem),
+    QcTOption(elem) => qc_enc_type(qc_enc_byte(s, 6), elem),
+    QcTResult(ok, err) => qc_enc_type(qc_enc_type(qc_enc_byte(s, 7), ok), err),
+    QcTNamed(n) =>
+      let tidx = qc_lookup_scope_loop(s.tparams, n, 0) in
+      match tidx {
+        Some(i) =>
+          let s1 = qc_enc_set_v2(s) in
+          qc_enc_varint(qc_enc_byte(s1, 11), i), # T_PARAM = 11
+        None =>
+          let s1 = if !qc_is_type_in_env(s.env, n) then qc_enc_fail(s, "unknown type `" ++ n ++ "`") else s in
+          qc_enc_ref(qc_enc_byte(s1, 8), n) # T_NAMED = 8
+      },
+    QcTParam(n) =>
+      let tidx = qc_lookup_scope_loop(s.tparams, n, 0) in
+      match tidx {
+        Some(i) =>
+          let s1 = qc_enc_set_v2(s) in
+          qc_enc_varint(qc_enc_byte(s1, 11), i),
+        None =>
+          qc_enc_fail(s, "unknown type parameter `" ++ n ++ "`")
+      },
+    QcTFn(ps, ret, effs) =>
+      let sorted_effs = qc_sort_dedup_strs(effs) in
+      let s1 = qc_enc_varint(qc_enc_byte(s, 9), len(ps)) in
+      let s2 = fold(ps, s1, fn(st: QcEncState, param_ty: QcType) => qc_enc_type(st, param_ty)) in
+      let s3 = qc_enc_type(s2, ret) in
+      let s4 = qc_enc_varint(s3, len(sorted_effs)) in
+      fold(sorted_effs, s4, fn(st: QcEncState, e: Str) => qc_enc_str(st, e)),
+    QcTApp(n, args) =>
+      let s1 = qc_enc_set_v2(s) in
+      let valid_app = map_has(s1.env.types, n) || (qc_is_prelude_type_in_env(s1.env, n) && n == "Accum") in
+      let s2 = if !valid_app then qc_enc_fail(s1, "unknown type `" ++ n ++ "`") else s1 in
+      let s3 = qc_enc_ref(qc_enc_byte(s2, 10), n) in
+      let s4 = qc_enc_varint(s3, len(args)) in
+      fold(args, s4, fn(st: QcEncState, a: QcType) => qc_enc_type(st, a)),
+    QcTMap(k, v) =>
+      let s1 = qc_enc_set_v2(s) in
+      qc_enc_type(qc_enc_type(qc_enc_byte(s1, 12), k), v),
+    QcTBytes =>
+      let s1 = qc_enc_set_v2(s) in
+      qc_enc_byte(s1, 13),
+    QcTVar(_) => qc_enc_fail(s, "inference variable in a written type")
+  }
+
+
+fn qc_enc_variant_owner(s: QcEncState, name: Str) -> QcEncState =
+  if name == "None" || name == "Some" then qc_enc_byte(s, 0)
+  else if name == "Ok" || name == "Err" then qc_enc_byte(s, 1)
+  else
+    let owner_opt = match map_get(s.env.variants, name) {
+      Some(o) => Some(o),
+      None => qc_prelude_variant_owner(name)
+    } in
+    match owner_opt {
+      Some(owner) => qc_enc_ref(qc_enc_byte(s, 2), owner),
+      None => qc_enc_fail(s, "unknown variant `" ++ name ++ "`")
+    }
+
+fn qc_is_variant_name(s: QcEncState, name: Str) -> Bool =
+  if name == "None" || name == "Some" || name == "Ok" || name == "Err" then true
+  else if map_has(s.env.variants, name) then true
+  else
+    match qc_prelude_variant_owner(name) {
+      Some(_) => true,
+      None => false
+    }
+
+fn qc_enc_pat(s: QcEncState, p: QcPat) -> QcEncState =
+  match p {
+    QcPWild => qc_enc_byte(s, 0),
+    QcPBind(n) => qc_enc_bind(qc_enc_byte(s, 1), n),
+    QcPInt(n) => qc_enc_i64(qc_enc_byte(s, 2), n),
+    QcPStr(str_val) => qc_enc_str(qc_enc_byte(s, 3), str_val),
+    QcPBool(b) => qc_enc_byte(qc_enc_byte(s, 4), if b then 1 else 0),
+    QcPUnit => qc_enc_byte(s, 5),
+    QcPVariant(n, ps) =>
+      let s1 = qc_enc_str(qc_enc_variant_owner(qc_enc_byte(s, 6), n), n) in
+      let s2 = qc_enc_varint(s1, len(ps)) in
+      fold(ps, s2, fn(st: QcEncState, subp: QcPat) => qc_enc_pat(st, subp)),
+    QcPRecord(n, fs) =>
+      let s0 = qc_enc_byte(s, 7) in
+      let s0_chk = if !qc_is_type_in_env(s0.env, n) then qc_enc_fail(s0, "unknown type `" ++ n ++ "`") else s0 in
+      let s1 = qc_enc_varint(qc_enc_ref(s0_chk, n), len(fs)) in
+      fold(fs, s1, fn(st: QcEncState, f: QcFieldPat) => qc_enc_pat(qc_enc_str(st, f.name), f.pat))
+  }
+
+fn qc_binop_tag(op: QcBinOp) -> Int =
+  match op {
+    QcOpAdd => 0,
+    QcOpSub => 1,
+    QcOpMul => 2,
+    QcOpDiv => 3,
+    QcOpRem => 4,
+    QcOpConcat => 5,
+    QcOpEq => 6,
+    QcOpNe => 7,
+    QcOpLt => 8,
+    QcOpLe => 9,
+    QcOpGt => 10,
+    QcOpGe => 11,
+    QcOpAnd => 12,
+    QcOpOr => 13
+  }
+
+fn qc_enc_expr(s: QcEncState, e: QcExpr) -> QcEncState =
+  match e {
+    QcEInt(n) => qc_enc_i64(qc_enc_byte(s, 0), n),
+    QcEFloat(x) => qc_enc_float(qc_enc_byte(s, 1), x),
+    QcEBool(b) => qc_enc_byte(qc_enc_byte(s, 2), if b then 1 else 0),
+    QcEStr(str_val) => qc_enc_str(qc_enc_byte(s, 3), str_val),
+    QcEUnit => qc_enc_byte(s, 4),
+    QcEVar(v) =>
+      match qc_lookup_scope(s, v) {
+        Some(i) => qc_enc_varint(qc_enc_byte(s, 5), i), # E_LOCAL = 5
+        None =>
+          if map_has(s.env.fns, v) then qc_enc_ref(qc_enc_byte(s, 6), v) # E_FN_REF = 6
+          else if qc_is_variant_name(s, v) then
+            let s1 = qc_enc_str(qc_enc_variant_owner(qc_enc_byte(s, 7), v), v) in # E_VARIANT = 7
+            qc_enc_varint(s1, 0)
+          else qc_enc_fail(s, "unknown name `" ++ v ++ "`")
+      },
+    QcECall(f, args) =>
+      match qc_lookup_scope(s, f) {
+        Some(i) =>
+          let s1 = qc_enc_varint(qc_enc_byte(s, 8), i) in # E_CALL_LOCAL = 8
+          let s2 = qc_enc_varint(s1, len(args)) in
+          fold(args, s2, fn(st: QcEncState, a: QcExpr) => qc_enc_expr(st, a)),
+        None =>
+          if map_has(s.env.fns, f) then
+            let s1 = qc_enc_ref(qc_enc_byte(s, 9), f) in # E_CALL_FN = 9
+            let s2 = qc_enc_varint(s1, len(args)) in
+            fold(args, s2, fn(st: QcEncState, a: QcExpr) => qc_enc_expr(st, a))
+          else if qc_is_variant_name(s, f) then
+            let s1 = qc_enc_str(qc_enc_variant_owner(qc_enc_byte(s, 7), f), f) in # E_VARIANT = 7
+            let s2 = qc_enc_varint(s1, len(args)) in
+            fold(args, s2, fn(st: QcEncState, a: QcExpr) => qc_enc_expr(st, a))
+          else if qc_is_builtin_name(f) then
+            let s1 = qc_enc_str(qc_enc_byte(s, 10), f) in # E_BUILTIN = 10
+            let s2 = qc_enc_varint(s1, len(args)) in
+            fold(args, s2, fn(st: QcEncState, a: QcExpr) => qc_enc_expr(st, a))
+          else
+            qc_enc_fail(s, "unknown name `" ++ f ++ "`")
+      },
+    QcEBin(op, l, r) =>
+      let s1 = qc_enc_byte(qc_enc_byte(s, 11), qc_binop_tag(op)) in
+      qc_enc_expr(qc_enc_expr(s1, l), r),
+    QcEUn(op, x) =>
+      let tag = match op { QcUnNeg => 0, QcUnNot => 1 } in
+      qc_enc_expr(qc_enc_byte(qc_enc_byte(s, 12), tag), x),
+    QcEIf(c, t, f) =>
+      qc_enc_expr(qc_enc_expr(qc_enc_expr(qc_enc_byte(s, 13), c), t), f),
+    QcELet(n, ann, val, body) =>
+      let s1 = qc_enc_byte(s, 14) in
+      let s2 = match ann {
+        Some(ty) => qc_enc_type(qc_enc_byte(s1, 1), ty),
+        None => qc_enc_byte(s1, 0)
+      } in
+      let s3 = qc_enc_expr(s2, val) in
+      let s4 = qc_enc_bind(s3, n) in
+      let s5 = qc_enc_expr(s4, body) in
+      qc_enc_set_scope(s5, s.scope),
+    QcEList(items) =>
+      let s1 = qc_enc_varint(qc_enc_byte(s, 15), len(items)) in
+      fold(items, s1, fn(st: QcEncState, x: QcExpr) => qc_enc_expr(st, x)),
+    QcERecord(n, fs) =>
+      let s0 = qc_enc_byte(s, 16) in
+      let s0_chk = if !qc_is_type_in_env(s0.env, n) then qc_enc_fail(s0, "unknown type `" ++ n ++ "`") else s0 in
+      let s1 = qc_enc_varint(qc_enc_ref(s0_chk, n), len(fs)) in
+      fold(fs, s1, fn(st: QcEncState, f: QcFieldExpr) => qc_enc_expr(qc_enc_str(st, f.name), f.expr)),
+    QcEField(target, field) =>
+      qc_enc_str(qc_enc_expr(qc_enc_byte(s, 17), target), field),
+    QcEMatch(scrut, arms) =>
+      let s1 = qc_enc_varint(qc_enc_expr(qc_enc_byte(s, 18), scrut), len(arms)) in
+      fold(arms, s1, fn(st: QcEncState, a: QcArm) =>
+        let orig_scope = st.scope in
+        let s_pat = qc_enc_pat(st, a.pat) in
+        let s_guard = match a.guard {
+          Some(g) => qc_enc_expr(qc_enc_byte(s_pat, 1), g),
+          None => qc_enc_byte(s_pat, 0)
+        } in
+        let s_body = qc_enc_expr(s_guard, a.body) in
+        qc_enc_set_scope(s_body, orig_scope)
+      ),
+    QcESeq(items) =>
+      let s1 = qc_enc_varint(qc_enc_byte(s, 19), len(items)) in
+      fold(items, s1, fn(st: QcEncState, x: QcExpr) => qc_enc_expr(st, x)),
+    QcELambda(params, body) =>
+      let s1 = qc_enc_set_v2(s) in
+      let s2 = qc_enc_varint(qc_enc_byte(s1, 20), len(params)) in
+      let s3 = fold(params, s2, fn(st: QcEncState, p: QcLambdaParam) =>
+        match p.ty {
+          Some(ty) => qc_enc_type(qc_enc_byte(st, 1), ty),
+          None => qc_enc_byte(st, 0)
+        }
+      ) in
+      let s4 = fold(params, s3, fn(st: QcEncState, p: QcLambdaParam) => qc_enc_bind(st, p.name)) in
+      let s5 = qc_enc_expr(s4, body) in
+      qc_enc_set_scope(s5, s.scope)
+  }
+
+type QcEncodedMember = {
+  bytes: Bytes,
+  locals: List[Str],
+  refs: List[Str],
+  v2: Bool,
+  err: Option[Str]
+}
+
+
+fn qc_def_kind(d: QcDef) -> Int =
+  match d {
+    QcDefType(_) => 0,
+    QcDefFn(_) => 1,
+    QcDefTest(_) => 2
+  }
+
+fn qc_def_effects(d: QcDef) -> List[Str] =
+  match d {
+    QcDefFn(f) => qc_sort_dedup_strs(f.effects),
+    _ => []
+  }
+
+fn qc_encode_member_ext(d: QcDef, env: QcCanonEnv, refs_map: Map[Str, Bytes], group_map: Map[Str, Int], resolve_refs: Bool) -> QcEncodedMember =
+  let init_st = QcEncState { env: env, scope: [], locals: AccEnd, tparams: [], refs_map: refs_map, group_map: group_map, ref_names: AccEnd, resolve_refs: resolve_refs, v2: false, err: None, bytes: AccEnd } in
+  let final_st = match d {
+    QcDefType(t) =>
+      let is_gen = len(t.params) > 0 in
+      let s0 = if is_gen then
+        qc_enc_varint(qc_enc_byte(qc_enc_set_tparams(qc_enc_set_v2(init_st), t.params), 3), len(t.params))
+      else qc_enc_byte(init_st, 0) in
+      match t.body {
+        QcBodyRecord(fields) =>
+          let s1 = qc_enc_varint(qc_enc_byte(s0, 0), len(fields)) in
+          fold(fields, s1, fn(st: QcEncState, f: QcFieldType) => qc_enc_type(qc_enc_str(st, f.name), f.ty)),
+        QcBodyEnum(variants) =>
+          let s1 = qc_enc_varint(qc_enc_byte(s0, 1), len(variants)) in
+          fold(variants, s1, fn(st: QcEncState, v: QcVariant) =>
+            let sv = qc_enc_varint(qc_enc_str(st, v.name), len(v.fields)) in
+            fold(v.fields, sv, fn(st2: QcEncState, fty: QcType) => qc_enc_type(st2, fty))
+          )
+      },
+    QcDefFn(f) =>
+      let is_gen = len(f.tparams) > 0 in
+      let tps = qc_fn_tparams(f) in
+      let s0 = if is_gen then
+        qc_enc_varint(qc_enc_byte(qc_enc_set_tparams(qc_enc_set_v2(init_st), tps), 4), len(tps))
+      else qc_enc_byte(init_st, 1) in
+      let s1 = qc_enc_varint(s0, len(f.params)) in
+      let s2 = fold(f.params, s1, fn(st: QcEncState, p: QcParam) => qc_enc_type(st, p.ty)) in
+      let s3 = qc_enc_type(s2, f.ret) in
+      let sorted_effs = qc_sort_dedup_strs(f.effects) in
+      let s4 = qc_enc_varint(s3, len(sorted_effs)) in
+      let s5 = fold(sorted_effs, s4, fn(st: QcEncState, e: Str) => qc_enc_str(st, e)) in
+      # Bind parameters in order
+      let s_bound = fold(f.params, s5, fn(st: QcEncState, p: QcParam) => qc_enc_bind(st, p.name)) in
+      # req
+      let s6 = qc_enc_varint(s_bound, len(f.reqs)) in
+      let s7 = fold(f.reqs, s6, fn(st: QcEncState, c: QcExpr) => qc_enc_expr(st, c)) in
+      # ens (with `r` bound in scope only, not stored in local_names)
+      let s8 = qc_enc_varint(s7, len(f.enss)) in
+      let s9 = if len(f.enss) == 0 then s8
+      else
+        let s_ens_scope = qc_enc_set_scope(s8, ["r"] ++ s_bound.scope) in
+        let s_ens_done = fold(f.enss, s_ens_scope, fn(st: QcEncState, c: QcExpr) => qc_enc_expr(st, c)) in
+        qc_enc_set_scope(s_ens_done, s_bound.scope) in
+      # body
+      qc_enc_expr(s9, f.body),
+    QcDefTest(t) =>
+      let s0 = qc_enc_byte(init_st, 2) in
+      qc_enc_expr(s0, t.body)
+  } in
+  QcEncodedMember {
+    bytes: bytes_from(acc_list(final_st.bytes)),
+    locals: acc_list(final_st.locals),
+    refs: qc_sort_dedup_strs(acc_list(final_st.ref_names)),
+    v2: final_st.v2,
+    err: final_st.err
+  }
+
+fn qc_encode_member(d: QcDef, env: QcCanonEnv, refs_map: Map[Str, Bytes], group_map: Map[Str, Int]) -> QcEncodedMember =
+  qc_encode_member_ext(d, env, refs_map, group_map, true)
+
+fn qc_varint_bytes(n: Int) -> Bytes =
+  bytes_from(acc_list(qc_varint_acc(n, AccEnd)))
+
+fn qc_group_prefix(size: Int, ver: Int) -> Bytes =
+  bytes_from([81, 65, 76, 0, ver]) ++ qc_varint_bytes(size)
+
+fn qc_canon_form_single(member_bytes: Bytes, v2: Bool) -> Bytes =
+  let ver = if v2 then 2 else 1 in
+  qc_group_prefix(1, ver) ++ bytes_from([0]) ++ member_bytes
+
+fn qc_int_list_contains(xs: List[Int], target: Int) -> Bool =
+  fold(xs, false, fn(found: Bool, x: Int) => if found then true else x == target)
+
+fn qc_edges_for_def(refs: List[Str], by_name: Map[Str, Int]) -> List[Int] =
+  fold(refs, [], fn(acc: List[Int], r: Str) =>
+    match map_get(by_name, r) {
+      Some(w) => if qc_int_list_contains(acc, w) then acc else acc ++ [w],
+      None => acc
+    }
+  )
+
+fn qc_filter_refs_for_def(refs: List[Str], dname: Str, by_name: Map[Str, Int]) -> List[Str] =
+  fold(refs, [], fn(acc: List[Str], r: Str) =>
+    if r != dname && map_has(by_name, r) then acc ++ [r] else acc
+  )
+
+fn qc_build_by_name_loop(defs: List[QcDef], idx: Int, acc: Map[Str, Int]) -> Result[Map[Str, Int], Str] =
+  if idx >= len(defs) then Ok(acc)
+  else
+    let d = list_at(defs, idx) in
+    let dname = qc_def_name(d) in
+    if map_has(acc, dname) then Err("`" ++ dname ++ "` is defined more than once")
+    else qc_build_by_name_loop(defs, idx + 1, map_put(acc, dname, idx))
+
+fn qc_build_edges_loop(defs: List[QcDef], idx: Int, env: QcCanonEnv, by_name: Map[Str, Int], acc: Accum[List[Int]]) -> Result[List[List[Int]], Str] =
+  if idx >= len(defs) then Ok(acc_list(acc))
+  else
+    let d = list_at(defs, idx) in
+    let dname = qc_def_name(d) in
+    let enc = qc_encode_member_ext(d, env, map_new(), map_new(), false) in
+    match enc.err {
+      Some(e) => Err("`" ++ dname ++ "`: " ++ e),
+      None =>
+        let cur_edges = qc_edges_for_def(enc.refs, by_name) in
+        qc_build_edges_loop(defs, idx + 1, env, by_name, AccPush(acc, cur_edges))
+    }
+
+type QcLabelKey = {
+  label: Int,
+  bytes: Bytes
+}
+
+fn qc_cmp_label_key(a: QcLabelKey, b: QcLabelKey) -> Int =
+  if a.label < b.label then -1
+  else if a.label > b.label then 1
+  else compare(a.bytes, b.bytes)
+
+fn qc_append_rest_lkey(xs: List[QcLabelKey], idx: Int, acc: Accum[QcLabelKey]) -> List[QcLabelKey] =
+  if idx >= len(xs) then acc_list(acc)
+  else qc_append_rest_lkey(xs, idx + 1, AccPush(acc, list_at(xs, idx)))
+
+fn qc_insert_distinct_lkey_rec(xs: List[QcLabelKey], x: QcLabelKey, idx: Int, acc: Accum[QcLabelKey]) -> List[QcLabelKey] =
+  if idx >= len(xs) then acc_list(AccPush(acc, x))
+  else
+    let cur = list_at(xs, idx) in
+    let c = qc_cmp_label_key(x, cur) in
+    if c == 0 then
+      qc_append_rest_lkey(xs, idx, acc)
+    else if c < 0 then
+      qc_append_rest_lkey(xs, idx, AccPush(acc, x))
+    else
+      qc_insert_distinct_lkey_rec(xs, x, idx + 1, AccPush(acc, cur))
+
+fn qc_sort_dedup_lkeys(xs: List[QcLabelKey]) -> List[QcLabelKey] =
+  fold(xs, [], fn(acc: List[QcLabelKey], x: QcLabelKey) => qc_insert_distinct_lkey_rec(acc, x, 0, AccEnd))
+
+fn qc_find_lkey_idx(distinct: List[QcLabelKey], target: QcLabelKey, idx: Int) -> Int =
+  if idx >= len(distinct) then 0
+  else if qc_cmp_label_key(list_at(distinct, idx), target) == 0 then idx
+  else qc_find_lkey_idx(distinct, target, idx + 1)
+
+fn qc_count_distinct_ints_loop(xs: List[Int], idx: Int, seen: Map[Int, Bool], count: Int) -> Int =
+  if idx >= len(xs) then count
+  else
+    let v = list_at(xs, idx) in
+    if map_has(seen, v) then qc_count_distinct_ints_loop(xs, idx + 1, seen, count)
+    else qc_count_distinct_ints_loop(xs, idx + 1, map_put(seen, v, true), count + 1)
+
+fn qc_build_lab_map_loop(defs: List[QcDef], labels: List[Int], idx: Int, acc: Map[Str, Int]) -> Map[Str, Int] =
+  if idx >= len(defs) then acc
+  else
+    let d = list_at(defs, idx) in
+    let l = list_at(labels, idx) in
+    qc_build_lab_map_loop(defs, labels, idx + 1, map_put(acc, qc_def_name(d), l))
+
+fn qc_build_lkeys_loop(defs: List[QcDef], labels: List[Int], idx: Int, env: QcCanonEnv, refs_map: Map[Str, Bytes], lab_map: Map[Str, Int], acc: Accum[QcLabelKey]) -> List[QcLabelKey] =
+  if idx >= len(defs) then acc_list(acc)
+  else
+    let d = list_at(defs, idx) in
+    let l = list_at(labels, idx) in
+    let enc = qc_encode_member(d, env, refs_map, lab_map) in
+    qc_build_lkeys_loop(defs, labels, idx + 1, env, refs_map, lab_map, AccPush(acc, QcLabelKey { label: l, bytes: enc.bytes }))
+
+fn qc_refine_labels(defs: List[QcDef], labels: List[Int], env: QcCanonEnv, refs_map: Map[Str, Bytes]) -> List[Int] =
+  let before = qc_count_distinct_ints_loop(labels, 0, map_new(), 0) in
+  let lab_map = qc_build_lab_map_loop(defs, labels, 0, map_new()) in
+  let keys = qc_build_lkeys_loop(defs, labels, 0, env, refs_map, lab_map, AccEnd) in
+  let distinct = qc_sort_dedup_lkeys(keys) in
+  let new_labels = map(keys, fn(k: QcLabelKey) => qc_find_lkey_idx(distinct, k, 0)) in
+  if len(distinct) == before then new_labels
+  else qc_refine_labels(defs, new_labels, env, refs_map)
+
+fn qc_count_label_occurrences_loop(labels: List[Int], idx: Int, acc: Map[Int, Int]) -> Map[Int, Int] =
+  if idx >= len(labels) then acc
+  else
+    let l = list_at(labels, idx) in
+    let c = match map_get(acc, l) { Some(n) => n + 1, None => 1 } in
+    qc_count_label_occurrences_loop(labels, idx + 1, map_put(acc, l, c))
+
+fn qc_find_min_dup_label_loop(labels: List[Int], counts: Map[Int, Int], idx: Int, best: Option[Int]) -> Option[Int] =
+  if idx >= len(labels) then best
+  else
+    let l = list_at(labels, idx) in
+    let c = match map_get(counts, l) { Some(n) => n, None => 0 } in
+    let next_best = if c > 1 then
+      match best {
+        None => Some(l),
+        Some(b) => if l < b then Some(l) else Some(b)
+      }
+    else best in
+    qc_find_min_dup_label_loop(labels, counts, idx + 1, next_best)
+
+fn qc_find_def_with_label(defs: List[QcDef], labels: List[Int], target_label: Int, idx: Int) -> QcDef =
+  if idx >= len(defs) then list_at(defs, 0)
+  else if list_at(labels, idx) == target_label then list_at(defs, idx)
+  else qc_find_def_with_label(defs, labels, target_label, idx + 1)
+
+fn qc_order_from_labels_loop(defs: List[QcDef], labels: List[Int], pos: Int, k: Int, acc: Accum[QcDef]) -> List[QcDef] =
+  if pos >= k then acc_list(acc)
+  else
+    let d = qc_find_def_with_label(defs, labels, pos, 0) in
+    qc_order_from_labels_loop(defs, labels, pos + 1, k, AccPush(acc, d))
+
+fn qc_order_pos_loop(order: List[QcDef], idx: Int, acc: Map[Str, Int]) -> Map[Str, Int] =
+  if idx >= len(order) then acc
+  else
+    let d = list_at(order, idx) in
+    qc_order_pos_loop(order, idx + 1, map_put(acc, qc_def_name(d), idx))
+
+type QcGroupEval = {
+  form: Bytes,
+  v2: Bool,
+  encs: List[QcEncodedMember]
+}
+
+fn qc_eval_order_loop(order: List[QcDef], idx: Int, env: QcCanonEnv, refs_map: Map[Str, Bytes], pos_map: Map[Str, Int], any_v2: Bool, bytes_acc: Accum[Int], encs_acc: Accum[QcEncodedMember]) -> QcGroupEval =
+  if idx >= len(order) then
+    let ver = if any_v2 then 2 else 1 in
+    let full_form = qc_group_prefix(len(order), ver) ++ bytes_from(acc_list(bytes_acc)) in
+    QcGroupEval { form: full_form, v2: any_v2, encs: acc_list(encs_acc) }
+  else
+    let d = list_at(order, idx) in
+    let enc = qc_encode_member(d, env, refs_map, pos_map) in
+    let next_acc = fold(bytes_to_list(enc.bytes), bytes_acc, fn(a: Accum[Int], b: Int) => AccPush(a, b)) in
+    qc_eval_order_loop(order, idx + 1, env, refs_map, pos_map, any_v2 || enc.v2, next_acc, AccPush(encs_acc, enc))
+
+type QcBestOrder = {
+  order: List[QcDef],
+  form: Bytes,
+  v2: Bool,
+  encs: List[QcEncodedMember],
+  symmetric: Bool
+}
+
+fn qc_same_def_order_loop(a: List[QcDef], b: List[QcDef], idx: Int) -> Bool =
+  if idx >= len(a) then true
+  else if qc_def_name(list_at(a, idx)) != qc_def_name(list_at(b, idx)) then false
+  else qc_same_def_order_loop(a, b, idx + 1)
+
+fn qc_split_labels_loop(labels: List[Int], target: Int, chosen_idx: Int, idx: Int, acc: Accum[Int]) -> List[Int] =
+  if idx >= len(labels) then acc_list(acc)
+  else
+    let l = list_at(labels, idx) in
+    let nl =
+      if l < target then 2 * l
+      else if l == target && idx == chosen_idx then 2 * l
+      else 2 * l + 1 in
+    qc_split_labels_loop(labels, target, chosen_idx, idx + 1, AccPush(acc, nl))
+
+fn qc_search_labels(defs: List[QcDef], labels: List[Int], env: QcCanonEnv, refs_map: Map[Str, Bytes], best: Option[QcBestOrder]) -> Option[QcBestOrder] =
+  let ref_labels = qc_refine_labels(defs, labels, env, refs_map) in
+  let counts = qc_count_label_occurrences_loop(ref_labels, 0, map_new()) in
+  let dup_opt = qc_find_min_dup_label_loop(ref_labels, counts, 0, None) in
+  match dup_opt {
+    None =>
+      let order = qc_order_from_labels_loop(defs, ref_labels, 0, len(defs), AccEnd) in
+      let pos_map = qc_order_pos_loop(order, 0, map_new()) in
+      let ev = qc_eval_order_loop(order, 0, env, refs_map, pos_map, false, AccEnd, AccEnd) in
+      match best {
+        None =>
+          Some(QcBestOrder { order: order, form: ev.form, v2: ev.v2, encs: ev.encs, symmetric: false }),
+        Some(b) =>
+          let c = compare(ev.form, b.form) in
+          if c < 0 then
+            Some(QcBestOrder { order: order, form: ev.form, v2: ev.v2, encs: ev.encs, symmetric: false })
+          else if c == 0 then
+            let is_sym = b.symmetric || !qc_same_def_order_loop(order, b.order, 0) in
+            Some(QcBestOrder { order: b.order, form: b.form, v2: b.v2, encs: b.encs, symmetric: is_sym })
+          else
+            best
+      },
+    Some(target) =>
+      qc_search_branch_loop(defs, ref_labels, target, 0, env, refs_map, best)
+  }
+
+fn qc_search_branch_loop(defs: List[QcDef], labels: List[Int], target: Int, idx: Int, env: QcCanonEnv, refs_map: Map[Str, Bytes], best: Option[QcBestOrder]) -> Option[QcBestOrder] =
+  if idx >= len(labels) then best
+  else if list_at(labels, idx) != target then
+    qc_search_branch_loop(defs, labels, target, idx + 1, env, refs_map, best)
+  else
+    let next_labels = qc_split_labels_loop(labels, target, idx, 0, AccEnd) in
+    let next_best = qc_search_labels(defs, next_labels, env, refs_map, best) in
+    qc_search_branch_loop(defs, labels, target, idx + 1, env, refs_map, next_best)
+
+fn qc_zeros_loop(count: Int, acc: Accum[Int]) -> List[Int] =
+  if count <= 0 then acc_list(acc)
+  else qc_zeros_loop(count - 1, AccPush(acc, 0))
+
+fn qc_find_best_order(defs: List[QcDef], env: QcCanonEnv, refs_map: Map[Str, Bytes]) -> QcBestOrder =
+  let init_labels = qc_zeros_loop(len(defs), AccEnd) in
+  match qc_search_labels(defs, init_labels, env, refs_map, None) {
+    Some(b) => b,
+    None => QcBestOrder { order: [], form: bytes_from([]), v2: false, encs: [], symmetric: false }
+  }
+
+fn qc_append_rest_bytes(xs: List[Bytes], idx: Int, acc: Accum[Bytes]) -> List[Bytes] =
+  if idx >= len(xs) then acc_list(acc)
+  else qc_append_rest_bytes(xs, idx + 1, AccPush(acc, list_at(xs, idx)))
+
+fn qc_insert_distinct_bytes_rec(xs: List[Bytes], x: Bytes, idx: Int, acc: Accum[Bytes]) -> List[Bytes] =
+  if idx >= len(xs) then acc_list(AccPush(acc, x))
+  else
+    let cur = list_at(xs, idx) in
+    let c = compare(x, cur) in
+    if c == 0 then qc_append_rest_bytes(xs, idx, acc)
+    else if c < 0 then qc_append_rest_bytes(xs, idx, AccPush(acc, x))
+    else qc_insert_distinct_bytes_rec(xs, x, idx + 1, AccPush(acc, cur))
+
+fn qc_sort_dedup_bytes(xs: List[Bytes]) -> List[Bytes] =
+  fold(xs, [], fn(acc: List[Bytes], x: Bytes) => qc_insert_distinct_bytes_rec(acc, x, 0, AccEnd))
+
+fn qc_deps_for_refs(refs: List[Str], self_hash: Bytes, refs_map: Map[Str, Bytes]) -> List[Bytes] =
+  let raw = fold(refs, [], fn(acc: List[Bytes], r: Str) =>
+    match map_get(refs_map, r) {
+      Some(h) => if compare(h, self_hash) == 0 then acc else acc ++ [h],
+      None => acc
+    }
+  ) in
+  qc_sort_dedup_bytes(raw)
+
+fn qc_add_group_hashes_loop(order: List[QcDef], idx: Int, size: Int, ver: Int, gh: Bytes, refs_map: Map[Str, Bytes]) -> Map[Str, Bytes] =
+  if idx >= len(order) then refs_map
+  else
+    let d = list_at(order, idx) in
+    let dname = qc_def_name(d) in
+    let member_canon = qc_group_prefix(size, ver) ++ qc_varint_bytes(idx) ++ gh in
+    let h = sha256(member_canon) in
+    qc_add_group_hashes_loop(order, idx + 1, size, ver, gh, map_put(refs_map, dname, h))
+
+fn qc_add_group_canons_loop(order: List[QcDef], encs: List[QcEncodedMember], idx: Int, size: Int, ver: Int, gh: Bytes, by_name: Map[Str, Int], refs_map: Map[Str, Bytes], canons_map: Map[Str, QcCanon]) -> Map[Str, QcCanon] =
+  if idx >= len(order) then canons_map
+  else
+    let d = list_at(order, idx) in
+    let enc = list_at(encs, idx) in
+    let dname = qc_def_name(d) in
+    let member_canon = qc_group_prefix(size, ver) ++ qc_varint_bytes(idx) ++ gh in
+    let h = sha256(member_canon) in
+    let clean_refs = qc_filter_refs_for_def(enc.refs, dname, by_name) in
+    let c = QcCanon {
+      name: dname,
+      kind: qc_def_kind(d),
+      hash: h,
+      canonical: member_canon,
+      signature: qc_signature_text_mapped(d, refs_map),
+      effects: qc_def_effects(d),
+      local_names: enc.locals,
+      refs: clean_refs,
+      deps: qc_deps_for_refs(clean_refs, h, refs_map),
+      group: Some(gh)
+    } in
+    qc_add_group_canons_loop(order, encs, idx + 1, size, ver, gh, by_name, refs_map, map_put(canons_map, dname, c))
+
+type QcTarjanState = {
+  n: Int,
+  edges: List[List[Int]],
+  indices: Map[Int, Int],
+  lowlinks: Map[Int, Int],
+  on_stack: Map[Int, Bool],
+  stack: List[Int],
+  next_idx: Int,
+  sccs: Accum[List[Int]]
+}
+
+type QcTarjanPopRes = {
+  comp_acc: Accum[Int],
+  on_stack: Map[Int, Bool],
+  rest_stack: List[Int]
+}
+
+fn qc_tail_int_loop(xs: List[Int], idx: Int, acc: Accum[Int]) -> List[Int] =
+  if idx >= len(xs) then acc_list(acc)
+  else qc_tail_int_loop(xs, idx + 1, AccPush(acc, list_at(xs, idx)))
+
+fn qc_tail_int_list(xs: List[Int]) -> List[Int] =
+  qc_tail_int_loop(xs, 1, AccEnd)
+
+fn qc_tarjan_pop_loop(stack: List[Int], on_stack: Map[Int, Bool], target: Int, acc: Accum[Int]) -> QcTarjanPopRes =
+  if len(stack) == 0 then QcTarjanPopRes { comp_acc: acc, on_stack: on_stack, rest_stack: [] }
+  else
+    let w = list_at(stack, 0) in
+    let rest = qc_tail_int_list(stack) in
+    let next_on_stack = map_put(on_stack, w, false) in
+    let next_acc = AccPush(acc, w) in
+    if w == target then
+      QcTarjanPopRes { comp_acc: next_acc, on_stack: next_on_stack, rest_stack: rest }
+    else
+      qc_tarjan_pop_loop(rest, next_on_stack, target, next_acc)
+
+fn qc_append_rest_int(xs: List[Int], idx: Int, acc: Accum[Int]) -> List[Int] =
+  if idx >= len(xs) then acc_list(acc)
+  else qc_append_rest_int(xs, idx + 1, AccPush(acc, list_at(xs, idx)))
+
+fn qc_insert_sorted_int_rec(xs: List[Int], x: Int, idx: Int, acc: Accum[Int]) -> List[Int] =
+  if idx >= len(xs) then acc_list(AccPush(acc, x))
+  else
+    let cur = list_at(xs, idx) in
+    if x <= cur then
+      qc_append_rest_int(xs, idx, AccPush(acc, x))
+    else
+      qc_insert_sorted_int_rec(xs, x, idx + 1, AccPush(acc, cur))
+
+fn qc_insert_sorted_int(xs: List[Int], x: Int) -> List[Int] =
+  qc_insert_sorted_int_rec(xs, x, 0, AccEnd)
+
+fn qc_sort_int_list(xs: List[Int]) -> List[Int] =
+  fold(xs, [], qc_insert_sorted_int)
+
+fn qc_tarjan_dfs(st: QcTarjanState, u: Int) -> QcTarjanState =
+  let cur_idx = st.next_idx in
+  let st1 = QcTarjanState {
+    n: st.n,
+    edges: st.edges,
+    indices: map_put(st.indices, u, cur_idx),
+    lowlinks: map_put(st.lowlinks, u, cur_idx),
+    on_stack: map_put(st.on_stack, u, true),
+    stack: [u] ++ st.stack,
+    next_idx: cur_idx + 1,
+    sccs: st.sccs
+  } in
+  let u_edges = list_at(st1.edges, u) in
+  let st2 = qc_tarjan_edges_loop(st1, u, u_edges, 0) in
+  let u_low = match map_get(st2.lowlinks, u) { Some(x) => x, None => 0 } in
+  let u_ind = match map_get(st2.indices, u) { Some(x) => x, None => 0 } in
+  if u_low == u_ind then
+    let pop_res = qc_tarjan_pop_loop(st2.stack, st2.on_stack, u, AccEnd) in
+    let comp = qc_sort_int_list(acc_list(pop_res.comp_acc)) in
+    QcTarjanState {
+      n: st2.n,
+      edges: st2.edges,
+      indices: st2.indices,
+      lowlinks: st2.lowlinks,
+      on_stack: pop_res.on_stack,
+      stack: pop_res.rest_stack,
+      next_idx: st2.next_idx,
+      sccs: AccPush(st2.sccs, comp)
+    }
+  else
+    st2
+
+fn qc_tarjan_edges_loop(st: QcTarjanState, u: Int, edges: List[Int], idx: Int) -> QcTarjanState =
+  if idx >= len(edges) then st
+  else
+    let w = list_at(edges, idx) in
+    if !map_has(st.indices, w) then
+      let st_after = qc_tarjan_dfs(st, w) in
+      let w_low = match map_get(st_after.lowlinks, w) { Some(x) => x, None => 0 } in
+      let u_low = match map_get(st_after.lowlinks, u) { Some(x) => x, None => 0 } in
+      let new_u_low = if w_low < u_low then w_low else u_low in
+      let st_next = QcTarjanState {
+        n: st_after.n,
+        edges: st_after.edges,
+        indices: st_after.indices,
+        lowlinks: map_put(st_after.lowlinks, u, new_u_low),
+        on_stack: st_after.on_stack,
+        stack: st_after.stack,
+        next_idx: st_after.next_idx,
+        sccs: st_after.sccs
+      } in
+      qc_tarjan_edges_loop(st_next, u, edges, idx + 1)
+    else if match map_get(st.on_stack, w) { Some(b) => b, None => false } then
+      let w_idx = match map_get(st.indices, w) { Some(x) => x, None => 0 } in
+      let u_low = match map_get(st.lowlinks, u) { Some(x) => x, None => 0 } in
+      let new_u_low = if w_idx < u_low then w_idx else u_low in
+      let st_next = QcTarjanState {
+        n: st.n,
+        edges: st.edges,
+        indices: st.indices,
+        lowlinks: map_put(st.lowlinks, u, new_u_low),
+        on_stack: st.on_stack,
+        stack: st.stack,
+        next_idx: st.next_idx,
+        sccs: st.sccs
+      } in
+      qc_tarjan_edges_loop(st_next, u, edges, idx + 1)
+    else
+      qc_tarjan_edges_loop(st, u, edges, idx + 1)
+
+fn qc_tarjan_loop(st: QcTarjanState, root: Int) -> QcTarjanState =
+  if root >= st.n then st
+  else if map_has(st.indices, root) then
+    qc_tarjan_loop(st, root + 1)
+  else
+    let next_st = qc_tarjan_dfs(st, root) in
+    qc_tarjan_loop(next_st, root + 1)
+
+type QcHashMaps = {
+  refs_map: Map[Str, Bytes],
+  canons_map: Map[Str, QcCanon],
+  groups: List[QcGroup]
+}
+
+fn qc_append_rest_group(xs: List[QcGroup], idx: Int, acc: Accum[QcGroup]) -> List[QcGroup] =
+  if idx >= len(xs) then acc_list(acc)
+  else qc_append_rest_group(xs, idx + 1, AccPush(acc, list_at(xs, idx)))
+
+fn qc_insert_distinct_group_rec(xs: List[QcGroup], x: QcGroup, idx: Int, acc: Accum[QcGroup]) -> List[QcGroup] =
+  if idx >= len(xs) then acc_list(AccPush(acc, x))
+  else
+    let cur = list_at(xs, idx) in
+    let c = compare(x.hash, cur.hash) in
+    if c == 0 then qc_append_rest_group(xs, idx, acc)
+    else if c < 0 then qc_append_rest_group(xs, idx, AccPush(acc, x))
+    else qc_insert_distinct_group_rec(xs, x, idx + 1, AccPush(acc, cur))
+
+fn qc_defs_for_comp_loop(defs: List[QcDef], comp: List[Int], idx: Int, acc: Accum[QcDef]) -> List[QcDef] =
+  if idx >= len(comp) then acc_list(acc)
+  else
+    let d_idx = list_at(comp, idx) in
+    qc_defs_for_comp_loop(defs, comp, idx + 1, AccPush(acc, list_at(defs, d_idx)))
+
+fn qc_first_member_err_loop(order: List[QcDef], encs: List[QcEncodedMember], idx: Int) -> Option[Str] =
+  if idx >= len(encs) then None
+  else
+    let enc = list_at(encs, idx) in
+    match enc.err {
+      Some(e) => Some("`" ++ qc_def_name(list_at(order, idx)) ++ "`: " ++ e),
+      None => qc_first_member_err_loop(order, encs, idx + 1)
+    }
+
+fn qc_process_sccs_loop(sccs: List[List[Int]], scc_idx: Int, p: QcProgram, env: QcCanonEnv, by_name: Map[Str, Int], refs_map: Map[Str, Bytes], canons_map: Map[Str, QcCanon], groups: List[QcGroup]) -> Result[QcHashMaps, Str] =
+  if scc_idx >= len(sccs) then
+    Ok(QcHashMaps { refs_map: refs_map, canons_map: canons_map, groups: groups })
+  else
+    let comp = list_at(sccs, scc_idx) in
+    if len(comp) == 1 then
+      let d_idx = list_at(comp, 0) in
+      let d = list_at(p.defs, d_idx) in
+      let dname = qc_def_name(d) in
+      let group_map = map_put(map_new(), dname, 0) in
+      let enc = qc_encode_member(d, env, refs_map, group_map) in
+      match enc.err {
+        Some(e) => Err("`" ++ dname ++ "`: " ++ e),
+        None =>
+          let canon_bytes = qc_canon_form_single(enc.bytes, enc.v2) in
+          let h = sha256(canon_bytes) in
+          let next_refs_map = map_put(refs_map, dname, h) in
+          let clean_refs = qc_filter_refs_for_def(enc.refs, dname, by_name) in
+          let c = QcCanon {
+            name: dname,
+            kind: qc_def_kind(d),
+            hash: h,
+            canonical: canon_bytes,
+            signature: qc_signature_text_mapped(d, next_refs_map),
+            effects: qc_def_effects(d),
+            local_names: enc.locals,
+            refs: clean_refs,
+            deps: qc_deps_for_refs(clean_refs, h, next_refs_map),
+            group: None
+          } in
+          qc_process_sccs_loop(sccs, scc_idx + 1, p, env, by_name, next_refs_map, map_put(canons_map, dname, c), groups)
+      }
+    else
+      let comp_defs = qc_defs_for_comp_loop(p.defs, comp, 0, AccEnd) in
+      let best = qc_find_best_order(comp_defs, env, refs_map) in
+      match qc_first_member_err_loop(best.order, best.encs, 0) {
+        Some(e) => Err(e),
+        None =>
+          if best.symmetric then
+            Err("the recursive group has interchangeable members")
+          else
+            let gh = sha256(best.form) in
+            let g_obj = QcGroup { hash: gh, form: best.form } in
+            let ver = if best.v2 then 2 else 1 in
+            let size = len(best.order) in
+            let next_refs_map = qc_add_group_hashes_loop(best.order, 0, size, ver, gh, refs_map) in
+            let next_canons_map = qc_add_group_canons_loop(best.order, best.encs, 0, size, ver, gh, by_name, next_refs_map, canons_map) in
+            let next_groups = qc_insert_distinct_group_rec(groups, g_obj, 0, AccEnd) in
+            qc_process_sccs_loop(sccs, scc_idx + 1, p, env, by_name, next_refs_map, next_canons_map, next_groups)
+      }
+
+fn qc_hash_program_res(p: QcProgram) -> Result[QcHashed, Str] =
+  let env = qc_canon_env_of(p) in
+  let n = len(p.defs) in
+  match qc_build_by_name_loop(p.defs, 0, map_new()) {
+    Err(e) => Err(e),
+    Ok(by_name) =>
+      match qc_build_edges_loop(p.defs, 0, env, by_name, AccEnd) {
+        Err(e) => Err(e),
+        Ok(edges) =>
+          let init_tarjan = QcTarjanState {
+            n: n,
+            edges: edges,
+            indices: map_new(),
+            lowlinks: map_new(),
+            on_stack: map_new(),
+            stack: [],
+            next_idx: 0,
+            sccs: AccEnd
+          } in
+          let tarjan_res = qc_tarjan_loop(init_tarjan, 0) in
+          let sccs = acc_list(tarjan_res.sccs) in
+          match qc_process_sccs_loop(sccs, 0, p, env, by_name, map_new(), map_new(), []) {
+            Err(e) => Err(e),
+            Ok(final_st) =>
+              let canons = fold(p.defs, AccEnd, fn(a: Accum[QcCanon], d: QcDef) =>
+                match map_get(final_st.canons_map, qc_def_name(d)) {
+                  Some(c) => AccPush(a, c),
+                  None => a
+                }
+              ) in
+              Ok(QcHashed { canons: acc_list(canons), groups: final_st.groups })
+          }
+      }
+  }
+
+fn qc_hash_program(p: QcProgram) -> QcHashed =
+  match qc_hash_program_res(p) {
+    Ok(h) => h,
+    Err(_) => QcHashed { canons: [], groups: [] }
+  }
+
+# Canonical Decoder (qc_decode_canonical)
+type QcDecState = {
+  bytes: Bytes,
+  pos: Int,
+  scope: List[Str],
+  local_names: List[Str],
+  next_name: Int,
+  tparams: List[Str],
+  def_name: Str,
+  hash_to_name: Map[Str, Str],
+  group_names: List[Str],
+  self_index: Int
+}
+
+type QcDecRes[T] = {
+  val: T,
+  s: QcDecState
+}
+
+
+fn qc_dec_byte(s: QcDecState) -> QcDecRes[Int] =
+  let b = bytes_at(s.bytes, s.pos) in
+  QcDecRes {
+    val: b,
+    s: QcDecState {
+      bytes: s.bytes,
+      pos: s.pos + 1,
+      scope: s.scope,
+      local_names: s.local_names,
+      next_name: s.next_name,
+      tparams: s.tparams,
+      def_name: s.def_name,
+      hash_to_name: s.hash_to_name,
+      group_names: s.group_names,
+      self_index: s.self_index
+    }
+  }
+
+fn qc_dec_varint_loop(s: QcDecState, shift: Int, acc: Int) -> QcDecRes[Int] =
+  let b = bytes_at(s.bytes, s.pos) in
+  let val = bit_or(acc, shl(bit_and(b, 127), shift)) in
+  let next_s = QcDecState {
+    bytes: s.bytes,
+    pos: s.pos + 1,
+    scope: s.scope,
+    local_names: s.local_names,
+    next_name: s.next_name,
+    tparams: s.tparams,
+    def_name: s.def_name,
+    hash_to_name: s.hash_to_name,
+    group_names: s.group_names,
+    self_index: s.self_index
+  } in
+  if bit_and(b, 128) == 0 then QcDecRes { val: val, s: next_s }
+  else qc_dec_varint_loop(next_s, shift + 7, val)
+
+fn qc_dec_varint(s: QcDecState) -> QcDecRes[Int] =
+  qc_dec_varint_loop(s, 0, 0)
+
+fn qc_dec_i64(s: QcDecState) -> QcDecRes[Int] =
+  let b0 = bytes_at(s.bytes, s.pos) in
+  let b1 = bytes_at(s.bytes, s.pos + 1) in
+  let b2 = bytes_at(s.bytes, s.pos + 2) in
+  let b3 = bytes_at(s.bytes, s.pos + 3) in
+  let b4 = bytes_at(s.bytes, s.pos + 4) in
+  let b5 = bytes_at(s.bytes, s.pos + 5) in
+  let b6 = bytes_at(s.bytes, s.pos + 6) in
+  let b7 = bytes_at(s.bytes, s.pos + 7) in
+  let low = bit_or(b0, bit_or(shl(b1, 8), bit_or(shl(b2, 16), shl(b3, 24)))) in
+  let high = bit_or(b4, bit_or(shl(b5, 8), bit_or(shl(b6, 16), shl(b7, 24)))) in
+  let n = bit_or(bit_and(low, 4294967295), shl(high, 32)) in
+  QcDecRes {
+    val: n,
+    s: QcDecState {
+      bytes: s.bytes,
+      pos: s.pos + 8,
+      scope: s.scope,
+      local_names: s.local_names,
+      next_name: s.next_name,
+      tparams: s.tparams,
+      def_name: s.def_name,
+      hash_to_name: s.hash_to_name,
+      group_names: s.group_names,
+      self_index: s.self_index
+    }
+  }
+
+fn qc_dec_float(s: QcDecState) -> QcDecRes[Float] =
+  let i_res = qc_dec_i64(s) in
+  QcDecRes { val: float_of_bits(i_res.val), s: i_res.s }
+
+fn qc_dec_str(s: QcDecState) -> QcDecRes[Str] =
+  let len_res = qc_dec_varint(s) in
+  let str_bytes = bytes_slice(len_res.s.bytes, len_res.s.pos, len_res.s.pos + len_res.val) in
+  let str_val = match bytes_to_str(str_bytes) {
+    Some(v) => v,
+    None => ""
+  } in
+  QcDecRes {
+    val: str_val,
+    s: QcDecState {
+      bytes: len_res.s.bytes,
+      pos: len_res.s.pos + len_res.val,
+      scope: len_res.s.scope,
+      local_names: len_res.s.local_names,
+      next_name: len_res.s.next_name,
+      tparams: len_res.s.tparams,
+      def_name: len_res.s.def_name,
+      hash_to_name: len_res.s.hash_to_name,
+      group_names: len_res.s.group_names,
+      self_index: len_res.s.self_index
+    }
+  }
+
+fn qc_dec_bind(s: QcDecState) -> QcDecRes[Str] =
+  let name = if s.next_name < len(s.local_names) then list_at(s.local_names, s.next_name) else "x" ++ from_int(s.next_name) in
+  QcDecRes {
+    val: name,
+    s: QcDecState {
+      bytes: s.bytes,
+      pos: s.pos,
+      scope: [name] ++ s.scope,
+      local_names: s.local_names,
+      next_name: s.next_name + 1,
+      tparams: s.tparams,
+      def_name: s.def_name,
+      hash_to_name: s.hash_to_name,
+      group_names: s.group_names,
+      self_index: s.self_index
+    }
+  }
+
+fn qc_dec_local(s: QcDecState) -> QcDecRes[Str] =
+  let idx_res = qc_dec_varint(s) in
+  let name = if idx_res.val < len(idx_res.s.scope) then list_at(idx_res.s.scope, idx_res.val) else "unknown" in
+  QcDecRes { val: name, s: idx_res.s }
+
+fn qc_dec_ref(s: QcDecState) -> QcDecRes[Str] =
+  let tag_res = qc_dec_byte(s) in
+  if tag_res.val == 0 then
+    # R_HASH = 0 (32 bytes)
+    let hash_bytes = bytes_slice(tag_res.s.bytes, tag_res.s.pos, tag_res.s.pos + 32) in
+    let next_s = QcDecState {
+      bytes: tag_res.s.bytes,
+      pos: tag_res.s.pos + 32,
+      scope: tag_res.s.scope,
+      local_names: tag_res.s.local_names,
+      next_name: tag_res.s.next_name,
+      tparams: tag_res.s.tparams,
+      def_name: tag_res.s.def_name,
+      hash_to_name: tag_res.s.hash_to_name,
+      group_names: tag_res.s.group_names,
+      self_index: tag_res.s.self_index
+    } in
+    let hex = qc_hash_to_hex(hash_bytes) in
+    let name = match map_get(next_s.hash_to_name, hex) {
+      Some(n) => n,
+      None => slice(hex, 0, 12)
+    } in
+    QcDecRes { val: name, s: next_s }
+  else if tag_res.val == 1 then
+    # R_GROUP = 1
+    let j_res = qc_dec_varint(tag_res.s) in
+    let name =
+      if j_res.val == j_res.s.self_index then j_res.s.def_name
+      else if j_res.val < len(j_res.s.group_names) then list_at(j_res.s.group_names, j_res.val)
+      else j_res.s.def_name in
+    QcDecRes { val: name, s: j_res.s }
+  else
+    # R_PRELUDE = 2
+    qc_dec_str(tag_res.s)
+
+fn qc_dec_effects_loop(s: QcDecState, count: Int, acc: Accum[Str]) -> QcDecRes[List[Str]] =
+  if count <= 0 then QcDecRes { val: acc_list(acc), s: s }
+  else
+    let str_res = qc_dec_str(s) in
+    qc_dec_effects_loop(str_res.s, count - 1, AccPush(acc, str_res.val))
+
+fn qc_dec_effects(s: QcDecState) -> QcDecRes[List[Str]] =
+  let n_res = qc_dec_varint(s) in
+  qc_dec_effects_loop(n_res.s, n_res.val, AccEnd)
+
+fn qc_dec_types_loop(s: QcDecState, count: Int, acc: Accum[QcType]) -> QcDecRes[List[QcType]] =
+  if count <= 0 then QcDecRes { val: acc_list(acc), s: s }
+  else
+    let t_res = qc_dec_type(s) in
+    qc_dec_types_loop(t_res.s, count - 1, AccPush(acc, t_res.val))
+
+fn qc_dec_type(s: QcDecState) -> QcDecRes[QcType] =
+  let tag_res = qc_dec_byte(s) in
+  let tag = tag_res.val in
+  let s1 = tag_res.s in
+  if tag == 0 then QcDecRes { val: QcTInt, s: s1 }
+  else if tag == 1 then QcDecRes { val: QcTFloat, s: s1 }
+  else if tag == 2 then QcDecRes { val: QcTBool, s: s1 }
+  else if tag == 3 then QcDecRes { val: QcTUnit, s: s1 }
+  else if tag == 4 then QcDecRes { val: QcTStr, s: s1 }
+  else if tag == 5 then
+    let elem_res = qc_dec_type(s1) in
+    QcDecRes { val: QcTList(elem_res.val), s: elem_res.s }
+  else if tag == 6 then
+    let elem_res = qc_dec_type(s1) in
+    QcDecRes { val: QcTOption(elem_res.val), s: elem_res.s }
+  else if tag == 7 then
+    let ok_res = qc_dec_type(s1) in
+    let err_res = qc_dec_type(ok_res.s) in
+    QcDecRes { val: QcTResult(ok_res.val, err_res.val), s: err_res.s }
+  else if tag == 8 then
+    let ref_res = qc_dec_ref(s1) in
+    QcDecRes { val: QcTNamed(ref_res.val), s: ref_res.s }
+  else if tag == 9 then
+    let n_res = qc_dec_varint(s1) in
+    let params_res = qc_dec_types_loop(n_res.s, n_res.val, AccEnd) in
+    let ret_res = qc_dec_type(params_res.s) in
+    let effs_res = qc_dec_effects(ret_res.s) in
+    QcDecRes { val: QcTFn(params_res.val, ret_res.val, effs_res.val), s: effs_res.s }
+  else if tag == 10 then
+    let ref_res = qc_dec_ref(s1) in
+    let n_res = qc_dec_varint(ref_res.s) in
+    let args_res = qc_dec_types_loop(n_res.s, n_res.val, AccEnd) in
+    QcDecRes { val: QcTApp(ref_res.val, args_res.val), s: args_res.s }
+  else if tag == 11 then
+    let i_res = qc_dec_varint(s1) in
+    let name = if i_res.val < len(s1.tparams) then list_at(s1.tparams, i_res.val) else "T" ++ from_int(i_res.val) in
+    QcDecRes { val: QcTParam(name), s: i_res.s }
+  else if tag == 12 then
+    let k_res = qc_dec_type(s1) in
+    let v_res = qc_dec_type(k_res.s) in
+    QcDecRes { val: QcTMap(k_res.val, v_res.val), s: v_res.s }
+  else if tag == 13 then
+    QcDecRes { val: QcTBytes, s: s1 }
+  else
+    QcDecRes { val: QcTUnit, s: s1 }
+
+fn qc_dec_variant_name(s: QcDecState) -> QcDecRes[Str] =
+  let owner_res = qc_dec_byte(s) in
+  let s_after_owner = if owner_res.val == 2 then
+    let ref_res = qc_dec_ref(owner_res.s) in
+    ref_res.s
+  else owner_res.s in
+  qc_dec_str(s_after_owner)
+
+fn qc_binop_from_tag(tag: Int) -> QcBinOp =
+  if tag == 0 then QcOpAdd
+  else if tag == 1 then QcOpSub
+  else if tag == 2 then QcOpMul
+  else if tag == 3 then QcOpDiv
+  else if tag == 4 then QcOpRem
+  else if tag == 5 then QcOpConcat
+  else if tag == 6 then QcOpEq
+  else if tag == 7 then QcOpNe
+  else if tag == 8 then QcOpLt
+  else if tag == 9 then QcOpLe
+  else if tag == 10 then QcOpGt
+  else if tag == 11 then QcOpGe
+  else if tag == 12 then QcOpAnd
+  else QcOpOr
+
+fn qc_dec_pats_loop(s: QcDecState, count: Int, acc: Accum[QcPat]) -> QcDecRes[List[QcPat]] =
+  if count <= 0 then QcDecRes { val: acc_list(acc), s: s }
+  else
+    let p_res = qc_dec_pat(s) in
+    qc_dec_pats_loop(p_res.s, count - 1, AccPush(acc, p_res.val))
+
+fn qc_dec_field_pats_loop(s: QcDecState, count: Int, acc: Accum[QcFieldPat]) -> QcDecRes[List[QcFieldPat]] =
+  if count <= 0 then QcDecRes { val: acc_list(acc), s: s }
+  else
+    let f_name = qc_dec_str(s) in
+    let f_pat = qc_dec_pat(f_name.s) in
+    let fp = QcFieldPat { name: f_name.val, pat: f_pat.val } in
+    qc_dec_field_pats_loop(f_pat.s, count - 1, AccPush(acc, fp))
+
+fn qc_dec_pat(s: QcDecState) -> QcDecRes[QcPat] =
+  let tag_res = qc_dec_byte(s) in
+  let tag = tag_res.val in
+  let s1 = tag_res.s in
+  if tag == 0 then QcDecRes { val: QcPWild, s: s1 }
+  else if tag == 1 then
+    let b_res = qc_dec_bind(s1) in
+    QcDecRes { val: QcPBind(b_res.val), s: b_res.s }
+  else if tag == 2 then
+    let i_res = qc_dec_i64(s1) in
+    QcDecRes { val: QcPInt(i_res.val), s: i_res.s }
+  else if tag == 3 then
+    let s_res = qc_dec_str(s1) in
+    QcDecRes { val: QcPStr(s_res.val), s: s_res.s }
+  else if tag == 4 then
+    let b_res = qc_dec_byte(s1) in
+    QcDecRes { val: QcPBool(b_res.val == 1), s: b_res.s }
+  else if tag == 5 then
+    QcDecRes { val: QcPUnit, s: s1 }
+  else if tag == 6 then
+    let vn_res = qc_dec_variant_name(s1) in
+    let n_res = qc_dec_varint(vn_res.s) in
+    let pats_res = qc_dec_pats_loop(n_res.s, n_res.val, AccEnd) in
+    QcDecRes { val: QcPVariant(vn_res.val, pats_res.val), s: pats_res.s }
+  else if tag == 7 then
+    let ref_res = qc_dec_ref(s1) in
+    let n_res = qc_dec_varint(ref_res.s) in
+    let fields_res = qc_dec_field_pats_loop(n_res.s, n_res.val, AccEnd) in
+    QcDecRes { val: QcPRecord(ref_res.val, fields_res.val), s: fields_res.s }
+  else
+    QcDecRes { val: QcPWild, s: s1 }
+
+fn qc_dec_exprs_loop(s: QcDecState, count: Int, acc: Accum[QcExpr]) -> QcDecRes[List[QcExpr]] =
+  if count <= 0 then QcDecRes { val: acc_list(acc), s: s }
+  else
+    let e_res = qc_dec_expr(s) in
+    qc_dec_exprs_loop(e_res.s, count - 1, AccPush(acc, e_res.val))
+
+fn qc_dec_exprs(s: QcDecState) -> QcDecRes[List[QcExpr]] =
+  let n_res = qc_dec_varint(s) in
+  qc_dec_exprs_loop(n_res.s, n_res.val, AccEnd)
+
+fn qc_dec_record_fields_loop(s: QcDecState, count: Int, acc: Accum[QcFieldExpr]) -> QcDecRes[List[QcFieldExpr]] =
+  if count <= 0 then QcDecRes { val: acc_list(acc), s: s }
+  else
+    let fn_res = qc_dec_str(s) in
+    let fv_res = qc_dec_expr(fn_res.s) in
+    let rf = QcFieldExpr { name: fn_res.val, expr: fv_res.val } in
+    qc_dec_record_fields_loop(fv_res.s, count - 1, AccPush(acc, rf))
+
+fn qc_dec_arms_loop(s: QcDecState, count: Int, acc: Accum[QcArm]) -> QcDecRes[List[QcArm]] =
+  if count <= 0 then QcDecRes { val: acc_list(acc), s: s }
+  else
+    let orig_scope = s.scope in
+    let pat_res = qc_dec_pat(s) in
+    let g_flag = qc_dec_byte(pat_res.s) in
+    let guard_res = if g_flag.val == 1 then
+      let ge = qc_dec_expr(g_flag.s) in
+      QcDecRes { val: Some(ge.val), s: ge.s }
+    else
+      QcDecRes { val: None, s: g_flag.s } in
+    let body_res = qc_dec_expr(guard_res.s) in
+    let arm = QcArm { pat: pat_res.val, guard: guard_res.val, body: body_res.val } in
+    let next_s = QcDecState {
+      bytes: body_res.s.bytes,
+      pos: body_res.s.pos,
+      scope: orig_scope,
+      local_names: body_res.s.local_names,
+      next_name: body_res.s.next_name,
+      tparams: body_res.s.tparams,
+      def_name: body_res.s.def_name,
+      hash_to_name: body_res.s.hash_to_name,
+      group_names: body_res.s.group_names,
+      self_index: body_res.s.self_index
+    } in
+    qc_dec_arms_loop(next_s, count - 1, AccPush(acc, arm))
+
+fn qc_dec_lambda_types_loop(s: QcDecState, count: Int, acc: Accum[Option[QcType]]) -> QcDecRes[List[Option[QcType]]] =
+  if count <= 0 then QcDecRes { val: acc_list(acc), s: s }
+  else
+    let flag_res = qc_dec_byte(s) in
+    if flag_res.val == 1 then
+      let ty_res = qc_dec_type(flag_res.s) in
+      qc_dec_lambda_types_loop(ty_res.s, count - 1, AccPush(acc, Some(ty_res.val)))
+    else
+      qc_dec_lambda_types_loop(flag_res.s, count - 1, AccPush(acc, None))
+
+fn qc_dec_lambda_binds_loop(s: QcDecState, tys: List[Option[QcType]], idx: Int, acc: Accum[QcLambdaParam]) -> QcDecRes[List[QcLambdaParam]] =
+  if idx >= len(tys) then QcDecRes { val: acc_list(acc), s: s }
+  else
+    let opt_ty = list_at(tys, idx) in
+    let b_res = qc_dec_bind(s) in
+    let param = QcLambdaParam { name: b_res.val, ty: opt_ty } in
+    qc_dec_lambda_binds_loop(b_res.s, tys, idx + 1, AccPush(acc, param))
+
+fn qc_dec_expr(s: QcDecState) -> QcDecRes[QcExpr] =
+  let tag_res = qc_dec_byte(s) in
+  let tag = tag_res.val in
+  let s1 = tag_res.s in
+  if tag == 0 then
+    let i_res = qc_dec_i64(s1) in
+    QcDecRes { val: QcEInt(i_res.val), s: i_res.s }
+  else if tag == 1 then
+    let f_res = qc_dec_float(s1) in
+    QcDecRes { val: QcEFloat(f_res.val), s: f_res.s }
+  else if tag == 2 then
+    let b_res = qc_dec_byte(s1) in
+    QcDecRes { val: QcEBool(b_res.val == 1), s: b_res.s }
+  else if tag == 3 then
+    let s_res = qc_dec_str(s1) in
+    QcDecRes { val: QcEStr(s_res.val), s: s_res.s }
+  else if tag == 4 then
+    QcDecRes { val: QcEUnit, s: s1 }
+  else if tag == 5 then
+    let v_res = qc_dec_local(s1) in
+    QcDecRes { val: QcEVar(v_res.val), s: v_res.s }
+  else if tag == 6 then
+    let r_res = qc_dec_ref(s1) in
+    QcDecRes { val: QcEVar(r_res.val), s: r_res.s }
+  else if tag == 7 then
+    let vn_res = qc_dec_variant_name(s1) in
+    let n_res = qc_dec_varint(vn_res.s) in
+    let args_res = qc_dec_exprs_loop(n_res.s, n_res.val, AccEnd) in
+    if n_res.val == 0 then QcDecRes { val: QcEVar(vn_res.val), s: args_res.s }
+    else QcDecRes { val: QcECall(vn_res.val, args_res.val), s: args_res.s }
+  else if tag == 8 || tag == 9 || tag == 10 then
+    let fn_res =
+      if tag == 8 then qc_dec_local(s1)
+      else if tag == 9 then qc_dec_ref(s1)
+      else qc_dec_str(s1) in
+    let n_res = qc_dec_varint(fn_res.s) in
+    let args_res = qc_dec_exprs_loop(n_res.s, n_res.val, AccEnd) in
+    QcDecRes { val: QcECall(fn_res.val, args_res.val), s: args_res.s }
+  else if tag == 11 then
+    let op_res = qc_dec_byte(s1) in
+    let l_res = qc_dec_expr(op_res.s) in
+    let r_res = qc_dec_expr(l_res.s) in
+    QcDecRes { val: QcEBin(qc_binop_from_tag(op_res.val), l_res.val, r_res.val), s: r_res.s }
+  else if tag == 12 then
+    let op_res = qc_dec_byte(s1) in
+    let x_res = qc_dec_expr(op_res.s) in
+    let op = if op_res.val == 0 then QcUnNeg else QcUnNot in
+    QcDecRes { val: QcEUn(op, x_res.val), s: x_res.s }
+  else if tag == 13 then
+    let c_res = qc_dec_expr(s1) in
+    let t_res = qc_dec_expr(c_res.s) in
+    let e_res = qc_dec_expr(t_res.s) in
+    QcDecRes { val: QcEIf(c_res.val, t_res.val, e_res.val), s: e_res.s }
+  else if tag == 14 then
+    let flag_res = qc_dec_byte(s1) in
+    let ann_res = if flag_res.val == 1 then
+      let ty_res = qc_dec_type(flag_res.s) in
+      QcDecRes { val: Some(ty_res.val), s: ty_res.s }
+    else
+      QcDecRes { val: None, s: flag_res.s } in
+    let val_res = qc_dec_expr(ann_res.s) in
+    let orig_scope = val_res.s.scope in
+    let bind_res = qc_dec_bind(val_res.s) in
+    let body_res = qc_dec_expr(bind_res.s) in
+    let popped_s = QcDecState {
+      bytes: body_res.s.bytes,
+      pos: body_res.s.pos,
+      scope: orig_scope,
+      local_names: body_res.s.local_names,
+      next_name: body_res.s.next_name,
+      tparams: body_res.s.tparams,
+      def_name: body_res.s.def_name,
+      hash_to_name: body_res.s.hash_to_name,
+      group_names: body_res.s.group_names,
+      self_index: body_res.s.self_index
+    } in
+    QcDecRes { val: QcELet(bind_res.val, ann_res.val, val_res.val, body_res.val), s: popped_s }
+  else if tag == 15 then
+    let n_res = qc_dec_varint(s1) in
+    let items_res = qc_dec_exprs_loop(n_res.s, n_res.val, AccEnd) in
+    QcDecRes { val: QcEList(items_res.val), s: items_res.s }
+  else if tag == 16 then
+    let ref_res = qc_dec_ref(s1) in
+    let n_res = qc_dec_varint(ref_res.s) in
+    let fields_res = qc_dec_record_fields_loop(n_res.s, n_res.val, AccEnd) in
+    QcDecRes { val: QcERecord(ref_res.val, fields_res.val), s: fields_res.s }
+  else if tag == 17 then
+    let target_res = qc_dec_expr(s1) in
+    let fname_res = qc_dec_str(target_res.s) in
+    QcDecRes { val: QcEField(target_res.val, fname_res.val), s: fname_res.s }
+  else if tag == 18 then
+    let scrut_res = qc_dec_expr(s1) in
+    let n_res = qc_dec_varint(scrut_res.s) in
+    let arms_res = qc_dec_arms_loop(n_res.s, n_res.val, AccEnd) in
+    QcDecRes { val: QcEMatch(scrut_res.val, arms_res.val), s: arms_res.s }
+  else if tag == 19 then
+    let n_res = qc_dec_varint(s1) in
+    let items_res = qc_dec_exprs_loop(n_res.s, n_res.val, AccEnd) in
+    QcDecRes { val: QcESeq(items_res.val), s: items_res.s }
+  else if tag == 20 then
+    let n_res = qc_dec_varint(s1) in
+    let types_res = qc_dec_lambda_types_loop(n_res.s, n_res.val, AccEnd) in
+    let orig_scope = types_res.s.scope in
+    let binds_res = qc_dec_lambda_binds_loop(types_res.s, types_res.val, 0, AccEnd) in
+    let body_res = qc_dec_expr(binds_res.s) in
+    let popped_s = QcDecState {
+      bytes: body_res.s.bytes,
+      pos: body_res.s.pos,
+      scope: orig_scope,
+      local_names: body_res.s.local_names,
+      next_name: body_res.s.next_name,
+      tparams: body_res.s.tparams,
+      def_name: body_res.s.def_name,
+      hash_to_name: body_res.s.hash_to_name,
+      group_names: body_res.s.group_names,
+      self_index: body_res.s.self_index
+    } in
+    QcDecRes { val: QcELambda(binds_res.val, body_res.val), s: popped_s }
+  else
+    QcDecRes { val: QcEUnit, s: s1 }
+
+fn qc_dec_tparams_loop(s: QcDecState, count: Int, acc: Accum[Str]) -> QcDecRes[List[Str]] =
+  if count <= 0 then QcDecRes { val: acc_list(acc), s: s }
+  else
+    let b_res = qc_dec_bind(s) in
+    let popped_s = QcDecState {
+      bytes: b_res.s.bytes,
+      pos: b_res.s.pos,
+      scope: s.scope,
+      local_names: b_res.s.local_names,
+      next_name: b_res.s.next_name,
+      tparams: b_res.s.tparams,
+      def_name: b_res.s.def_name,
+      hash_to_name: b_res.s.hash_to_name,
+      group_names: b_res.s.group_names,
+      self_index: b_res.s.self_index
+    } in
+    qc_dec_tparams_loop(popped_s, count - 1, AccPush(acc, b_res.val))
+
+fn qc_dec_type_fields_loop(s: QcDecState, count: Int, acc: Accum[QcFieldType]) -> QcDecRes[List[QcFieldType]] =
+  if count <= 0 then QcDecRes { val: acc_list(acc), s: s }
+  else
+    let fname_res = qc_dec_str(s) in
+    let fty_res = qc_dec_type(fname_res.s) in
+    let ft = QcFieldType { name: fname_res.val, ty: fty_res.val } in
+    qc_dec_type_fields_loop(fty_res.s, count - 1, AccPush(acc, ft))
+
+fn qc_dec_variants_loop(s: QcDecState, count: Int, acc: Accum[QcVariant]) -> QcDecRes[List[QcVariant]] =
+  if count <= 0 then QcDecRes { val: acc_list(acc), s: s }
+  else
+    let vname_res = qc_dec_str(s) in
+    let k_res = qc_dec_varint(vname_res.s) in
+    let fields_res = qc_dec_types_loop(k_res.s, k_res.val, AccEnd) in
+    let v = QcVariant { name: vname_res.val, fields: fields_res.val } in
+    qc_dec_variants_loop(fields_res.s, count - 1, AccPush(acc, v))
+
+fn qc_dec_bind_params_loop(s: QcDecState, tys: List[QcType], idx: Int, acc: Accum[QcParam]) -> QcDecRes[List[QcParam]] =
+  if idx >= len(tys) then QcDecRes { val: acc_list(acc), s: s }
+  else
+    let ty = list_at(tys, idx) in
+    let b_res = qc_dec_bind(s) in
+    let param = QcParam { name: b_res.val, ty: ty } in
+    qc_dec_bind_params_loop(b_res.s, tys, idx + 1, AccPush(acc, param))
+
+fn qc_dec_member(s: QcDecState) -> QcDecRes[QcDef] =
+  let kind_res = qc_dec_byte(s) in
+  let raw_kind = kind_res.val in
+  let tparams_res = if raw_kind == 3 || raw_kind == 4 then
+    let n_res = qc_dec_varint(kind_res.s) in
+    qc_dec_tparams_loop(n_res.s, n_res.val, AccEnd)
+  else
+    QcDecRes { val: [], s: kind_res.s } in
+  let kind = if raw_kind >= 3 then raw_kind - 3 else raw_kind in
+  let s_with_tparams = QcDecState {
+    bytes: tparams_res.s.bytes,
+    pos: tparams_res.s.pos,
+    scope: tparams_res.s.scope,
+    local_names: tparams_res.s.local_names,
+    next_name: tparams_res.s.next_name,
+    tparams: tparams_res.val,
+    def_name: tparams_res.s.def_name,
+    hash_to_name: tparams_res.s.hash_to_name,
+    group_names: tparams_res.s.group_names,
+    self_index: tparams_res.s.self_index
+  } in
+  if kind == 0 then
+    let tag_res = qc_dec_byte(s_with_tparams) in
+    if tag_res.val == 0 then
+      let n_res = qc_dec_varint(tag_res.s) in
+      let fields_res = qc_dec_type_fields_loop(n_res.s, n_res.val, AccEnd) in
+      QcDecRes {
+        val: QcDefType(QcTypeDef { name: s.def_name, params: tparams_res.val, body: QcBodyRecord(fields_res.val) }),
+        s: fields_res.s
+      }
+    else
+      let n_res = qc_dec_varint(tag_res.s) in
+      let variants_res = qc_dec_variants_loop(n_res.s, n_res.val, AccEnd) in
+      QcDecRes {
+        val: QcDefType(QcTypeDef { name: s.def_name, params: tparams_res.val, body: QcBodyEnum(variants_res.val) }),
+        s: variants_res.s
+      }
+  else if kind == 1 then
+    let n_res = qc_dec_varint(s_with_tparams) in
+    let param_tys_res = qc_dec_types_loop(n_res.s, n_res.val, AccEnd) in
+    let ret_res = qc_dec_type(param_tys_res.s) in
+    let effs_res = qc_dec_effects(ret_res.s) in
+    let params_res = qc_dec_bind_params_loop(effs_res.s, param_tys_res.val, 0, AccEnd) in
+    let params_scope = params_res.s.scope in
+    let reqs_res = qc_dec_exprs(params_res.s) in
+    let s_with_r = QcDecState {
+      bytes: reqs_res.s.bytes,
+      pos: reqs_res.s.pos,
+      scope: ["r"] ++ params_scope,
+      local_names: reqs_res.s.local_names,
+      next_name: reqs_res.s.next_name,
+      tparams: reqs_res.s.tparams,
+      def_name: reqs_res.s.def_name,
+      hash_to_name: reqs_res.s.hash_to_name,
+      group_names: reqs_res.s.group_names,
+      self_index: reqs_res.s.self_index
+    } in
+    let enss_res = qc_dec_exprs(s_with_r) in
+    let s_for_body = QcDecState {
+      bytes: enss_res.s.bytes,
+      pos: enss_res.s.pos,
+      scope: params_scope,
+      local_names: enss_res.s.local_names,
+      next_name: enss_res.s.next_name,
+      tparams: enss_res.s.tparams,
+      def_name: enss_res.s.def_name,
+      hash_to_name: enss_res.s.hash_to_name,
+      group_names: enss_res.s.group_names,
+      self_index: enss_res.s.self_index
+    } in
+    let body_res = qc_dec_expr(s_for_body) in
+    QcDecRes {
+      val: QcDefFn(QcFnDef {
+        name: s.def_name,
+        tparams: tparams_res.val,
+        params: params_res.val,
+        ret: ret_res.val,
+        effects: effs_res.val,
+        reqs: reqs_res.val,
+        enss: enss_res.val,
+        body: body_res.val
+      }),
+      s: body_res.s
+    }
+  else
+    let body_res = qc_dec_expr(s_with_tparams) in
+    QcDecRes {
+      val: QcDefTest(QcTestDef { name: s.def_name, body: body_res.val }),
+      s: body_res.s
+    }
+
+fn qc_skip_members_loop(s: QcDecState, count: Int) -> QcDecState =
+  if count <= 0 then s
+  else
+    let dec = qc_dec_member(s) in
+    qc_skip_members_loop(dec.s, count - 1)
+
+fn qc_decode_canonical(canonical: Bytes, local_names: List[Str], def_name: Str, group_form: Option[Bytes], hash_to_name: Map[Str, Str], group_names: List[Str]) -> Option[QcDef] =
+  if bytes_len(canonical) < 6 then None
+  else
+    let s0 = QcDecState {
+      bytes: canonical,
+      pos: 5,
+      scope: [],
+      local_names: local_names,
+      next_name: 0,
+      tparams: [],
+      def_name: def_name,
+      hash_to_name: hash_to_name,
+      group_names: group_names,
+      self_index: 0
+    } in
+    let size_res = qc_dec_varint(s0) in
+    let index_res = qc_dec_varint(size_res.s) in
+    if size_res.val == 1 then
+      let s_member = QcDecState {
+        bytes: canonical,
+        pos: index_res.s.pos,
+        scope: [],
+        local_names: local_names,
+        next_name: 0,
+        tparams: [],
+        def_name: def_name,
+        hash_to_name: hash_to_name,
+        group_names: group_names,
+        self_index: 0
+      } in
+      let res = qc_dec_member(s_member) in
+      Some(res.val)
+    else
+      match group_form {
+        Some(g_bytes) =>
+          let g_s0 = QcDecState {
+            bytes: g_bytes,
+            pos: 5,
+            scope: [],
+            local_names: local_names,
+            next_name: 0,
+            tparams: [],
+            def_name: def_name,
+            hash_to_name: hash_to_name,
+            group_names: group_names,
+            self_index: index_res.val
+          } in
+          let g_size_res = qc_dec_varint(g_s0) in
+          let target_idx = index_res.val in
+          let s_target = qc_skip_members_loop(g_size_res.s, target_idx) in
+          let s_member = QcDecState {
+            bytes: g_bytes,
+            pos: s_target.pos,
+            scope: [],
+            local_names: local_names,
+            next_name: 0,
+            tparams: [],
+            def_name: def_name,
+            hash_to_name: hash_to_name,
+            group_names: group_names,
+            self_index: target_idx
+          } in
+          let res = qc_dec_member(s_member) in
+          Some(res.val),
+        None => None
+      }
+
+fn qc_find_group_form_loop(target_hash: Bytes, groups: List[QcGroup], idx: Int) -> Option[Bytes] =
+  if idx >= len(groups) then None
+  else
+    let g = list_at(groups, idx) in
+    if g.hash == target_hash then Some(g.form)
+    else qc_find_group_form_loop(target_hash, groups, idx + 1)
+
+fn qc_find_group_form(canonical: Bytes, groups: List[QcGroup]) -> Option[Bytes] =
+  if bytes_len(canonical) < 37 then None
+  else
+    let hash_start = bytes_len(canonical) - 32 in
+    let gh = bytes_slice(canonical, hash_start, bytes_len(canonical)) in
+    qc_find_group_form_loop(gh, groups, 0)
+
+fn qc_find_member_name_at_idx(entries: List[QcStateEntry], target_gh: Bytes, target_idx: Int, idx: Int) -> Str =
+  if idx >= len(entries) then ""
+  else
+    let e = list_at(entries, idx) in
+    if bytes_len(e.canonical) < 37 then qc_find_member_name_at_idx(entries, target_gh, target_idx, idx + 1)
+    else
+      let gh = bytes_slice(e.canonical, bytes_len(e.canonical) - 32, bytes_len(e.canonical)) in
+      if gh != target_gh then qc_find_member_name_at_idx(entries, target_gh, target_idx, idx + 1)
+      else
+        let dummy_s = QcDecState { bytes: e.canonical, pos: 5, scope: [], local_names: [], next_name: 0, tparams: [], def_name: "", hash_to_name: map_new(), group_names: [], self_index: 0 } in
+        let size_res = qc_dec_varint(dummy_s) in
+        let idx_res = qc_dec_varint(size_res.s) in
+        if idx_res.val == target_idx then e.name
+        else qc_find_member_name_at_idx(entries, target_gh, target_idx, idx + 1)
+
+fn qc_build_group_names_loop(entries: List[QcStateEntry], target_gh: Bytes, cur_idx: Int, size: Int, acc: Accum[Str]) -> List[Str] =
+  if cur_idx >= size then acc_list(acc)
+  else
+    let name = qc_find_member_name_at_idx(entries, target_gh, cur_idx, 0) in
+    qc_build_group_names_loop(entries, target_gh, cur_idx + 1, size, AccPush(acc, name))
+
+fn qc_find_group_names(canonical: Bytes, entries: List[QcStateEntry]) -> List[Str] =
+  if bytes_len(canonical) < 37 then []
+  else
+    let dummy_s = QcDecState { bytes: canonical, pos: 5, scope: [], local_names: [], next_name: 0, tparams: [], def_name: "", hash_to_name: map_new(), group_names: [], self_index: 0 } in
+    let size_res = qc_dec_varint(dummy_s) in
+    if size_res.val <= 1 then []
+    else
+      let gh = bytes_slice(canonical, bytes_len(canonical) - 32, bytes_len(canonical)) in
+      qc_build_group_names_loop(entries, gh, 0, size_res.val, AccEnd)
+
+test qc_canon_test =
+  let src = "fn add(a: Int, b: Int) -> Int !io\n  req a >= 0\n= a + b * 2\n" in
+  match qc_parse(src) {
+    Ok(p) =>
+      let h = qc_hash_program(p) in
+      len(h.canons) == 1 && bytes_len((list_at(h.canons, 0)).hash) == 32,
+    Err(_) => false
+  }
+
+# QALQ/QALR protocol codec and dispatch for QAL self-hosting compiler (spec §7: qc_proto, qc_main)
+
+type QcReader = {
+  bytes: Bytes,
+  pos: Int
+}
+
+type QcReadRes[T] = {
+  val: T,
+  r: QcReader
+}
+
+fn qc_reader_byte(r: QcReader) -> QcReadRes[Int] =
+  let b = bytes_at(r.bytes, r.pos) in
+  QcReadRes { val: b, r: QcReader { bytes: r.bytes, pos: r.pos + 1 } }
+
+fn qc_reader_varint_loop(r: QcReader, shift: Int, acc: Int) -> QcReadRes[Int] =
+  let b = bytes_at(r.bytes, r.pos) in
+  let r2 = QcReader { bytes: r.bytes, pos: r.pos + 1 } in
+  let val = bit_or(acc, shl(bit_and(b, 127), shift)) in
+  if bit_and(b, 128) == 0 then QcReadRes { val: val, r: r2 }
+  else qc_reader_varint_loop(r2, shift + 7, val)
+
+fn qc_reader_varint(r: QcReader) -> QcReadRes[Int] =
+  qc_reader_varint_loop(r, 0, 0)
+
+fn qc_reader_raw_bytes(r: QcReader, count: Int) -> QcReadRes[Bytes] =
+  let slice = bytes_slice(r.bytes, r.pos, r.pos + count) in
+  QcReadRes { val: slice, r: QcReader { bytes: r.bytes, pos: r.pos + count } }
+
+fn qc_reader_bytes(r: QcReader) -> QcReadRes[Bytes] =
+  let len_res = qc_reader_varint(r) in
+  qc_reader_raw_bytes(len_res.r, len_res.val)
+
+fn qc_reader_str(r: QcReader) -> QcReadRes[Str] =
+  let b_res = qc_reader_bytes(r) in
+  let s = match bytes_to_str(b_res.val) {
+    Some(str_val) => str_val,
+    None => ""
+  } in
+  QcReadRes { val: s, r: b_res.r }
+
+fn qc_reader_strs_loop(r: QcReader, count: Int, acc: Accum[Str]) -> QcReadRes[List[Str]] =
+  if count <= 0 then QcReadRes { val: acc_list(acc), r: r }
+  else
+    let s_res = qc_reader_str(r) in
+    qc_reader_strs_loop(s_res.r, count - 1, AccPush(acc, s_res.val))
+
+fn qc_reader_strs(r: QcReader) -> QcReadRes[List[Str]] =
+  let count_res = qc_reader_varint(r) in
+  qc_reader_strs_loop(count_res.r, count_res.val, AccEnd)
+
+type QcStateEntry = {
+  name: Str,
+  hash: Bytes,
+  kind: Int,
+  canonical: Bytes,
+  local_names: List[Str],
+  refs: List[Str]
+}
+
+fn qc_read_state_entry(r: QcReader) -> QcReadRes[QcStateEntry] =
+  let name_res = qc_reader_str(r) in
+  let hash_res = qc_reader_raw_bytes(name_res.r, 32) in
+  let kind_res = qc_reader_byte(hash_res.r) in
+  let canon_res = qc_reader_bytes(kind_res.r) in
+  let locals_res = qc_reader_strs(canon_res.r) in
+  let refs_res = qc_reader_strs(locals_res.r) in
+  QcReadRes {
+    val: QcStateEntry {
+      name: name_res.val,
+      hash: hash_res.val,
+      kind: kind_res.val,
+      canonical: canon_res.val,
+      local_names: locals_res.val,
+      refs: refs_res.val
+    },
+    r: refs_res.r
+  }
+
+fn qc_read_state_entries_loop(r: QcReader, count: Int, acc: Accum[QcStateEntry]) -> QcReadRes[List[QcStateEntry]] =
+  if count <= 0 then QcReadRes { val: acc_list(acc), r: r }
+  else
+    let e_res = qc_read_state_entry(r) in
+    qc_read_state_entries_loop(e_res.r, count - 1, AccPush(acc, e_res.val))
+
+type QcStoreState = {
+  entries: List[QcStateEntry],
+  groups: List[QcGroup]
+}
+
+fn qc_read_group_loop(r: QcReader, count: Int, acc: Accum[QcGroup]) -> QcReadRes[List[QcGroup]] =
+  if count <= 0 then QcReadRes { val: acc_list(acc), r: r }
+  else
+    let hash_res = qc_reader_raw_bytes(r, 32) in
+    let form_res = qc_reader_bytes(hash_res.r) in
+    let g = QcGroup { hash: hash_res.val, form: form_res.val } in
+    qc_read_group_loop(form_res.r, count - 1, AccPush(acc, g))
+
+fn qc_read_store_state(r: QcReader) -> QcReadRes[QcStoreState] =
+  let n_res = qc_reader_varint(r) in
+  let entries_res = qc_read_state_entries_loop(n_res.r, n_res.val, AccEnd) in
+  let m_res = qc_reader_varint(entries_res.r) in
+  let groups_res = qc_read_group_loop(m_res.r, m_res.val, AccEnd) in
+  QcReadRes {
+    val: QcStoreState { entries: entries_res.val, groups: groups_res.val },
+    r: groups_res.r
+  }
+
+# TForm AST encoder (used for op 1 PARSE response: Done(encode_program(p)))
+fn qc_tform_put_int_loop(n: Int, acc: Accum[Int]) -> Accum[Int] =
+  let b = bit_and(n, 127) in
+  let next_n = shr(n, 7) in
+  let b_sign = bit_and(b, 64) in
+  let done = (next_n == 0 && b_sign == 0) || (next_n == -1 && b_sign != 0) in
+  if done then AccPush(acc, b)
+  else qc_tform_put_int_loop(next_n, AccPush(acc, bit_or(b, 128)))
+
+fn qc_tform_type_acc(t: QcType, acc: Accum[Int]) -> Accum[Int] =
+  match t {
+    QcTInt => AccPush(acc, 0),
+    QcTFloat => AccPush(acc, 1),
+    QcTBool => AccPush(acc, 2),
+    QcTUnit => AccPush(acc, 3),
+    QcTStr => AccPush(acc, 4),
+    QcTList(x) => qc_tform_type_acc(x, AccPush(acc, 5)),
+    QcTOption(x) => qc_tform_type_acc(x, AccPush(acc, 6)),
+    QcTResult(a, b) => qc_tform_type_acc(b, qc_tform_type_acc(a, AccPush(acc, 7))),
+    QcTNamed(n) => qc_str_acc(n, AccPush(acc, 8)),
+    QcTFn(ps, ret, effs) =>
+      let a1 = qc_varint_acc(len(ps), AccPush(acc, 9)) in
+      let a2 = fold(ps, a1, fn(st: Accum[Int], p: QcType) => qc_tform_type_acc(p, st)) in
+      let a3 = qc_tform_type_acc(ret, a2) in
+      let a4 = qc_varint_acc(len(effs), a3) in
+      fold(effs, a4, fn(st: Accum[Int], e: Str) => qc_str_acc(e, st)),
+    QcTApp(n, args) =>
+      let a1 = qc_varint_acc(len(args), qc_str_acc(n, AccPush(acc, 10))) in
+      fold(args, a1, fn(st: Accum[Int], arg: QcType) => qc_tform_type_acc(arg, st)),
+    QcTParam(n) => qc_str_acc(n, AccPush(acc, 11)),
+    QcTMap(k, v) => qc_tform_type_acc(v, qc_tform_type_acc(k, AccPush(acc, 12))),
+    QcTBytes => AccPush(acc, 13),
+    QcTVar(v) => qc_varint_acc(v, AccPush(acc, 14))
+  }
+
+fn qc_tform_opt_type_acc(ot: Option[QcType], acc: Accum[Int]) -> Accum[Int] =
+  match ot {
+    Some(t) => qc_tform_type_acc(t, AccPush(acc, 1)),
+    None => AccPush(acc, 0)
+  }
+
+fn qc_tform_pat_acc(p: QcPat, acc: Accum[Int]) -> Accum[Int] =
+  match p {
+    QcPWild => AccPush(acc, 0),
+    QcPBind(n) => qc_str_acc(n, AccPush(acc, 1)),
+    QcPInt(n) => qc_tform_put_int_loop(n, AccPush(acc, 2)),
+    QcPStr(s) => qc_str_acc(s, AccPush(acc, 3)),
+    QcPBool(b) => AccPush(AccPush(acc, 4), if b then 1 else 0),
+    QcPUnit => AccPush(acc, 5),
+    QcPVariant(n, ps) =>
+      let a1 = qc_varint_acc(len(ps), qc_str_acc(n, AccPush(acc, 6))) in
+      fold(ps, a1, fn(st: Accum[Int], subp: QcPat) => qc_tform_pat_acc(subp, st)),
+    QcPRecord(n, fs) =>
+      let a1 = qc_varint_acc(len(fs), qc_str_acc(n, AccPush(acc, 7))) in
+      fold(fs, a1, fn(st: Accum[Int], f: QcFieldPat) => qc_tform_pat_acc(f.pat, qc_str_acc(f.name, st)))
+  }
+
+fn qc_tform_expr_acc(e: QcExpr, acc: Accum[Int]) -> Accum[Int] =
+  match e {
+    QcEInt(n) => qc_tform_put_int_loop(n, AccPush(acc, 0)),
+    QcEFloat(x) => qc_float_acc(x, AccPush(acc, 1)),
+    QcEBool(b) => AccPush(AccPush(acc, 2), if b then 1 else 0),
+    QcEStr(s) => qc_str_acc(s, AccPush(acc, 3)),
+    QcEUnit => AccPush(acc, 4),
+    QcEVar(v) => qc_str_acc(v, AccPush(acc, 5)),
+    QcEBin(op, l, r) =>
+      let a1 = AccPush(AccPush(acc, 6), qc_binop_tag(op)) in
+      qc_tform_expr_acc(r, qc_tform_expr_acc(l, a1)),
+    QcEUn(op, x) =>
+      let tag = match op { QcUnNeg => 0, QcUnNot => 1 } in
+      qc_tform_expr_acc(x, AccPush(AccPush(acc, 7), tag)),
+    QcEIf(c, t, f) =>
+      qc_tform_expr_acc(f, qc_tform_expr_acc(t, qc_tform_expr_acc(c, AccPush(acc, 8)))),
+    QcELet(n, ann, val, body) =>
+      let a1 = qc_tform_opt_type_acc(ann, qc_str_acc(n, AccPush(acc, 9))) in
+      qc_tform_expr_acc(body, qc_tform_expr_acc(val, a1)),
+    QcECall(f, args) =>
+      let a1 = qc_varint_acc(len(args), qc_str_acc(f, AccPush(acc, 10))) in
+      fold(args, a1, fn(st: Accum[Int], a: QcExpr) => qc_tform_expr_acc(a, st)),
+    QcEList(items) =>
+      let a1 = qc_varint_acc(len(items), AccPush(acc, 11)) in
+      fold(items, a1, fn(st: Accum[Int], x: QcExpr) => qc_tform_expr_acc(x, st)),
+    QcERecord(n, fs) =>
+      let a1 = qc_varint_acc(len(fs), qc_str_acc(n, AccPush(acc, 12))) in
+      fold(fs, a1, fn(st: Accum[Int], f: QcFieldExpr) => qc_tform_expr_acc(f.expr, qc_str_acc(f.name, st))),
+    QcEField(target, field) =>
+      qc_str_acc(field, qc_tform_expr_acc(target, AccPush(acc, 13))),
+    QcEMatch(scrut, arms) =>
+      let a1 = qc_varint_acc(len(arms), qc_tform_expr_acc(scrut, AccPush(acc, 14))) in
+      fold(arms, a1, fn(st: Accum[Int], a: QcArm) =>
+        let a_pat = qc_tform_pat_acc(a.pat, st) in
+        let a_guard = match a.guard {
+          Some(g) => qc_tform_expr_acc(g, AccPush(a_pat, 1)),
+          None => AccPush(a_pat, 0)
+        } in
+        qc_tform_expr_acc(a.body, a_guard)
+      ),
+    QcESeq(items) =>
+      let a1 = qc_varint_acc(len(items), AccPush(acc, 15)) in
+      fold(items, a1, fn(st: Accum[Int], x: QcExpr) => qc_tform_expr_acc(x, st)),
+    QcELambda(params, body) =>
+      let a1 = qc_varint_acc(len(params), AccPush(acc, 16)) in
+      let a2 = fold(params, a1, fn(st: Accum[Int], p: QcLambdaParam) =>
+        qc_tform_opt_type_acc(p.ty, qc_str_acc(p.name, st))
+      ) in
+      qc_tform_expr_acc(body, a2)
+  }
+
+fn qc_tform_def_acc(d: QcDef, acc: Accum[Int]) -> Accum[Int] =
+  match d {
+    QcDefType(t) =>
+      let a1 = qc_varint_acc(len(t.params), qc_str_acc(t.name, AccPush(acc, 0))) in
+      let a2 = fold(t.params, a1, fn(st: Accum[Int], p: Str) => qc_str_acc(p, st)) in
+      match t.body {
+        QcBodyRecord(fields) =>
+          let a3 = qc_varint_acc(len(fields), AccPush(a2, 0)) in
+          fold(fields, a3, fn(st: Accum[Int], f: QcFieldType) => qc_tform_type_acc(f.ty, qc_str_acc(f.name, st))),
+        QcBodyEnum(variants) =>
+          let a3 = qc_varint_acc(len(variants), AccPush(a2, 1)) in
+          fold(variants, a3, fn(st: Accum[Int], v: QcVariant) =>
+            let av = qc_varint_acc(len(v.fields), qc_str_acc(v.name, st)) in
+            fold(v.fields, av, fn(st2: Accum[Int], ty: QcType) => qc_tform_type_acc(ty, st2))
+          )
+      },
+    QcDefFn(f) =>
+      let a1 = qc_varint_acc(len(f.tparams), qc_str_acc(f.name, AccPush(acc, 1))) in
+      let a2 = fold(f.tparams, a1, fn(st: Accum[Int], p: Str) => qc_str_acc(p, st)) in
+      let a3 = qc_varint_acc(len(f.params), a2) in
+      let a4 = fold(f.params, a3, fn(st: Accum[Int], p: QcParam) => qc_tform_type_acc(p.ty, qc_str_acc(p.name, st))) in
+      let a5 = qc_tform_type_acc(f.ret, a4) in
+      let a6 = qc_varint_acc(len(f.effects), a5) in
+      let a7 = fold(f.effects, a6, fn(st: Accum[Int], e: Str) => qc_str_acc(e, st)) in
+      let a8 = qc_varint_acc(len(f.reqs), a7) in
+      let a9 = fold(f.reqs, a8, fn(st: Accum[Int], c: QcExpr) => qc_tform_expr_acc(c, st)) in
+      let a10 = qc_varint_acc(len(f.enss), a9) in
+      let a11 = fold(f.enss, a10, fn(st: Accum[Int], c: QcExpr) => qc_tform_expr_acc(c, st)) in
+      qc_tform_expr_acc(f.body, a11),
+    QcDefTest(t) =>
+      let a1 = qc_str_acc(t.name, AccPush(acc, 2)) in
+      qc_tform_expr_acc(t.body, a1)
+  }
+
+fn qc_encode_program(p: QcProgram) -> Bytes =
+  let a0 = qc_varint_acc(len(p.defs), AccEnd) in
+  let a1 = fold(p.defs, a0, fn(st: Accum[Int], d: QcDef) => qc_tform_def_acc(d, st)) in
+  bytes_from(acc_list(a1))
+
+# TForm AST decoder
+fn qc_reader_int_loop(r: QcReader, shift: Int, acc: Int) -> QcReadRes[Int] =
+  let b = bytes_at(r.bytes, r.pos) in
+  let r2 = QcReader { bytes: r.bytes, pos: r.pos + 1 } in
+  let val = bit_or(acc, shl(bit_and(b, 127), shift)) in
+  let next_shift = shift + 7 in
+  if bit_and(b, 128) == 0 then
+    let final_val = if next_shift < 64 && bit_and(b, 64) != 0 then
+      bit_or(val, shl(-1, next_shift))
+    else val in
+    QcReadRes { val: final_val, r: r2 }
+  else
+    qc_reader_int_loop(r2, next_shift, val)
+
+fn qc_reader_int(r: QcReader) -> QcReadRes[Int] =
+  qc_reader_int_loop(r, 0, 0)
+
+fn qc_reader_float(r: QcReader) -> QcReadRes[Float] =
+  let b0 = bytes_at(r.bytes, r.pos) in
+  let b1 = bytes_at(r.bytes, r.pos + 1) in
+  let b2 = bytes_at(r.bytes, r.pos + 2) in
+  let b3 = bytes_at(r.bytes, r.pos + 3) in
+  let b4 = bytes_at(r.bytes, r.pos + 4) in
+  let b5 = bytes_at(r.bytes, r.pos + 5) in
+  let b6 = bytes_at(r.bytes, r.pos + 6) in
+  let b7 = bytes_at(r.bytes, r.pos + 7) in
+  let low = bit_or(b0, bit_or(shl(b1, 8), bit_or(shl(b2, 16), shl(b3, 24)))) in
+  let high = bit_or(b4, bit_or(shl(b5, 8), bit_or(shl(b6, 16), shl(b7, 24)))) in
+  let n = bit_or(bit_and(low, 4294967295), shl(high, 32)) in
+  QcReadRes { val: float_of_bits(n), r: QcReader { bytes: r.bytes, pos: r.pos + 8 } }
+
+fn qc_tform_dec_types_loop(r: QcReader, count: Int, acc: Accum[QcType]) -> QcReadRes[List[QcType]] =
+  if count <= 0 then QcReadRes { val: acc_list(acc), r: r }
+  else
+    let t_res = qc_tform_dec_type(r) in
+    qc_tform_dec_types_loop(t_res.r, count - 1, AccPush(acc, t_res.val))
+
+fn qc_tform_dec_type(r: QcReader) -> QcReadRes[QcType] =
+  let tag_res = qc_reader_byte(r) in
+  let tag = tag_res.val in
+  let r1 = tag_res.r in
+  if tag == 0 then QcReadRes { val: QcTInt, r: r1 }
+  else if tag == 1 then QcReadRes { val: QcTFloat, r: r1 }
+  else if tag == 2 then QcReadRes { val: QcTBool, r: r1 }
+  else if tag == 3 then QcReadRes { val: QcTUnit, r: r1 }
+  else if tag == 4 then QcReadRes { val: QcTStr, r: r1 }
+  else if tag == 5 then
+    let x_res = qc_tform_dec_type(r1) in
+    QcReadRes { val: QcTList(x_res.val), r: x_res.r }
+  else if tag == 6 then
+    let x_res = qc_tform_dec_type(r1) in
+    QcReadRes { val: QcTOption(x_res.val), r: x_res.r }
+  else if tag == 7 then
+    let a_res = qc_tform_dec_type(r1) in
+    let b_res = qc_tform_dec_type(a_res.r) in
+    QcReadRes { val: QcTResult(a_res.val, b_res.val), r: b_res.r }
+  else if tag == 8 then
+    let n_res = qc_reader_str(r1) in
+    QcReadRes { val: QcTNamed(n_res.val), r: n_res.r }
+  else if tag == 9 then
+    let ps_len = qc_reader_varint(r1) in
+    let ps_res = qc_tform_dec_types_loop(ps_len.r, ps_len.val, AccEnd) in
+    let ret_res = qc_tform_dec_type(ps_res.r) in
+    let effs_res = qc_reader_strs(ret_res.r) in
+    QcReadRes { val: QcTFn(ps_res.val, ret_res.val, effs_res.val), r: effs_res.r }
+  else if tag == 10 then
+    let n_res = qc_reader_str(r1) in
+    let args_len = qc_reader_varint(n_res.r) in
+    let args_res = qc_tform_dec_types_loop(args_len.r, args_len.val, AccEnd) in
+    QcReadRes { val: QcTApp(n_res.val, args_res.val), r: args_res.r }
+  else if tag == 11 then
+    let n_res = qc_reader_str(r1) in
+    QcReadRes { val: QcTParam(n_res.val), r: n_res.r }
+  else if tag == 12 then
+    let k_res = qc_tform_dec_type(r1) in
+    let v_res = qc_tform_dec_type(k_res.r) in
+    QcReadRes { val: QcTMap(k_res.val, v_res.val), r: v_res.r }
+  else if tag == 13 then
+    QcReadRes { val: QcTBytes, r: r1 }
+  else
+    let v_res = qc_reader_varint(r1) in
+    QcReadRes { val: QcTVar(v_res.val), r: v_res.r }
+
+fn qc_tform_dec_opt_type(r: QcReader) -> QcReadRes[Option[QcType]] =
+  let b_res = qc_reader_byte(r) in
+  if b_res.val == 1 then
+    let t_res = qc_tform_dec_type(b_res.r) in
+    QcReadRes { val: Some(t_res.val), r: t_res.r }
+  else
+    QcReadRes { val: None, r: b_res.r }
+
+fn qc_tform_dec_pats_loop(r: QcReader, count: Int, acc: Accum[QcPat]) -> QcReadRes[List[QcPat]] =
+  if count <= 0 then QcReadRes { val: acc_list(acc), r: r }
+  else
+    let p_res = qc_tform_dec_pat(r) in
+    qc_tform_dec_pats_loop(p_res.r, count - 1, AccPush(acc, p_res.val))
+
+fn qc_tform_dec_field_pats_loop(r: QcReader, count: Int, acc: Accum[QcFieldPat]) -> QcReadRes[List[QcFieldPat]] =
+  if count <= 0 then QcReadRes { val: acc_list(acc), r: r }
+  else
+    let fn_res = qc_reader_str(r) in
+    let fp_res = qc_tform_dec_pat(fn_res.r) in
+    qc_tform_dec_field_pats_loop(fp_res.r, count - 1, AccPush(acc, QcFieldPat { name: fn_res.val, pat: fp_res.val }))
+
+fn qc_tform_dec_pat(r: QcReader) -> QcReadRes[QcPat] =
+  let tag_res = qc_reader_byte(r) in
+  let tag = tag_res.val in
+  let r1 = tag_res.r in
+  if tag == 0 then QcReadRes { val: QcPWild, r: r1 }
+  else if tag == 1 then
+    let n_res = qc_reader_str(r1) in
+    QcReadRes { val: QcPBind(n_res.val), r: n_res.r }
+  else if tag == 2 then
+    let n_res = qc_reader_int(r1) in
+    QcReadRes { val: QcPInt(n_res.val), r: n_res.r }
+  else if tag == 3 then
+    let s_res = qc_reader_str(r1) in
+    QcReadRes { val: QcPStr(s_res.val), r: s_res.r }
+  else if tag == 4 then
+    let b_res = qc_reader_byte(r1) in
+    QcReadRes { val: QcPBool(b_res.val == 1), r: b_res.r }
+  else if tag == 5 then
+    QcReadRes { val: QcPUnit, r: r1 }
+  else if tag == 6 then
+    let n_res = qc_reader_str(r1) in
+    let c_res = qc_reader_varint(n_res.r) in
+    let ps_res = qc_tform_dec_pats_loop(c_res.r, c_res.val, AccEnd) in
+    QcReadRes { val: QcPVariant(n_res.val, ps_res.val), r: ps_res.r }
+  else
+    let n_res = qc_reader_str(r1) in
+    let c_res = qc_reader_varint(n_res.r) in
+    let fs_res = qc_tform_dec_field_pats_loop(c_res.r, c_res.val, AccEnd) in
+    QcReadRes { val: QcPRecord(n_res.val, fs_res.val), r: fs_res.r }
+
+fn qc_tform_dec_exprs_loop(r: QcReader, count: Int, acc: Accum[QcExpr]) -> QcReadRes[List[QcExpr]] =
+  if count <= 0 then QcReadRes { val: acc_list(acc), r: r }
+  else
+    let e_res = qc_tform_dec_expr(r) in
+    qc_tform_dec_exprs_loop(e_res.r, count - 1, AccPush(acc, e_res.val))
+
+fn qc_tform_dec_exprs(r: QcReader) -> QcReadRes[List[QcExpr]] =
+  let c_res = qc_reader_varint(r) in
+  qc_tform_dec_exprs_loop(c_res.r, c_res.val, AccEnd)
+
+fn qc_tform_dec_field_exprs_loop(r: QcReader, count: Int, acc: Accum[QcFieldExpr]) -> QcReadRes[List[QcFieldExpr]] =
+  if count <= 0 then QcReadRes { val: acc_list(acc), r: r }
+  else
+    let fn_res = qc_reader_str(r) in
+    let fe_res = qc_tform_dec_expr(fn_res.r) in
+    qc_tform_dec_field_exprs_loop(fe_res.r, count - 1, AccPush(acc, QcFieldExpr { name: fn_res.val, expr: fe_res.val }))
+
+fn qc_tform_dec_arms_loop(r: QcReader, count: Int, acc: Accum[QcArm]) -> QcReadRes[List[QcArm]] =
+  if count <= 0 then QcReadRes { val: acc_list(acc), r: r }
+  else
+    let pat_res = qc_tform_dec_pat(r) in
+    let g_flag = qc_reader_byte(pat_res.r) in
+    let g_res = if g_flag.val == 1 then
+      let ge = qc_tform_dec_expr(g_flag.r) in
+      QcReadRes { val: Some(ge.val), r: ge.r }
+    else
+      QcReadRes { val: None, r: g_flag.r } in
+    let body_res = qc_tform_dec_expr(g_res.r) in
+    qc_tform_dec_arms_loop(body_res.r, count - 1, AccPush(acc, QcArm { pat: pat_res.val, guard: g_res.val, body: body_res.val }))
+
+fn qc_tform_dec_lambda_params_loop(r: QcReader, count: Int, acc: Accum[QcLambdaParam]) -> QcReadRes[List[QcLambdaParam]] =
+  if count <= 0 then QcReadRes { val: acc_list(acc), r: r }
+  else
+    let n_res = qc_reader_str(r) in
+    let ty_res = qc_tform_dec_opt_type(n_res.r) in
+    qc_tform_dec_lambda_params_loop(ty_res.r, count - 1, AccPush(acc, QcLambdaParam { name: n_res.val, ty: ty_res.val }))
+
+fn qc_tform_dec_expr(r: QcReader) -> QcReadRes[QcExpr] =
+  let tag_res = qc_reader_byte(r) in
+  let tag = tag_res.val in
+  let r1 = tag_res.r in
+  if tag == 0 then
+    let n_res = qc_reader_int(r1) in
+    QcReadRes { val: QcEInt(n_res.val), r: n_res.r }
+  else if tag == 1 then
+    let f_res = qc_reader_float(r1) in
+    QcReadRes { val: QcEFloat(f_res.val), r: f_res.r }
+  else if tag == 2 then
+    let b_res = qc_reader_byte(r1) in
+    QcReadRes { val: QcEBool(b_res.val == 1), r: b_res.r }
+  else if tag == 3 then
+    let s_res = qc_reader_str(r1) in
+    QcReadRes { val: QcEStr(s_res.val), r: s_res.r }
+  else if tag == 4 then
+    QcReadRes { val: QcEUnit, r: r1 }
+  else if tag == 5 then
+    let v_res = qc_reader_str(r1) in
+    QcReadRes { val: QcEVar(v_res.val), r: v_res.r }
+  else if tag == 6 then
+    let op_res = qc_reader_byte(r1) in
+    let l_res = qc_tform_dec_expr(op_res.r) in
+    let r_res = qc_tform_dec_expr(l_res.r) in
+    QcReadRes { val: QcEBin(qc_binop_from_tag(op_res.val), l_res.val, r_res.val), r: r_res.r }
+  else if tag == 7 then
+    let op_res = qc_reader_byte(r1) in
+    let x_res = qc_tform_dec_expr(op_res.r) in
+    let op = if op_res.val == 0 then QcUnNeg else QcUnNot in
+    QcReadRes { val: QcEUn(op, x_res.val), r: x_res.r }
+  else if tag == 8 then
+    let c_res = qc_tform_dec_expr(r1) in
+    let t_res = qc_tform_dec_expr(c_res.r) in
+    let f_res = qc_tform_dec_expr(t_res.r) in
+    QcReadRes { val: QcEIf(c_res.val, t_res.val, f_res.val), r: f_res.r }
+  else if tag == 9 then
+    let n_res = qc_reader_str(r1) in
+    let ann_res = qc_tform_dec_opt_type(n_res.r) in
+    let val_res = qc_tform_dec_expr(ann_res.r) in
+    let body_res = qc_tform_dec_expr(val_res.r) in
+    QcReadRes { val: QcELet(n_res.val, ann_res.val, val_res.val, body_res.val), r: body_res.r }
+  else if tag == 10 then
+    let f_res = qc_reader_str(r1) in
+    let args_res = qc_tform_dec_exprs(f_res.r) in
+    QcReadRes { val: QcECall(f_res.val, args_res.val), r: args_res.r }
+  else if tag == 11 then
+    let items_res = qc_tform_dec_exprs(r1) in
+    QcReadRes { val: QcEList(items_res.val), r: items_res.r }
+  else if tag == 12 then
+    let n_res = qc_reader_str(r1) in
+    let c_res = qc_reader_varint(n_res.r) in
+    let fs_res = qc_tform_dec_field_exprs_loop(c_res.r, c_res.val, AccEnd) in
+    QcReadRes { val: QcERecord(n_res.val, fs_res.val), r: fs_res.r }
+  else if tag == 13 then
+    let t_res = qc_tform_dec_expr(r1) in
+    let f_res = qc_reader_str(t_res.r) in
+    QcReadRes { val: QcEField(t_res.val, f_res.val), r: f_res.r }
+  else if tag == 14 then
+    let s_res = qc_tform_dec_expr(r1) in
+    let c_res = qc_reader_varint(s_res.r) in
+    let arms_res = qc_tform_dec_arms_loop(c_res.r, c_res.val, AccEnd) in
+    QcReadRes { val: QcEMatch(s_res.val, arms_res.val), r: arms_res.r }
+  else if tag == 15 then
+    let items_res = qc_tform_dec_exprs(r1) in
+    QcReadRes { val: QcESeq(items_res.val), r: items_res.r }
+  else
+    let c_res = qc_reader_varint(r1) in
+    let ps_res = qc_tform_dec_lambda_params_loop(c_res.r, c_res.val, AccEnd) in
+    let body_res = qc_tform_dec_expr(ps_res.r) in
+    QcReadRes { val: QcELambda(ps_res.val, body_res.val), r: body_res.r }
+
+fn qc_tform_dec_field_types_loop(r: QcReader, count: Int, acc: Accum[QcFieldType]) -> QcReadRes[List[QcFieldType]] =
+  if count <= 0 then QcReadRes { val: acc_list(acc), r: r }
+  else
+    let fn_res = qc_reader_str(r) in
+    let ft_res = qc_tform_dec_type(fn_res.r) in
+    qc_tform_dec_field_types_loop(ft_res.r, count - 1, AccPush(acc, QcFieldType { name: fn_res.val, ty: ft_res.val }))
+
+fn qc_tform_dec_variants_loop(r: QcReader, count: Int, acc: Accum[QcVariant]) -> QcReadRes[List[QcVariant]] =
+  if count <= 0 then QcReadRes { val: acc_list(acc), r: r }
+  else
+    let vn_res = qc_reader_str(r) in
+    let c_res = qc_reader_varint(vn_res.r) in
+    let fs_res = qc_tform_dec_types_loop(c_res.r, c_res.val, AccEnd) in
+    qc_tform_dec_variants_loop(fs_res.r, count - 1, AccPush(acc, QcVariant { name: vn_res.val, fields: fs_res.val }))
+
+fn qc_tform_dec_params_loop(r: QcReader, count: Int, acc: Accum[QcParam]) -> QcReadRes[List[QcParam]] =
+  if count <= 0 then QcReadRes { val: acc_list(acc), r: r }
+  else
+    let pn_res = qc_reader_str(r) in
+    let pt_res = qc_tform_dec_type(pn_res.r) in
+    qc_tform_dec_params_loop(pt_res.r, count - 1, AccPush(acc, QcParam { name: pn_res.val, ty: pt_res.val }))
+
+fn qc_tform_dec_def(r: QcReader) -> QcReadRes[QcDef] =
+  let tag_res = qc_reader_byte(r) in
+  let tag = tag_res.val in
+  let r1 = tag_res.r in
+  if tag == 0 then
+    let n_res = qc_reader_str(r1) in
+    let ps_res = qc_reader_strs(n_res.r) in
+    let btag_res = qc_reader_byte(ps_res.r) in
+    if btag_res.val == 0 then
+      let c_res = qc_reader_varint(btag_res.r) in
+      let fs_res = qc_tform_dec_field_types_loop(c_res.r, c_res.val, AccEnd) in
+      QcReadRes { val: QcDefType(QcTypeDef { name: n_res.val, params: ps_res.val, body: QcBodyRecord(fs_res.val) }), r: fs_res.r }
+    else
+      let c_res = qc_reader_varint(btag_res.r) in
+      let vs_res = qc_tform_dec_variants_loop(c_res.r, c_res.val, AccEnd) in
+      QcReadRes { val: QcDefType(QcTypeDef { name: n_res.val, params: ps_res.val, body: QcBodyEnum(vs_res.val) }), r: vs_res.r }
+  else if tag == 1 then
+    let n_res = qc_reader_str(r1) in
+    let tps_res = qc_reader_strs(n_res.r) in
+    let pc_res = qc_reader_varint(tps_res.r) in
+    let ps_res = qc_tform_dec_params_loop(pc_res.r, pc_res.val, AccEnd) in
+    let ret_res = qc_tform_dec_type(ps_res.r) in
+    let effs_res = qc_reader_strs(ret_res.r) in
+    let reqs_res = qc_tform_dec_exprs(effs_res.r) in
+    let enss_res = qc_tform_dec_exprs(reqs_res.r) in
+    let body_res = qc_tform_dec_expr(enss_res.r) in
+    QcReadRes {
+      val: QcDefFn(QcFnDef {
+        name: n_res.val,
+        tparams: tps_res.val,
+        params: ps_res.val,
+        ret: ret_res.val,
+        effects: effs_res.val,
+        reqs: reqs_res.val,
+        enss: enss_res.val,
+        body: body_res.val
+      }),
+      r: body_res.r
+    }
+  else
+    let n_res = qc_reader_str(r1) in
+    let body_res = qc_tform_dec_expr(n_res.r) in
+    QcReadRes { val: QcDefTest(QcTestDef { name: n_res.val, body: body_res.val }), r: body_res.r }
+
+fn qc_tform_dec_defs_loop(r: QcReader, count: Int, acc: Accum[QcDef]) -> QcReadRes[List[QcDef]] =
+  if count <= 0 then QcReadRes { val: acc_list(acc), r: r }
+  else
+    let d_res = qc_tform_dec_def(r) in
+    qc_tform_dec_defs_loop(d_res.r, count - 1, AccPush(acc, d_res.val))
+
+fn qc_tform_dec_program(b: Bytes) -> QcProgram =
+  let r0 = QcReader { bytes: b, pos: 0 } in
+  let c_res = qc_reader_varint(r0) in
+  let defs_res = qc_tform_dec_defs_loop(c_res.r, c_res.val, AccEnd) in
+  QcProgram { defs: defs_res.val }
+
+# Response encoders
+fn qc_res_done(payload: Bytes) -> Bytes =
+  let prefix = bytes_from([81, 65, 76, 82, 1, 0]) in # "QALR", ver 1, status 0 (DONE)
+  let a = qc_varint_acc(bytes_len(payload), AccEnd) in
+  prefix ++ bytes_from(acc_list(a)) ++ payload
+
+fn qc_diag_to_acc(d: QcDiag, acc: Accum[Int]) -> Accum[Int] =
+  let a1 = qc_str_acc(d.code, acc) in
+  let a2 = qc_str_acc(d.kind, a1) in
+  let a3 = qc_str_acc(d.def, a2) in
+  let a4 = qc_str_acc(d.path, a3) in
+  let a5 = qc_str_acc(d.message, a4) in
+  let a6 = AccPush(a5, 0) in # opt(expected) = None
+  let a7 = AccPush(a6, 0) in # opt(found) = None
+  let a8 = qc_varint_acc(len(d.hints), a7) in
+  let a9 = fold(d.hints, a8, fn(st: Accum[Int], h: Str) => qc_str_acc(h, st)) in
+  let a10 = qc_varint_acc(0, a9) in # dependents = []
+  AccPush(a10, 0) # opt(counterexample) = None
+
+fn qc_res_diagnostics(ds: List[QcDiag]) -> Bytes =
+  let prefix = bytes_from([81, 65, 76, 82, 1, 1]) in # "QALR", ver 1, status 1 (DIAGNOSTICS)
+  let a0 = qc_varint_acc(len(ds), AccEnd) in
+  let a1 = fold(ds, a0, fn(st: Accum[Int], d: QcDiag) => qc_diag_to_acc(d, st)) in
+  prefix ++ bytes_from(acc_list(a1))
+
+fn qc_res_internal(msg: Str) -> Bytes =
+  let prefix = bytes_from([81, 65, 76, 82, 1, 3]) in # "QALR", ver 1, status 3 (INTERNAL)
+  let a = qc_str_acc(msg, AccEnd) in
+  prefix ++ bytes_from(acc_list(a))
+
+type QcTextPair = {
+  name: Str,
+  text: Str
+}
+
+fn qc_encode_texts(texts: List[QcTextPair]) -> Bytes =
+  let a0 = qc_varint_acc(len(texts), AccEnd) in
+  let a1 = fold(texts, a0, fn(st: Accum[Int], pair: QcTextPair) =>
+    qc_str_acc(pair.text, qc_str_acc(pair.name, st))
+  ) in
+  bytes_from(acc_list(a1))
+
+fn qc_find_state_entry_loop(entries: List[QcStateEntry], name: Str, idx: Int) -> Option[QcStateEntry] =
+  if idx >= len(entries) then None
+  else
+    let e = list_at(entries, idx) in
+    if e.name == name then Some(e)
+    else qc_find_state_entry_loop(entries, name, idx + 1)
+
+fn qc_build_h2n_loop(entries: List[QcStateEntry], idx: Int, acc: Map[Str, Str]) -> Map[Str, Str] =
+  if idx >= len(entries) then acc
+  else
+    let e = list_at(entries, idx) in
+    let hex = qc_hash_to_hex(e.hash) in
+    let next_acc = if map_has(acc, hex) then acc else map_put(acc, hex, e.name) in
+    qc_build_h2n_loop(entries, idx + 1, next_acc)
+
+fn qc_build_n2h_loop(entries: List[QcStateEntry], idx: Int, acc: Map[Str, Str]) -> Map[Str, Str] =
+  if idx >= len(entries) then acc
+  else
+    let e = list_at(entries, idx) in
+    qc_build_n2h_loop(entries, idx + 1, map_put(acc, e.name, qc_hash_to_hex(e.hash)))
+
+fn qc_overlay_refs_h2n_loop(refs: List[Str], idx: Int, n2h: Map[Str, Str], acc: Map[Str, Str]) -> Map[Str, Str] =
+  if idx < 0 then acc
+  else
+    let r = list_at(refs, idx) in
+    let next_acc = match map_get(n2h, r) {
+      Some(hex) => map_put(acc, hex, r),
+      None => acc
+    } in
+    qc_overlay_refs_h2n_loop(refs, idx - 1, n2h, next_acc)
+
+fn qc_serve_named_loop(entries: List[QcStateEntry], groups: List[QcGroup], h2n: Map[Str, Str], n2h: Map[Str, Str], names: List[Str], idx: Int, is_sig: Bool, acc: Accum[QcTextPair]) -> Bytes =
+  if idx >= len(names) then
+    qc_res_done(qc_encode_texts(acc_list(acc)))
+  else
+    let name = list_at(names, idx) in
+    match qc_find_state_entry_loop(entries, name, 0) {
+      None => qc_res_internal("`" ++ name ++ "` is not in the store state"),
+      Some(e) =>
+        let g_form = qc_find_group_form(e.canonical, groups) in
+        let g_names = qc_find_group_names(e.canonical, entries) in
+        let entry_h2n = qc_overlay_refs_h2n_loop(e.refs, len(e.refs) - 1, n2h, h2n) in
+        match qc_decode_canonical(e.canonical, e.local_names, e.name, g_form, entry_h2n, g_names) {
+          None => qc_res_internal("failed to decode canonical for " ++ name),
+          Some(d) =>
+            let text = if is_sig then qc_signature_text(d) else qc_print_def(d) in
+            qc_serve_named_loop(entries, groups, h2n, n2h, names, idx + 1, is_sig, AccPush(acc, QcTextPair { name: name, text: text }))
+        }
+    }
+
+fn qc_print_prog_defs_loop(defs: List[QcDef], idx: Int, acc: Accum[QcTextPair]) -> Bytes =
+  if idx >= len(defs) then
+    qc_res_done(qc_encode_texts(acc_list(acc)))
+  else
+    let d = list_at(defs, idx) in
+    let pair = QcTextPair { name: qc_def_name(d), text: qc_print_def(d) } in
+    qc_print_prog_defs_loop(defs, idx + 1, AccPush(acc, pair))
+
+# Entry point: qc_main
+fn qc_main(request: Bytes) -> Bytes =
+  if bytes_len(request) < 6 then qc_res_internal("request too short")
+  else
+    let magic = bytes_slice(request, 0, 4) in
+    if magic != to_bytes("QALQ") then qc_res_internal("bad request magic")
+    else
+      let op = bytes_at(request, 5) in
+      let r0 = QcReader { bytes: request, pos: 6 } in
+      if op == 1 then
+        # PARSE
+        let s_res = qc_reader_str(r0) in
+        match qc_parse(s_res.val) {
+          Ok(p) => qc_res_done(qc_encode_program(p)),
+          Err(d) => qc_res_diagnostics([d])
+        }
+      else if op == 3 then
+        # PRINT
+        let state_res = qc_read_store_state(r0) in
+        let names_res = qc_reader_strs(state_res.r) in
+        let entries = state_res.val.entries in
+        let groups = state_res.val.groups in
+        if len(entries) == 0 && len(names_res.val) == 0 && len(groups) == 1 then
+          let g0 = list_at(groups, 0) in
+          let p = qc_tform_dec_program(g0.form) in
+          qc_print_prog_defs_loop(p.defs, 0, AccEnd)
+        else
+          let h2n = qc_build_h2n_loop(entries, 0, map_new()) in
+          let n2h = qc_build_n2h_loop(entries, 0, map_new()) in
+          qc_serve_named_loop(entries, groups, h2n, n2h, names_res.val, 0, false, AccEnd)
+      else if op == 8 then
+        # SIGNATURES
+        let state_res = qc_read_store_state(r0) in
+        let names_res = qc_reader_strs(state_res.r) in
+        let entries = state_res.val.entries in
+        let h2n = qc_build_h2n_loop(entries, 0, map_new()) in
+        let n2h = qc_build_n2h_loop(entries, 0, map_new()) in
+        qc_serve_named_loop(entries, state_res.val.groups, h2n, n2h, names_res.val, 0, true, AccEnd)
+      else if op == 2 then
+        # DEFINE
+        let state_res = qc_read_store_state(r0) in
+        let text_res = qc_reader_str(state_res.r) in
+        match qc_parse(text_res.val) {
+          Ok(input_prog) =>
+            match qc_hash_program_res(input_prog) {
+              Err(err_msg) => qc_res_internal(err_msg),
+              Ok(hashed) =>
+                let a0 = qc_varint_acc(0, AccEnd) in # typed len = 0
+                let a1 = qc_varint_acc(len(hashed.canons), a0) in # canons count
+                let a2 = fold(hashed.canons, a1, fn(st: Accum[Int], c: QcCanon) =>
+                  let s1 = qc_str_acc(c.name, st) in
+                  let s2 = AccPush(s1, c.kind) in
+                  let s3 = qc_raw_bytes_acc(c.hash, s2) in
+                  let s4 = qc_raw_bytes_acc(c.canonical, qc_varint_acc(bytes_len(c.canonical), s3)) in
+                  let s5 = qc_str_acc(c.signature, s4) in
+                  let s6 = fold(c.effects, qc_varint_acc(len(c.effects), s5), fn(acc_ef: Accum[Int], ef: Str) => qc_str_acc(ef, acc_ef)) in
+                  let s7 = fold(c.local_names, qc_varint_acc(len(c.local_names), s6), fn(acc_ln: Accum[Int], ln: Str) => qc_str_acc(ln, acc_ln)) in
+                  let s8 = fold(c.refs, qc_varint_acc(len(c.refs), s7), fn(acc_rf: Accum[Int], rf: Str) => qc_str_acc(rf, acc_rf)) in
+                  let s9 = fold(c.deps, qc_varint_acc(len(c.deps), s8), fn(acc_dp: Accum[Int], dp: Bytes) => qc_raw_bytes_acc(dp, acc_dp)) in
+                  match c.group {
+                    Some(gh) => qc_raw_bytes_acc(gh, AccPush(s9, 1)),
+                    None => AccPush(s9, 0)
+                  }
+                ) in
+                let a3 = fold(hashed.groups, qc_varint_acc(len(hashed.groups), a2), fn(st_g: Accum[Int], g: QcGroup) =>
+                  let g1 = qc_raw_bytes_acc(g.hash, st_g) in
+                  qc_raw_bytes_acc(g.form, qc_varint_acc(bytes_len(g.form), g1))
+                ) in
+                let a4 = qc_varint_acc(0, a3) in # sig_old len = 0
+                let prep_bytes = bytes_from(acc_list(a4)) in
+                qc_res_done(prep_bytes)
+            },
+          Err(d) => qc_res_diagnostics([d])
+        }
+      else
+        qc_res_internal("unsupported op in QAL compiler")
+
+test qc_proto_test =
+  let request = bytes_from([81, 65, 76, 81, 1, 1, 11]) ++ to_bytes("test t = ()") in
+  let res = qc_main(request) in
+  bytes_len(res) > 6 && bytes_slice(res, 0, 4) == to_bytes("QALR")

@@ -846,7 +846,23 @@ fn serve_request(req: Request) -> Response {
             Ok(p) => Response::Done(encode_program(&p)),
             Err(d) => diagnostics(vec![d]),
         },
-        Request::Print { state, names } => named(&state, &names, &|d| backend.print(&Program { defs: vec![d.clone()] }).trim_end().to_string()),
+        Request::Print { state, names } => {
+            if state.entries.is_empty() && names.is_empty() && state.groups.len() == 1 {
+                match decode_program(&state.groups[0].1) {
+                    Ok(p) => {
+                        let out: Vec<(String, String)> = p
+                            .defs
+                            .iter()
+                            .map(|d| (d.name().to_string(), backend.print(&Program { defs: vec![d.clone()] }).trim_end().to_string()))
+                            .collect();
+                        Response::Done(encode_texts(&out))
+                    }
+                    Err(e) => Response::Internal(e),
+                }
+            } else {
+                named(&state, &names, &|d| backend.print(&Program { defs: vec![d.clone()] }).trim_end().to_string())
+            }
+        }
         Request::Signatures { state, names } => named(&state, &names, &|d| canon::signature_text(d, &|n| n.to_string())),
         Request::Typed { state, roots, options: _ } => match program_of(&state) {
             Ok(p) => match roots.iter().find(|r| !p.defs.iter().any(|d| d.name() == r.as_str())) {
@@ -881,7 +897,63 @@ fn serve_request(req: Request) -> Response {
                 },
             },
         },
-        Request::Define { .. } => Response::Internal("DEFINE is answered by the compiler from Phase 5b on; the Rust store prepares definitions itself".into()),
+        Request::Define { state, text, options: _ } => {
+            let input = match backend.parse(&text) {
+                Ok(p) => p,
+                Err(d) => return diagnostics(vec![d]),
+            };
+            let stored = match program_of(&state) {
+                Ok(p) => p,
+                Err(e) => return Response::Internal(e),
+            };
+            let input_names: std::collections::HashSet<&str> = input.defs.iter().map(|d| d.name()).collect();
+            let mut combined_defs: Vec<Def> = stored.defs.iter().filter(|d| !input_names.contains(d.name())).cloned().collect();
+            combined_defs.extend(input.defs.iter().cloned());
+            let combined = Program { defs: combined_defs };
+            let typed = match backend.check(&combined, &|n| input_names.contains(n)) {
+                Ok(tp) => tp,
+                Err(ds) => return diagnostics(ds),
+            };
+            let hashed = match backend.hash(&combined) {
+                Ok(h) => h,
+                Err(e) => return Response::Internal(e.to_string()),
+            };
+            let mut canons = Vec::new();
+            for d in &input.defs {
+                let name = d.name();
+                if let Some(c) = hashed.defs.iter().find(|c| c.name == name) {
+                    canons.push(PreparedCanon {
+                        name: c.name.clone(),
+                        kind: c.kind,
+                        hash: c.hash,
+                        canonical: c.canonical.clone(),
+                        signature: c.signature.clone(),
+                        effects: c.effects.clone(),
+                        local_names: c.local_names.clone(),
+                        refs: c.refs.clone(),
+                        deps: c.deps.clone(),
+                        group: c.group,
+                    });
+                }
+            }
+            let mut sig_old = Vec::new();
+            for e in &state.entries {
+                if input_names.contains(e.name.as_str()) {
+                    if let Some(d) = stored.defs.iter().find(|d| d.name() == e.name) {
+                        let sig = canon::signature_text(d, &|n| n.to_string());
+                        sig_old.push((e.name.clone(), e.kind, sig));
+                    }
+                }
+            }
+            let groups: Vec<(Hash, Vec<u8>)> = hashed.groups.into_iter().collect();
+            let prepared = Prepared {
+                typed: tform::encode(&typed),
+                canons,
+                groups,
+                sig_old,
+            };
+            Response::Done(encode_prepared(&prepared))
+        }
         Request::Join { .. } => Response::Internal("the Rust pipeline never forks, so it receives no JOIN".into()),
     }
 }
@@ -1005,8 +1077,14 @@ mod tests {
         }
         assert!(matches!(decode_checked(&done(&serve(&Request::CheckFile { text: SRC.into(), entry: None, options: opts }.encode()))).unwrap(), Checked::Typed(_)));
         assert!(matches!(decode_checked(&done(&serve(&Request::CheckFile { text: SRC.into(), entry: Some(Entry::Tests), options: opts }.encode()))).unwrap(), Checked::Module(_)));
-        // Broken requests and the operations of later phases are INTERNAL, never a panic.
-        for req in [b"nope".to_vec(), Request::Define { state: st.clone(), text: String::new(), options: opts }.encode(), join(b"", &[]), Request::Print { state: st.clone(), names: vec!["zz".into()] }.encode()] {
+        // DEFINE (Phase 5b): prepared definitions
+        let def_res = serve(&Request::Define { state: st.clone(), text: "fn extra(x: Int) -> Int = x".into(), options: opts }.encode());
+        let prep = decode_prepared(&done(&def_res)).unwrap();
+        assert_eq!(prep.canons.len(), 1);
+        assert_eq!(prep.canons[0].name, "extra");
+
+        // Broken requests and unhandled operations (JOIN) are INTERNAL, never a panic.
+        for req in [b"nope".to_vec(), join(b"", &[]), Request::Print { state: st.clone(), names: vec!["zz".into()] }.encode()] {
             assert!(matches!(Response::decode(&serve(&req)).unwrap(), Response::Internal(_)));
         }
         let bad = Options { memory_max_pages: 0 };

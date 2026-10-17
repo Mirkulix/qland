@@ -84,18 +84,231 @@ impl Backend for Rust {
     }
 }
 
-static RUST: Rust = Rust;
+pub type Driver = Box<dyn Fn(&[u8]) -> Result<Vec<u8>, Diagnostic> + Send + Sync>;
 
-/// The backend the free functions use. Phase 5a: always [`Rust`].
-pub fn backend() -> &'static dyn Backend {
-    &RUST
+static QAL_DRIVER: std::sync::RwLock<Option<Driver>> = std::sync::RwLock::new(None);
+
+/// Sets the driver that invokes the self-hosted compiler module (e.g. via wasmtime in `qal-run`).
+pub fn set_qal_driver(d: Driver) {
+    let mut lock = QAL_DRIVER.write().unwrap();
+    *lock = Some(d);
 }
 
-/// The backend named `name` (`rust`; `qal` and `both` exist from 5b on).
+/// True if a driver for the self-hosted compiler module has been installed.
+pub fn has_qal_driver() -> bool {
+    QAL_DRIVER.read().unwrap().is_some()
+}
+
+/// Invokes the configured QAL compiler driver (or the Rust reference server if none is set) on a raw `QALQ` request.
+pub fn call_qal(req: &[u8]) -> Result<Vec<u8>, Diagnostic> {
+    call_driver(req)
+}
+
+fn call_driver(req: &[u8]) -> Result<Vec<u8>, Diagnostic> {
+    if let Some(ref d) = *QAL_DRIVER.read().unwrap() {
+        d(req)
+    } else {
+        // Fallback: the reference server
+        Ok(proto::serve(req))
+    }
+}
+
+/// The self-hosted QAL compiler backend running through `QALQ`/`QALR` protocol.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Qal;
+
+impl Backend for Qal {
+    fn name(&self) -> &'static str {
+        "qal"
+    }
+
+    fn parse(&self, src: &str) -> Result<Program, Diagnostic> {
+        let req = proto::Request::Parse { text: src.to_string() }.encode();
+        let resp_bytes = call_driver(&req)?;
+        match proto::Response::decode(&resp_bytes) {
+            Ok(proto::Response::Done(payload)) => proto::decode_program(&payload).map_err(|e| Diagnostic::compiler_failed("qal", "PARSE", "main", &e)),
+            Ok(proto::Response::Diagnostics(ds)) => Err(ds.into_iter().next().unwrap_or_else(|| Diagnostic::compiler_failed("qal", "PARSE", "main", "empty diagnostics"))),
+            Ok(proto::Response::Internal(msg)) => Err(Diagnostic::compiler_failed("qal", "PARSE", "main", &msg)),
+            Ok(proto::Response::Fork { .. }) => Err(Diagnostic::compiler_failed("qal", "PARSE", "main", "unexpected fork")),
+            Err(e) => Err(Diagnostic::bad_compiler_response(&e)),
+        }
+    }
+
+    fn print(&self, p: &Program) -> String {
+        let st = proto::StoreState {
+            entries: Vec::new(),
+            groups: vec![(qal_core::canon::Hash([0; 32]), proto::encode_program(p))],
+        };
+        let req = proto::Request::Print { state: st, names: Vec::new() }.encode();
+        let resp_bytes = match call_driver(&req) {
+            Ok(b) => b,
+            Err(d) => return format!("error: {d:?}"),
+        };
+        match proto::Response::decode(&resp_bytes) {
+            Ok(proto::Response::Done(payload)) => match proto::decode_texts(&payload) {
+                Ok(texts) => {
+                    let mut parts = Vec::new();
+                    for (_n, t) in texts {
+                        parts.push(t);
+                    }
+                    let mut out = parts.join("\n\n");
+                    if !out.is_empty() {
+                        out.push('\n');
+                    }
+                    out
+                }
+                Err(e) => format!("error decoding texts: {e}"),
+            },
+            _ => format!("error in print response"),
+        }
+    }
+
+    fn print_expr(&self, e: &Expr) -> String {
+        let test_def = qal_core::ast::Def::Test(qal_core::ast::TestDef { name: "t".into(), body: e.clone() });
+        let prog = Program { defs: vec![test_def] };
+        let s = self.print(&prog);
+        let trimmed = s.trim();
+        trimmed.strip_prefix("test t = ").unwrap_or(trimmed).to_string()
+    }
+
+    fn check(&self, p: &Program, is_new: &dyn Fn(&str) -> bool) -> Result<TProgram, Vec<Diagnostic>> {
+        // Checker in QAL is Phase 5d; in 5b it delegates to Rust
+        qal_check::check_stored(p, is_new)
+    }
+
+    fn hash(&self, p: &Program) -> Result<Hashed, HashError> {
+        let st = proto::StoreState::default();
+        let text = Rust.print(p);
+        let req = proto::Request::Define { state: st, text, options: Default::default() }.encode();
+        let resp_bytes = call_driver(&req).map_err(|d| HashError::Internal(d.message))?;
+        match proto::Response::decode(&resp_bytes) {
+            Ok(proto::Response::Done(payload)) => match proto::decode_prepared(&payload) {
+                Ok(prep) => {
+                    let mut defs = Vec::new();
+                    for c in prep.canons {
+                        defs.push(qal_core::canon::Canon {
+                            name: c.name,
+                            kind: c.kind,
+                            hash: c.hash,
+                            canonical: c.canonical,
+                            signature: c.signature,
+                            effects: c.effects,
+                            local_names: c.local_names,
+                            refs: c.refs,
+                            deps: c.deps,
+                            group: c.group,
+                        });
+                    }
+                    let groups = prep.groups.into_iter().collect();
+                    Ok(Hashed { defs, groups })
+                }
+                Err(e) => Err(HashError::Internal(e)),
+            },
+            Ok(proto::Response::Internal(msg)) => Err(HashError::Internal(msg)),
+            _ => Err(HashError::Internal("bad response from DEFINE".into())),
+        }
+    }
+
+    fn compile(&self, p: &TProgram, entry: &Entry, opts: &CompileOptions) -> Result<CompiledModule, String> {
+        // Codegen in QAL is Phase 5c; in 5b it delegates to Rust
+        qal_wasm::compile_with(p, entry, opts)
+    }
+}
+
+/// The differential `both` backend running Rust and QAL in parallel, comparing outputs byte for byte.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Both;
+
+impl Backend for Both {
+    fn name(&self) -> &'static str {
+        "both"
+    }
+
+    fn parse(&self, src: &str) -> Result<Program, Diagnostic> {
+        let r1 = Rust.parse(src);
+        let r2 = Qal.parse(src);
+        match (&r1, &r2) {
+            (Ok(p1), Ok(p2)) if p1 == p2 => r1,
+            (Err(d1), Err(d2)) if (d1.code, d1.kind) == (d2.code, d2.kind) => r1,
+            _ => Err(Diagnostic::compiler_divergence("PARSE", &format!("Rust: {r1:?}, Qal: {r2:?}"))),
+        }
+    }
+
+    fn print(&self, p: &Program) -> String {
+        let s1 = Rust.print(p);
+        let s2 = Qal.print(p);
+        if s1 != s2 {
+            panic!("compiler divergence in print:\n--- Rust:\n{s1}\n--- Qal:\n{s2}");
+        }
+        s1
+    }
+
+    fn print_expr(&self, e: &Expr) -> String {
+        let s1 = Rust.print_expr(e);
+        let s2 = Qal.print_expr(e);
+        if s1 != s2 {
+            panic!("compiler divergence in print_expr:\n--- Rust:\n{s1}\n--- Qal:\n{s2}");
+        }
+        s1
+    }
+
+    fn check(&self, p: &Program, is_new: &dyn Fn(&str) -> bool) -> Result<TProgram, Vec<Diagnostic>> {
+        Rust.check(p, is_new)
+    }
+
+    fn hash(&self, p: &Program) -> Result<Hashed, HashError> {
+        let h1 = Rust.hash(p)?;
+        let h2 = Qal.hash(p)?;
+        if h1 != h2 {
+            return Err(HashError::Internal("compiler divergence in hash".into()));
+        }
+        Ok(h1)
+    }
+
+    fn compile(&self, p: &TProgram, entry: &Entry, opts: &CompileOptions) -> Result<CompiledModule, String> {
+        Rust.compile(p, entry, opts)
+    }
+}
+
+static RUST: Rust = Rust;
+static QAL: Qal = Qal;
+static BOTH: Both = Both;
+
+static CURRENT_BACKEND: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0); // 0=Rust, 1=Qal, 2=Both
+
+/// Sets the default backend for free functions (`rust`, `qal`, `both`).
+pub fn set_backend(name: &str) -> Result<(), String> {
+    match name {
+        "rust" => { CURRENT_BACKEND.store(0, std::sync::atomic::Ordering::SeqCst); Ok(()) }
+        "qal" => { CURRENT_BACKEND.store(1, std::sync::atomic::Ordering::SeqCst); Ok(()) }
+        "both" => { CURRENT_BACKEND.store(2, std::sync::atomic::Ordering::SeqCst); Ok(()) }
+        _ => Err(format!("unknown compiler backend `{name}`; expected rust, qal or both")),
+    }
+}
+
+/// The backend the free functions use.
+pub fn backend() -> &'static dyn Backend {
+    if let Ok(env) = std::env::var("QAL_COMPILER") {
+        match env.as_str() {
+            "qal" => return &QAL,
+            "both" => return &BOTH,
+            "rust" => return &RUST,
+            _ => {}
+        }
+    }
+    match CURRENT_BACKEND.load(std::sync::atomic::Ordering::SeqCst) {
+        1 => &QAL,
+        2 => &BOTH,
+        _ => &RUST,
+    }
+}
+
+/// The backend named `name` (`rust`, `qal`, `both`).
 pub fn select(name: &str) -> Result<&'static dyn Backend, String> {
     match name {
         "rust" => Ok(&RUST),
-        "qal" | "both" => Err(format!("the compiler backend `{name}` is not available yet (self-hosting Phase 5b); use `rust`")),
+        "qal" => Ok(&QAL),
+        "both" => Ok(&BOTH),
         _ => Err(format!("unknown compiler backend `{name}`; expected rust, qal or both")),
     }
 }
@@ -156,7 +369,29 @@ mod tests {
         assert_eq!(compile(&tp, &Entry::All).unwrap().wasm, qal_wasm::compile(&tp, &Entry::All).unwrap().wasm);
         assert_eq!(backend().name(), "rust");
         assert_eq!(select("rust").map(|b| b.name()), Ok("rust"));
-        assert!(select("qal").is_err() && select("both").is_err() && select("x").err().is_some_and(|e| e.contains("unknown")));
+        assert_eq!(select("qal").map(|b| b.name()), Ok("qal"));
+        assert_eq!(select("both").map(|b| b.name()), Ok("both"));
+        assert!(select("x").err().is_some_and(|e| e.contains("unknown")));
+    }
+
+    #[test]
+    fn qal_and_both_backends_match_reference() {
+        let src = "fn add(x: Int, y: Int) -> Int = x + y\ntest t = add(2, 3) == 5";
+        let rust = select("rust").unwrap();
+        let qal = select("qal").unwrap();
+        let both = select("both").unwrap();
+
+        let p_rust = rust.parse(src).unwrap();
+        let p_qal = qal.parse(src).unwrap();
+        let p_both = both.parse(src).unwrap();
+        assert_eq!(p_rust, p_qal);
+        assert_eq!(p_rust, p_both);
+
+        assert_eq!(rust.print(&p_rust), qal.print(&p_qal));
+        assert_eq!(rust.print(&p_rust), both.print(&p_both));
+
+        assert_eq!(rust.hash(&p_rust).unwrap(), qal.hash(&p_qal).unwrap());
+        assert_eq!(rust.hash(&p_rust).unwrap(), both.hash(&p_both).unwrap());
     }
 
     #[test]
