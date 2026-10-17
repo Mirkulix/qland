@@ -874,16 +874,28 @@ fn serve_request(req: Request) -> Response {
             },
             Err(e) => Response::Internal(e),
         },
-        Request::Build { state, entry, options } => match program_of(&state) {
-            Ok(p) => match backend.check(&p, &|_| false) {
-                Ok(tp) => match backend.compile(&tp, &entry, &compile_options(&options)) {
-                    Ok(m) => Response::Done(encode_module(&m)),
+        Request::Build { state, entry, options } => {
+            if state.entries.is_empty() && state.groups.len() == 1 && state.groups[0].1.starts_with(tform::MAGIC) {
+                match tform::decode(&state.groups[0].1) {
+                    Ok(tp) => match backend.compile(&tp, &entry, &compile_options(&options)) {
+                        Ok(m) => Response::Done(encode_module(&m)),
+                        Err(e) => Response::Internal(e),
+                    },
                     Err(e) => Response::Internal(e),
-                },
-                Err(ds) => diagnostics(ds),
-            },
-            Err(e) => Response::Internal(e),
-        },
+                }
+            } else {
+                match program_of(&state) {
+                    Ok(p) => match backend.check(&p, &|_| false) {
+                        Ok(tp) => match backend.compile(&tp, &entry, &compile_options(&options)) {
+                            Ok(m) => Response::Done(encode_module(&m)),
+                            Err(e) => Response::Internal(e),
+                        },
+                        Err(ds) => diagnostics(ds),
+                    },
+                    Err(e) => Response::Internal(e),
+                }
+            }
+        }
         Request::CheckFile { text, entry, options } => match backend.parse(&text) {
             Err(d) => diagnostics(vec![d]),
             Ok(p) => match backend.check(&p, &|_| true) {

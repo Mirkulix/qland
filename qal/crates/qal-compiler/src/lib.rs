@@ -210,8 +210,22 @@ impl Backend for Qal {
     }
 
     fn compile(&self, p: &TProgram, entry: &Entry, opts: &CompileOptions) -> Result<CompiledModule, String> {
-        // Codegen in QAL is Phase 5c; in 5b it delegates to Rust
-        qal_wasm::compile_with(p, entry, opts)
+        let st = proto::StoreState {
+            entries: Vec::new(),
+            groups: vec![(qal_core::canon::Hash([0; 32]), qal_core::tform::encode(p))],
+        };
+        let req = proto::Request::Build {
+            state: st,
+            entry: entry.clone(),
+            options: proto::Options { memory_max_pages: opts.memory_max_pages },
+        }
+        .encode();
+        let resp_bytes = call_driver(&req).map_err(|d| d.message)?;
+        match proto::Response::decode(&resp_bytes) {
+            Ok(proto::Response::Done(payload)) => proto::decode_module(&payload),
+            Ok(proto::Response::Internal(msg)) => Err(msg),
+            _ => Err("bad response from BUILD".into()),
+        }
     }
 }
 
@@ -266,7 +280,18 @@ impl Backend for Both {
     }
 
     fn compile(&self, p: &TProgram, entry: &Entry, opts: &CompileOptions) -> Result<CompiledModule, String> {
-        Rust.compile(p, entry, opts)
+        let m1 = Rust.compile(p, entry, opts)?;
+        let m2 = Qal.compile(p, entry, opts)?;
+        if m1.wasm != m2.wasm
+            || m1.funcs != m2.funcs
+            || m1.types != m2.types
+            || m1.imports != m2.imports
+            || m1.table_len != m2.table_len
+            || m1.memory_max_pages != m2.memory_max_pages
+        {
+            return Err("compiler divergence in compile".into());
+        }
+        Ok(m1)
     }
 }
 
