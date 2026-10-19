@@ -1246,6 +1246,9 @@ fn qc_tp_find_type_def_loop(types: List[QcTypeDef], name: Str, idx: Int) -> Opti
     if t.name == name then Some(t)
     else qc_tp_find_type_def_loop(types, name, idx + 1)
 
+fn qc_tp_type_def(tp: QcTProgram, name: Str) -> Option[QcTypeDef] =
+  qc_tp_find_type_def_loop(tp.types, name, 0)
+
 fn qc_tp_find_fn_idx_loop(fns: List[QcTFn], name: Str, idx: Int) -> Option[Int] =
   if idx >= len(fns) then None
   else

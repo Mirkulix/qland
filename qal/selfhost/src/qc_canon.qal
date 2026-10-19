@@ -1496,7 +1496,7 @@ fn qc_dec_type(s: QcDecState) -> QcDecRes[QcType] =
   else if tag == 11 then
     let i_res = qc_dec_varint(s1) in
     let name = if i_res.val < len(s1.tparams) then list_at(s1.tparams, i_res.val) else "T" ++ from_int(i_res.val) in
-    QcDecRes { val: QcTParam(name), s: i_res.s }
+    QcDecRes { val: QcTNamed(name), s: i_res.s }
   else if tag == 12 then
     let k_res = qc_dec_type(s1) in
     let v_res = qc_dec_type(k_res.s) in

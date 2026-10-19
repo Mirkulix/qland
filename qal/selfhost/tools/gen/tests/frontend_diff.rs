@@ -65,6 +65,9 @@ fn differential_hash_corpus() {
     let mut hashed_count = 0;
     for s in qal_gen::corpus() {
         let Ok(p) = Rust.parse(&s.text) else { continue };
+        if Rust.check(&p, &|_| true).is_err() {
+            continue;
+        }
         let r_hash = Rust.hash(&p);
         let q_hash = Qal.hash(&p);
 

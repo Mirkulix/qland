@@ -72,6 +72,27 @@ fn qc_read_entry(r: QcReader) -> QcReadRes[QcEntry] =
   else
     QcReadRes { val: QcEntryAll, r: r1 }
 
+type QcCheckFileArgs = {
+  entry: Option[QcEntry],
+  pages: Int
+}
+
+fn qc_read_check_file_args(r: QcReader) -> QcCheckFileArgs =
+  let has_entry_res = qc_reader_byte(r) in
+  if has_entry_res.val == 0 then
+    let opts_res = qc_reader_varint(has_entry_res.r) in
+    QcCheckFileArgs { entry: None, pages: opts_res.val }
+  else
+    let ent_res = qc_read_entry(has_entry_res.r) in
+    let opts_res = qc_reader_varint(ent_res.r) in
+    QcCheckFileArgs { entry: Some(ent_res.val), pages: opts_res.val }
+
+type QcSigOld = {
+  name: Str,
+  kind: Int,
+  sig: Str
+}
+
 # Response encoders
 fn qc_res_done(payload: Bytes) -> Bytes =
   let prefix = bytes_from([81, 65, 76, 82, 1, 0]) in # "QALR", ver 1, status 0 (DONE)
@@ -145,6 +166,85 @@ fn qc_overlay_refs_h2n_loop(refs: List[Str], idx: Int, n2h: Map[Str, Str], acc: 
     } in
     qc_overlay_refs_h2n_loop(refs, idx - 1, n2h, next_acc)
 
+fn qc_decode_state_entries_loop(entries: List[QcStateEntry], groups: List[QcGroup], h2n: Map[Str, Str], n2h: Map[Str, Str], idx: Int, acc: Accum[QcDef]) -> Result[List[QcDef], Str] =
+  if idx >= len(entries) then Ok(acc_list(acc))
+  else
+    let e = list_at(entries, idx) in
+    if sha256(e.canonical) != e.hash then
+      Err("`" ++ e.name ++ "`: the canonical form does not match its hash")
+    else
+      let g_form = qc_find_group_form(e.canonical, groups) in
+      let g_names = qc_find_group_names(e.canonical, entries) in
+      let entry_h2n = qc_overlay_refs_h2n_loop(e.refs, len(e.refs) - 1, n2h, h2n) in
+      match qc_decode_canonical(e.canonical, e.local_names, e.name, g_form, entry_h2n, g_names) {
+        None => Err("failed to decode canonical for " ++ e.name),
+        Some(d) => qc_decode_state_entries_loop(entries, groups, h2n, n2h, idx + 1, AccPush(acc, d))
+      }
+
+fn qc_program_of_state(state: QcStoreState) -> Result[QcProgram, Str] =
+  let entries = state.entries in
+  let h2n = qc_build_h2n_loop(entries, 0, map_new()) in
+  let n2h = qc_build_n2h_loop(entries, 0, map_new()) in
+  match qc_decode_state_entries_loop(entries, state.groups, h2n, n2h, 0, AccEnd) {
+    Ok(defs) => Ok(QcProgram { defs: defs }),
+    Err(e) => Err(e)
+  }
+
+fn qc_defs_has_name(defs: List[QcDef], name: Str, idx: Int) -> Bool =
+  if idx >= len(defs) then false
+  else
+    let d = list_at(defs, idx) in
+    if qc_def_name(d) == name then true
+    else qc_defs_has_name(defs, name, idx + 1)
+
+fn qc_find_missing_root_loop(roots: List[Str], defs: List[QcDef], idx: Int) -> Option[Str] =
+  if idx >= len(roots) then None
+  else
+    let r = list_at(roots, idx) in
+    if qc_defs_has_name(defs, r, 0) then qc_find_missing_root_loop(roots, defs, idx + 1)
+    else Some(r)
+
+fn qc_find_def_in_list(defs: List[QcDef], name: Str, idx: Int) -> Option[QcDef] =
+  if idx >= len(defs) then None
+  else
+    let d = list_at(defs, idx) in
+    if qc_def_name(d) == name then Some(d)
+    else qc_find_def_in_list(defs, name, idx + 1)
+
+fn qc_find_canon_in_list(canons: List[QcCanon], name: Str, idx: Int) -> Option[QcCanon] =
+  if idx >= len(canons) then None
+  else
+    let c = list_at(canons, idx) in
+    if c.name == name then Some(c)
+    else qc_find_canon_in_list(canons, name, idx + 1)
+
+fn qc_filter_out_stored_defs_loop(defs: List[QcDef], input_map: Map[Str, Bool], idx: Int, acc: Accum[QcDef]) -> List[QcDef] =
+  if idx >= len(defs) then acc_list(acc)
+  else
+    let d = list_at(defs, idx) in
+    if map_has(input_map, qc_def_name(d)) then qc_filter_out_stored_defs_loop(defs, input_map, idx + 1, acc)
+    else qc_filter_out_stored_defs_loop(defs, input_map, idx + 1, AccPush(acc, d))
+
+fn qc_extract_input_canons_loop(input_defs: List[QcDef], all_canons: List[QcCanon], idx: Int, acc: Accum[QcCanon]) -> List[QcCanon] =
+  if idx >= len(input_defs) then acc_list(acc)
+  else
+    let d = list_at(input_defs, idx) in
+    match qc_find_canon_in_list(all_canons, qc_def_name(d), 0) {
+      Some(c) => qc_extract_input_canons_loop(input_defs, all_canons, idx + 1, AccPush(acc, c)),
+      None => qc_extract_input_canons_loop(input_defs, all_canons, idx + 1, acc)
+    }
+
+fn qc_build_sig_old_loop(entries: List[QcStateEntry], input_map: Map[Str, Bool], stored_defs: List[QcDef], idx: Int, acc: Accum[QcSigOld]) -> List[QcSigOld] =
+  if idx >= len(entries) then acc_list(acc)
+  else
+    let e = list_at(entries, idx) in
+    if map_has(input_map, e.name) then
+      match qc_find_def_in_list(stored_defs, e.name, 0) {
+        Some(d) => qc_build_sig_old_loop(entries, input_map, stored_defs, idx + 1, AccPush(acc, QcSigOld { name: e.name, kind: e.kind, sig: qc_signature_text(d) })),
+        None => qc_build_sig_old_loop(entries, input_map, stored_defs, idx + 1, acc)
+      }
+    else qc_build_sig_old_loop(entries, input_map, stored_defs, idx + 1, acc)
+
 fn qc_serve_named_loop(entries: List[QcStateEntry], groups: List[QcGroup], h2n: Map[Str, Str], n2h: Map[Str, Str], names: List[Str], idx: Int, is_sig: Bool, acc: Accum[QcTextPair]) -> Bytes =
   if idx >= len(names) then
     qc_res_done(qc_encode_texts(acc_list(acc)))
@@ -210,6 +310,23 @@ fn qc_main(request: Bytes) -> Bytes =
         let h2n = qc_build_h2n_loop(entries, 0, map_new()) in
         let n2h = qc_build_n2h_loop(entries, 0, map_new()) in
         qc_serve_named_loop(entries, state_res.val.groups, h2n, n2h, names_res.val, 0, true, AccEnd)
+      else if op == 4 then
+        # TYPED
+        let state_res = qc_read_store_state(r0) in
+        let roots_res = qc_reader_strs(state_res.r) in
+        let opts_res = qc_reader_varint(roots_res.r) in
+        match qc_program_of_state(state_res.val) {
+          Err(e) => qc_res_internal(e),
+          Ok(p) =>
+            match qc_find_missing_root_loop(roots_res.val, p.defs, 0) {
+              Some(r) => qc_res_internal("`" ++ r ++ "` is not in the store state"),
+              None =>
+                match qc_check_stored(p, fn(_: Str) => false) {
+                  Ok(tp) => qc_res_done(qc_tform_encode(tp)),
+                  Err(ds) => qc_res_diagnostics(ds)
+                }
+            }
+        }
       else if op == 5 then
         # BUILD
         let state_res = qc_read_store_state(r0) in
@@ -228,42 +345,102 @@ fn qc_main(request: Bytes) -> Bytes =
               }
           }
         else
-          qc_res_internal("BUILD from raw store state requires Phase 5d checker")
+          match qc_program_of_state(state_res.val) {
+            Err(e) => qc_res_internal(e),
+            Ok(p) =>
+              match qc_check_stored(p, fn(_: Str) => false) {
+                Err(ds) => qc_res_diagnostics(ds),
+                Ok(tp) =>
+                  match qc_compile_with(tp, entry_res.val, pages_res.val) {
+                    Err(e) => qc_res_internal(e),
+                    Ok(cm) => qc_res_done(qc_encode_compiled_module(cm))
+                  }
+              }
+          }
+      else if op == 6 then
+        # CHECK_FILE
+        let text_res = qc_reader_str(r0) in
+        let args = qc_read_check_file_args(text_res.r) in
+        match qc_parse(text_res.val) {
+          Err(d) => qc_res_diagnostics([d]),
+          Ok(p) =>
+            match qc_check(p) {
+              Err(ds) => qc_res_diagnostics(ds),
+              Ok(tp) =>
+                match args.entry {
+                  None =>
+                    let t_bytes = qc_tform_encode(tp) in
+                    let a0 = AccPush(AccEnd, 0) in
+                    let a1 = qc_raw_bytes_acc(t_bytes, qc_varint_acc(bytes_len(t_bytes), a0)) in
+                    qc_res_done(bytes_from(acc_list(a1))),
+                  Some(ent) =>
+                    match qc_compile_with(tp, ent, args.pages) {
+                      Err(e) => qc_res_internal(e),
+                      Ok(cm) =>
+                        let m_bytes = qc_encode_compiled_module(cm) in
+                        let a0 = AccPush(AccEnd, 1) in
+                        qc_res_done(bytes_from(acc_list(a0)) ++ m_bytes)
+                    }
+                }
+            }
+        }
       else if op == 2 then
         # DEFINE
         let state_res = qc_read_store_state(r0) in
         let text_res = qc_reader_str(state_res.r) in
+        let opts_res = qc_reader_varint(text_res.r) in
         match qc_parse(text_res.val) {
+          Err(d) => qc_res_diagnostics([d]),
           Ok(input_prog) =>
-            match qc_hash_program_res(input_prog) {
-              Err(err_msg) => qc_res_internal(err_msg),
-              Ok(hashed) =>
-                let a0 = qc_varint_acc(0, AccEnd) in # typed len = 0
-                let a1 = qc_varint_acc(len(hashed.canons), a0) in # canons count
-                let a2 = fold(hashed.canons, a1, fn(st: Accum[Int], c: QcCanon) =>
-                  let s1 = qc_str_acc(c.name, st) in
-                  let s2 = AccPush(s1, c.kind) in
-                  let s3 = qc_raw_bytes_acc(c.hash, s2) in
-                  let s4 = qc_raw_bytes_acc(c.canonical, qc_varint_acc(bytes_len(c.canonical), s3)) in
-                  let s5 = qc_str_acc(c.signature, s4) in
-                  let s6 = fold(c.effects, qc_varint_acc(len(c.effects), s5), fn(acc_ef: Accum[Int], ef: Str) => qc_str_acc(ef, acc_ef)) in
-                  let s7 = fold(c.local_names, qc_varint_acc(len(c.local_names), s6), fn(acc_ln: Accum[Int], ln: Str) => qc_str_acc(ln, acc_ln)) in
-                  let s8 = fold(c.refs, qc_varint_acc(len(c.refs), s7), fn(acc_rf: Accum[Int], rf: Str) => qc_str_acc(rf, acc_rf)) in
-                  let s9 = fold(c.deps, qc_varint_acc(len(c.deps), s8), fn(acc_dp: Accum[Int], dp: Bytes) => qc_raw_bytes_acc(dp, acc_dp)) in
-                  match c.group {
-                    Some(gh) => qc_raw_bytes_acc(gh, AccPush(s9, 1)),
-                    None => AccPush(s9, 0)
-                  }
-                ) in
-                let a3 = fold(hashed.groups, qc_varint_acc(len(hashed.groups), a2), fn(st_g: Accum[Int], g: QcGroup) =>
-                  let g1 = qc_raw_bytes_acc(g.hash, st_g) in
-                  qc_raw_bytes_acc(g.form, qc_varint_acc(bytes_len(g.form), g1))
-                ) in
-                let a4 = qc_varint_acc(0, a3) in # sig_old len = 0
-                let prep_bytes = bytes_from(acc_list(a4)) in
-                qc_res_done(prep_bytes)
-            },
-          Err(d) => qc_res_diagnostics([d])
+            let stored_res = if len(state_res.val.entries) == 0 then Ok(QcProgram { defs: [] })
+                             else qc_program_of_state(state_res.val) in
+            match stored_res {
+              Err(e) => qc_res_internal(e),
+              Ok(stored) =>
+                let input_map = fold(input_prog.defs, map_new(), fn(m: Map[Str, Bool], d: QcDef) => map_put(m, qc_def_name(d), true)) in
+                let kept_defs = qc_filter_out_stored_defs_loop(stored.defs, input_map, 0, AccEnd) in
+                let combined = QcProgram { defs: kept_defs ++ input_prog.defs } in
+                match qc_check_stored(combined, fn(n: Str) => map_has(input_map, n)) {
+                  Err(ds) => qc_res_diagnostics(ds),
+                  Ok(tp) =>
+                    match qc_hash_program_res(combined) {
+                      Err(err_msg) => qc_res_internal(err_msg),
+                      Ok(hashed) =>
+                        let typed_bytes = qc_tform_encode(tp) in
+                        let input_canons = qc_extract_input_canons_loop(input_prog.defs, hashed.canons, 0, AccEnd) in
+                        let sig_old_list = qc_build_sig_old_loop(state_res.val.entries, input_map, stored.defs, 0, AccEnd) in
+                        let a0 = qc_raw_bytes_acc(typed_bytes, qc_varint_acc(bytes_len(typed_bytes), AccEnd)) in
+                        let a1 = qc_varint_acc(len(input_canons), a0) in
+                        let a2 = fold(input_canons, a1, fn(st: Accum[Int], c: QcCanon) =>
+                          let s1 = qc_str_acc(c.name, st) in
+                          let s2 = AccPush(s1, c.kind) in
+                          let s3 = qc_raw_bytes_acc(c.hash, s2) in
+                          let s4 = qc_raw_bytes_acc(c.canonical, qc_varint_acc(bytes_len(c.canonical), s3)) in
+                          let s5 = qc_str_acc(c.signature, s4) in
+                          let s6 = fold(c.effects, qc_varint_acc(len(c.effects), s5), fn(acc_ef: Accum[Int], ef: Str) => qc_str_acc(ef, acc_ef)) in
+                          let s7 = fold(c.local_names, qc_varint_acc(len(c.local_names), s6), fn(acc_ln: Accum[Int], ln: Str) => qc_str_acc(ln, acc_ln)) in
+                          let s8 = fold(c.refs, qc_varint_acc(len(c.refs), s7), fn(acc_rf: Accum[Int], rf: Str) => qc_str_acc(rf, acc_rf)) in
+                          let s9 = fold(c.deps, qc_varint_acc(len(c.deps), s8), fn(acc_dp: Accum[Int], dp: Bytes) => qc_raw_bytes_acc(dp, acc_dp)) in
+                          match c.group {
+                            Some(gh) => qc_raw_bytes_acc(gh, AccPush(s9, 1)),
+                            None => AccPush(s9, 0)
+                          }
+                        ) in
+                        let a3 = fold(hashed.groups, qc_varint_acc(len(hashed.groups), a2), fn(st_g: Accum[Int], g: QcGroup) =>
+                          let g1 = qc_raw_bytes_acc(g.hash, st_g) in
+                          qc_raw_bytes_acc(g.form, qc_varint_acc(bytes_len(g.form), g1))
+                        ) in
+                        let a4 = qc_varint_acc(len(sig_old_list), a3) in
+                        let a5 = fold(sig_old_list, a4, fn(st_s: Accum[Int], s: QcSigOld) =>
+                          let s1 = qc_str_acc(s.name, st_s) in
+                          let s2 = AccPush(s1, s.kind) in
+                          qc_str_acc(s.sig, s2)
+                        ) in
+                        let prep_bytes = bytes_from(acc_list(a5)) in
+                        qc_res_done(prep_bytes)
+                    }
+                }
+            }
         }
       else
         qc_res_internal("unsupported op in QAL compiler")

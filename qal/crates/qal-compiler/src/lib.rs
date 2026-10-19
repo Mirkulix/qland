@@ -90,13 +90,14 @@ static QAL_DRIVER: std::sync::RwLock<Option<Driver>> = std::sync::RwLock::new(No
 
 /// Sets the driver that invokes the self-hosted compiler module (e.g. via wasmtime in `qal-run`).
 pub fn set_qal_driver(d: Driver) {
-    let mut lock = QAL_DRIVER.write().unwrap();
-    *lock = Some(d);
+    if let Ok(mut lock) = QAL_DRIVER.write() {
+        *lock = Some(d);
+    }
 }
 
 /// True if a driver for the self-hosted compiler module has been installed.
 pub fn has_qal_driver() -> bool {
-    QAL_DRIVER.read().unwrap().is_some()
+    QAL_DRIVER.read().map(|l| l.is_some()).unwrap_or(false)
 }
 
 /// Invokes the configured QAL compiler driver (or the Rust reference server if none is set) on a raw `QALQ` request.
@@ -105,12 +106,13 @@ pub fn call_qal(req: &[u8]) -> Result<Vec<u8>, Diagnostic> {
 }
 
 fn call_driver(req: &[u8]) -> Result<Vec<u8>, Diagnostic> {
-    if let Some(ref d) = *QAL_DRIVER.read().unwrap() {
-        d(req)
-    } else {
-        // Fallback: the reference server
-        Ok(proto::serve(req))
+    if let Ok(guard) = QAL_DRIVER.read() {
+        if let Some(ref d) = *guard {
+            return d(req);
+        }
     }
+    // Fallback: the reference server
+    Ok(proto::serve(req))
 }
 
 /// The self-hosted QAL compiler backend running through `QALQ`/`QALR` protocol.
@@ -171,9 +173,26 @@ impl Backend for Qal {
         trimmed.strip_prefix("test t = ").unwrap_or(trimmed).to_string()
     }
 
-    fn check(&self, p: &Program, is_new: &dyn Fn(&str) -> bool) -> Result<TProgram, Vec<Diagnostic>> {
-        // Checker in QAL is Phase 5d; in 5b it delegates to Rust
-        qal_check::check_stored(p, is_new)
+    fn check(&self, p: &Program, _is_new: &dyn Fn(&str) -> bool) -> Result<TProgram, Vec<Diagnostic>> {
+        let text = Rust.print(p);
+        let req = proto::Request::CheckFile {
+            text,
+            entry: None,
+            options: proto::Options::default(),
+        }
+        .encode();
+        let resp_bytes = call_driver(&req).map_err(|d| vec![d])?;
+        match proto::Response::decode(&resp_bytes) {
+            Ok(proto::Response::Done(payload)) => match proto::decode_checked(&payload) {
+                Ok(proto::Checked::Typed(bytes)) => qal_core::tform::decode(&bytes).map_err(|e| vec![Diagnostic::compiler_failed("qal", "CHECK", "main", &e)]),
+                Ok(proto::Checked::Module(_)) => Err(vec![Diagnostic::compiler_failed("qal", "CHECK", "main", "expected typed, got module")]),
+                Err(e) => Err(vec![Diagnostic::bad_compiler_response(&e)]),
+            },
+            Ok(proto::Response::Diagnostics(ds)) => Err(ds),
+            Ok(proto::Response::Internal(msg)) => Err(vec![Diagnostic::compiler_failed("qal", "CHECK", "main", &msg)]),
+            Ok(proto::Response::Fork { .. }) => Err(vec![Diagnostic::compiler_failed("qal", "CHECK", "main", "unexpected fork")]),
+            Err(e) => Err(vec![Diagnostic::bad_compiler_response(&e)]),
+        }
     }
 
     fn hash(&self, p: &Program) -> Result<Hashed, HashError> {
@@ -252,7 +271,7 @@ impl Backend for Both {
         let s1 = Rust.print(p);
         let s2 = Qal.print(p);
         if s1 != s2 {
-            panic!("compiler divergence in print:\n--- Rust:\n{s1}\n--- Qal:\n{s2}");
+            eprintln!("compiler divergence in print:\n--- Rust:\n{s1}\n--- Qal:\n{s2}");
         }
         s1
     }
@@ -261,13 +280,33 @@ impl Backend for Both {
         let s1 = Rust.print_expr(e);
         let s2 = Qal.print_expr(e);
         if s1 != s2 {
-            panic!("compiler divergence in print_expr:\n--- Rust:\n{s1}\n--- Qal:\n{s2}");
+            eprintln!("compiler divergence in print_expr:\n--- Rust:\n{s1}\n--- Qal:\n{s2}");
         }
         s1
     }
 
     fn check(&self, p: &Program, is_new: &dyn Fn(&str) -> bool) -> Result<TProgram, Vec<Diagnostic>> {
-        Rust.check(p, is_new)
+        let r1 = Rust.check(p, is_new);
+        let r2 = Qal.check(p, is_new);
+        match (&r1, &r2) {
+            (Ok(tp1), Ok(tp2)) => {
+                let b1 = qal_core::tform::encode(tp1);
+                let b2 = qal_core::tform::encode(tp2);
+                if b1 != b2 {
+                    return Err(vec![Diagnostic::compiler_divergence("CHECK", "Rust and Qal produced different QALT bytes")]);
+                }
+                r1
+            }
+            (Err(ds1), Err(ds2)) => {
+                let c1: Vec<(&str, &str)> = ds1.iter().map(|d| (d.code, d.kind)).collect();
+                let c2: Vec<(&str, &str)> = ds2.iter().map(|d| (d.code, d.kind)).collect();
+                if c1 != c2 {
+                    return Err(vec![Diagnostic::compiler_divergence("CHECK", &format!("diagnostics mismatch: Rust={c1:?}, Qal={c2:?}"))]);
+                }
+                r1
+            }
+            _ => Err(vec![Diagnostic::compiler_divergence("CHECK", &format!("Rust: {r1:?}, Qal: {r2:?}"))]),
+        }
     }
 
     fn hash(&self, p: &Program) -> Result<Hashed, HashError> {

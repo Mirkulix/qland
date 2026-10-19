@@ -242,6 +242,14 @@ fn qc_def_name(d: QcDef) -> Str =
     QcDefTest(t) => t.name
   }
 
+fn qc_list_find_idx_str_loop(xs: List[Str], s: Str, cur: Int) -> Option[Int] =
+  if cur >= len(xs) then None
+  else if list_at(xs, cur) == s then Some(cur)
+  else qc_list_find_idx_str_loop(xs, s, cur + 1)
+
+fn qc_list_find_idx_str(xs: List[Str], s: Str) -> Option[Int] =
+  qc_list_find_idx_str_loop(xs, s, 0)
+
 test qc_ast_test =
   qc_binop_symbol(QcOpAdd) == "+" &&
   qc_binop_prec(QcOpMul) == 5 &&
