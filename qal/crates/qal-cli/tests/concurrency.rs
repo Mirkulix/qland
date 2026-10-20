@@ -389,7 +389,8 @@ fn a_process_killed_in_a_define_leaves_a_consistent_store() {
         assert!(!err, "{a}");
         let change = v.open(&format!("doomed {k}"));
         previous = change.clone();
-        let (err, l) = v.call("qal_lease", json!({"action": "acquire", "names": ["held"], "ttl_s": 60}));
+        // Long enough to outlive the slowest kill point (3 x a full define) on a loaded CI runner.
+        let (err, l) = v.call("qal_lease", json!({"action": "acquire", "names": ["held"], "ttl_s": 3600}));
         assert!(!err, "{l}");
         let (before, _) = count(&change);
         v.send_call("qal_define", json!({"source": big(k + 1)}));

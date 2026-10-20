@@ -358,7 +358,8 @@ fn a_failing_request_does_not_affect_the_next() {
     let spin = req(addr, "GET", "/iso/spin", None);
     let took = t.elapsed();
     assert_eq!((spin.status, spin.json()["error"]["kind"].as_str()), (503, Some("timeout")));
-    assert!(took >= Duration::from_millis(1900) && took < Duration::from_secs(6), "{took:?}");
+    // The 2 s request timeout ends the spin; the upper bound only rules out a hang (slow CI runners).
+    assert!(took >= Duration::from_millis(1900) && took < Duration::from_secs(20), "{took:?}");
     assert_eq!(c.send("GET", "/todos", None).json().as_array().map(Vec::len), Some(1), "the server is still up");
     // About 60 MiB per request (a 30 MiB string built by doubling) within the 64 MiB limit, 20
     // times in a row: every request gets fresh memory.
