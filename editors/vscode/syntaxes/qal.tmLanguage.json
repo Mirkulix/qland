@@ -1,0 +1,143 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "QAL",
+  "scopeName": "source.qal",
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#strings" },
+    { "include": "#numbers" },
+    { "include": "#effects" },
+    { "include": "#contracts" },
+    { "include": "#keywords" },
+    { "include": "#types" },
+    { "include": "#constants" },
+    { "include": "#operators" },
+    { "include": "#functions" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.double-slash.qal",
+          "match": "//.*$"
+        },
+        {
+          "name": "comment.block.qal",
+          "begin": "/\\*",
+          "end": "\\*/"
+        }
+      ]
+    },
+    "strings": {
+      "name": "string.quoted.double.qal",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [
+        {
+          "name": "constant.character.escape.qal",
+          "match": "\\\\."
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.float.qal",
+          "match": "\\b[0-9]+\\.[0-9]+([eE][+-]?[0-9]+)?\\b"
+        },
+        {
+          "name": "constant.numeric.integer.qal",
+          "match": "\\b[0-9]+\\b"
+        }
+      ]
+    },
+    "effects": {
+      "patterns": [
+        {
+          "name": "keyword.control.effect.qal",
+          "match": "!(io|net|db|fs|time|rand)\\b"
+        }
+      ]
+    },
+    "contracts": {
+      "patterns": [
+        {
+          "name": "keyword.other.contract.qal",
+          "match": "\\b(req|ens)\\b"
+        }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.declaration.qal",
+          "match": "\\b(fn|test|type|record|enum|let)\\b"
+        },
+        {
+          "name": "keyword.control.qal",
+          "match": "\\b(match|if|else|return|todo)\\b"
+        }
+      ]
+    },
+    "types": {
+      "patterns": [
+        {
+          "name": "entity.name.type.primitive.qal",
+          "match": "\\b(Int|Float|Str|Bool|Bytes|List|Map|Option|Result)\\b"
+        },
+        {
+          "name": "entity.name.type.user.qal",
+          "match": "\\b[A-Z][a-zA-Z0-9_]*\\b"
+        }
+      ]
+    },
+    "constants": {
+      "patterns": [
+        {
+          "name": "constant.language.boolean.qal",
+          "match": "\\b(true|false)\\b"
+        },
+        {
+          "name": "constant.language.option-result.qal",
+          "match": "\\b(None|Some|Ok|Err)\\b"
+        }
+      ]
+    },
+    "operators": {
+      "patterns": [
+        {
+          "name": "keyword.operator.arrow.qal",
+          "match": "(->|=>)"
+        },
+        {
+          "name": "keyword.operator.comparison.qal",
+          "match": "(==|!=|<=|>=|<|>)"
+        },
+        {
+          "name": "keyword.operator.arithmetic.qal",
+          "match": "(\\+\\+|\\+|-|\\*|/|%)"
+        },
+        {
+          "name": "keyword.operator.assignment.qal",
+          "match": "="
+        }
+      ]
+    },
+    "functions": {
+      "patterns": [
+        {
+          "match": "\\bfn\\s+([a-z_][a-zA-Z0-9_]*)",
+          "captures": {
+            "1": { "name": "entity.name.function.qal" }
+          }
+        },
+        {
+          "match": "\\btest\\s+([a-z_][a-zA-Z0-9_]*)",
+          "captures": {
+            "1": { "name": "entity.name.function.test.qal" }
+          }
+        }
+      ]
+    }
+  }
+}

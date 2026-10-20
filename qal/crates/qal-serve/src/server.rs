@@ -219,15 +219,49 @@ fn connection(shared: &Shared, worker: &mut crate::service::Worker, stream: TcpS
         if head_only {
             handler_req.method = "GET".into();
         }
-        let handled = catch_unwind(AssertUnwindSafe(|| shared.service.handle(worker, &handler_req, id, incoming.head_bytes)));
-        let (resp, log) = match handled {
-            Ok(h) => (h.response, json!(h.log)),
-            Err(p) => {
-                // A bug in the host: answer, log, and continue with a fresh worker state.
-                *worker = crate::service::Worker::default();
-                let msg = p.downcast_ref::<&str>().map(|s| s.to_string()).or_else(|| p.downcast_ref::<String>().cloned()).unwrap_or_else(|| "panic".into());
-                let body = json!({"error": {"kind": "internal_error", "id": id.to_string()}}).to_string();
-                (Response::json(500, body, id), host_event(id, Some((&req.method, &req.path)), 500, RunError::new("internal", "", format!("the server panicked while handling the request: {msg}"))))
+        let (resp, log) = if req.path == "/livez" {
+            let body = json!({"status": "live", "service": "qal"}).to_string();
+            (Response::json(200, body, id), json!({"event": "request", "id": id, "method": req.method, "path": req.path, "status": 200, "ms": 0, "fuel": 0, "mem_bytes": 0, "db": "none"}))
+        } else if req.path == "/readyz" {
+            let body = json!({
+                "status": "ready",
+                "service": "qal",
+                "served": shared.served.load(Ordering::SeqCst),
+                "workers": shared.cfg.workers
+            }).to_string();
+            (Response::json(200, body, id), json!({"event": "request", "id": id, "method": req.method, "path": req.path, "status": 200, "ms": 0, "fuel": 0, "mem_bytes": 0, "db": "none"}))
+        } else if req.path == "/metrics" {
+            let body = format!(
+                "# HELP qal_requests_served_total Total requests served by qal.\n\
+                 # TYPE qal_requests_served_total counter\n\
+                 qal_requests_served_total {}\n\
+                 # HELP qal_pending_connections Number of connections currently waiting in queue.\n\
+                 # TYPE qal_pending_connections gauge\n\
+                 qal_pending_connections {}\n",
+                shared.served.load(Ordering::SeqCst),
+                shared.pending.load(Ordering::SeqCst)
+            );
+            let resp = Response {
+                status: 200,
+                headers: vec![
+                    ("content-type".into(), "text/plain; version=0.0.4; charset=utf-8".into()),
+                    ("content-length".into(), body.len().to_string()),
+                    ("x-request-id".into(), id.to_string()),
+                ],
+                body,
+            };
+            (resp, json!({"event": "request", "id": id, "method": req.method, "path": req.path, "status": 200, "ms": 0, "fuel": 0, "mem_bytes": 0, "db": "none"}))
+        } else {
+            let handled = catch_unwind(AssertUnwindSafe(|| shared.service.handle(worker, &handler_req, id, incoming.head_bytes)));
+            match handled {
+                Ok(h) => (h.response, json!(h.log)),
+                Err(p) => {
+                    // A bug in the host: answer, log, and continue with a fresh worker state.
+                    *worker = crate::service::Worker::default();
+                    let msg = p.downcast_ref::<&str>().map(|s| s.to_string()).or_else(|| p.downcast_ref::<String>().cloned()).unwrap_or_else(|| "panic".into());
+                    let body = json!({"error": {"kind": "internal_error", "id": id.to_string()}}).to_string();
+                    (Response::json(500, body, id), host_event(id, Some((&req.method, &req.path)), 500, RunError::new("internal", "", format!("the server panicked while handling the request: {msg}"))))
+                }
             }
         };
         let last = conn.answered + 1 >= limits.keepalive_requests;

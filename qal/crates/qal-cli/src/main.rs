@@ -80,7 +80,7 @@ use std::sync::Arc;
 
 const USAGE: &str = "usage: qal <check|fmt> <file>\n       \
                      qal init [--std] | define <file> [--agent <name>] [--breaking] | view <name>... | rename <old> <new> [--agent <name>] [--breaking] | delete <name>... [--agent <name>] [--breaking] | history <name> | build <name>\n       \
-                     qal export <prefix> --out <file> [--name <pkg>] | import <file>\n       \
+                     qal export <prefix> --out <file> [--name <pkg>] | import <file|url> | install <file|url>\n       \
                      qal query [--name <prefix>] [--type <pattern>] [--uses <name>]\n       \
                      qal call <file> [--allow <spec>] <fn> [args...] | call <fn> [--allow <spec>] [args...]\n       \
                      qal test [--allow <spec>] [--seed <n>] [<file> | <name>...] | prove [<file> | <name>...]\n       \
@@ -149,7 +149,7 @@ fn main() -> ExitCode {
     let rest = &args[1..];
     match cmd.as_str() {
         "check" | "fmt" => file_command(cmd, rest),
-        "init" | "define" | "view" | "query" | "rename" | "delete" | "history" | "build" | "export" | "import" => store_command(cmd, rest),
+        "init" | "define" | "view" | "query" | "rename" | "delete" | "history" | "build" | "export" | "import" | "install" => store_command(cmd, rest),
         "call" | "test" | "run" => run_command(cmd, rest),
         "prove" => prove_command(rest),
         "mcp" => mcp(rest),
@@ -259,10 +259,20 @@ fn store_command(cmd: &str, args: &[String]) -> ExitCode {
             Some(out) => with_ctx(|c| ops::export(c, prefix, std::path::Path::new(out), s.one("name"))),
             None => bad_usage("`qal export` needs `--out <file>`"),
         },
-        ("import", [file]) => {
-            let text = match read(file) {
-                Ok(t) => t,
-                Err(code) => return code,
+        ("import" | "install", [file_or_url]) => {
+            let text = if file_or_url.starts_with("http://") || file_or_url.starts_with("https://") {
+                match ureq::get(file_or_url).call() {
+                    Ok(resp) => match resp.into_string() {
+                        Ok(t) => t,
+                        Err(e) => return bad_usage(&format!("failed to read response from {file_or_url}: {e}")),
+                    },
+                    Err(e) => return bad_usage(&format!("cannot download package from {file_or_url}: {e}")),
+                }
+            } else {
+                match read(file_or_url) {
+                    Ok(t) => t,
+                    Err(code) => return code,
+                }
             };
             with_ctx(|c| ops::import(c, &text))
         }
