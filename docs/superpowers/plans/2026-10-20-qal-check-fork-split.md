@@ -20,7 +20,7 @@
    - `items` = one `QALQ` request per chunk of definitions (chunk size chosen so a chunk stays well below 1 GiB; start with 64 and measure). Each item carries the encoded globals and the definition range.
 2. **Phase B (per item, fresh execution):** decode the globals, run `qc_check_defs_loop` on the range only, and return the typed functions, generics, tests and diagnostics as a `QALT` fragment.
 3. **Join:** `Request::Join { continuation, results }` concatenates the fragments in item order, which gives the same order as today. If any diagnostics exist, return them (same order as the single-pass loop). Otherwise run polymorphic-recursion check → monomorphise → validate. If mono itself exceeds the limit, fork it the same way by root groups.
-4. **Host:** `impl Backend for Qal::check` in `qal/crates/qal-compiler/src/lib.rs` must drive Fork/Join instead of returning "unexpected fork". Reuse `qal_run::selfhost::drive`, which already handles `Response::Fork`.
+4. **Host:** nothing to do. `init_qal_backend` (`qal/crates/qal-run/src/selfhost.rs`) installs a driver that runs every request through `drive`, which already follows `Fork` rounds and sends `Join`. `Qal.check` only ever sees the final answer. The whole change is on the QAL side.
 
 ## Needed pieces
 
