@@ -14,5 +14,8 @@ ureq = { workspace = true }
 url = { workspace = true }
 wasmtime = { workspace = true }
 
+[dev-dependencies]
+qal-compiler = { workspace = true, features = ["reference"] }
+
 [target.'cfg(unix)'.dependencies]
 rustix = { workspace = true }

@@ -46,7 +46,9 @@
 //! compiler side on the Rust pipeline (5a: every operation but `DEFINE` and `JOIN`, which arrive
 //! with the QAL compiler in 5b/5d); the self-hosted compiler must answer byte for byte the same.
 
-use crate::{CompileOptions, CompiledModule, Entry, FuncMeta, Site};
+#[cfg(feature = "reference")]
+use crate::CompileOptions;
+use crate::{CompiledModule, Entry, FuncMeta, Site};
 use qal_core::ast::{Def, Program};
 use qal_core::canon::{self, Hash, Kind};
 use qal_core::diag::Diagnostic;
@@ -768,6 +770,7 @@ pub fn decode_prepared(b: &[u8]) -> R<Prepared> {
 // The Rust reference server
 
 /// A store state for a checked program (what a store holding exactly `p` would send).
+#[cfg(feature = "reference")]
 pub fn state_of(p: &Program) -> Result<StoreState, String> {
     let h = canon::hash_program(p).map_err(|e| e.to_string())?;
     let mut entries: Vec<StateEntry> = h
@@ -806,16 +809,19 @@ pub fn program_of(state: &StoreState) -> Result<Program, String> {
     Ok(Program { defs })
 }
 
+#[cfg(feature = "reference")]
 fn compile_options(o: &Options) -> CompileOptions {
     CompileOptions { memory_max_pages: o.memory_max_pages }
 }
 
+#[cfg(feature = "reference")]
 fn diagnostics(ds: Vec<Diagnostic>) -> Response {
     Response::Diagnostics(ds)
 }
 
 /// The Rust pipeline answering a `QALQ` request (the reference for the self-hosted compiler).
 /// Never panics: a malformed request is an `INTERNAL` response.
+#[cfg(feature = "reference")]
 pub fn serve(req: &[u8]) -> Vec<u8> {
     let res = match big_stack(|| Request::decode(req)) {
         Ok(r) => serve_request(r),
@@ -824,6 +830,7 @@ pub fn serve(req: &[u8]) -> Vec<u8> {
     res.encode()
 }
 
+#[cfg(feature = "reference")]
 fn serve_request(req: Request) -> Response {
     let backend = &crate::Rust;
     use crate::Backend;
@@ -970,7 +977,7 @@ fn serve_request(req: Request) -> Response {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "reference"))]
 mod tests {
     use super::*;
 

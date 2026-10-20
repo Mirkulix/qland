@@ -14,9 +14,7 @@ use qal_core::prelude;
 use qal_core::tast::{Builtin, TFn, TProgram, TTest};
 use std::collections::{HashMap, HashSet};
 
-/// Known effects: Phase 1's plus outgoing HTTP (`net`) and the SQLite database (`db`).
-pub const KNOWN_EFFECTS: &[&str] = &["io", "fs", "time", "rand", "net", "db"];
-
+pub use qal_core::{KNOWN_EFFECTS, MAX_INSTANCES};
 pub use qal_core::ast::RESULT_VAR;
 
 /// Names the compiled module exports itself; a user function cannot take them.
@@ -40,8 +38,6 @@ impl Sig {
     }
 }
 
-/// Maximum number of instances of generic functions per program.
-pub const MAX_INSTANCES: usize = 1000;
 
 /// Program-wide names, known before any body is checked.
 pub(crate) struct Globals {

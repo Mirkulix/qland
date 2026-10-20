@@ -76,7 +76,17 @@ impl<'p> Mb<'p> {
                 mb.bug(format!("unknown host function `{name}`"));
                 continue;
             };
-            let ty = mb.ty(params, results);
+            let wparams: Vec<ValType> = params.iter().map(|v| match v {
+                host::ValType::I32 => ValType::I32,
+                host::ValType::I64 => ValType::I64,
+                host::ValType::F64 => ValType::F64,
+            }).collect();
+            let wresults: Vec<ValType> = results.iter().map(|v| match v {
+                host::ValType::I32 => ValType::I32,
+                host::ValType::I64 => ValType::I64,
+                host::ValType::F64 => ValType::F64,
+            }).collect();
+            let ty = mb.ty(&wparams, &wresults);
             mb.imports.push((name, ty));
         }
         // Static data: OOM scratch slot, then one 8-byte block per tag for payload-free variants.

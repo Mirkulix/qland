@@ -3,7 +3,7 @@
 //! (`qal/selfhost/proto/forkjoin.qal`) run with `Limits::compiler()` (1 GiB, i32 audit).
 
 use qal_compiler::proto::{self, Request, Response};
-use qal_compiler::{CompileOptions, Entry};
+use qal_compiler::{Backend, CompileOptions, Entry};
 use qal_run::selfhost::{self, Compiler, DriveError, Limits};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -203,4 +203,12 @@ fn a_failing_item_stops_the_later_ones() {
     let e = selfhost::drive(parse_req("go"), 8, &limits, &fails).unwrap_err();
     assert!(matches!(&e, DriveError::Failed { item, .. } if item == "round 1 item 3"), "{e:?}");
     assert!(calls.load(Ordering::SeqCst) < 101);
+}
+
+#[test]
+fn seed_backend_initializes_and_parses_program() {
+    selfhost::init_seed_backend(4).expect("init seed backend");
+    assert!(qal_compiler::has_qal_driver());
+    let p = qal_compiler::Qal.parse("fn add(x: Int, y: Int) -> Int = x + y").expect("parse via seed");
+    assert_eq!(p.defs.len(), 1);
 }

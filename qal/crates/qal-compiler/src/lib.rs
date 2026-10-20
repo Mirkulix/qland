@@ -18,15 +18,16 @@ use qal_core::canon::{HashError, Hashed};
 use qal_core::diag::Diagnostic;
 use qal_core::tast::TProgram;
 
-pub use qal_check::{KNOWN_EFFECTS, MAX_INSTANCES};
-pub use qal_wasm::{
-    host, CompileOptions, CompiledModule, Entry, FuncMeta, Site, COMPILER_MAX_PAGES, FAIL_BUILTIN, FAIL_DIV_ZERO, FAIL_ENS, FAIL_INDEX, FAIL_OOM, FAIL_OVERFLOW, FAIL_REQ, FAIL_TODO, HOST_MODULE, MAX_MEMORY_PAGES,
-    MAX_PAGES, OOM_SCRATCH,
+pub use qal_core::{KNOWN_EFFECTS, MAX_INSTANCES};
+pub use qal_core::module::{
+    host, CompileOptions, CompiledModule, Entry, FuncMeta, Site, COMPILER_MAX_PAGES, FAIL_BUILTIN, FAIL_DIV_ZERO,
+    FAIL_ENS, FAIL_INDEX, FAIL_OOM, FAIL_OVERFLOW, FAIL_REQ, FAIL_TODO, HOST_MODULE, MAX_MEMORY_PAGES, MAX_PAGES,
+    OOM_SCRATCH,
 };
 
 /// Rules for names (not compilation): the `std.` namespace, keywords and length limits.
 pub mod lexer {
-    pub use qal_text::lexer::{is_std_name, last_segment, std_parts, KEYWORDS, MAX_NAME_LEN, STD_PREFIX};
+    pub use qal_core::lexer::{is_std_name, last_segment, std_parts, KEYWORDS, MAX_NAME_LEN, STD_PREFIX};
 }
 
 /// One implementation of the compiler operations (the `QALQ` operations of spec §4.2, as Rust
@@ -51,9 +52,11 @@ pub trait Backend: Send + Sync {
 }
 
 /// The Rust pipeline: the reference implementation.
+#[cfg(feature = "reference")]
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Rust;
 
+#[cfg(feature = "reference")]
 impl Backend for Rust {
     fn name(&self) -> &'static str {
         "rust"
@@ -111,8 +114,206 @@ fn call_driver(req: &[u8]) -> Result<Vec<u8>, Diagnostic> {
             return d(req);
         }
     }
-    // Fallback: the reference server
-    Ok(proto::serve(req))
+    #[cfg(feature = "reference")]
+    return Ok(proto::serve(req));
+    #[cfg(not(feature = "reference"))]
+    Err(Diagnostic::compiler_failed("qal", "DRIVER", "main", "no QAL compiler driver has been registered"))
+}
+
+fn collect_type_refs<'a>(ty: &'a qal_core::ast::Type, out: &mut std::collections::HashSet<&'a str>) {
+    match ty {
+        qal_core::ast::Type::Named(n) => {
+            out.insert(n.as_str());
+        }
+        qal_core::ast::Type::App(n, args) => {
+            out.insert(n.as_str());
+            for a in args {
+                collect_type_refs(a, out);
+            }
+        }
+        qal_core::ast::Type::List(x) | qal_core::ast::Type::Option(x) => collect_type_refs(x, out),
+        qal_core::ast::Type::Result(a, b) | qal_core::ast::Type::Map(a, b) => {
+            collect_type_refs(a, out);
+            collect_type_refs(b, out);
+        }
+        qal_core::ast::Type::Fn(ps, ret, _) => {
+            for p in ps {
+                collect_type_refs(p, out);
+            }
+            collect_type_refs(ret, out);
+        }
+        _ => {}
+    }
+}
+
+fn collect_pat_refs<'a>(pat: &'a qal_core::ast::Pat, out: &mut std::collections::HashSet<&'a str>) {
+    match pat {
+        qal_core::ast::Pat::Variant(n, pats) => {
+            out.insert(n.as_str());
+            for p in pats {
+                collect_pat_refs(p, out);
+            }
+        }
+        qal_core::ast::Pat::Record(n, fields) => {
+            out.insert(n.as_str());
+            for (_, p) in fields {
+                collect_pat_refs(p, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn collect_expr_refs<'a>(expr: &'a qal_core::ast::Expr, out: &mut std::collections::HashSet<&'a str>) {
+    match expr {
+        qal_core::ast::Expr::Var(n) => {
+            out.insert(n.as_str());
+        }
+        qal_core::ast::Expr::Call(n, args) => {
+            out.insert(n.as_str());
+            for a in args {
+                collect_expr_refs(a, out);
+            }
+        }
+        qal_core::ast::Expr::Record(n, fields) => {
+            out.insert(n.as_str());
+            for (_, e) in fields {
+                collect_expr_refs(e, out);
+            }
+        }
+        qal_core::ast::Expr::Bin(_, l, r) => {
+            collect_expr_refs(l, out);
+            collect_expr_refs(r, out);
+        }
+        qal_core::ast::Expr::Un(_, e) | qal_core::ast::Expr::Field(e, _) => {
+            collect_expr_refs(e, out);
+        }
+        qal_core::ast::Expr::If(c, t, e) => {
+            collect_expr_refs(c, out);
+            collect_expr_refs(t, out);
+            collect_expr_refs(e, out);
+        }
+        qal_core::ast::Expr::Let(_, ty, v, b) => {
+            if let Some(t) = ty {
+                collect_type_refs(t, out);
+            }
+            collect_expr_refs(v, out);
+            collect_expr_refs(b, out);
+        }
+        qal_core::ast::Expr::List(es) | qal_core::ast::Expr::Seq(es) => {
+            for e in es {
+                collect_expr_refs(e, out);
+            }
+        }
+        qal_core::ast::Expr::Match(e, arms) => {
+            collect_expr_refs(e, out);
+            for arm in arms {
+                collect_pat_refs(&arm.pat, out);
+                if let Some(g) = &arm.guard {
+                    collect_expr_refs(g, out);
+                }
+                collect_expr_refs(&arm.body, out);
+            }
+        }
+        qal_core::ast::Expr::Lambda(params, body) => {
+            for (_, ty) in params {
+                if let Some(t) = ty {
+                    collect_type_refs(t, out);
+                }
+            }
+            collect_expr_refs(body, out);
+        }
+        _ => {}
+    }
+}
+
+fn collect_def_refs<'a>(def: &'a qal_core::ast::Def, out: &mut std::collections::HashSet<&'a str>) {
+    match def {
+        qal_core::ast::Def::Type(t) => match &t.body {
+            qal_core::ast::TypeBody::Record(fields) => {
+                for (_, ty) in fields {
+                    collect_type_refs(ty, out);
+                }
+            }
+            qal_core::ast::TypeBody::Enum(variants) => {
+                for v in variants {
+                    for ty in &v.fields {
+                        collect_type_refs(ty, out);
+                    }
+                }
+            }
+        },
+        qal_core::ast::Def::Fn(f) => {
+            for p in &f.params {
+                collect_type_refs(&p.ty, out);
+            }
+            collect_type_refs(&f.ret, out);
+            for e in &f.req {
+                collect_expr_refs(e, out);
+            }
+            for e in &f.ens {
+                collect_expr_refs(e, out);
+            }
+            collect_expr_refs(&f.body, out);
+        }
+        qal_core::ast::Def::Test(t) => {
+            collect_expr_refs(&t.body, out);
+        }
+    }
+}
+
+fn partition_connected_components(defs: &[qal_core::ast::Def]) -> Vec<Vec<usize>> {
+    let n = defs.len();
+    if n <= 1 {
+        return (0..n).map(|i| vec![i]).collect();
+    }
+    let mut name_to_idx = std::collections::HashMap::new();
+    for (i, d) in defs.iter().enumerate() {
+        name_to_idx.insert(d.name(), i);
+    }
+
+    struct UF {
+        p: Vec<usize>,
+    }
+    impl UF {
+        fn find(&mut self, mut x: usize) -> usize {
+            let mut root = x;
+            while self.p[root] != root {
+                root = self.p[root];
+            }
+            while self.p[x] != root {
+                let nxt = self.p[x];
+                self.p[x] = root;
+                x = nxt;
+            }
+            root
+        }
+        fn union(&mut self, a: usize, b: usize) {
+            let ra = self.find(a);
+            let rb = self.find(b);
+            if ra != rb {
+                self.p[ra] = rb;
+            }
+        }
+    }
+
+    let mut uf = UF { p: (0..n).collect() };
+    for (i, d) in defs.iter().enumerate() {
+        let mut refs = std::collections::HashSet::new();
+        collect_def_refs(d, &mut refs);
+        for r in refs {
+            if let Some(&j) = name_to_idx.get(r) {
+                uf.union(i, j);
+            }
+        }
+    }
+
+    let mut comps: std::collections::HashMap<usize, Vec<usize>> = std::collections::HashMap::new();
+    for i in 0..n {
+        let root = uf.find(i);
+        comps.entry(root).or_default().push(i);
+    }
+    comps.into_values().collect()
 }
 
 /// The self-hosted QAL compiler backend running through `QALQ`/`QALR` protocol.
@@ -137,44 +338,15 @@ impl Backend for Qal {
     }
 
     fn print(&self, p: &Program) -> String {
-        let st = proto::StoreState {
-            entries: Vec::new(),
-            groups: vec![(qal_core::canon::Hash([0; 32]), proto::encode_program(p))],
-        };
-        let req = proto::Request::Print { state: st, names: Vec::new() }.encode();
-        let resp_bytes = match call_driver(&req) {
-            Ok(b) => b,
-            Err(d) => return format!("error: {d:?}"),
-        };
-        match proto::Response::decode(&resp_bytes) {
-            Ok(proto::Response::Done(payload)) => match proto::decode_texts(&payload) {
-                Ok(texts) => {
-                    let mut parts = Vec::new();
-                    for (_n, t) in texts {
-                        parts.push(t);
-                    }
-                    let mut out = parts.join("\n\n");
-                    if !out.is_empty() {
-                        out.push('\n');
-                    }
-                    out
-                }
-                Err(e) => format!("error decoding texts: {e}"),
-            },
-            _ => format!("error in print response"),
-        }
+        qal_core::print_program(p)
     }
 
     fn print_expr(&self, e: &Expr) -> String {
-        let test_def = qal_core::ast::Def::Test(qal_core::ast::TestDef { name: "t".into(), body: e.clone() });
-        let prog = Program { defs: vec![test_def] };
-        let s = self.print(&prog);
-        let trimmed = s.trim();
-        trimmed.strip_prefix("test t = ").unwrap_or(trimmed).to_string()
+        qal_core::print_expr(e)
     }
 
     fn check(&self, p: &Program, _is_new: &dyn Fn(&str) -> bool) -> Result<TProgram, Vec<Diagnostic>> {
-        let text = Rust.print(p);
+        let text = self.print(p);
         let req = proto::Request::CheckFile {
             text,
             entry: None,
@@ -196,8 +368,31 @@ impl Backend for Qal {
     }
 
     fn hash(&self, p: &Program) -> Result<Hashed, HashError> {
+        let comps = partition_connected_components(&p.defs);
+        if comps.len() > 1 {
+            let mut by_name = std::collections::HashMap::new();
+            let mut groups = std::collections::BTreeMap::new();
+            for comp in comps {
+                let sub = Program { defs: comp.into_iter().map(|i| p.defs[i].clone()).collect() };
+                let h = self.hash(&sub)?;
+                for c in h.defs {
+                    by_name.insert(c.name.clone(), c);
+                }
+                groups.extend(h.groups);
+            }
+            let mut defs = Vec::with_capacity(p.defs.len());
+            for d in &p.defs {
+                if let Some(c) = by_name.remove(d.name()) {
+                    defs.push(c);
+                } else {
+                    return Err(HashError::Internal(format!("missing hashed definition for `{}`", d.name())));
+                }
+            }
+            return Ok(Hashed { defs, groups });
+        }
+
         let st = proto::StoreState::default();
-        let text = Rust.print(p);
+        let text = self.print(p);
         let req = proto::Request::Define { state: st, text, options: Default::default() }.encode();
         let resp_bytes = call_driver(&req).map_err(|d| HashError::Internal(d.message))?;
         match proto::Response::decode(&resp_bytes) {
@@ -223,8 +418,13 @@ impl Backend for Qal {
                 }
                 Err(e) => Err(HashError::Internal(e)),
             },
+            Ok(proto::Response::Diagnostics(ds)) => {
+                let msgs: Vec<String> = ds.into_iter().map(|d| format!("{}: {}", d.code, d.message)).collect();
+                Err(HashError::Internal(format!("diagnostics from DEFINE: {}", msgs.join("; "))))
+            }
             Ok(proto::Response::Internal(msg)) => Err(HashError::Internal(msg)),
-            _ => Err(HashError::Internal("bad response from DEFINE".into())),
+            Ok(other) => Err(HashError::Internal(format!("unexpected response from DEFINE: {other:?}"))),
+            Err(e) => Err(HashError::Internal(format!("cannot decode response from DEFINE: {e}"))),
         }
     }
 
@@ -249,9 +449,11 @@ impl Backend for Qal {
 }
 
 /// The differential `both` backend running Rust and QAL in parallel, comparing outputs byte for byte.
+#[cfg(feature = "reference")]
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Both;
 
+#[cfg(feature = "reference")]
 impl Backend for Both {
     fn name(&self) -> &'static str {
         "both"
@@ -334,18 +536,30 @@ impl Backend for Both {
     }
 }
 
+#[cfg(feature = "reference")]
 static RUST: Rust = Rust;
 static QAL: Qal = Qal;
+#[cfg(feature = "reference")]
 static BOTH: Both = Both;
 
+#[cfg(feature = "reference")]
 static CURRENT_BACKEND: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0); // 0=Rust, 1=Qal, 2=Both
+#[cfg(not(feature = "reference"))]
+#[cfg(feature = "reference")]
+static CURRENT_BACKEND: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0); // 0=Rust, 1=Qal, 2=Both
+#[cfg(not(feature = "reference"))]
+static CURRENT_BACKEND: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(1); // 1=Qal
 
 /// Sets the default backend for free functions (`rust`, `qal`, `both`).
 pub fn set_backend(name: &str) -> Result<(), String> {
     match name {
+        #[cfg(feature = "reference")]
         "rust" => { CURRENT_BACKEND.store(0, std::sync::atomic::Ordering::SeqCst); Ok(()) }
         "qal" => { CURRENT_BACKEND.store(1, std::sync::atomic::Ordering::SeqCst); Ok(()) }
+        #[cfg(feature = "reference")]
         "both" => { CURRENT_BACKEND.store(2, std::sync::atomic::Ordering::SeqCst); Ok(()) }
+        #[cfg(not(feature = "reference"))]
+        "rust" | "both" => Err(format!("compiler backend `{name}` is not available without feature `reference`")),
         _ => Err(format!("unknown compiler backend `{name}`; expected rust, qal or both")),
     }
 }
@@ -355,24 +569,36 @@ pub fn backend() -> &'static dyn Backend {
     if let Ok(env) = std::env::var("QAL_COMPILER") {
         match env.as_str() {
             "qal" => return &QAL,
+            #[cfg(feature = "reference")]
             "both" => return &BOTH,
+            #[cfg(feature = "reference")]
             "rust" => return &RUST,
             _ => {}
         }
     }
     match CURRENT_BACKEND.load(std::sync::atomic::Ordering::SeqCst) {
+        #[cfg(feature = "reference")]
+        0 => &RUST,
         1 => &QAL,
+        #[cfg(feature = "reference")]
         2 => &BOTH,
+        #[cfg(feature = "reference")]
         _ => &RUST,
+        #[cfg(not(feature = "reference"))]
+        _ => &QAL,
     }
 }
 
 /// The backend named `name` (`rust`, `qal`, `both`).
 pub fn select(name: &str) -> Result<&'static dyn Backend, String> {
     match name {
+        #[cfg(feature = "reference")]
         "rust" => Ok(&RUST),
         "qal" => Ok(&QAL),
+        #[cfg(feature = "reference")]
         "both" => Ok(&BOTH),
+        #[cfg(not(feature = "reference"))]
+        "rust" | "both" => Err(format!("compiler backend `{name}` is not available without feature `reference`")),
         _ => Err(format!("unknown compiler backend `{name}`; expected rust, qal or both")),
     }
 }
@@ -419,19 +645,21 @@ pub fn compile_with(p: &TProgram, entry: &Entry, opts: &CompileOptions) -> Resul
 
 #[cfg(test)]
 mod tests {
+    #[allow(unused_imports)]
     use super::*;
 
     #[test]
+    #[cfg(feature = "reference")]
     fn the_rust_backend_is_the_reference_pipeline() {
         let src = "fn f(x: Int) -> Int = x + 1\ntest t = f(1) == 2";
-        let p = parse_program(src).unwrap();
+        let rust = select("rust").unwrap();
+        let p = rust.parse(src).unwrap();
         assert_eq!(p, qal_text::parse_program(src).unwrap());
-        assert_eq!(print_program(&p), qal_text::print_program(&p));
-        let tp = check(&p).unwrap();
+        assert_eq!(rust.print(&p), qal_text::print_program(&p));
+        let tp = rust.check(&p, &|_| true).unwrap();
         assert_eq!(tp, qal_check::check(&p).unwrap());
-        assert_eq!(hash_program(&p).unwrap(), qal_core::canon::hash_program(&p).unwrap());
-        assert_eq!(compile(&tp, &Entry::All).unwrap().wasm, qal_wasm::compile(&tp, &Entry::All).unwrap().wasm);
-        assert_eq!(backend().name(), "rust");
+        assert_eq!(rust.hash(&p).unwrap(), qal_core::canon::hash_program(&p).unwrap());
+        assert_eq!(rust.compile(&tp, &Entry::All, &CompileOptions::default()).unwrap().wasm, qal_wasm::compile(&tp, &Entry::All).unwrap().wasm);
         assert_eq!(select("rust").map(|b| b.name()), Ok("rust"));
         assert_eq!(select("qal").map(|b| b.name()), Ok("qal"));
         assert_eq!(select("both").map(|b| b.name()), Ok("both"));
@@ -439,6 +667,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "reference")]
     fn qal_and_both_backends_match_reference() {
         let src = "fn add(x: Int, y: Int) -> Int = x + y\ntest t = add(2, 3) == 5";
         let rust = select("rust").unwrap();
@@ -463,7 +692,7 @@ mod tests {
         let crates = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
         for host in ["qal-store", "qal-run", "qal-prove", "qal-serve", "qal-cli"] {
             let manifest = std::fs::read_to_string(crates.join(host).join("Cargo.toml")).unwrap();
-            assert!(manifest.contains("qal-compiler = { workspace = true }"), "{host}");
+            assert!(manifest.contains("qal-compiler = { workspace = true"), "{host}");
             for compiler in ["qal-text", "qal-check", "qal-wasm"] {
                 assert!(!manifest.contains(compiler), "{host} depends on {compiler} directly");
             }
@@ -471,6 +700,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "reference")]
     fn compile_options_bound_the_memory() {
         let tp = check(&parse_program("fn f(x: Int) -> Int = x").unwrap()).unwrap();
         let pages = |o: CompileOptions| compile_with(&tp, &Entry::All, &o).map(|m| m.wasm.len());

@@ -525,12 +525,11 @@ pub fn new_bytes(c: &mut Caller<'_, HostState>, s: &[u8]) -> Result<i32, wasmtim
 }
 
 fn val_type(t: &host::ValType) -> Result<ValType, wasmtime::Error> {
-    match t {
-        host::ValType::I32 => Ok(ValType::I32),
-        host::ValType::I64 => Ok(ValType::I64),
-        host::ValType::F64 => Ok(ValType::F64),
-        other => Err(wasmtime::Error::msg(format!("host signatures use no {other:?}"))),
-    }
+    Ok(match t {
+        host::ValType::I32 => ValType::I32,
+        host::ValType::I64 => ValType::I64,
+        host::ValType::F64 => ValType::F64,
+    })
 }
 
 /// splitmix64

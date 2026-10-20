@@ -56,13 +56,36 @@ pub const VERSION: u8 = 2;
 /// nesting 256), so nothing decodes that the text form could not express.
 const MAX_DECODE_DEPTH: usize = 256;
 const MAX_DECODE_TYPE_DEPTH: usize = 256;
-/// Bounds on the canonical-labelling search of one group: search-tree nodes and member encodings.
-const MAX_LABEL_NODES: usize = 1024;
-const MAX_LABEL_WORK: usize = 2_000_000;
 
 /// SHA-256 content hash of a definition's canonical form.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Hash(pub [u8; 32]);
+
+fn put_varint(out: &mut Vec<u8>, mut n: u64) {
+    loop {
+        let b = (n & 0x7f) as u8;
+        n >>= 7;
+        if n == 0 {
+            out.push(b);
+            return;
+        }
+        out.push(b | 0x80);
+    }
+}
+
+fn prefix(size: usize, version: u8) -> Vec<u8> {
+    let mut out = MAGIC.to_vec();
+    out.push(version);
+    put_varint(&mut out, size as u64);
+    out
+}
+
+fn member_form(size: usize, index: usize, group: &Hash, version: u8) -> Vec<u8> {
+    let mut out = prefix(size, version);
+    put_varint(&mut out, index as u64);
+    out.extend_from_slice(&group.0);
+    out
+}
 
 impl Hash {
     pub fn of(bytes: &[u8]) -> Hash {
@@ -139,6 +162,7 @@ impl Kind {
         }
     }
 
+    #[cfg(feature = "canon-encode")]
     fn tag(self) -> u8 {
         match self {
             Kind::Type => 0,
@@ -302,8 +326,15 @@ const BINOPS: [BinOp; 14] = [
     BinOp::Or,
 ];
 
+#[cfg(feature = "canon-encode")]
+mod encode {
+    use super::*;
+
+    const MAX_LABEL_NODES: usize = 1024;
+    const MAX_LABEL_WORK: usize = 2_000_000;
+
 /// The operator's index in `BINOPS` (an exhaustive match, so a new operator cannot be forgotten).
-fn binop_tag(op: BinOp) -> u8 {
+pub(super) fn binop_tag(op: BinOp) -> u8 {
     match op {
         BinOp::Add => 0,
         BinOp::Sub => 1,
@@ -324,7 +355,7 @@ fn binop_tag(op: BinOp) -> u8 {
 
 /// A reference from one definition to another.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Ref {
+pub(super) enum Ref {
     Hash(Hash),
     Group(u32),
 }
@@ -846,27 +877,8 @@ fn references(env: &Env, d: &Def) -> Result<BTreeSet<String>, String> {
     Ok(names)
 }
 
-fn put_varint(out: &mut Vec<u8>, mut n: u64) {
-    loop {
-        let b = (n & 0x7f) as u8;
-        n >>= 7;
-        if n == 0 {
-            out.push(b);
-            return;
-        }
-        out.push(b | 0x80);
-    }
-}
-
-fn prefix(size: usize, version: u8) -> Vec<u8> {
-    let mut out = MAGIC.to_vec();
-    out.push(version);
-    put_varint(&mut out, size as u64);
-    out
-}
-
 /// Canonical form of a definition outside any group.
-fn single_form(member: &[u8], version: u8) -> Vec<u8> {
+pub(super) fn single_form(member: &[u8], version: u8) -> Vec<u8> {
     let mut out = prefix(1, version);
     out.push(0);
     out.extend_from_slice(member);
@@ -878,13 +890,6 @@ fn group_form(members: &[Vec<u8>], version: u8) -> Vec<u8> {
     for m in members {
         out.extend_from_slice(m);
     }
-    out
-}
-
-fn member_form(size: usize, index: usize, group: &Hash, version: u8) -> Vec<u8> {
-    let mut out = prefix(size, version);
-    put_varint(&mut out, index as u64);
-    out.extend_from_slice(&group.0);
     out
 }
 
@@ -1019,7 +1024,7 @@ pub fn hash_program(p: &Program) -> Result<Hashed, HashError> {
 
 /// What `n` refers to: a member of the group being encoded, or an already hashed definition.
 /// None (an internal error, never a placeholder hash) if neither holds.
-fn resolve(n: &str, by_name: &HashMap<&str, usize>, pos: &HashMap<usize, u32>, hashes: &[Option<Hash>]) -> Option<Ref> {
+pub(super) fn resolve(n: &str, by_name: &HashMap<&str, usize>, pos: &HashMap<usize, u32>, hashes: &[Option<Hash>]) -> Option<Ref> {
     let i = *by_name.get(n)?;
     match pos.get(&i) {
         Some(k) => Some(Ref::Group(*k)),
@@ -1149,6 +1154,10 @@ fn order_group(env: &Env, p: &Program, comp: &[usize], by_name: &HashMap<&str, u
     }
     l.best.map(|(_, order)| order).ok_or_else(|| HashError::Internal("no labelling".into()))
 }
+}
+
+#[cfg(feature = "canon-encode")]
+pub use encode::hash_program;
 
 /// The type parameters of a generic function in canonical order: by first occurrence in the
 /// parameter types, then the result type (then any others, in written order). Type arguments of a
@@ -2086,9 +2095,10 @@ impl<'b> Dec<'b> {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "canon-encode"))]
 mod tests {
     use super::*;
+    use super::encode::*;
 
     fn var(s: &str) -> Box<Expr> {
         Box::new(Expr::Var(s.into()))

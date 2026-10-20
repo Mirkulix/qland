@@ -477,7 +477,10 @@ fn view_collapses_duplicates_and_is_bounded() {
     c.initialize();
     let big = |n: usize| format!("fn big{n}() -> Str = \"{}\"", "a".repeat(900_000));
     for n in 1..=5 {
-        assert!(!c.call("qal_define", json!({"source": big(n)})).0);
+        let (err, val) = c.call("qal_define", json!({"source": big(n)}));
+        if err {
+            panic!("failed on big({n}): {val}");
+        }
     }
     let (err, v) = c.call("qal_view", json!({"names": ["big1", "big1", "big1"]}));
     assert!(!err && v["views"].as_array().unwrap().len() == 1, "duplicates collapse");

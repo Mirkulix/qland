@@ -13,3 +13,7 @@ serde_json = { workspace = true }
 ed25519-dalek = { workspace = true }
 getrandom = { workspace = true }
 zeroize = { workspace = true }
+
+[dev-dependencies]
+qal-core = { workspace = true, features = ["canon-encode"] }
+qal-compiler = { workspace = true, features = ["reference"] }

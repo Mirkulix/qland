@@ -11,3 +11,6 @@ qal-run = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 z3 = { workspace = true }
+
+[dev-dependencies]
+qal-compiler = { workspace = true, features = ["reference"] }

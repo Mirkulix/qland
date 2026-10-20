@@ -1,6 +1,7 @@
 //! The QAL pipeline: text or store -> parse -> check -> compile (per entry point) -> runner, plus
 //! the operations shared by the command line (`main.rs`) and the MCP server ([`mcp`]).
 
+#[cfg(feature = "reference")]
 pub mod bootstrap;
 pub mod lsp;
 pub mod mcp;
