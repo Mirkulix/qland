@@ -759,7 +759,7 @@ fn qc_parse_atom(s: QcPState) -> QcPRes[QcExpr] =
             }
         else
           qc_pres_ok(QcEVar(id), s1),
-    _ => qc_err_here(s, "expected an expression")
+    _ => qc_err_here(s, "expected an expression, found " ++ qc_tok_describe(qc_peek(s)))
   }
 
 fn qc_parse_record_literal(s: QcPState, name: Str, acc: Accum[QcFieldExpr]) -> QcPRes[QcExpr] =

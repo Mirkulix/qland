@@ -2020,8 +2020,8 @@ fn qc_check(p: QcProgram) -> Result[QcTProgram, List[QcDiag]] =
 # each in its own execution, so the memory of one execution stays bounded. Only programs whose
 # globals have no diagnostics are split; any diagnostic falls back to the single pass, which
 # keeps diagnostics and their order identical.
-fn qc_check_globals_ok(p: QcProgram) -> Bool =
-  len(qc_build_globals(p, fn(_: Str) => true).diags) == 0
+fn qc_check_globals_ok(p: QcProgram, is_new: fn(Str) -> Bool) -> Bool =
+  len(qc_build_globals(p, is_new).diags) == 0
 
 fn qc_defs_range_loop(defs: List[QcDef], idx: Int, hi: Int, acc: Accum[QcDef]) -> List[QcDef] =
   if idx >= hi || idx >= len(defs) then acc_list(acc)

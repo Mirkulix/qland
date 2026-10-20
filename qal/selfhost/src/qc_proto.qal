@@ -74,18 +74,22 @@ fn qc_read_entry(r: QcReader) -> QcReadRes[QcEntry] =
 
 type QcCheckFileArgs = {
   entry: Option[QcEntry],
-  pages: Int
+  pages: Int,
+  new_names: Option[List[Str]]
 }
 
 fn qc_read_check_file_args(r: QcReader) -> QcCheckFileArgs =
   let has_entry_res = qc_reader_byte(r) in
-  if has_entry_res.val == 0 then
-    let opts_res = qc_reader_varint(has_entry_res.r) in
-    QcCheckFileArgs { entry: None, pages: opts_res.val }
+  let ent_opt = if has_entry_res.val == 0 then
+    QcReadRes { val: None, r: has_entry_res.r }
   else
     let ent_res = qc_read_entry(has_entry_res.r) in
-    let opts_res = qc_reader_varint(ent_res.r) in
-    QcCheckFileArgs { entry: Some(ent_res.val), pages: opts_res.val }
+    QcReadRes { val: Some(ent_res.val), r: ent_res.r } in
+  let opts_res = qc_reader_varint(ent_opt.r) in
+  let has_new_res = qc_reader_byte(opts_res.r) in
+  let new_names = if has_new_res.val == 0 then None
+                  else let ns_res = qc_reader_strs(has_new_res.r) in Some(ns_res.val) in
+  QcCheckFileArgs { entry: ent_opt.val, pages: opts_res.val, new_names: new_names }
 
 type QcSigOld = {
   name: Str,
@@ -444,9 +448,15 @@ fn qc_main(request: Bytes) -> Bytes =
         match qc_parse(text_res.val) {
           Err(d) => qc_res_diagnostics([d]),
           Ok(p) =>
-            if len(p.defs) > qc_fork_min_defs() && qc_check_globals_ok(p) then
+            let is_new = match args.new_names {
+              None => fn(_: Str) => true,
+              Some(names) =>
+                let m = fold(names, map_new(), fn(acc: Map[Str, Bool], n: Str) => map_put(acc, n, true)) in
+                fn(n: Str) => map_has(m, n)
+            } in
+            if len(p.defs) > qc_fork_min_defs() && qc_check_globals_ok(p, is_new) then
               qc_res_fork(request, qc_check_items(qc_reader_bytes(r0).val, len(p.defs), 0, AccEnd))
-            else qc_serve_checked(qc_check(p), args)
+            else qc_serve_checked(qc_check_stored(p, is_new), args)
         }
       else if op == 7 then
         # JOIN of a split CHECK_FILE: the continuation is the original request
@@ -521,6 +531,9 @@ fn qc_main(request: Bytes) -> Bytes =
         let state_res = qc_read_store_state(r0) in
         let text_res = qc_reader_str(state_res.r) in
         let opts_res = qc_reader_varint(text_res.r) in
+        let has_new_res = if opts_res.r.pos < bytes_len(opts_res.r.bytes) then qc_reader_byte(opts_res.r) else QcReadRes { val: 0, r: opts_res.r } in
+        let new_names = if has_new_res.val == 0 then None
+                        else let ns_res = qc_reader_strs(has_new_res.r) in Some(ns_res.val) in
         match qc_parse(text_res.val) {
           Err(d) => qc_res_diagnostics([d]),
           Ok(input_prog) =>
@@ -529,10 +542,15 @@ fn qc_main(request: Bytes) -> Bytes =
             match stored_res {
               Err(e) => qc_res_internal(e),
               Ok(stored) =>
-                let input_map = fold(input_prog.defs, map_new(), fn(m: Map[Str, Bool], d: QcDef) => map_put(m, qc_def_name(d), true)) in
+                let input_map = match new_names {
+                  Some(names) => fold(names, map_new(), fn(m: Map[Str, Bool], n: Str) => map_put(m, n, true)),
+                  None => fold(input_prog.defs, map_new(), fn(m: Map[Str, Bool], d: QcDef) => map_put(m, qc_def_name(d), true))
+                } in
                 let kept_defs = qc_filter_out_stored_defs_loop(stored.defs, input_map, 0, AccEnd) in
                 let combined = QcProgram { defs: kept_defs ++ input_prog.defs } in
-                match qc_check_stored(combined, fn(n: Str) => map_has(input_map, n)) {
+                let check_res = if opts_res.val == 1 then Ok(QcTProgram { types: [], fns: [], tests: [], generics: [] })
+                                else qc_check_stored(combined, fn(n: Str) => map_has(input_map, n)) in
+                match check_res {
                   Err(ds) => qc_res_diagnostics(ds),
                   Ok(tp) =>
                     match qc_hash_program_res(combined) {

@@ -504,6 +504,9 @@ fn selfhost(args: &[String]) -> ExitCode {
             if let Err(e) = std::fs::write(out, &stage3.wasm) {
                 return bad_usage(&format!("cannot write {out}: {e}"));
             }
+            if let Some(sha) = report["sha256"].as_str() {
+                let _ = std::fs::write(format!("{out}.sha256"), format!("{sha}\n"));
+            }
         }
         let line = report.to_string();
         let mut o = std::io::stdout().lock();

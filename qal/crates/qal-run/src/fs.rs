@@ -76,6 +76,58 @@ impl FsRoot {
         }
     }
 
+    /// Opens `rel_dir` inside `project_root` via anchored directory descriptors using `openat`
+    /// with `O_NOFOLLOW` on each component, ensuring concurrent path swaps or symlinks cannot escape.
+    pub fn open_under(project_root: &Path, rel_dir: &str, given_root: &Path) -> Result<FsRoot, String> {
+        let rel_path = Path::new(rel_dir);
+        let mut comps = Vec::new();
+        for c in rel_path.components() {
+            match c {
+                Component::CurDir => {}
+                Component::Normal(n) => {
+                    let s = n.to_str().ok_or_else(|| format!("fs:{rel_dir}: invalid UTF-8"))?;
+                    if s.starts_with('.') {
+                        return Err(format!("fs:{rel_dir}: hidden directories (starting with `.`) cannot be granted"));
+                    }
+                    comps.push(s.to_string());
+                }
+                _ => return Err(format!("fs:{rel_dir}: outside the project root")),
+            }
+        }
+        #[cfg(unix)]
+        {
+            use rustix::fs::{FileType, Mode, OFlags};
+            let root_fd = rustix::fs::open(project_root, OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC, Mode::empty())
+                .map_err(|e| format!("project root {}: {}", project_root.display(), std::io::Error::from(e)))?;
+            let mut cur = root_fd;
+            for comp in &comps {
+                let next = rustix::fs::openat(&cur, comp.as_str(), OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC, Mode::empty())
+                    .map_err(|_| format!("fs:{rel_dir}: no such directory in the project"))?;
+                cur = next;
+            }
+            let st = rustix::fs::fstat(&cur).map_err(|e| format!("fs:{rel_dir}: {}", std::io::Error::from(e)))?;
+            if FileType::from_raw_mode(st.st_mode) != FileType::Directory {
+                return Err(format!("fs:{rel_dir}: not a directory"));
+            }
+            let canonical = if comps.is_empty() {
+                project_root.to_path_buf()
+            } else {
+                project_root.join(comps.join("/"))
+            };
+            let alias = if comps.is_empty() {
+                given_root.to_path_buf()
+            } else {
+                given_root.join(comps.join("/"))
+            };
+            Ok(FsRoot { path: canonical, alias, fd: Arc::new(cur) })
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = (project_root, given_root, comps);
+            Err(format!("fs:{rel_dir}: the `fs` effect is not supported on this platform"))
+        }
+    }
+
     /// The components of `abs` below this root, if it lies inside (by its canonical path or the
     /// path it was granted as).
     fn below<'p>(&self, abs: &'p Path) -> Option<&'p Path> {

@@ -670,3 +670,23 @@ fn a_stub_is_never_proven() {
     let names: Vec<&str> = props::candidates(&tp).into_iter().map(|i| tp.fns[i].def.name.as_str()).collect();
     assert_eq!(names, vec!["real"]);
 }
+
+#[test]
+fn confirm_fuel_is_part_of_cache_key_and_budget_differences_are_distinguished() {
+    let opt_low = Options { confirm_fuel: 10, ..Options::default() };
+    let opt_high = Options { confirm_fuel: 10_000_000, ..Options::default() };
+    assert_ne!(opt_low.key(), opt_high.key(), "confirm_fuel must be part of the cache key");
+    assert!(opt_low.key().contains("fuel-10"));
+    assert!(opt_high.key().contains("fuel-10000000"));
+
+    let src = "fn loop_sub(n: Int) -> Int = if n <= 0 then 0 else loop_sub(n - 1)\n\
+               fn f(x: Int) -> Int req x >= 0 ens r == 1 = loop_sub(x)";
+    let tp = typed(src);
+    let r_low = prove(&tp, Some(&["f".to_string()]), &Options { confirm_fuel: 1, ..Options::default() });
+    let f_low = r_low.iter().find(|r| r.def == "f" && r.obligation == "ens[0]").unwrap();
+    assert_eq!(f_low.status, Status::Unknown);
+
+    let r_high = prove(&tp, Some(&["f".to_string()]), &Options { confirm_fuel: 50_000_000, ..Options::default() });
+    let f_high = r_high.iter().find(|r| r.def == "f" && r.obligation == "ens[0]").unwrap();
+    assert_eq!(f_high.status, Status::Refuted);
+}

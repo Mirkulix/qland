@@ -5,7 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [features]
-default = ["reference"]
+default = []
 reference = ["qal-compiler/reference", "qal-core/canon-encode"]
 
 [[bin]]
@@ -27,5 +27,3 @@ zeroize = { workspace = true }
 [dev-dependencies]
 # Tests hold the store's write lock to show that team reads never wait for it.
 rusqlite = { workspace = true }
-qal-compiler = { workspace = true, features = ["reference"] }
-qal-core = { workspace = true, features = ["canon-encode"] }

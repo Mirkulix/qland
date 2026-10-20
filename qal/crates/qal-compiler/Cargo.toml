@@ -5,7 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [features]
-default = ["reference"]
+default = []
 reference = ["dep:qal-text", "dep:qal-check", "dep:qal-wasm", "qal-core/canon-encode"]
 
 [dependencies]

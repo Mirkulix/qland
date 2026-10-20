@@ -140,6 +140,7 @@ fn differential_define_op_corpus() {
             state: Default::default(),
             text: s.text.clone(),
             options: Default::default(),
+            new_names: None,
         }
         .encode();
         let r_res = qal_compiler::proto::serve(&req);

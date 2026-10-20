@@ -11,8 +11,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  qal-test-suite:
-    name: QAL Rust Workspace Tests
+  qal-reference-comparison:
+    name: QAL Reference Comparison (Differential Parity & Bootstrap)
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -41,15 +41,82 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             qal/target
-            gen3/target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-ref-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-cargo-
+            ${{ runner.os }}-cargo-ref-
 
-      - name: Check QAL Compilation
-        run: cargo check --manifest-path qal/Cargo.toml --workspace --all-targets
+      - name: Check Reference Compilation
+        run: cargo check --manifest-path qal/Cargo.toml --features qal-compiler/reference --all-targets
 
-      - name: Run QAL Unit & Integration Tests (548 Tests)
+      - name: Differential Frontend Tests (Parser, Printer, Lexer)
+        run: cargo test --manifest-path qal/Cargo.toml --features qal-compiler/reference --test frontend_diff
+
+      - name: Differential Typechecker Tests (Checker, Unifier, Exhaustiveness)
+        run: cargo test --manifest-path qal/Cargo.toml --features qal-compiler/reference --test checker_diff
+
+      - name: Differential Codegen & Fixpoint Tests (WASM Lowering)
+        run: cargo test --manifest-path qal/Cargo.toml --features qal-compiler/reference --test codegen_diff
+
+      - name: Self-Hosted Bootstrap Fixpoint Verification (Stage 1 == Stage 2 == Stage 3)
+        run: cargo test --manifest-path qal/Cargo.toml --features qal-compiler/reference --test full_fixpoint
+
+  qal-autonomous-operation:
+    name: QAL Autonomous Operation (Pure Self-Hosted CLI)
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Install System Dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake clang libsqlite3-dev
+
+      - name: Cache Cargo Dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            qal/target
+          key: ${{ runner.os }}-cargo-auto-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-auto-
+
+      - name: Build Autonomous Release CLI (Zero Reference Dependencies)
+        run: cargo build --manifest-path qal/Cargo.toml -p qal-cli --release
+
+      - name: Verify Seed Integrity & Architectural Isolation
+        run: |
+          cargo test --manifest-path qal/Cargo.toml -p qal-run seed_module
+          # Ensure no reference compiler symbols leaked into autonomous binary
+          if nm qal/target/release/qal | grep -E "qal_text|qal_check|qal_wasm"; then
+            echo "ERROR: Reference compiler symbols found in autonomous binary"
+            exit 1
+          fi
+
+      - name: Autonomous CLI Integration Tests
+        run: |
+          cargo test --manifest-path qal/Cargo.toml -p qal-cli --release --test cli
+          cargo test --manifest-path qal/Cargo.toml -p qal-cli --release --test mcp
+          cargo test --manifest-path qal/Cargo.toml -p qal-cli --release --test todo_scenarios
+          cargo test --manifest-path qal/Cargo.toml -p qal-cli --release --test shop_scenarios
+          cargo test --manifest-path qal/Cargo.toml -p qal-cli --release --test team
+          cargo test --manifest-path qal/Cargo.toml -p qal-cli --release --test concurrency
+          cargo test --manifest-path qal/Cargo.toml -p qal-cli --release --test production
+
+      - name: Autonomous Workspace Unit & Property Tests
         run: cargo test --manifest-path qal/Cargo.toml --workspace --no-fail-fast
 
   gen3-substrate-suite:

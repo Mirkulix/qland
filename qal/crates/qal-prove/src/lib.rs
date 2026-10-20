@@ -46,7 +46,7 @@ use z3::{Config, Params, SatResult, Solver};
 
 /// Changes whenever the encoding or the stored form changes (stored results of another version are
 /// not reused).
-pub const PROVER_VERSION: &str = "qal-prove/4";
+pub const PROVER_VERSION: &str = "qal-prove/5";
 
 /// Reasons of results that depend on the machine's speed or load, not only on the definition.
 const NOT_ATTEMPTED: &str = "not attempted:";
@@ -80,7 +80,7 @@ impl Options {
     /// Identifies everything a result depends on besides the definition (and through its hash, the
     /// contracts of its callees).
     pub fn key(&self) -> String {
-        format!("{PROVER_VERSION} z3-{} rlimit-{}", z3::full_version(), self.rlimit)
+        format!("{PROVER_VERSION} z3-{} rlimit-{} fuel-{}", z3::full_version(), self.rlimit, self.confirm_fuel)
     }
 }
 

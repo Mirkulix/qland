@@ -23,6 +23,9 @@ struct Team {
 impl Team {
     /// A team store without the standard library (smaller, so defines are quick) and `members`.
     fn new(tag: &str, members: &[(&str, Role)]) -> Team {
+        if !qal_compiler::has_qal_driver() {
+            let _ = qal_run::selfhost::init_seed_backend(4);
+        }
         let home = std::env::temp_dir().join(format!("qal-conc-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&home);
         let project = home.join("project");

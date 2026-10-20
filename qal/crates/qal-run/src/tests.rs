@@ -456,6 +456,22 @@ fn confined_permissions_resolve_against_the_root_and_hide_dot_entries() {
     assert!(grant(&["fs:"]).unwrap_err().contains("needs a directory"));
     assert!(grant(&["fs: "]).unwrap_err().contains("needs a directory"));
     assert!(grant(&["web"]).unwrap_err().contains("unknown effect"));
+    #[cfg(unix)]
+    {
+        let outside = std::env::temp_dir().join(format!("qal-run-outside-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&outside);
+        let symlink_path = root.join("symlink_dir");
+        let _ = std::os::unix::fs::symlink(&outside, &symlink_path);
+        if symlink_path.is_symlink() {
+            assert!(grant(&["fs:symlink_dir"]).is_err(), "symlink directory grant must be refused");
+        }
+        let sub_target = root.join("data");
+        let intermediate_symlink = root.join("link_to_data");
+        let _ = std::os::unix::fs::symlink(&sub_target, &intermediate_symlink);
+        if intermediate_symlink.is_symlink() {
+            assert!(grant(&["fs:link_to_data"]).is_err(), "intermediate symlink grant must be refused");
+        }
+    }
     let whole = grant(&["io", "fs:."]).unwrap();
     assert!(whole.io && whole.no_hidden && whole.base.is_some());
     let r = main_runner(FILE_PROGRAM, "").with_permissions(whole);
@@ -480,6 +496,7 @@ fn confined_permissions_resolve_against_the_root_and_hide_dot_entries() {
     let out = r.run_main(&["data/b.txt".into(), "B".into()]);
     assert_eq!(out.result, Ok(Value::Int(0)));
     assert_eq!(std::fs::read_to_string(root.join("data/b.txt")).unwrap(), "B");
+    let _ = std::fs::remove_dir_all(&root);
 }
 
 #[test]
@@ -1120,4 +1137,21 @@ fn todo_traps_with_todo_reached() {
     assert_eq!(r.call("pick", &[Value::Int(0)]).unwrap_err().path, "body.else");
     let t = r.run_test("test:t");
     assert_eq!((t.passed, t.error.map(|e| e.kind)), (false, Some("todo_reached")));
+}
+
+#[test]
+fn seed_module_checksum_verifies() {
+    let m = crate::selfhost::seed_module();
+    assert_eq!(qal_core::canon::Hash::of(&m.wasm).to_hex(), crate::selfhost::SEED_SHA256.trim());
+    assert!(crate::selfhost::verify_seed(&m.wasm).is_ok());
+}
+
+#[test]
+fn tampered_seed_module_fails_with_seed_mismatch() {
+    let mut wasm = crate::selfhost::seed_module().wasm;
+    if let Some(b) = wasm.last_mut() {
+        *b = b.wrapping_add(1);
+    }
+    let err = crate::selfhost::verify_seed(&wasm).unwrap_err();
+    assert_eq!((err.code, err.kind), ("E0953", "seed_mismatch"));
 }

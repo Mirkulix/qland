@@ -181,6 +181,9 @@ fn check_rejects_deeply_nested_input_with_json_diagnostic() {
 
 /// A fresh project directory (no store yet).
 fn project(tag: &str) -> PathBuf {
+    if !qal_compiler::has_qal_driver() {
+        let _ = qal_run::selfhost::init_seed_backend(4);
+    }
     let dir = temp_dir().join(format!("project-{tag}"));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
@@ -636,7 +639,7 @@ fn the_checked_in_std_package_has_agent_provenance() {
     assert_eq!(pkg.name, "std");
     for d in &pkg.defs {
         assert!(!d.agent.trim().is_empty() && d.agent != "cli" && d.agent != "unknown", "`{}` has agent `{}`", d.name, d.agent);
-        assert!(qal_compiler::lexer::is_std_name(&d.name), "`{}` is not a std. name", d.name);
+        assert!(qal_core::lexer::is_std_name(&d.name), "`{}` is not a std. name", d.name);
     }
     // It imports into a fresh project with exactly the recorded hashes.
     let dir = project("std-fresh");

@@ -93,11 +93,11 @@ impl Default for Options {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Request {
     Parse { text: String },
-    Define { state: StoreState, text: String, options: Options },
+    Define { state: StoreState, text: String, options: Options, new_names: Option<Vec<String>> },
     Print { state: StoreState, names: Vec<String> },
     Typed { state: StoreState, roots: Vec<String>, options: Options },
     Build { state: StoreState, entry: Entry, options: Options },
-    CheckFile { text: String, entry: Option<Entry>, options: Options },
+    CheckFile { text: String, entry: Option<Entry>, options: Options, new_names: Option<Vec<String>> },
     Join { continuation: Vec<u8>, results: Vec<Vec<u8>> },
     Signatures { state: StoreState, names: Vec<String> },
 }
@@ -333,10 +333,17 @@ impl Request {
         w.byte(self.op());
         match self {
             Request::Parse { text } => w.str(text),
-            Request::Define { state, text, options } => {
+            Request::Define { state, text, options, new_names } => {
                 w.state(state);
                 w.str(text);
                 w.options(options);
+                match new_names {
+                    Some(names) => {
+                        w.byte(1);
+                        w.strs(names);
+                    }
+                    None => w.byte(0),
+                }
             }
             Request::Print { state, names } | Request::Signatures { state, names } => {
                 w.state(state);
@@ -352,7 +359,7 @@ impl Request {
                 w.entry(entry);
                 w.options(options);
             }
-            Request::CheckFile { text, entry, options } => {
+            Request::CheckFile { text, entry, options, new_names } => {
                 w.str(text);
                 match entry {
                     Some(e) => {
@@ -362,6 +369,13 @@ impl Request {
                     None => w.byte(0),
                 }
                 w.options(options);
+                match new_names {
+                    Some(names) => {
+                        w.byte(1);
+                        w.strs(names);
+                    }
+                    None => w.byte(0),
+                }
             }
             Request::Join { continuation, results } => {
                 w.bytes(continuation);
@@ -379,14 +393,22 @@ impl Request {
         magic(&mut r, REQ_MAGIC, "QALQ request")?;
         let req = match r.byte()? {
             1 => Request::Parse { text: r.str()? },
-            2 => Request::Define { state: r.state()?, text: r.str()?, options: r.options()? },
+            2 => {
+                let state = r.state()?;
+                let text = r.str()?;
+                let options = r.options()?;
+                let new_names = if !r.at_end() && r.bool()? { Some(r.strs()?) } else { None };
+                Request::Define { state, text, options, new_names }
+            }
             3 => Request::Print { state: r.state()?, names: r.strs()? },
             4 => Request::Typed { state: r.state()?, roots: r.strs()?, options: r.options()? },
             5 => Request::Build { state: r.state()?, entry: r.entry()?, options: r.options()? },
             6 => {
                 let text = r.str()?;
                 let entry = if r.bool()? { Some(r.entry()?) } else { None };
-                Request::CheckFile { text, entry, options: r.options()? }
+                let options = r.options()?;
+                let new_names = if r.bool()? { Some(r.strs()?) } else { None };
+                Request::CheckFile { text, entry, options, new_names }
             }
             7 => {
                 let continuation = r.blob()?;
@@ -903,20 +925,29 @@ fn serve_request(req: Request) -> Response {
                 }
             }
         }
-        Request::CheckFile { text, entry, options } => match backend.parse(&text) {
+        Request::CheckFile { text, entry, options, new_names } => match backend.parse(&text) {
             Err(d) => diagnostics(vec![d]),
-            Ok(p) => match backend.check(&p, &|_| true) {
-                Err(ds) => diagnostics(ds),
-                Ok(tp) => match entry {
-                    None => Response::Done(encode_checked(&Checked::Typed(tform::encode(&tp)))),
-                    Some(e) => match backend.compile(&tp, &e, &compile_options(&options)) {
-                        Ok(m) => Response::Done(encode_checked(&Checked::Module(m))),
-                        Err(e) => Response::Internal(e),
+            Ok(p) => {
+                let is_new: Box<dyn Fn(&str) -> bool> = match new_names {
+                    None => Box::new(|_| true),
+                    Some(names) => {
+                        let set: std::collections::HashSet<String> = names.into_iter().collect();
+                        Box::new(move |n: &str| set.contains(n))
+                    }
+                };
+                match backend.check(&p, &*is_new) {
+                    Err(ds) => diagnostics(ds),
+                    Ok(tp) => match entry {
+                        None => Response::Done(encode_checked(&Checked::Typed(tform::encode(&tp)))),
+                        Some(e) => match backend.compile(&tp, &e, &compile_options(&options)) {
+                            Ok(m) => Response::Done(encode_checked(&Checked::Module(m))),
+                            Err(e) => Response::Internal(e),
+                        },
                     },
-                },
-            },
+                }
+            }
         },
-        Request::Define { state, text, options: _ } => {
+        Request::Define { state, text, options: _, new_names } => {
             let input = match backend.parse(&text) {
                 Ok(p) => p,
                 Err(d) => return diagnostics(vec![d]),
@@ -925,7 +956,10 @@ fn serve_request(req: Request) -> Response {
                 Ok(p) => p,
                 Err(e) => return Response::Internal(e),
             };
-            let input_names: std::collections::HashSet<&str> = input.defs.iter().map(|d| d.name()).collect();
+            let input_names: std::collections::HashSet<&str> = match new_names {
+                Some(ref names) => names.iter().map(|s| s.as_str()).collect(),
+                None => input.defs.iter().map(|d| d.name()).collect(),
+            };
             let mut combined_defs: Vec<Def> = stored.defs.iter().filter(|d| !input_names.contains(d.name())).cloned().collect();
             combined_defs.extend(input.defs.iter().cloned());
             let combined = Program { defs: combined_defs };
@@ -1007,13 +1041,13 @@ mod tests {
         let opts = Options { memory_max_pages: 16384 };
         let reqs = [
             Request::Parse { text: SRC.into() },
-            Request::Define { state: st.clone(), text: "fn x() -> Int = 1".into(), options: opts },
+            Request::Define { state: st.clone(), text: "fn x() -> Int = 1".into(), options: opts, new_names: None },
             Request::Print { state: st.clone(), names: vec!["area".into(), "odd".into()] },
             Request::Typed { state: st.clone(), roots: vec!["t".into()], options: Options::default() },
             Request::Build { state: st.clone(), entry: Entry::Fns(vec!["twice".into(), "even".into()]), options: opts },
             Request::Build { state: StoreState::default(), entry: Entry::Tests, options: opts },
-            Request::CheckFile { text: SRC.into(), entry: Some(Entry::All), options: opts },
-            Request::CheckFile { text: "".into(), entry: None, options: opts },
+            Request::CheckFile { text: SRC.into(), entry: Some(Entry::All), options: opts, new_names: None },
+            Request::CheckFile { text: "".into(), entry: None, options: opts, new_names: None },
             Request::Join { continuation: vec![1, 2, 3], results: vec![vec![], vec![0xff; 300]] },
             Request::Signatures { state: st, names: vec!["Shape".into()] },
         ];
@@ -1090,14 +1124,14 @@ mod tests {
         assert_eq!(m.wasm, reference.wasm);
         assert_eq!((m.funcs, m.types, m.imports, m.table_len, m.memory_max_pages), (reference.funcs, reference.types, reference.imports, reference.table_len, 16384));
         // CHECK_FILE: diagnostics, the typed form, or the module
-        match Response::decode(&serve(&Request::CheckFile { text: "fn f() -> Int = \"x\"".into(), entry: None, options: opts }.encode())).unwrap() {
+        match Response::decode(&serve(&Request::CheckFile { text: "fn f() -> Int = \"x\"".into(), entry: None, options: opts, new_names: None }.encode())).unwrap() {
             Response::Diagnostics(ds) => assert_eq!((ds[0].code, ds[0].kind), ("E0203", "type_mismatch")),
             other => panic!("{other:?}"),
         }
-        assert!(matches!(decode_checked(&done(&serve(&Request::CheckFile { text: SRC.into(), entry: None, options: opts }.encode()))).unwrap(), Checked::Typed(_)));
-        assert!(matches!(decode_checked(&done(&serve(&Request::CheckFile { text: SRC.into(), entry: Some(Entry::Tests), options: opts }.encode()))).unwrap(), Checked::Module(_)));
+        assert!(matches!(decode_checked(&done(&serve(&Request::CheckFile { text: SRC.into(), entry: None, options: opts, new_names: None }.encode()))).unwrap(), Checked::Typed(_)));
+        assert!(matches!(decode_checked(&done(&serve(&Request::CheckFile { text: SRC.into(), entry: Some(Entry::Tests), options: opts, new_names: None }.encode()))).unwrap(), Checked::Module(_)));
         // DEFINE (Phase 5b): prepared definitions
-        let def_res = serve(&Request::Define { state: st.clone(), text: "fn extra(x: Int) -> Int = x".into(), options: opts }.encode());
+        let def_res = serve(&Request::Define { state: st.clone(), text: "fn extra(x: Int) -> Int = x".into(), options: opts, new_names: None }.encode());
         let prep = decode_prepared(&done(&def_res)).unwrap();
         assert_eq!(prep.canons.len(), 1);
         assert_eq!(prep.canons[0].name, "extra");

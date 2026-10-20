@@ -101,14 +101,7 @@ impl Permissions {
                     Some(dir) if dir.trim().is_empty() => return Err("`fs:` needs a directory: `fs:<dir>` relative to the project root, e.g. `fs:data` or `fs:.`".into()),
                     Some(dir) => {
                         let dir = dir.trim();
-                        let canonical = root.join(dir).canonicalize().map_err(|_| format!("fs:{dir}: no such directory in the project"))?;
-                        let rel = canonical.strip_prefix(&root).map_err(|_| format!("fs:{dir}: outside the project root"))?;
-                        if hidden(rel) {
-                            return Err(format!("fs:{dir}: hidden directories (starting with `.`) cannot be granted"));
-                        }
-                        // Opened by the path as given, so guest paths may use either spelling of the root.
-                        let path = given.join(dir);
-                        p.fs.push(FsRoot::open(&path).map_err(|e| e.replace(&format!("fs:{}", path.display()), &format!("fs:{dir}")))?);
+                        p.fs.push(FsRoot::open_under(&root, dir, &given)?);
                     }
                     None => return Err(format!("unknown effect `{item}` (known: {KNOWN_GRANTS})")),
                 },
@@ -154,10 +147,6 @@ impl Permissions {
     }
 }
 
-/// True if a path below a granted directory has a component starting with `.`.
-fn hidden(rel: &Path) -> bool {
-    rel.components().any(|c| c.as_os_str().to_string_lossy().starts_with('.'))
-}
 
 fn read_text(file: File, path: &str, limit: usize) -> Result<Result<String, String>, usize> {
     let len = file.metadata().map(|m| m.len()).unwrap_or(0) as usize;

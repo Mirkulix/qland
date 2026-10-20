@@ -304,9 +304,25 @@ pub fn init_qal_backend(module: CompiledModule, jobs: usize) -> Result<(), Strin
     Ok(())
 }
 
+/// The expected SHA-256 of the seed compiler module (`selfhost/qalc.wasm.sha256`).
+pub const SEED_SHA256: &str = include_str!("../../../selfhost/qalc.wasm.sha256");
+
+/// Verifies that `wasm` matches the versioned seed checksum.
+pub fn verify_seed(wasm: &[u8]) -> Result<(), Diagnostic> {
+    let expected = SEED_SHA256.trim();
+    let actual = qal_core::canon::Hash::of(wasm).to_hex();
+    if actual != expected {
+        return Err(Diagnostic::seed_mismatch(&format!("expected {expected}, found {actual}")));
+    }
+    Ok(())
+}
+
 /// The versioned fixpoint compiler module (`selfhost/qalc.wasm`).
 pub fn seed_module() -> CompiledModule {
     let wasm = include_bytes!("../../../selfhost/qalc.wasm").to_vec();
+    if let Err(d) = verify_seed(&wasm) {
+        panic!("{}", d.message);
+    }
     let func = qal_compiler::FuncMeta {
         name: ENTRY.into(),
         export: ENTRY.into(),

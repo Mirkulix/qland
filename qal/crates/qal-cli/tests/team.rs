@@ -33,6 +33,9 @@ const BASE: &str = "fn base() -> Int = 1\nfn spare() -> Int = 2\nfn main(args: L
 
 impl Team {
     fn bare() -> Team {
+        if !qal_compiler::has_qal_driver() {
+            let _ = qal_run::selfhost::init_seed_backend(4);
+        }
         let home = temp("home");
         let keys = home.join("keys");
         Team { project: temp("project"), home, keys, transcript: Arc::new(Mutex::new(Vec::new())) }

@@ -120,6 +120,7 @@ fn call_driver(req: &[u8]) -> Result<Vec<u8>, Diagnostic> {
     Err(Diagnostic::compiler_failed("qal", "DRIVER", "main", "no QAL compiler driver has been registered"))
 }
 
+
 /// The self-hosted QAL compiler backend running through `QALQ`/`QALR` protocol.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Qal;
@@ -142,19 +143,60 @@ impl Backend for Qal {
     }
 
     fn print(&self, p: &Program) -> String {
+        if has_qal_driver() {
+            let st = proto::StoreState {
+                entries: Vec::new(),
+                groups: vec![(qal_core::canon::Hash([0; 32]), proto::encode_program(p))],
+            };
+            let req = proto::Request::Print {
+                state: st,
+                names: Vec::new(),
+            }
+            .encode();
+            if let Ok(resp_bytes) = call_driver(&req) {
+                if let Ok(proto::Response::Done(payload)) = proto::Response::decode(&resp_bytes) {
+                    if let Ok(texts) = proto::decode_texts(&payload) {
+                        let mut s = texts.into_iter().map(|(_, t)| t).collect::<Vec<_>>().join("\n\n");
+                        if !s.is_empty() {
+                            s.push('\n');
+                        }
+                        return s;
+                    }
+                }
+            }
+        }
         qal_core::print_program(p)
     }
 
     fn print_expr(&self, e: &Expr) -> String {
+        if has_qal_driver() {
+            let dummy = Program {
+                defs: vec![qal_core::ast::Def::Test(qal_core::ast::TestDef {
+                    name: "t".into(),
+                    body: e.clone(),
+                })],
+            };
+            let s = self.print(&dummy);
+            if let Some(rest) = s.strip_prefix("test t = ") {
+                return rest.trim_end_matches('\n').to_string();
+            }
+        }
         qal_core::print_expr(e)
     }
 
-    fn check(&self, p: &Program, _is_new: &dyn Fn(&str) -> bool) -> Result<TProgram, Vec<Diagnostic>> {
+    fn check(&self, p: &Program, is_new: &dyn Fn(&str) -> bool) -> Result<TProgram, Vec<Diagnostic>> {
         let text = self.print(p);
+        let all_new = p.defs.iter().all(|d| is_new(d.name()));
+        let new_names = if all_new {
+            None
+        } else {
+            Some(p.defs.iter().filter(|d| is_new(d.name())).map(|d| d.name().to_string()).collect())
+        };
         let req = proto::Request::CheckFile {
             text,
             entry: None,
             options: proto::Options::default(),
+            new_names,
         }
         .encode();
         let resp_bytes = call_driver(&req).map_err(|d| vec![d])?;
@@ -175,7 +217,13 @@ impl Backend for Qal {
 
         let st = proto::StoreState::default();
         let text = self.print(p);
-        let req = proto::Request::Define { state: st, text, options: Default::default() }.encode();
+        let req = proto::Request::Define {
+            state: st,
+            text,
+            options: proto::Options { memory_max_pages: 1 },
+            new_names: Some(Vec::new()),
+        }
+        .encode();
         let resp_bytes = call_driver(&req).map_err(|d| HashError::Internal(d.message))?;
         match proto::Response::decode(&resp_bytes) {
             Ok(proto::Response::Done(payload)) => match proto::decode_prepared(&payload) {
@@ -204,7 +252,19 @@ impl Backend for Qal {
                 let msgs: Vec<String> = ds.into_iter().map(|d| format!("{}: {}", d.code, d.message)).collect();
                 Err(HashError::Internal(format!("diagnostics from DEFINE: {}", msgs.join("; "))))
             }
-            Ok(proto::Response::Internal(msg)) => Err(HashError::Internal(msg)),
+            Ok(proto::Response::Internal(msg)) => {
+                if let Some(rest) = msg.strip_prefix("the recursive group ") {
+                    if let Some(names_str) = rest.strip_suffix(" has interchangeable members") {
+                        let names: Vec<String> = names_str.split(", ").map(|s| s.trim().to_string()).collect();
+                        return Err(HashError::Symmetric(names));
+                    }
+                }
+                if msg.contains("interchangeable members") {
+                    let names: Vec<String> = p.defs.iter().map(|d| d.name().to_string()).collect();
+                    return Err(HashError::Symmetric(names));
+                }
+                Err(HashError::Internal(msg))
+            }
             Ok(other) => Err(HashError::Internal(format!("unexpected response from DEFINE: {other:?}"))),
             Err(e) => Err(HashError::Internal(format!("cannot decode response from DEFINE: {e}"))),
         }
@@ -246,7 +306,7 @@ impl Backend for Both {
         let r2 = Qal.parse(src);
         match (&r1, &r2) {
             (Ok(p1), Ok(p2)) if p1 == p2 => r1,
-            (Err(d1), Err(d2)) if (d1.code, d1.kind) == (d2.code, d2.kind) => r1,
+            (Err(d1), Err(d2)) if (d1.code, d1.kind, &d1.def, &d1.path, &d1.message, &d1.hints) == (d2.code, d2.kind, &d2.def, &d2.path, &d2.message, &d2.hints) => r1,
             _ => Err(Diagnostic::compiler_divergence("PARSE", &format!("Rust: {r1:?}, Qal: {r2:?}"))),
         }
     }
@@ -255,7 +315,7 @@ impl Backend for Both {
         let s1 = Rust.print(p);
         let s2 = Qal.print(p);
         if s1 != s2 {
-            eprintln!("compiler divergence in print:\n--- Rust:\n{s1}\n--- Qal:\n{s2}");
+            panic!("compiler divergence in print:\n--- Rust:\n{s1}\n--- Qal:\n{s2}");
         }
         s1
     }
@@ -264,7 +324,7 @@ impl Backend for Both {
         let s1 = Rust.print_expr(e);
         let s2 = Qal.print_expr(e);
         if s1 != s2 {
-            eprintln!("compiler divergence in print_expr:\n--- Rust:\n{s1}\n--- Qal:\n{s2}");
+            panic!("compiler divergence in print_expr:\n--- Rust:\n{s1}\n--- Qal:\n{s2}");
         }
         s1
     }
@@ -282,8 +342,8 @@ impl Backend for Both {
                 r1
             }
             (Err(ds1), Err(ds2)) => {
-                let c1: Vec<(&str, &str)> = ds1.iter().map(|d| (d.code, d.kind)).collect();
-                let c2: Vec<(&str, &str)> = ds2.iter().map(|d| (d.code, d.kind)).collect();
+                let c1: Vec<(&str, &str, &str, &str, &str, &[String])> = ds1.iter().map(|d| (d.code, d.kind, d.def.as_str(), d.path.as_str(), d.message.as_str(), d.hints.as_slice())).collect();
+                let c2: Vec<(&str, &str, &str, &str, &str, &[String])> = ds2.iter().map(|d| (d.code, d.kind, d.def.as_str(), d.path.as_str(), d.message.as_str(), d.hints.as_slice())).collect();
                 if c1 != c2 {
                     return Err(vec![Diagnostic::compiler_divergence("CHECK", &format!("diagnostics mismatch: Rust={c1:?}, Qal={c2:?}"))]);
                 }
@@ -324,13 +384,7 @@ static QAL: Qal = Qal;
 #[cfg(feature = "reference")]
 static BOTH: Both = Both;
 
-#[cfg(feature = "reference")]
-static CURRENT_BACKEND: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0); // 0=Rust, 1=Qal, 2=Both
-#[cfg(not(feature = "reference"))]
-#[cfg(feature = "reference")]
-static CURRENT_BACKEND: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0); // 0=Rust, 1=Qal, 2=Both
-#[cfg(not(feature = "reference"))]
-static CURRENT_BACKEND: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(1); // 1=Qal
+static CURRENT_BACKEND: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(1); // 0=Rust, 1=Qal, 2=Both
 
 /// Sets the default backend for free functions (`rust`, `qal`, `both`).
 pub fn set_backend(name: &str) -> Result<(), String> {

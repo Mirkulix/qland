@@ -28,6 +28,9 @@ fn project_source() -> String {
 #[test]
 #[ignore]
 fn define_holds_the_write_lock_briefly() {
+    if !qal_compiler::has_qal_driver() {
+        let _ = qal_run::selfhost::init_seed_backend(4);
+    }
     let home = std::env::temp_dir().join(format!("qal-lock-time-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&home);
     let project = home.join("project");

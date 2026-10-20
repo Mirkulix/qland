@@ -1219,7 +1219,8 @@ fn qc_process_sccs_loop(sccs: List[List[Int]], scc_idx: Int, p: QcProgram, env: 
         Some(e) => Err(e),
         None =>
           if best.symmetric then
-            Err("the recursive group has interchangeable members")
+            let names = map(comp_defs, fn(d: QcDef) => qc_def_name(d)) in
+            Err("the recursive group " ++ join(names, ", ") ++ " has interchangeable members")
           else
             let gh = sha256(best.form) in
             let g_obj = QcGroup { hash: gh, form: best.form } in
