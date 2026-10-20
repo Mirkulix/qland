@@ -8,7 +8,7 @@ use qal_core::tform;
 /// Programs of part (1): examples, fixtures, 20 benchmark solutions, the std, todo and shop packages.
 const FILES: usize = 28;
 /// Programs of part (2), extracted by `selfhost/tools/extract_corpus.py`.
-const EXTRACTED: usize = 758;
+const EXTRACTED: usize = 761;
 
 #[test]
 fn the_corpus_size_is_fixed() {
@@ -69,7 +69,7 @@ fn every_checked_corpus_program_round_trips_through_qalt() {
     }
     assert_eq!((files.parsed, files.checked), (FILES, FILES), "{files:?}");
     // Fixed with the corpus: a change means the corpus or the pipeline changed.
-    assert_eq!((st.parsed, st.checked), (735, 515), "{st:?}");
+    assert_eq!((st.parsed, st.checked), (738, 517), "{st:?}");
 }
 
 

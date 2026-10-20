@@ -24,6 +24,8 @@ use std::collections::BTreeSet;
 /// Limits of spec §14.
 pub const MAX_OPEN_CHANGES: i64 = 64;
 pub const MAX_OPEN_PER_MEMBER: i64 = 8;
+/// Most reviews `qal_change show` lists (the latest ones).
+pub const MAX_SHOWN_REVIEWS: i64 = 16;
 pub const MAX_DELTA: i64 = 2000;
 pub const MAX_SCOPE: usize = 256;
 pub const MAX_LEASES_PER_CHANGE: i64 = 256;
@@ -780,6 +782,27 @@ pub(crate) fn summary(conn: &Connection, row: &ChangeRow) -> Result<Value, Vec<D
     }))
 }
 
+/// The reviews of a change set for `show`: the latest `MAX_SHOWN_REVIEWS`, oldest first, each with
+/// reviewer, verdict, whether it is for the current root, time and its comments as stored (a
+/// review has at most `MAX_COMMENTS` of `MAX_COMMENT_BYTES`); `omitted` counts older ones left out.
+fn reviews_detail(conn: &Connection, id: &str, current: Option<&str>) -> Result<Value, Vec<Diagnostic>> {
+    let total: i64 = conn.query_row("SELECT count(*) FROM reviews WHERE change = ?1", params![id], |r| r.get(0)).map_err(sql)?;
+    let mut stmt = conn
+        .prepare("SELECT member, verdict, root, comments, at FROM (SELECT id, member, verdict, root, comments, at FROM reviews WHERE change = ?1 ORDER BY id DESC LIMIT ?2) ORDER BY id")
+        .map_err(sql)?;
+    let rows = stmt
+        .query_map(params![id, MAX_SHOWN_REVIEWS], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, String>(3)?, r.get::<_, i64>(4)?)))
+        .map_err(sql)?;
+    let mut out = Vec::new();
+    for row in rows {
+        let (member, verdict, root, comments, at) = row.map_err(sql)?;
+        let comments: Value = serde_json::from_str(&comments).unwrap_or(Value::Null);
+        out.push(json!({"member": member, "verdict": verdict, "current": current == Some(root.as_str()), "at": at, "comments": comments}));
+    }
+    let omitted = total - out.len() as i64;
+    Ok(if omitted > 0 { json!({"list": out, "omitted": omitted}) } else { Value::Array(out) })
+}
+
 impl Store {
     pub(crate) fn team_tx(&mut self, what: &str) -> Result<Transaction<'_>, Vec<Diagnostic>> {
         if !super::is_team(&self.conn)? {
@@ -1013,6 +1036,7 @@ impl Store {
         let tx = self.conn.transaction().map_err(sql)?;
         let row = require(&tx, id)?;
         let mut v = summary(&tx, &row)?;
+        let current = v["root"].as_str().map(str::to_string);
         let mut names = Vec::new();
         {
             let mut stmt = tx.prepare("SELECT name, origin FROM change_names WHERE change = ?1 AND origin != 'base' ORDER BY name").map_err(sql)?;
@@ -1028,6 +1052,7 @@ impl Store {
             m.insert("created_at".into(), json!(row.created_at));
             m.insert("updated_at".into(), json!(row.updated_at));
             m.insert("names".into(), Value::Array(names));
+            m.insert("reviews".into(), reviews_detail(&tx, id, current.as_deref())?);
             m.insert("leases".into(), serde_json::to_value(leases_of(&tx, id)?).unwrap_or(Value::Null));
         }
         Ok(v)

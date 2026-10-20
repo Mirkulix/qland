@@ -328,12 +328,12 @@ fn plan(tx: &Transaction, signer: &Signer, id: &str) -> Result<Plan, Vec<Diagnos
     if !row.is_live() {
         return Err(one(change::not_live(&row)));
     }
-    if row.status != "submitted" {
-        return Err(one(gate_unmet(id, "the status `submitted` (it is open: its owner submits it with qal_change submit)")));
-    }
     let marks: i64 = tx.query_row("SELECT count(*) FROM change_names WHERE change = ?1 AND conflict IS NOT NULL", params![id], |r| r.get(0)).map_err(sql)?;
     if marks > 0 {
         return Err(one(state(format!("change set {id} has {marks} conflict mark(s) from its rebase")).hint("resolve each marked name by defining it again in the change set (qal_change diff shows them), then submit again")));
+    }
+    if row.status != "submitted" {
+        return Err(one(gate_unmet(id, "the status `submitted` (it is open: its owner submits it with qal_change submit)")));
     }
     let space = Space::Change(id.to_string());
     let c_rows = space_rows(tx, &space)?;
@@ -363,7 +363,7 @@ fn plan(tx: &Transaction, signer: &Signer, id: &str) -> Result<Plan, Vec<Diagnos
                 Some(_) if input_origin(n) => "replaced",
                 Some(_) => "relinked",
             };
-            defined.push(Defined { name: n.clone(), kind, hash: r.hash.clone(), status, old_hash: old.map(|o| o.hash.clone()).filter(|_| matches!(status, "replaced" | "relinked")) });
+            defined.push(Defined { name: n.clone(), kind, hash: r.hash.clone(), status, old_hash: old.map(|o| o.hash.clone()).filter(|_| matches!(status, "replaced" | "relinked")), resolved: false });
         }
         let mut removed = BTreeMap::new();
         for n in before.keys().filter(|n| !c_rows.contains_key(*n)) {
@@ -817,7 +817,7 @@ fn plan_rebase(tx: &Transaction, signer: &Signer, id: &str) -> Result<Rebase, Ve
             continue;
         }
         let kind = replayed.defined.iter().find(|d| d.name == *n).map_or_else(|| main_snap_kind(&main_snap, tx, n), |d| d.kind);
-        verify.push(Defined { name: n.clone(), kind, hash: r.hash.clone(), status: if old.is_some() { "relinked" } else { "added" }, old_hash: old.map(|o| o.hash.clone()) });
+        verify.push(Defined { name: n.clone(), kind, hash: r.hash.clone(), status: if old.is_some() { "relinked" } else { "added" }, old_hash: old.map(|o| o.hash.clone()), resolved: false });
     }
     Ok(Rebase::Plan(Box::new(RebasePlan { row, c_root, main_root, before, replayed, after, meta: meta_rows, marks, conflicts, replayed_names, verify })))
 }

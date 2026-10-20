@@ -835,6 +835,26 @@ fn a_team_reviews_and_merges_over_mcp() {
     assert!(told >= 3, "{told}");
 }
 
+/// A reviewer's `changes` comments are readable by the change set's author through `qal_change show`.
+#[test]
+fn the_author_reads_review_comments_with_show() {
+    let t = Team::new();
+    let mut imp = t.agent("impl-1");
+    let mut rev = t.agent("rev-1");
+    let c = imp.open("buy");
+    assert_eq!(imp.code("qal_define", json!({"source": "fn buy() -> Int = spare()"})), "ok");
+    assert_eq!(imp.code("qal_change", json!({"action": "submit"})), "ok");
+    let (err, v) = rev.call("qal_review", json!({"change": c, "verdict": "changes", "comments": [{"name": "buy", "text": "return price, not spare"}, {"text": "add a test"}]}));
+    assert!(!err, "{v}");
+    let (err, v) = imp.call("qal_change", json!({"action": "show", "change": c}));
+    assert!(!err, "{v}");
+    let r = &v["reviews"][0];
+    assert_eq!((r["member"].as_str(), r["verdict"].as_str(), r["current"].as_bool()), (Some("rev-1"), Some("changes"), Some(true)), "{v}");
+    assert!(r["at"].as_i64().is_some(), "{v}");
+    assert_eq!((r["comments"][0]["name"].as_str(), r["comments"][0]["text"].as_str()), (Some("buy"), Some("return price, not spare")), "{v}");
+    assert_eq!(r["comments"][1]["text"], "add a test", "{v}");
+}
+
 /// Spec §8: the section „Team“ of `qal_define`'s reference (in reference.md) has at most 12 lines
 /// per role, with exactly that role's rules; the language reference itself is unchanged by it.
 #[test]

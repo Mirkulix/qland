@@ -47,6 +47,10 @@ pub struct Defined {
     pub status: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub old_hash: Option<String>,
+    /// An unchanged input that cleared a conflict mark of its change set (the owner keeps its
+    /// own version: spec §7.3, "define n again"). Signed in the `define` record as `resolved`.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub resolved: bool,
 }
 
 /// The project directory around `start`: the nearest directory (`start` or an ancestor) that
@@ -214,7 +218,15 @@ impl Store {
             *report.borrow_mut() = team::WriteReport { leases, stubs };
             Ok(())
         };
-        let record = |out: &[Defined], tx: &rusqlite::Transaction, before: &team::Rows| team::record_write(tx, signer, "define", &space, before, &team::Entry::of_defined(out), serde_json::Map::new());
+        let record = |out: &[Defined], tx: &rusqlite::Transaction, before: &team::Rows| {
+            // A define that cleared conflict marks without changing a hash signs which (§7.3).
+            let mut extra = serde_json::Map::new();
+            let resolved: Vec<&str> = out.iter().filter(|d| d.resolved).map(|d| d.name.as_str()).collect();
+            if !resolved.is_empty() {
+                extra.insert("resolved".into(), serde_json::Value::from(resolved));
+            }
+            team::record_write(tx, signer, "define", &space, before, &team::Entry::of_defined(out), extra)
+        };
         let out = define::define_checked(&mut self.conn, src, agent, &rules, &self.space, verify, &guard, &record);
         self.last = report.into_inner();
         out

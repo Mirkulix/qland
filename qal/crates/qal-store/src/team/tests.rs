@@ -1297,6 +1297,39 @@ fn a_rebase_marks_conflicts_and_their_resolution_merges() {
     ok_verify(&mut s);
 }
 
+/// Review I3: a conflict mark is cleared by defining the name again with the change set's own
+/// text (keep ours): the hash does not change, the define still signs the resolution, `qal verify`
+/// replays it, and the merge goes through.
+#[test]
+fn a_conflict_mark_is_cleared_by_keeping_the_own_version() {
+    let (mut s, keys, _owner, arch, _imp, ver, rev) = seeded();
+    let (a, b) = two_from_one_base(&mut s, &arch);
+    write_in(&mut s, &keys, &arch, &b, "fn mine() -> Int = 1").unwrap();
+    write_in(&mut s, &keys, &arch, &a, "fn spare() -> Int = 5").unwrap();
+    pass_gate(&mut s, &arch, &ver, &rev, &a);
+    merge_as(&mut s, &keys, &rev, &a).unwrap();
+    write_in(&mut s, &keys, &arch, &b, "fn spare() -> Int = 6").unwrap();
+    let ours = change_hash(&s, &b, "spare");
+    let r = s.rebase(&again(&keys, &s, &arch), &b, None).unwrap();
+    assert_eq!(r["conflicts"][0]["name"], "spare", "{r}");
+    let marks = |s: &Store| -> i64 { raw(s).query_row("SELECT count(*) FROM change_names WHERE change = ?1 AND conflict IS NOT NULL", [&b], |r| r.get(0)).unwrap() };
+    assert_eq!(marks(&s), 1);
+    ok_verify(&mut s);
+    // The same text again: the hash stays, the mark goes, and a signed record says so.
+    let records = count(&s, "records");
+    let d = write_in(&mut s, &keys, &arch, &b, "fn spare() -> Int = 6").unwrap();
+    assert_eq!((d[0].status, d[0].resolved), ("unchanged", true), "{d:?}");
+    assert_eq!(change_hash(&s, &b, "spare"), ours);
+    assert_eq!(marks(&s), 0);
+    assert_eq!(count(&s, "records"), records + 1);
+    ok_verify(&mut s);
+    pass_gate(&mut s, &arch, &ver, &rev, &b);
+    merge_as(&mut s, &keys, &rev, &b).unwrap();
+    s.set_space(crate::Space::Main);
+    assert!(s.view(&["spare".into()]).unwrap()[0].text.contains('6'));
+    ok_verify(&mut s);
+}
+
 /// §7.3: a rebase whose replay does not check changes nothing and names what to adapt.
 #[test]
 fn a_rebase_that_does_not_check_changes_nothing() {
@@ -1452,6 +1485,101 @@ fn tampering_with_reviews_and_merge_gates_is_detected() {
     let _ = keys;
     // `spare` is replaced by `base`'s definition (a valid stored hash), outside the empty scope.
     let seq = forge(&s, &imp, "define", &c, json!({"entries": [{"name": "spare", "old": spare, "new": h, "action": "replaced", "refs": [], "locals": []}]}));
+    let o = verified(&mut s, None);
+    assert_eq!((code(&o), o.error.as_ref().map(|e| e.seq)), ("E0924", Some(seq)), "{o:?}");
+}
+
+/// Signs and appends a record by hand, as a member with write access to the store could: the
+/// names of `space` go from `before` to `after`.
+fn forge_at(s: &Store, who: &Signer, op: &str, space: &str, mut args: Value, before: &Rows, after: &Rows) -> i64 {
+    let c = raw(s);
+    let (seq, prev): (i64, String) = c.query_row("SELECT seq, hash FROM records ORDER BY seq DESC LIMIT 1", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
+    if space != "main" {
+        args["meta_after"] = json!(change::meta_digest(&c, space).unwrap());
+    }
+    let body = json!({"v": 1, "seq": seq + 1, "prev": prev, "at": 1, "member": who.member, "key": who.key.key_id(), "session": who.session, "op": op, "space": space,
+                      "args": args, "root_before": root_of(before), "root_after": root_of(after), "names_after": names_digest(&c, after).unwrap()});
+    let bytes = record_bytes(&body).unwrap();
+    c.execute("INSERT INTO records (seq, hash, body, sig) VALUES (?1, ?2, ?3, ?4)", rusqlite::params![seq + 1, Hash::of(&bytes).to_hex(), bytes, who.key.sign_hex(&bytes)]).unwrap();
+    seq + 1
+}
+
+fn entry_json(name: &str, old: &NameRow, new: &NameRow, action: &str) -> Value {
+    json!({"name": name, "old": old.hash, "new": new.hash, "action": action, "refs": new.refs, "locals": new.locals})
+}
+
+/// Review I1: `qal verify` binds a replayed merge's entries to the change set: a gated merge that
+/// rewrites a name of main the change set never touched (and drops the change set's own `mine`) is
+/// refused, although its gate holds and the record is signed.
+#[test]
+fn a_replayed_merge_is_bound_to_its_change_set() {
+    let (mut s, keys, _owner, arch, _imp, ver, rev) = seeded();
+    let (a, b) = two_from_one_base(&mut s, &arch);
+    write_in(&mut s, &keys, &arch, &b, "fn mine() -> Int = 1").unwrap();
+    write_in(&mut s, &keys, &arch, &a, "fn other() -> Int = 3").unwrap();
+    pass_gate(&mut s, &arch, &ver, &rev, &a);
+    merge_as(&mut s, &keys, &rev, &a).unwrap();
+    pass_gate(&mut s, &arch, &ver, &rev, &b);
+    ok_verify(&mut s);
+    let c = raw(&s);
+    let before = main_rows(&c).unwrap();
+    let (uses, base) = (before["uses"].clone(), before["base"].clone());
+    let seqs: Vec<i64> = ["approve", "verified"].iter().map(|v| c.query_row("SELECT record FROM reviews WHERE change = ?1 AND verdict = ?2", rusqlite::params![b, v], |r| r.get(0)).unwrap()).collect();
+    // `uses` now has `base`'s definition (a stored hash); `mine` never reaches main.
+    c.execute("UPDATE names SET hash = ?1, refs = ?2, local_names = ?3 WHERE name = 'uses'", rusqlite::params![base.hash, Value::from(base.refs.clone()).to_string(), Value::from(base.locals.clone()).to_string()]).unwrap();
+    let after = main_rows(&c).unwrap();
+    let root = root_of(&space_rows(&c, &crate::Space::Change(b.clone())).unwrap());
+    let args = json!({"change": b, "change_root": root, "kind": "replayed", "reviews": seqs, "entries": [entry_json("uses", &uses, &base, "replaced")]});
+    let seq = forge_at(&s, &rev, "merge", "main", args, &before, &after);
+    // The rest of a merge, so that only the entries are wrong: the change set ends as merged.
+    c.execute("UPDATE changes SET status = 'merged' WHERE id = ?1", [&b]).unwrap();
+    let own = space_rows(&c, &crate::Space::Change(b.clone())).unwrap();
+    forge_at(&s, &rev, "change", &b, json!({"id": b, "action": "merged", "fields": {"merge": seq}}), &own, &own);
+    let o = verified(&mut s, None);
+    assert_eq!((code(&o), o.error.as_ref().map(|e| e.seq)), ("E0924", Some(seq)), "{o:?}");
+}
+
+/// Review I2: a rebase record is held to what rebasing does. An implementer with an empty scope
+/// cannot replace the existing `spare` by another definition through a hand-signed rebase (the
+/// define of the same entry is E0924 already), and a rebase cannot leave out the conflict mark
+/// that the classification of §7.2 demands.
+#[test]
+fn a_rebase_record_is_bound_to_what_a_rebase_does() {
+    // The implementer's hand-signed rebase replaces `spare` by `base`'s definition.
+    let (mut s, _keys, _owner, _arch, imp, _ver, _rev) = seeded();
+    let ch = open(&mut s, &imp, "own", &[], None);
+    let c = raw(&s);
+    let main = main_rows(&c).unwrap();
+    let (spare, base) = (main["spare"].clone(), main["base"].clone());
+    let mut after = space_rows(&c, &crate::Space::Change(ch.clone())).unwrap();
+    after.insert("spare".into(), base.clone());
+    let last: i64 = c.query_row("SELECT max(seq) FROM records", [], |r| r.get(0)).unwrap();
+    c.execute(
+        "UPDATE change_names SET hash = ?3, refs = ?4, local_names = ?5, origin = 'relinked' WHERE change = ?1 AND name = ?2",
+        rusqlite::params![ch, "spare", base.hash, Value::from(base.refs.clone()).to_string(), Value::from(base.locals.clone()).to_string()],
+    )
+    .unwrap();
+    c.execute("UPDATE changes SET base_seq = ?2 WHERE id = ?1", rusqlite::params![ch, last]).unwrap();
+    let before = space_rows(&c, &crate::Space::Main).unwrap();
+    let before_c = main.clone();
+    let args = json!({"entries": [entry_json("spare", &spare, &base, "relinked")], "base_root": root_of(&before), "conflicts": []});
+    let seq = forge_at(&s, &imp, "rebase", &ch, args, &before_c, &after);
+    let o = verified(&mut s, None);
+    assert_eq!((code(&o), o.error.as_ref().map(|e| e.seq)), ("E0924", Some(seq)), "{o:?}");
+
+    // A rebase without the conflict mark of an edit/edit conflict.
+    let (mut s, keys, _owner, arch, _imp, ver, rev) = seeded();
+    let (a, b) = two_from_one_base(&mut s, &arch);
+    write_in(&mut s, &keys, &arch, &b, "fn mine() -> Int = 1").unwrap();
+    write_in(&mut s, &keys, &arch, &a, "fn spare() -> Int = 5").unwrap();
+    pass_gate(&mut s, &arch, &ver, &rev, &a);
+    merge_as(&mut s, &keys, &rev, &a).unwrap();
+    write_in(&mut s, &keys, &arch, &b, "fn spare() -> Int = 6").unwrap();
+    ok_verify(&mut s);
+    let c = raw(&s);
+    let (main, mine) = (space_rows(&c, &crate::Space::Main).unwrap(), space_rows(&c, &crate::Space::Change(b.clone())).unwrap());
+    let args = json!({"entries": [], "base_root": root_of(&main), "conflicts": []});
+    let seq = forge_at(&s, &arch, "rebase", &b, args, &mine, &mine);
     let o = verified(&mut s, None);
     assert_eq!((code(&o), o.error.as_ref().map(|e| e.seq)), ("E0924", Some(seq)), "{o:?}");
 }
