@@ -81,7 +81,9 @@ type QcMonoState = {
   instances: Map[Str, Int],
   new_fns: List[QcTFn],
   queue: List[Int],
-  failed: Option[QcDiag]
+  failed: Option[QcDiag],
+  # Rewritten instances by index into new_fns (avoids copying new_fns per instance)
+  done: Map[Str, QcTFn]
 }
 
 type QcMonoRewriteRes = {
@@ -157,7 +159,8 @@ fn qc_mono_instance(st: QcMonoState, caller: Str, g: Int, targs: List[QcType]) -
             instances: st.instances,
             new_fns: st.new_fns,
             queue: st.queue,
-            failed: Some(diag)
+            failed: Some(diag),
+            done: st.done
           },
           idx: 0
         }
@@ -193,7 +196,8 @@ fn qc_mono_instance(st: QcMonoState, caller: Str, g: Int, targs: List[QcType]) -
           instances: map_put(st.instances, key, idx),
           new_fns: push(st.new_fns, inst_fn),
           queue: push(st.queue, k),
-          failed: st.failed
+          failed: st.failed,
+          done: st.done
         } in
         QcMonoInstRes { st: next_st, idx: idx }
   }
@@ -352,21 +356,22 @@ fn qc_monomorphise_queue_loop(st: QcMonoState) -> QcMonoState =
             instances: st.instances,
             new_fns: st.new_fns,
             queue: rest_queue,
-            failed: st.failed
+            failed: st.failed,
+            done: st.done
           } in
           if k < len(st_popped.new_fns) then
             let f = list_at(st_popped.new_fns, k) in
             let fn_res = qc_mono_rewrite_fn(st_popped, f) in
-            let next_new_fns = qc_list_set(fn_res.st.new_fns, k, fn_res.f) in
             let st_next = QcMonoState {
               generics: fn_res.st.generics,
               sizes: fn_res.st.sizes,
               copied: fn_res.st.copied,
               base: fn_res.st.base,
               instances: fn_res.st.instances,
-              new_fns: next_new_fns,
+              new_fns: fn_res.st.new_fns,
               queue: fn_res.st.queue,
-              failed: fn_res.st.failed
+              failed: fn_res.st.failed,
+              done: map_put(fn_res.st.done, from_int(k), fn_res.f)
             } in
             qc_monomorphise_queue_loop(st_next)
           else
@@ -401,7 +406,8 @@ fn qc_monomorphise(tp: QcTProgram) -> QcMonoRes =
     instances: map_new(),
     new_fns: [],
     queue: [],
-    failed: None
+    failed: None,
+    done: map_new()
   } in
   # Rewrite monomorphic fns
   let fns_res = qc_mono_rewrite_fns_loop(init_st, fns, 0, AccEnd) in
@@ -414,12 +420,22 @@ fn qc_monomorphise(tp: QcTProgram) -> QcMonoRes =
     None =>
       let final_tp = QcTProgram {
         types: tp.types,
-        fns: fns_res.fns ++ st3.new_fns,
+        fns: fns_res.fns ++ qc_mono_done_loop(st3, 0, AccEnd),
         tests: tests_res.tests,
         generics: generics
       } in
       QcMonoRes { tp: final_tp, diag: None }
   }
+
+# The instances in index order, each in its rewritten form.
+fn qc_mono_done_loop(st: QcMonoState, k: Int, acc: Accum[QcTFn]) -> List[QcTFn] =
+  if k >= len(st.new_fns) then acc_list(acc)
+  else
+    let f = match map_get(st.done, from_int(k)) {
+      Some(rf) => rf,
+      None => list_at(st.new_fns, k)
+    } in
+    qc_mono_done_loop(st, k + 1, AccPush(acc, f))
 
 fn qc_mono_rewrite_fns_loop(st: QcMonoState, fns: List[QcTFn], idx: Int, acc: Accum[QcTFn]) -> QcMonoRewriteFnsRes =
   if idx >= len(fns) then QcMonoRewriteFnsRes { st: st, fns: acc_list(acc) }
@@ -770,6 +786,15 @@ fn qc_validate_tests_loop(tp: QcTProgram, tests: List[QcTTest], idx: Int) -> Opt
           None => qc_validate_tests_loop(tp, tests, idx + 1)
         }
     }
+
+fn qc_range_loop[T](xs: List[T], idx: Int, hi: Int, acc: Accum[T]) -> List[T] =
+  if idx >= hi || idx >= len(xs) then acc_list(acc)
+  else qc_range_loop(xs, idx + 1, hi, AccPush(acc, list_at(xs, idx)))
+
+# Validation of the functions (kind 0) or tests (kind 1) `lo..hi`: one work item of a split check.
+fn qc_mono_validate_range(tp: QcTProgram, kind: Int, lo: Int, hi: Int) -> Option[QcDiag] =
+  if kind == 0 then qc_validate_fns_loop(tp, qc_range_loop(tp.fns, lo, hi, AccEnd), 0)
+  else qc_validate_tests_loop(tp, qc_range_loop(tp.tests, lo, hi, AccEnd), 0)
 
 test qc_mono_test =
   let empty_tp = QcTProgram { types: [], fns: [], tests: [], generics: [] } in

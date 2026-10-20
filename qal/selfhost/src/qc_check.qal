@@ -1971,10 +1971,24 @@ fn qc_check_stored(p: QcProgram, is_new: fn(Str) -> Bool) -> Result[QcTProgram, 
       generics: check_res.gens
     } in
     if len(check_res.diags) > 0 then Err(check_res.diags)
-    else
+    else qc_check_finish(tp0)
+
+# Polymorphic recursion, monomorphisation and validation of a program whose definitions checked.
+fn qc_check_finish(tp0: QcTProgram) -> Result[QcTProgram, List[QcDiag]] =
+  match qc_check_mono(tp0) {
+    Err(ds) => Err(ds),
+    Ok(tp) =>
+      match qc_mono_validate(tp) {
+        Some(d) => Err([d]),
+        None => Ok(tp)
+      }
+  }
+
+# Polymorphic recursion and monomorphisation; validation is left to the caller.
+fn qc_check_mono(tp0: QcTProgram) -> Result[QcTProgram, List[QcDiag]] =
       let diags2 = match qc_mono_polymorphic_recursion(tp0) {
-        Some(d) => push(check_res.diags, d),
-        None => check_res.diags
+        Some(d) => [d],
+        None => []
       } in
       if len(diags2) > 0 then Err(diags2)
       else
@@ -1985,12 +1999,7 @@ fn qc_check_stored(p: QcProgram, is_new: fn(Str) -> Bool) -> Result[QcTProgram, 
         } in
         if len(diags3) > 0 then Err(diags3)
         else
-          let diags4 = match qc_mono_validate(mono_res.tp) {
-            Some(d) => push(diags3, d),
-            None => diags3
-          } in
-          if len(diags4) > 0 then Err(diags4)
-          else Ok(mono_res.tp)
+          Ok(mono_res.tp)
 
 fn qc_check_defs_loop(defs: List[QcDef], g: QcGlobals, diags: List[QcDiag], idx: Int, acc_fns: Accum[QcTFn], acc_gens: Accum[QcTFn], acc_tests: Accum[QcTTest]) -> QcCheckDefsRes =
   if idx >= len(defs) then QcCheckDefsRes { diags: diags, fns: acc_list(acc_fns), gens: acc_list(acc_gens), tests: acc_list(acc_tests) }
@@ -2022,6 +2031,36 @@ fn qc_check_defs_loop(defs: List[QcDef], g: QcGlobals, diags: List[QcDiag], idx:
 
 fn qc_check(p: QcProgram) -> Result[QcTProgram, List[QcDiag]] =
   qc_check_stored(p, fn(_: Str) => true)
+
+# Split checking (phase 5 §4.3): a large program is checked in work items of definition ranges,
+# each in its own execution, so the memory of one execution stays bounded. Only programs whose
+# globals have no diagnostics are split; any diagnostic falls back to the single pass, which
+# keeps diagnostics and their order identical.
+fn qc_check_globals_ok(p: QcProgram) -> Bool =
+  len(qc_build_globals(p, fn(_: Str) => true).diags) == 0
+
+fn qc_defs_range_loop(defs: List[QcDef], idx: Int, hi: Int, acc: Accum[QcDef]) -> List[QcDef] =
+  if idx >= hi || idx >= len(defs) then acc_list(acc)
+  else qc_defs_range_loop(defs, idx + 1, hi, AccPush(acc, list_at(defs, idx)))
+
+# The typed functions, generics and tests of the definitions `lo..hi`; None on any diagnostic.
+fn qc_check_range(p: QcProgram, lo: Int, hi: Int) -> Option[QcTProgram] =
+  let g_res = qc_build_globals(p, fn(_: Str) => true) in
+  if len(g_res.diags) > 0 then None
+  else
+    let r = qc_check_defs_loop(qc_defs_range_loop(p.defs, lo, hi, AccEnd), g_res.g, [], 0, AccEnd, AccEnd, AccEnd) in
+    if len(r.diags) > 0 then None
+    else Some(QcTProgram { types: if lo == 0 then g_res.g.tp.types else [], fns: r.fns, tests: r.tests, generics: r.gens })
+
+# Joins the fragments of `qc_check_range` in item order and monomorphises; validation follows in
+# work items (`qc_mono_validate_range`), so the whole equals `qc_check(p)`.
+# The first fragment carries the type definitions, so the join neither parses nor rebuilds globals.
+fn qc_check_join(frags: List[QcTProgram]) -> Result[QcTProgram, List[QcDiag]] =
+  let types = if len(frags) == 0 then [] else list_at(frags, 0).types in
+  let fns = fold(frags, AccEnd, fn(a: Accum[QcTFn], f: QcTProgram) => fold(f.fns, a, fn(b: Accum[QcTFn], x: QcTFn) => AccPush(b, x))) in
+  let gens = fold(frags, AccEnd, fn(a: Accum[QcTFn], f: QcTProgram) => fold(f.generics, a, fn(b: Accum[QcTFn], x: QcTFn) => AccPush(b, x))) in
+  let tests = fold(frags, AccEnd, fn(a: Accum[QcTTest], f: QcTProgram) => fold(f.tests, a, fn(b: Accum[QcTTest], x: QcTTest) => AccPush(b, x))) in
+  qc_check_mono(QcTProgram { types: types, fns: acc_list(fns), tests: acc_list(tests), generics: acc_list(gens) })
 
 test qc_check_test =
   match qc_parse("fn add(x: Int, y: Int) -> Int = x + y\ntest t = add(1, 2) == 3") {

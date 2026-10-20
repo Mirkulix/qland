@@ -216,6 +216,19 @@ fn run_items(items: &[Vec<u8>], jobs: usize, compiler: &dyn Invoke, round: usize
 pub struct Compiler {
     runner: Runner,
     slots: usize,
+    /// Calls in flight; callers beyond `slots` wait instead of exhausting the instance pool.
+    busy: (std::sync::Mutex<usize>, std::sync::Condvar),
+}
+
+/// One taken slot of a [`Compiler`]; dropping it frees the slot.
+struct Slot<'a>(&'a (std::sync::Mutex<usize>, std::sync::Condvar));
+
+impl Drop for Slot<'_> {
+    fn drop(&mut self) {
+        let mut n = self.0 .0.lock().unwrap_or_else(|e| e.into_inner());
+        *n = n.saturating_sub(1);
+        self.0 .1.notify_one();
+    }
 }
 
 impl Compiler {
@@ -236,7 +249,18 @@ impl Compiler {
             .with_fuel(limits.fuel)
             .with_timeout(limits.item_timeout)
             .with_exact_results(limits.max_round_bytes);
-        Ok(Compiler { runner, slots })
+        Ok(Compiler { runner, slots, busy: (std::sync::Mutex::new(0), std::sync::Condvar::new()) })
+    }
+
+    /// Waits until fewer than `slots` calls are in flight (several threads may share one compiler).
+    fn take_slot(&self) -> Slot<'_> {
+        let (lock, cv) = &self.busy;
+        let mut n = lock.lock().unwrap_or_else(|e| e.into_inner());
+        while *n >= self.slots {
+            n = cv.wait(n).unwrap_or_else(|e| e.into_inner());
+        }
+        *n += 1;
+        Slot(&self.busy)
     }
 
     /// One call in a fresh instance on the calling thread (which needs [`GUEST_THREAD_STACK`]),
@@ -254,6 +278,7 @@ impl Compiler {
 
 impl Invoke for Compiler {
     fn invoke(&self, req: &[u8], timeout: Duration) -> Result<Vec<u8>, String> {
+        let _slot = self.take_slot();
         let run = || self.call_here(req, timeout).0;
         let r = std::thread::scope(|scope| match std::thread::Builder::new().name("qal-compiler".into()).stack_size(GUEST_THREAD_STACK).spawn_scoped(scope, run) {
             Ok(h) => h.join().unwrap_or_else(|_| Err(RunError::new("trap", ENTRY, "the runtime panicked"))),

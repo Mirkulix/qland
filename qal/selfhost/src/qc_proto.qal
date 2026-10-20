@@ -273,6 +273,86 @@ fn qc_print_prog_defs_loop(defs: List[QcDef], idx: Int, acc: Accum[QcTextPair]) 
     qc_print_prog_defs_loop(defs, idx + 1, AccPush(acc, pair))
 
 # Entry point: qc_main
+# Split CHECK_FILE (phase 5 §4.3)
+# Programs with more definitions than this are checked in work items of this many definitions.
+fn qc_fork_min_defs() -> Int = 256
+
+fn qc_fork_chunk() -> Int = 128
+
+fn qc_res_fork(cont: Bytes, items: List[Bytes]) -> Bytes =
+  let head = bytes_from([81, 65, 76, 82, 1, 2]) in # "QALR", ver 1, status 2 (FORK)
+  let a0 = AccPush(AccPush(AccPush(AccPush(AccEnd, head), qc_varint_bytes(bytes_len(cont))), cont), qc_varint_bytes(len(items))) in
+  let a1 = fold(items, a0, fn(a: Accum[Bytes], it: Bytes) => AccPush(AccPush(a, qc_varint_bytes(bytes_len(it))), it)) in
+  bytes_join(acc_list(a1))
+
+fn qc_check_items(text: Bytes, n: Int, lo: Int, acc: Accum[Bytes]) -> List[Bytes] =
+  if lo >= n then acc_list(acc)
+  else
+    let hi = if lo + qc_fork_chunk() > n then n else lo + qc_fork_chunk() in
+    let head = bytes_from(acc_list(qc_varint_acc(bytes_len(text), AccPush(AccPush(AccPush(AccPush(AccPush(AccPush(AccEnd, 81), 65), 76), 81), 1), 9)))) in
+    let tail = bytes_from(acc_list(qc_varint_acc(hi, qc_varint_acc(lo, AccEnd)))) in
+    qc_check_items(text, n, hi, AccPush(acc, bytes_join([head, text, tail])))
+
+fn qc_validate_chunk() -> Int = 64
+
+fn qc_acc_of(xs: List[Bytes]) -> Accum[Bytes] =
+  fold(xs, AccEnd, fn(a: Accum[Bytes], x: Bytes) => AccPush(a, x))
+
+fn qc_validate_items(t_bytes: Bytes, kind: Int, n: Int, lo: Int, acc: Accum[Bytes]) -> List[Bytes] =
+  if lo >= n then acc_list(acc)
+  else
+    let hi = if lo + qc_validate_chunk() > n then n else lo + qc_validate_chunk() in
+    let head = bytes_from([81, 65, 76, 81, 1, 10]) in # "QALQ", ver 1, op 10 (VALIDATE_RANGE)
+    let item = bytes_join([head, qc_varint_bytes(bytes_len(t_bytes)), t_bytes, qc_varint_bytes(kind), qc_varint_bytes(lo), qc_varint_bytes(hi)]) in
+    qc_validate_items(t_bytes, kind, n, hi, AccPush(acc, item))
+
+# The first DIAGNOSTICS result in item order: the answer the single pass would give.
+fn qc_first_diag_result_loop(results: List[Bytes], idx: Int) -> Option[Bytes] =
+  if idx >= len(results) then None
+  else
+    let res = list_at(results, idx) in
+    if bytes_len(res) >= 6 && bytes_at(res, 5) == 1 then Some(res)
+    else qc_first_diag_result_loop(results, idx + 1)
+
+fn qc_read_results_loop(r: QcReader, count: Int, acc: Accum[Bytes]) -> List[Bytes] =
+  if count <= 0 then acc_list(acc)
+  else
+    let b_res = qc_reader_bytes(r) in
+    qc_read_results_loop(b_res.r, count - 1, AccPush(acc, b_res.val))
+
+# The QALT fragments of DONE results, or None if any work item did not finish cleanly.
+fn qc_decode_fragments_loop(results: List[Bytes], idx: Int, acc: Accum[QcTProgram]) -> Option[List[QcTProgram]] =
+  if idx >= len(results) then Some(acc_list(acc))
+  else
+    let res = list_at(results, idx) in
+    if bytes_len(res) < 6 || bytes_at(res, 5) != 0 then None
+    else
+      match qc_tform_decode(qc_reader_bytes(QcReader { bytes: res, pos: 6 }).val) {
+        Ok(frag) => qc_decode_fragments_loop(results, idx + 1, AccPush(acc, frag)),
+        Err(_) => None
+      }
+
+fn qc_serve_checked(res: Result[QcTProgram, List[QcDiag]], args: QcCheckFileArgs) -> Bytes =
+  match res {
+      Err(ds) => qc_res_diagnostics(ds),
+      Ok(tp) =>
+        match args.entry {
+          None =>
+            let t_bytes = qc_tform_encode(tp) in
+            let a0 = AccPush(AccEnd, 0) in
+            let a1 = qc_raw_bytes_acc(t_bytes, qc_varint_acc(bytes_len(t_bytes), a0)) in
+            qc_res_done(bytes_from(acc_list(a1))),
+          Some(ent) =>
+            match qc_compile_with(tp, ent, args.pages) {
+              Err(e) => qc_res_internal(e),
+              Ok(cm) =>
+                let m_bytes = qc_encode_compiled_module(cm) in
+                let a0 = AccPush(AccEnd, 1) in
+                qc_res_done(bytes_from(acc_list(a0)) ++ m_bytes)
+            }
+        }
+    }
+
 fn qc_main(request: Bytes) -> Bytes =
   if bytes_len(request) < 6 then qc_res_internal("request too short")
   else
@@ -364,24 +444,76 @@ fn qc_main(request: Bytes) -> Bytes =
         match qc_parse(text_res.val) {
           Err(d) => qc_res_diagnostics([d]),
           Ok(p) =>
-            match qc_check(p) {
-              Err(ds) => qc_res_diagnostics(ds),
-              Ok(tp) =>
-                match args.entry {
-                  None =>
-                    let t_bytes = qc_tform_encode(tp) in
-                    let a0 = AccPush(AccEnd, 0) in
-                    let a1 = qc_raw_bytes_acc(t_bytes, qc_varint_acc(bytes_len(t_bytes), a0)) in
-                    qc_res_done(bytes_from(acc_list(a1))),
-                  Some(ent) =>
-                    match qc_compile_with(tp, ent, args.pages) {
-                      Err(e) => qc_res_internal(e),
-                      Ok(cm) =>
-                        let m_bytes = qc_encode_compiled_module(cm) in
-                        let a0 = AccPush(AccEnd, 1) in
-                        qc_res_done(bytes_from(acc_list(a0)) ++ m_bytes)
-                    }
-                }
+            if len(p.defs) > qc_fork_min_defs() && qc_check_globals_ok(p) then
+              qc_res_fork(request, qc_check_items(qc_reader_bytes(r0).val, len(p.defs), 0, AccEnd))
+            else qc_serve_checked(qc_check(p), args)
+        }
+      else if op == 7 then
+        # JOIN of a split CHECK_FILE: the continuation is the original request
+        let cont_res = qc_reader_bytes(r0) in
+        let n_res = qc_reader_varint(cont_res.r) in
+        let results = qc_read_results_loop(n_res.r, n_res.val, AccEnd) in
+        let orig = cont_res.val in
+        if bytes_len(orig) >= 4 && bytes_slice(orig, 0, 4) == to_bytes("QALV") then
+          # second round: validation results
+          match qc_first_diag_result_loop(results, 0) {
+            Some(res) => res,
+            None =>
+              let req_res = qc_reader_bytes(QcReader { bytes: orig, pos: 4 }) in
+              let t_res = qc_reader_bytes(req_res.r) in
+              let text_res = qc_reader_str(QcReader { bytes: req_res.val, pos: 6 }) in
+              let args = qc_read_check_file_args(text_res.r) in
+              match qc_tform_decode(t_res.val) {
+                Ok(tp) => qc_serve_checked(Ok(tp), args),
+                Err(e) => qc_res_internal(e)
+              }
+          }
+        else if bytes_len(orig) < 6 || bytes_at(orig, 5) != 6 then qc_res_internal("JOIN without a CHECK_FILE continuation")
+        else
+          let o0 = QcReader { bytes: orig, pos: 6 } in
+          let text_res = qc_reader_str(o0) in
+          let args = qc_read_check_file_args(text_res.r) in
+          match qc_decode_fragments_loop(results, 0, AccEnd) {
+            Some(frags) =>
+              match qc_check_join(frags) {
+                Err(ds) => qc_res_diagnostics(ds),
+                Ok(tp) =>
+                  let t_bytes = qc_tform_encode(tp) in
+                  let cont2 = bytes_join([to_bytes("QALV"), qc_varint_bytes(bytes_len(orig)), orig, qc_varint_bytes(bytes_len(t_bytes)), t_bytes]) in
+                  let fn_items = qc_validate_items(t_bytes, 0, len(tp.fns), 0, AccEnd) in
+                  qc_res_fork(cont2, qc_validate_items(t_bytes, 1, len(tp.tests), 0, qc_acc_of(fn_items)))
+              },
+            None =>
+              match qc_parse(text_res.val) {
+                Err(d) => qc_res_diagnostics([d]),
+                Ok(p) => qc_serve_checked(qc_check(p), args)
+              }
+          }
+      else if op == 10 then
+        # VALIDATE_RANGE: one validation work item of a split CHECK_FILE
+        let t_res = qc_reader_bytes(r0) in
+        let k_res = qc_reader_varint(t_res.r) in
+        let lo_res = qc_reader_varint(k_res.r) in
+        let hi_res = qc_reader_varint(lo_res.r) in
+        match qc_tform_decode(t_res.val) {
+          Err(e) => qc_res_internal(e),
+          Ok(tp) =>
+            match qc_mono_validate_range(tp, k_res.val, lo_res.val, hi_res.val) {
+              Some(d) => qc_res_diagnostics([d]),
+              None => qc_res_done(bytes_from([]))
+            }
+        }
+      else if op == 9 then
+        # CHECK_RANGE: one work item of a split CHECK_FILE
+        let text_res = qc_reader_str(r0) in
+        let lo_res = qc_reader_varint(text_res.r) in
+        let hi_res = qc_reader_varint(lo_res.r) in
+        match qc_parse(text_res.val) {
+          Err(d) => qc_res_diagnostics([d]),
+          Ok(p) =>
+            match qc_check_range(p, lo_res.val, hi_res.val) {
+              Some(frag) => qc_res_done(qc_tform_encode(frag)),
+              None => qc_res_diagnostics([])
             }
         }
       else if op == 2 then
