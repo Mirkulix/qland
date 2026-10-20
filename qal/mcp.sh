@@ -8,11 +8,16 @@
 # Build output goes to stderr: stdout carries only MCP messages.
 set -e
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-if ! cargo build --release --quiet --manifest-path "$here/Cargo.toml" --target-dir "$here/target" -p qal-cli >&2; then
+if [ -x "$here/../bin/qal" ]; then
+    qal="$here/../bin/qal"
+elif [ -x "$here/target/release/qal" ]; then
+    qal="$here/target/release/qal"
+elif ! cargo build --release --quiet --manifest-path "$here/Cargo.toml" --target-dir "$here/target" -p qal-cli >&2; then
     echo "qal mcp: build failed (see the cargo output above); is a Rust toolchain installed?" >&2
     exit 1
+else
+    qal="$here/target/release/qal"
 fi
-qal="$here/target/release/qal"
 case "${1:-}" in
     "") root="${QAL_ROOT:-$PWD}" ;;
     std)
