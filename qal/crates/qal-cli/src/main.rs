@@ -132,15 +132,22 @@ fn extract_compiler_arg(args: &[String]) -> Result<(Option<String>, Vec<String>)
 }
 
 fn main() -> ExitCode {
-    if !qal_compiler::has_qal_driver() {
-        let _ = qal_run::selfhost::init_seed_backend(qal_run::selfhost::default_jobs());
-    }
     // Arguments that are not valid UTF-8 are converted lossily instead of panicking.
     let raw_args: Vec<String> = std::env::args_os().skip(1).map(|a| a.to_string_lossy().into_owned()).collect();
     let (compiler_opt, args) = match extract_compiler_arg(&raw_args) {
         Ok(res) => res,
         Err(e) => return bad_usage(&e),
     };
+    // The seed compiler is instantiated only when the QAL backend can run: always without the
+    // reference compiler, otherwise only when `--compiler` or QAL_COMPILER asks for qal or both
+    // (instantiating it costs seconds, which every other command must not pay).
+    let wants_qal = |c: &str| c == "qal" || c == "both";
+    let needs_seed = !cfg!(feature = "reference")
+        || compiler_opt.as_deref().is_some_and(wants_qal)
+        || std::env::var("QAL_COMPILER").is_ok_and(|c| wants_qal(&c));
+    if needs_seed && !qal_compiler::has_qal_driver() {
+        let _ = qal_run::selfhost::init_seed_backend(qal_run::selfhost::default_jobs());
+    }
     #[cfg(not(feature = "reference"))]
     if let Some(ref c) = compiler_opt {
         if let Err(e) = qal_compiler::set_backend(c) {
