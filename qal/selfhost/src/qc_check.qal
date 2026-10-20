@@ -121,7 +121,6 @@ type QcDiagVariantsRes = { diags: List[QcDiag], vars: List[QcVariantEntry] }
 type QcDiagFieldsRes = { diags: List[QcDiag], fields: List[QcFieldType] }
 type QcDiagVariantsRes2 = { diags: List[QcDiag], vars: List[QcVariant] }
 type QcCheckDefsRes = { diags: List[QcDiag], fns: List[QcTFn], gens: List[QcTFn], tests: List[QcTTest] }
-type QcTExprRes = { cx: QcCx, expr: QcTExpr }
 type QcGlobalsFoldAcc = { g: QcGlobals, idx: Int }
 type QcZonkBuiltinRes = { cx: QcCx, b: QcBuiltin }
 type QcResolvedBodyRes = { diags: List[QcDiag], body: QcTypeBody }
@@ -302,12 +301,7 @@ fn qc_cx_branch(cx: QcCx, e: QcExpr, acc: QcType, path: Str) -> QcBranchRes =
           QcBranchRes { cx: cx_fb, expr: t, ty: acc }
     }
 
-type QcWrapRes = {
-  cx: QcCx,
-  ty: QcType
-}
-
-fn qc_cx_wrap_at(cx: QcCx, path: Str, t: QcType) -> QcWrapRes =
+fn qc_cx_wrap_at(cx: QcCx, path: Str, t: QcType) -> QcCxTypeRes =
   let fresh_res = qc_subst_fresh(cx.sub) in
   let v = fresh_res.ty in
   let un_res = qc_subst_unify(fresh_res.subst, v, t) in
@@ -326,9 +320,9 @@ fn qc_cx_wrap_at(cx: QcCx, path: Str, t: QcType) -> QcWrapRes =
     deferred: cx.deferred
   } in
   if !un_res.ok then
-    QcWrapRes { cx: qc_cx_mismatch(next_cx, path, v, t), ty: v }
+    QcCxTypeRes { cx: qc_cx_mismatch(next_cx, path, v, t), ty: v }
   else
-    QcWrapRes { cx: next_cx, ty: v }
+    QcCxTypeRes { cx: next_cx, ty: v }
 
 fn qc_cx_lambda_against(cx: QcCx, params: List[QcLambdaParam], body: QcExpr, want: QcType, path: Str) -> QcInferRes =
   match qc_subst_resolve(cx.sub, want) {
@@ -407,11 +401,11 @@ fn qc_cx_fresh_targs_loop(cx: QcCx, count: Int, acc: Accum[QcType]) -> QcCxTypes
     let next_cx = QcCx { g: cx.g, def: cx.def, effects: cx.effects, tps: cx.tps, frames: cx.frames, ret: cx.ret, diags: cx.diags, start: cx.start, sub: fresh_res.subst, locals: cx.locals, scope: cx.scope, deferred: cx.deferred } in
     qc_cx_fresh_targs_loop(next_cx, count - 1, AccPush(acc, fresh_res.ty))
 
-fn qc_cx_wrap_type(cx: QcCx, t: QcType) -> QcWrapRes =
+fn qc_cx_wrap_type(cx: QcCx, t: QcType) -> QcCxTypeRes =
   let fresh_res = qc_subst_fresh(cx.sub) in
   let un_res = qc_subst_unify(fresh_res.subst, fresh_res.ty, t) in
   let next_cx = QcCx { g: cx.g, def: cx.def, effects: cx.effects, tps: cx.tps, frames: cx.frames, ret: cx.ret, diags: cx.diags, start: cx.start, sub: un_res.subst, locals: cx.locals, scope: cx.scope, deferred: cx.deferred } in
-  QcWrapRes { cx: next_cx, ty: fresh_res.ty }
+  QcCxTypeRes { cx: next_cx, ty: fresh_res.ty }
 
 fn qc_cx_wrap_types_loop(cx: QcCx, params: List[QcType], tparams: List[Str], targs: List[QcType], idx: Int, acc: Accum[QcType]) -> QcCxTypesRes =
   if idx >= len(params) then QcCxTypesRes { cx: cx, tys: acc_list(acc) }
@@ -815,7 +809,7 @@ fn qc_cx_builtin_args_loop(cx: QcCx, callee: Str, args: List[QcExpr], params: Li
         qc_cx_builtin_args_loop(exp_res.cx, callee, args, params, path, idx + 1, AccPush(acc, exp_res.expr))
     }
 
-fn qc_cx_fn_arg(cx: QcCx, callee: Str, arg: QcExpr, params: List[QcType], ret: QcType, path: Str) -> QcTExprRes =
+fn qc_cx_fn_arg(cx: QcCx, callee: Str, arg: QcExpr, params: List[QcType], ret: QcType, path: Str) -> QcInferRes =
   let t_res = match arg {
     QcELambda(ps, body) if len(ps) == len(params) => qc_cx_lambda(cx, ps, body, path, Some(params)),
     _ => qc_cx_infer(cx, arg, path)
@@ -829,7 +823,7 @@ fn qc_cx_fn_arg(cx: QcCx, callee: Str, arg: QcExpr, params: List[QcType], ret: Q
   let want = QcTFn(params, ret, effects) in
   let un_res = qc_cx_unify_at(cur_cx, path, want, t.ty) in
   let cx_eff = if un_res.ok then qc_cx_effect_check(un_res.cx, path, callee, effects) else un_res.cx in
-  QcTExprRes { cx: cx_eff, expr: t }
+  QcInferRes { cx: cx_eff, expr: t }
 
 fn qc_cx_len(cx: QcCx, args: List[QcExpr], path: Str) -> QcInferRes =
   if len(args) != 1 then
@@ -1255,16 +1249,16 @@ fn qc_cx_zonk_list_loop(cx: QcCx, exprs: List[QcTExpr], idx: Int, acc: Accum[QcT
     let z_res = qc_cx_zonk(cx, list_at(exprs, idx)) in
     qc_cx_zonk_list_loop(z_res.cx, exprs, idx + 1, AccPush(acc, z_res.expr))
 
-fn qc_cx_zonk(cx: QcCx, e: QcTExpr) -> QcTExprRes =
+fn qc_cx_zonk(cx: QcCx, e: QcTExpr) -> QcInferRes =
   let fin_ty = qc_subst_finish(cx.sub, e.ty) in
   match e.kind {
     QcTKFnRefG(idx, targs) =>
       let fin_targs = map(targs, fn(t: QcType) => qc_subst_finish(cx.sub, t)) in
-      QcTExprRes { cx: cx, expr: QcTExpr { ty: fin_ty, kind: QcTKFnRefG(idx, fin_targs) } },
+      QcInferRes { cx: cx, expr: QcTExpr { ty: fin_ty, kind: QcTKFnRefG(idx, fin_targs) } },
     QcTKCallG(idx, targs, xs) =>
       let fin_targs = map(targs, fn(t: QcType) => qc_subst_finish(cx.sub, t)) in
       let xs_res = qc_cx_zonk_list_loop(cx, xs, 0, AccEnd) in
-      QcTExprRes { cx: xs_res.cx, expr: QcTExpr { ty: fin_ty, kind: QcTKCallG(idx, fin_targs, xs_res.exprs) } },
+      QcInferRes { cx: xs_res.cx, expr: QcTExpr { ty: fin_ty, kind: QcTKCallG(idx, fin_targs, xs_res.exprs) } },
     QcTKLambda(l) =>
       let b_res = qc_cx_zonk(cx, l.body) in
       let init_bound = fold(l.params, map_new(), fn(m: Map[Int, Bool], p: Int) => map_put(m, p, true)) in
@@ -1272,45 +1266,45 @@ fn qc_cx_zonk(cx: QcCx, e: QcTExpr) -> QcTExprRes =
       let used = acc_list(walk_res.used) in
       let captures = filter(used, fn(id: Int) => !map_has(walk_res.bound, id)) in
       let final_lambda = QcTLambda { params: l.params, captures: qc_sort_dedup_ints(captures), body: b_res.expr } in
-      QcTExprRes { cx: b_res.cx, expr: QcTExpr { ty: fin_ty, kind: QcTKLambda(final_lambda) } },
+      QcInferRes { cx: b_res.cx, expr: QcTExpr { ty: fin_ty, kind: QcTKLambda(final_lambda) } },
     QcTKUn(op, x, path) =>
       let x_res = qc_cx_zonk(cx, x) in
-      QcTExprRes { cx: x_res.cx, expr: QcTExpr { ty: fin_ty, kind: QcTKUn(op, x_res.expr, path) } },
+      QcInferRes { cx: x_res.cx, expr: QcTExpr { ty: fin_ty, kind: QcTKUn(op, x_res.expr, path) } },
     QcTKField(x, i) =>
       let x_res = qc_cx_zonk(cx, x) in
-      QcTExprRes { cx: x_res.cx, expr: QcTExpr { ty: fin_ty, kind: QcTKField(x_res.expr, i) } },
+      QcInferRes { cx: x_res.cx, expr: QcTExpr { ty: fin_ty, kind: QcTKField(x_res.expr, i) } },
     QcTKBin(op, l, r, path) =>
       let l_res = qc_cx_zonk(cx, l) in
       let r_res = qc_cx_zonk(l_res.cx, r) in
-      QcTExprRes { cx: r_res.cx, expr: QcTExpr { ty: fin_ty, kind: QcTKBin(op, l_res.expr, r_res.expr, path) } },
+      QcInferRes { cx: r_res.cx, expr: QcTExpr { ty: fin_ty, kind: QcTKBin(op, l_res.expr, r_res.expr, path) } },
     QcTKLet(id, l, r) =>
       let l_res = qc_cx_zonk(cx, l) in
       let r_res = qc_cx_zonk(l_res.cx, r) in
-      QcTExprRes { cx: r_res.cx, expr: QcTExpr { ty: fin_ty, kind: QcTKLet(id, l_res.expr, r_res.expr) } },
+      QcInferRes { cx: r_res.cx, expr: QcTExpr { ty: fin_ty, kind: QcTKLet(id, l_res.expr, r_res.expr) } },
     QcTKIf(c, t, f) =>
       let c_res = qc_cx_zonk(cx, c) in
       let t_res = qc_cx_zonk(c_res.cx, t) in
       let f_res = qc_cx_zonk(t_res.cx, f) in
-      QcTExprRes { cx: f_res.cx, expr: QcTExpr { ty: fin_ty, kind: QcTKIf(c_res.expr, t_res.expr, f_res.expr) } },
+      QcInferRes { cx: f_res.cx, expr: QcTExpr { ty: fin_ty, kind: QcTKIf(c_res.expr, t_res.expr, f_res.expr) } },
     QcTKCall(i, xs) =>
       let xs_res = qc_cx_zonk_list_loop(cx, xs, 0, AccEnd) in
-      QcTExprRes { cx: xs_res.cx, expr: QcTExpr { ty: fin_ty, kind: QcTKCall(i, xs_res.exprs) } },
+      QcInferRes { cx: xs_res.cx, expr: QcTExpr { ty: fin_ty, kind: QcTKCall(i, xs_res.exprs) } },
     QcTKList(xs) =>
       let xs_res = qc_cx_zonk_list_loop(cx, xs, 0, AccEnd) in
-      QcTExprRes { cx: xs_res.cx, expr: QcTExpr { ty: fin_ty, kind: QcTKList(xs_res.exprs) } },
+      QcInferRes { cx: xs_res.cx, expr: QcTExpr { ty: fin_ty, kind: QcTKList(xs_res.exprs) } },
     QcTKVariant(tag, xs) =>
       let xs_res = qc_cx_zonk_list_loop(cx, xs, 0, AccEnd) in
-      QcTExprRes { cx: xs_res.cx, expr: QcTExpr { ty: fin_ty, kind: QcTKVariant(tag, xs_res.exprs) } },
+      QcInferRes { cx: xs_res.cx, expr: QcTExpr { ty: fin_ty, kind: QcTKVariant(tag, xs_res.exprs) } },
     QcTKSeq(xs) =>
       let xs_res = qc_cx_zonk_list_loop(cx, xs, 0, AccEnd) in
-      QcTExprRes { cx: xs_res.cx, expr: QcTExpr { ty: fin_ty, kind: QcTKSeq(xs_res.exprs) } },
+      QcInferRes { cx: xs_res.cx, expr: QcTExpr { ty: fin_ty, kind: QcTKSeq(xs_res.exprs) } },
     QcTKCallIndirect(f, xs) =>
       let f_res = qc_cx_zonk(cx, f) in
       let xs_res = qc_cx_zonk_list_loop(f_res.cx, xs, 0, AccEnd) in
-      QcTExprRes { cx: xs_res.cx, expr: QcTExpr { ty: fin_ty, kind: QcTKCallIndirect(f_res.expr, xs_res.exprs) } },
+      QcInferRes { cx: xs_res.cx, expr: QcTExpr { ty: fin_ty, kind: QcTKCallIndirect(f_res.expr, xs_res.exprs) } },
     QcTKRecord(fs) =>
       let fs_res = qc_cx_zonk_record_fields_loop(cx, fs, 0, AccEnd) in
-      QcTExprRes { cx: fs_res.cx, expr: QcTExpr { ty: fin_ty, kind: QcTKRecord(fs_res.fields) } },
+      QcInferRes { cx: fs_res.cx, expr: QcTExpr { ty: fin_ty, kind: QcTKRecord(fs_res.fields) } },
     QcTKBuiltin(b, xs, path) =>
       let xs_res = qc_cx_zonk_list_loop(cx, xs, 0, AccEnd) in
       let fin_res =
@@ -1325,12 +1319,12 @@ fn qc_cx_zonk(cx: QcCx, e: QcTExpr) -> QcTExprRes =
               QcZonkBuiltinRes { cx: cx_err, b: b }
           }
         else QcZonkBuiltinRes { cx: xs_res.cx, b: b } in
-      QcTExprRes { cx: fin_res.cx, expr: QcTExpr { ty: fin_ty, kind: QcTKBuiltin(fin_res.b, xs_res.exprs, path) } },
+      QcInferRes { cx: fin_res.cx, expr: QcTExpr { ty: fin_ty, kind: QcTKBuiltin(fin_res.b, xs_res.exprs, path) } },
     QcTKMatch(s, arms) =>
       let s_res = qc_cx_zonk(cx, s) in
       let arms_res = qc_cx_zonk_arms_loop(s_res.cx, arms, 0, AccEnd) in
-      QcTExprRes { cx: arms_res.cx, expr: QcTExpr { ty: fin_ty, kind: QcTKMatch(s_res.expr, arms_res.arms) } },
-    _ => QcTExprRes { cx: cx, expr: QcTExpr { ty: fin_ty, kind: e.kind } }
+      QcInferRes { cx: arms_res.cx, expr: QcTExpr { ty: fin_ty, kind: QcTKMatch(s_res.expr, arms_res.arms) } },
+    _ => QcInferRes { cx: cx, expr: QcTExpr { ty: fin_ty, kind: e.kind } }
   }
 
 fn qc_cx_zonk_record_fields_loop(cx: QcCx, fs: List[QcTField], idx: Int, acc: Accum[QcTField]) -> QcCxFieldsRes =
@@ -1566,14 +1560,14 @@ fn qc_check_main_sig(f: QcFnDef, ret_ty: QcType, diags: List[QcDiag]) -> List[Qc
     push(diags, qc_diag_hint(qc_diag_type_mismatch(f.name, "tparams", "no type parameters", "[" ++ join(f.tparams, ", ") ++ "]"), entry_hint))
   else diags in
   let d2 = if len(f.params) != 1 || (list_at(f.params, 0)).ty != QcTList(QcTStr) then
-    let found = join(map(f.params, fn(p: QcParam) => qc_print_type(p.ty)), ", ") in
+    let found = join(map(f.params, fn(p: QcFieldType) => qc_print_type(p.ty)), ", ") in
     push(d1, qc_diag_hint(qc_diag_type_mismatch(f.name, "params", "(List[Str])", "(" ++ found ++ ")"), entry_hint))
   else d1 in
   if f.ret != QcTInt then
     push(d2, qc_diag_hint(qc_diag_type_mismatch(f.name, "ret", "Int", qc_print_type(f.ret)), entry_hint))
   else d2
 
-fn qc_check_fn_params_loop(g: QcGlobals, f: QcFnDef, params: List[QcParam], diags: List[QcDiag], idx: Int, acc: Accum[QcType], seen: List[Str]) -> QcDiagTypesRes =
+fn qc_check_fn_params_loop(g: QcGlobals, f: QcFnDef, params: List[QcFieldType], diags: List[QcDiag], idx: Int, acc: Accum[QcType], seen: List[Str]) -> QcDiagTypesRes =
   if idx >= len(params) then QcDiagTypesRes { diags: diags, tys: acc_list(acc) }
   else
     let p = list_at(params, idx) in
@@ -1621,7 +1615,7 @@ fn qc_check_fn_effects_loop(def_name: Str, effs: List[Str], diags: List[QcDiag],
     else diags in
     qc_check_fn_effects_loop(def_name, effs, next_diags, idx + 1)
 
-fn qc_cx_bind_fn_params_loop(cx: QcCx, params: List[QcParam], ptypes: List[QcType], idx: Int) -> QcCx =
+fn qc_cx_bind_fn_params_loop(cx: QcCx, params: List[QcFieldType], ptypes: List[QcType], idx: Int) -> QcCx =
   if idx >= len(params) || idx >= len(ptypes) then cx
   else
     let bind_res = qc_cx_bind(cx, (list_at(params, idx)).name, list_at(ptypes, idx)) in
@@ -1644,8 +1638,8 @@ fn qc_irregular_recursion(tp: QcTProgram, diags: List[QcDiag]) -> List[QcDiag] =
         QcBodyRecord(fs) => map(fs, fn(f: QcFieldType) => f.ty),
         QcBodyEnum(vs) => fold(vs, [], fn(acc: List[QcType], v: QcVariant) => acc ++ v.fields)
       } in
-      let refs = fold(f_types, AccEnd, fn(st: Accum[QcTypeRef], t: QcType) => qc_collect_type_refs(t, st)) in
-      map(filter(acc_list(refs), fn(r: QcTypeRef) => qc_tp_has_type(tp, r.name)), fn(r: QcTypeRef) =>
+      let refs = fold(f_types, AccEnd, fn(st: Accum[QcFieldType], t: QcType) => qc_collect_type_refs(t, st)) in
+      map(filter(acc_list(refs), fn(r: QcFieldType) => qc_tp_has_type(tp, r.name)), fn(r: QcFieldType) =>
         QcTypeEdge { target: qc_tp_type_idx(tp, r.name), ty: r.ty }
       )
     ) in
@@ -1664,28 +1658,23 @@ fn qc_irregular_recursion(tp: QcTProgram, diags: List[QcDiag]) -> List[QcDiag] =
     let comp_map = qc_build_comp_map_loop(acc_list(tarjan_res.sccs), 0, map_new()) in
     qc_check_irreg_loop(tp.types, edges, comp_map, diags, 0)
 
-type QcTypeRef = {
-  name: Str,
-  ty: QcType
-}
-
 type QcTypeEdge = {
   target: Int,
   ty: QcType
 }
 
-fn qc_collect_type_refs(t: QcType, acc: Accum[QcTypeRef]) -> Accum[QcTypeRef] =
+fn qc_collect_type_refs(t: QcType, acc: Accum[QcFieldType]) -> Accum[QcFieldType] =
   match t {
-    QcTNamed(n) => AccPush(acc, QcTypeRef { name: n, ty: t }),
+    QcTNamed(n) => AccPush(acc, QcFieldType { name: n, ty: t }),
     QcTApp(n, args) =>
-      let st1 = AccPush(acc, QcTypeRef { name: n, ty: t }) in
-      fold(args, st1, fn(st: Accum[QcTypeRef], a: QcType) => qc_collect_type_refs(a, st)),
+      let st1 = AccPush(acc, QcFieldType { name: n, ty: t }) in
+      fold(args, st1, fn(st: Accum[QcFieldType], a: QcType) => qc_collect_type_refs(a, st)),
     QcTList(x) => qc_collect_type_refs(x, acc),
     QcTOption(x) => qc_collect_type_refs(x, acc),
     QcTResult(a, b) => qc_collect_type_refs(b, qc_collect_type_refs(a, acc)),
     QcTMap(a, b) => qc_collect_type_refs(b, qc_collect_type_refs(a, acc)),
     QcTFn(ps, r, _) =>
-      let st1 = fold(ps, acc, fn(st: Accum[QcTypeRef], p: QcType) => qc_collect_type_refs(p, st)) in
+      let st1 = fold(ps, acc, fn(st: Accum[QcFieldType], p: QcType) => qc_collect_type_refs(p, st)) in
       qc_collect_type_refs(r, st1),
     _ => acc
   }
@@ -1756,12 +1745,7 @@ fn qc_legacy_prelude_names(p: QcProgram, is_new: fn(Str) -> Bool) -> List[Str] =
     }
   )
 
-type QcGlobalsRes = {
-  g: QcGlobals,
-  diags: List[QcDiag]
-}
-
-fn qc_build_globals(p: QcProgram, is_new: fn(Str) -> Bool) -> QcGlobalsRes =
+fn qc_build_globals(p: QcProgram, is_new: fn(Str) -> Bool) -> QcGlobalsDiagsRes =
   let legacy = len(qc_legacy_prelude_names(p, is_new)) > 0 in
   let p_types = if legacy then [] else qc_prelude_types() in
   let g0_acc = fold(p_types, QcGlobalsFoldAcc {
@@ -1796,7 +1780,7 @@ fn qc_build_globals(p: QcProgram, is_new: fn(Str) -> Bool) -> QcGlobalsRes =
   let diags3 = qc_irregular_recursion(res2.g.tp, res2.diags) in
   # Collect functions and tests
   let res4 = qc_collect_fn_signatures_loop(p.defs, res2.g, diags3, 0, 0, 0, []) in
-  QcGlobalsRes { g: res4.g, diags: res4.diags }
+  QcGlobalsDiagsRes { g: res4.g, diags: res4.diags }
 
 fn qc_collect_user_types_loop(defs: List[QcDef], g: QcGlobals, diags: List[QcDiag], legacy: Bool, is_new: fn(Str) -> Bool, idx: Int) -> QcGlobalsDiagsRes =
   if idx >= len(defs) then QcGlobalsDiagsRes { g: g, diags: diags }
@@ -1934,7 +1918,7 @@ fn qc_collect_fn_signatures_loop(defs: List[QcDef], g: QcGlobals, diags: List[Qc
         else diags in
         let is_gen = len(f.tparams) > 0 in
         let cur_slot = if is_gen then gen_idx else fn_idx in
-        let ptypes = map(f.params, fn(p: QcParam) =>
+        let ptypes = map(f.params, fn(p: QcFieldType) =>
           match (qc_resolve_type(g, p.ty, f.tparams, f.name, "", [])).ty { Some(t) => t, None => QcTUnit }
         ) in
         let ret_ty = match (qc_resolve_type(g, f.ret, f.tparams, f.name, "", [])).ty { Some(t) => t, None => QcTUnit } in

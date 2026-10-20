@@ -87,15 +87,10 @@ type QcExpr =
   | QcESeq(List[QcExpr])
   | QcELambda(List[QcLambdaParam], QcExpr)
 
-type QcParam = {
-  name: Str,
-  ty: QcType
-}
-
 type QcFnDef = {
   name: Str,
   tparams: List[Str],
-  params: List[QcParam],
+  params: List[QcFieldType],
   ret: QcType,
   effects: List[Str],
   reqs: List[QcExpr],

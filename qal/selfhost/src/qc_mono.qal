@@ -126,12 +126,12 @@ fn qc_mono_expr_nodes(e: QcTExpr) -> Int =
     _ => 0
   })
 
-fn qc_mono_inst_params_loop(params: List[QcParam], locals: List[QcType], tps: List[Str], targs: List[QcType], idx: Int, acc: Accum[QcParam]) -> List[QcParam] =
+fn qc_mono_inst_params_loop(params: List[QcFieldType], locals: List[QcType], tps: List[Str], targs: List[QcType], idx: Int, acc: Accum[QcFieldType]) -> List[QcFieldType] =
   if idx >= len(params) then acc_list(acc)
   else
     let p = list_at(params, idx) in
     let loc_ty = if idx < len(locals) then list_at(locals, idx) else p.ty in
-    let next_p = QcParam { name: p.name, ty: qc_type_instantiate(loc_ty, tps, targs) } in
+    let next_p = QcFieldType { name: p.name, ty: qc_type_instantiate(loc_ty, tps, targs) } in
     qc_mono_inst_params_loop(params, locals, tps, targs, idx + 1, AccPush(acc, next_p))
 
 fn qc_mono_instance(st: QcMonoState, caller: Str, g: Int, targs: List[QcType]) -> QcMonoInstRes =

@@ -1053,7 +1053,7 @@ fn qc_parse_fn_def(s: QcPState) -> QcPRes[QcDef] =
       }
   }
 
-fn qc_parse_fn_params(s: QcPState, acc: Accum[QcParam]) -> QcPRes[List[QcParam]] =
+fn qc_parse_fn_params(s: QcPState, acc: Accum[QcFieldType]) -> QcPRes[List[QcFieldType]] =
   if qc_check_sym(s, ")") then
     qc_pres_ok(acc_list(acc), qc_next(s))
   else
@@ -1069,7 +1069,7 @@ fn qc_parse_fn_params(s: QcPState, acc: Accum[QcParam]) -> QcPRes[List[QcParam]]
             match ty_r.err {
               Some(d) => qc_pres_err(d, ty_r.state),
               None =>
-                let param = QcParam { name: name, ty: match ty_r.val { Some(t) => t, None => QcTUnit } } in
+                let param = QcFieldType { name: name, ty: match ty_r.val { Some(t) => t, None => QcTUnit } } in
                 let s2 = ty_r.state in
                 if qc_check_sym(s2, ",") then
                   let s3 = qc_next(s2) in

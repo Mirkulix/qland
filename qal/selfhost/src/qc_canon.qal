@@ -148,7 +148,7 @@ fn qc_walk_tparams_ty(t: QcType, tps: List[Str], out: List[Str]) -> List[Str] =
   }
 
 fn qc_fn_tparams(f: QcFnDef) -> List[Str] =
-  let out1 = fold(f.params, [], fn(acc: List[Str], p: QcParam) => qc_walk_tparams_ty(p.ty, f.tparams, acc)) in
+  let out1 = fold(f.params, [], fn(acc: List[Str], p: QcFieldType) => qc_walk_tparams_ty(p.ty, f.tparams, acc)) in
   let out2 = qc_walk_tparams_ty(f.ret, f.tparams, out1) in
   fold(f.tparams, out2, fn(acc: List[Str], tp: Str) =>
     if qc_str_list_contains(acc, tp) then acc else acc ++ [tp]
@@ -192,7 +192,7 @@ fn qc_signature_text_mapped(d: QcDef, refs_map: Map[Str, Bytes]) -> Str =
             head ++ join(vs, " | ")
       },
     QcDefFn(f) =>
-      let fn_ty = QcTFn(map(f.params, fn(p: QcParam) => p.ty), f.ret, f.effects) in
+      let fn_ty = QcTFn(map(f.params, fn(p: QcFieldType) => p.ty), f.ret, f.effects) in
       let mapped_ty = qc_map_type_named(fn_ty, f.tparams, refs_map) in
       let base = qc_print_type(mapped_ty) in
       if len(f.tparams) == 0 then base
@@ -687,13 +687,13 @@ fn qc_encode_member_ext(d: QcDef, env: QcCanonEnv, refs_map: Map[Str, Bytes], gr
         qc_enc_varint(qc_enc_byte(qc_enc_set_tparams(qc_enc_set_v2(init_st), tps), 4), len(tps))
       else qc_enc_byte(init_st, 1) in
       let s1 = qc_enc_varint(s0, len(f.params)) in
-      let s2 = fold(f.params, s1, fn(st: QcEncState, p: QcParam) => qc_enc_type(st, p.ty)) in
+      let s2 = fold(f.params, s1, fn(st: QcEncState, p: QcFieldType) => qc_enc_type(st, p.ty)) in
       let s3 = qc_enc_type(s2, f.ret) in
       let sorted_effs = qc_sort_dedup_strs(f.effects) in
       let s4 = qc_enc_varint(s3, len(sorted_effs)) in
       let s5 = fold(sorted_effs, s4, fn(st: QcEncState, e: Str) => qc_enc_str(st, e)) in
       # Bind parameters in order
-      let s_bound = fold(f.params, s5, fn(st: QcEncState, p: QcParam) => qc_enc_bind(st, p.name)) in
+      let s_bound = fold(f.params, s5, fn(st: QcEncState, p: QcFieldType) => qc_enc_bind(st, p.name)) in
       # req
       let s6 = qc_enc_varint(s_bound, len(f.reqs)) in
       let s7 = fold(f.reqs, s6, fn(st: QcEncState, c: QcExpr) => qc_enc_expr(st, c)) in
@@ -1795,12 +1795,12 @@ fn qc_dec_variants_loop(s: QcDecState, count: Int, acc: Accum[QcVariant]) -> QcD
     let v = QcVariant { name: vname_res.val, fields: fields_res.val } in
     qc_dec_variants_loop(fields_res.s, count - 1, AccPush(acc, v))
 
-fn qc_dec_bind_params_loop(s: QcDecState, tys: List[QcType], idx: Int, acc: Accum[QcParam]) -> QcDecRes[List[QcParam]] =
+fn qc_dec_bind_params_loop(s: QcDecState, tys: List[QcType], idx: Int, acc: Accum[QcFieldType]) -> QcDecRes[List[QcFieldType]] =
   if idx >= len(tys) then QcDecRes { val: acc_list(acc), s: s }
   else
     let ty = list_at(tys, idx) in
     let b_res = qc_dec_bind(s) in
-    let param = QcParam { name: b_res.val, ty: ty } in
+    let param = QcFieldType { name: b_res.val, ty: ty } in
     qc_dec_bind_params_loop(b_res.s, tys, idx + 1, AccPush(acc, param))
 
 fn qc_dec_member(s: QcDecState) -> QcDecRes[QcDef] =

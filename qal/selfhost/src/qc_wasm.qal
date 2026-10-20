@@ -1,15 +1,10 @@
 # Phase 5c: Lowering of typed expressions to WebAssembly and module compilation (qc_wasm.qal)
 
-type QcSiteVal = {
-  name: Str,
-  ty: QcType
-}
-
 type QcSite = {
   path: Str,
   label: Str,
   contract: Option[Int],
-  values: List[QcSiteVal]
+  values: List[QcFieldType]
 }
 
 type QcContractVal = {
@@ -22,7 +17,7 @@ type QcFuncMeta = {
   name: Str,
   export: Str,
   is_test: Bool,
-  params: List[QcParam],
+  params: List[QcFieldType],
   ret: QcType,
   effects: List[Str],
   reqs: List[QcExpr],
@@ -140,7 +135,7 @@ type QcFnGenSite = {
   site: Int
 }
 
-fn qc_fngen_site(g: QcFnGen, path: Str, label: Str, values: List[QcSiteVal], contract: Option[Int]) -> QcFnGenSite =
+fn qc_fngen_site(g: QcFnGen, path: Str, label: Str, values: List[QcFieldType], contract: Option[Int]) -> QcFnGenSite =
   let idx = len(g.sites) in
   let s = QcSite { path: path, label: label, contract: contract, values: values } in
   let g2 = QcFnGen {
@@ -297,8 +292,8 @@ fn qc_fngen_binary(g0: QcFnGen, op: QcBinOp, l: QcTExpr, r: QcTExpr, path: Str) 
       let is_float = match l.ty { QcTFloat => true, _ => false } in
       let os = if !is_float && qc_binop_is_arith(op) then
         let sr = qc_fngen_site(g0, path, qc_binop_sym(op), [
-          QcSiteVal { name: "left", ty: QcTInt },
-          QcSiteVal { name: "right", ty: QcTInt }
+          QcFieldType { name: "left", ty: QcTInt },
+          QcFieldType { name: "right", ty: QcTInt }
         ], None) in
         QcFnGenOptSite { g: sr.g, site: Some(sr.site) }
       else
@@ -417,13 +412,13 @@ fn qc_fngen_builtin(g0: QcFnGen, b: QcBuiltin, args: List[QcTExpr], path: Str, r
             QcBListLen => qc_fngen_all(g, [QcII32Load(0), QcII64ExtendI32U]),
             QcBSlice =>
               let sr = qc_fngen_site(g, path, "slice", [
-                QcSiteVal { name: "start", ty: QcTInt },
-                QcSiteVal { name: "end", ty: QcTInt },
-                QcSiteVal { name: "len", ty: QcTInt }
+                QcFieldType { name: "start", ty: QcTInt },
+                QcFieldType { name: "end", ty: QcTInt },
+                QcFieldType { name: "len", ty: QcTInt }
               ], None) in
               qc_fngen_call_rt(qc_fngen_site_args(sr.g, sr.site), QcRtStrSlice),
             QcBSplit =>
-              let sr = qc_fngen_site(g, path, "split: req sep != \"\"", [QcSiteVal { name: "sep", ty: QcTStr }], None) in
+              let sr = qc_fngen_site(g, path, "split: req sep != \"\"", [QcFieldType { name: "sep", ty: QcTStr }], None) in
               qc_fngen_call_rt(qc_fngen_site_args(sr.g, sr.site), QcRtStrSplit),
             QcBJoin => qc_fngen_call_rt(g, QcRtStrJoin),
             QcBTrim => qc_fngen_call_rt(g, QcRtStrTrim),
@@ -467,15 +462,15 @@ fn qc_fngen_builtin(g0: QcFnGen, b: QcBuiltin, args: List[QcTExpr], path: Str, r
             QcBSortInt => qc_fngen_call_rt(g, QcRtListSort(false)),
             QcBSortStr => qc_fngen_call_rt(g, QcRtListSort(true)),
             QcBCharCode =>
-              let sr = qc_fngen_site(g, path, "char_code: req s != \"\"", [QcSiteVal { name: "s", ty: QcTStr }], None) in
+              let sr = qc_fngen_site(g, path, "char_code: req s != \"\"", [QcFieldType { name: "s", ty: QcTStr }], None) in
               qc_fngen_call_rt(qc_fngen_site_args(sr.g, sr.site), QcRtCharCode),
             QcBFromCharCode =>
-              let sr = qc_fngen_site(g, path, "from_char_code: req 0 <= n <= 1114111 && !(55296 <= n <= 57343)", [QcSiteVal { name: "n", ty: QcTInt }], None) in
+              let sr = qc_fngen_site(g, path, "from_char_code: req 0 <= n <= 1114111 && !(55296 <= n <= 57343)", [QcFieldType { name: "n", ty: QcTInt }], None) in
               qc_fngen_call_rt(qc_fngen_site_args(sr.g, sr.site), QcRtFromCharCode),
             QcBToUpper => qc_fngen_call_rt(g, QcRtStrCase(true)),
             QcBToLower => qc_fngen_call_rt(g, QcRtStrCase(false)),
             QcBReplace =>
-              let sr = qc_fngen_site(g, path, "replace: req from != \"\"", [QcSiteVal { name: "from", ty: QcTStr }], None) in
+              let sr = qc_fngen_site(g, path, "replace: req from != \"\"", [QcFieldType { name: "from", ty: QcTStr }], None) in
               qc_fngen_call_rt(qc_fngen_site_args(sr.g, sr.site), QcRtStrReplace),
             QcBIndexOf => qc_fngen_call_rt(g, QcRtStrIndexOf),
             QcBIntToFloat => qc_fngen_i(g, QcIF64ConvertI64S),
@@ -510,13 +505,13 @@ fn qc_fngen_builtin(g0: QcFnGen, b: QcBuiltin, args: List[QcTExpr], path: Str, r
             QcBBytesGet => qc_fngen_call_rt(g, QcRtBytesGet),
             QcBBytesSlice =>
               let sr = qc_fngen_site(g, path, "bytes_slice", [
-                QcSiteVal { name: "start", ty: QcTInt },
-                QcSiteVal { name: "end", ty: QcTInt },
-                QcSiteVal { name: "len", ty: QcTInt }
+                QcFieldType { name: "start", ty: QcTInt },
+                QcFieldType { name: "end", ty: QcTInt },
+                QcFieldType { name: "len", ty: QcTInt }
               ], None) in
               qc_fngen_call_rt(qc_fngen_site_args(sr.g, sr.site), QcRtBytesSlice),
             QcBBytesFrom =>
-              let sr = qc_fngen_site(g, path, "bytes_from: req 0 <= x <= 255", [QcSiteVal { name: "x", ty: QcTInt }], None) in
+              let sr = qc_fngen_site(g, path, "bytes_from: req 0 <= x <= 255", [QcFieldType { name: "x", ty: QcTInt }], None) in
               qc_fngen_call_rt(qc_fngen_site_args(sr.g, sr.site), QcRtBytesFrom),
             QcBBytesToList => qc_fngen_call_rt(g, QcRtBytesToList),
             QcBBytesToStr =>
@@ -540,8 +535,8 @@ fn qc_fngen_builtin(g0: QcFnGen, b: QcBuiltin, args: List[QcTExpr], path: Str, r
               qc_fngen_set_ma(g, ir.m, qc_asm_i(g.a, QcICall(ir.idx))),
             QcBRandInt =>
               let sr = qc_fngen_site(g, path, "rand_int: req lo <= hi", [
-                QcSiteVal { name: "lo", ty: QcTInt },
-                QcSiteVal { name: "hi", ty: QcTInt }
+                QcFieldType { name: "lo", ty: QcTInt },
+                QcFieldType { name: "hi", ty: QcTInt }
               ], None) in
               qc_fngen_call_rt(qc_fngen_site_args(sr.g, sr.site), QcRtRandChecked),
             QcBBitAnd => qc_fngen_i(g, QcII64And),
@@ -550,35 +545,35 @@ fn qc_fngen_builtin(g0: QcFnGen, b: QcBuiltin, args: List[QcTExpr], path: Str, r
             QcBBitNot => qc_fngen_all(g, [QcII64Const(-1), QcII64Xor]),
             QcBShl =>
               let sr = qc_fngen_site(g, path, "shl: req 0 <= n && n < 64", [
-                QcSiteVal { name: "a", ty: QcTInt },
-                QcSiteVal { name: "n", ty: QcTInt }
+                QcFieldType { name: "a", ty: QcTInt },
+                QcFieldType { name: "n", ty: QcTInt }
               ], None) in
               qc_fngen_call_rt(qc_fngen_site_args(sr.g, sr.site), QcRtShift(QcShiftShl)),
             QcBShr =>
               let sr = qc_fngen_site(g, path, "shr: req 0 <= n && n < 64", [
-                QcSiteVal { name: "a", ty: QcTInt },
-                QcSiteVal { name: "n", ty: QcTInt }
+                QcFieldType { name: "a", ty: QcTInt },
+                QcFieldType { name: "n", ty: QcTInt }
               ], None) in
               qc_fngen_call_rt(qc_fngen_site_args(sr.g, sr.site), QcRtShift(QcShiftShrS)),
             QcBUshr =>
               let sr = qc_fngen_site(g, path, "ushr: req 0 <= n && n < 64", [
-                QcSiteVal { name: "a", ty: QcTInt },
-                QcSiteVal { name: "n", ty: QcTInt }
+                QcFieldType { name: "a", ty: QcTInt },
+                QcFieldType { name: "n", ty: QcTInt }
               ], None) in
               qc_fngen_call_rt(qc_fngen_site_args(sr.g, sr.site), QcRtShift(QcShiftShrU)),
             QcBFloatBits => qc_fngen_i(g, QcII64ReinterpretF64),
             QcBFloatOfBits => qc_fngen_i(g, QcIF64ReinterpretI64),
             QcBListAt =>
               let sr = qc_fngen_site(g, path, "list_at", [
-                QcSiteVal { name: "i", ty: QcTInt },
-                QcSiteVal { name: "len", ty: QcTInt }
+                QcFieldType { name: "i", ty: QcTInt },
+                QcFieldType { name: "len", ty: QcTInt }
               ], None) in
               let g1 = qc_fngen_call_rt(qc_fngen_site_args(sr.g, sr.site), QcRtListAt) in
               qc_fngen_opt(g1, qc_from_slot(qc_repr_of(ret))),
             QcBBytesAt =>
               let sr = qc_fngen_site(g, path, "bytes_at", [
-                QcSiteVal { name: "i", ty: QcTInt },
-                QcSiteVal { name: "len", ty: QcTInt }
+                QcFieldType { name: "i", ty: QcTInt },
+                QcFieldType { name: "len", ty: QcTInt }
               ], None) in
               qc_fngen_call_rt(qc_fngen_site_args(sr.g, sr.site), QcRtBytesAt),
             QcBAccList => qc_fngen_call_rt(g, QcRtAccList),
@@ -706,8 +701,8 @@ fn qc_fngen_expr(g: QcFnGen, e: QcTExpr, tail: Bool) -> QcFnGen =
         qc_fngen_i(g1, QcIF64Neg)
       else
         let sr = qc_fngen_site(g, path, "-", [
-          QcSiteVal { name: "zero", ty: QcTInt },
-          QcSiteVal { name: "operand", ty: QcTInt }
+          QcFieldType { name: "zero", ty: QcTInt },
+          QcFieldType { name: "operand", ty: QcTInt }
         ], None) in
         let g1 = qc_fngen_i(sr.g, QcII64Const(0)) in
         let g2 = qc_fngen_expr(g1, x, false) in
@@ -781,11 +776,11 @@ fn qc_fngen_expr(g: QcFnGen, e: QcTExpr, tail: Bool) -> QcFnGen =
     QcTKBuiltin(b, args, path) => qc_fngen_builtin(g, b, args, path, e.ty)
   }
 
-fn qc_cvals_to_site_vals_loop(vals: List[QcContractVal], k: Int, acc: Accum[QcSiteVal]) -> List[QcSiteVal] =
+fn qc_cvals_to_site_vals_loop(vals: List[QcContractVal], k: Int, acc: Accum[QcFieldType]) -> List[QcFieldType] =
   if k >= len(vals) then acc_list(acc)
   else
     let v = list_at(vals, k) in
-    qc_cvals_to_site_vals_loop(vals, k + 1, AccPush(acc, QcSiteVal { name: v.name, ty: v.ty }))
+    qc_cvals_to_site_vals_loop(vals, k + 1, AccPush(acc, QcFieldType { name: v.name, ty: v.ty }))
 
 fn qc_cvals_to_fail_vals_loop(vals: List[QcContractVal], k: Int, acc: Accum[QcFailVal]) -> List[QcFailVal] =
   if k >= len(vals) then acc_list(acc)
@@ -802,7 +797,7 @@ fn qc_fngen_contract(g0: QcFnGen, c: QcTExpr, kind: Int, path: Str, index: Int, 
   let ma = qc_mb_emit_fail(g2.m, g2.a, kind, QcArgConst(g2.meta), QcArgConst(sr.site), fvals) in
   qc_fngen_set_ma(g2, ma.m, qc_asm_i(ma.a, QcIEnd))
 
-fn qc_params_to_cvals_loop(ps: List[QcParam], k: Int, acc: Accum[QcContractVal]) -> List[QcContractVal] =
+fn qc_params_to_cvals_loop(ps: List[QcFieldType], k: Int, acc: Accum[QcContractVal]) -> List[QcContractVal] =
   if k >= len(ps) then acc_list(acc)
   else
     let p = list_at(ps, k) in
@@ -960,7 +955,7 @@ fn qc_collect_imports_loop(b_idxs: List[Int], k: Int, acc: Accum[Str]) -> List[S
     } in
     qc_collect_imports_loop(b_idxs, k + 1, acc2)
 
-fn qc_params_valtypes_loop(ps: List[QcParam], k: Int, acc: Accum[QcValType]) -> List[QcValType] =
+fn qc_params_valtypes_loop(ps: List[QcFieldType], k: Int, acc: Accum[QcValType]) -> List[QcValType] =
   if k >= len(ps) then acc_list(acc)
   else qc_params_valtypes_loop(ps, k + 1, AccPush(acc, qc_type_val(list_at(ps, k).ty)))
 
@@ -1146,7 +1141,7 @@ fn qc_tform_put_exprs(exprs: List[QcExpr], acc: Accum[Int]) -> Accum[Int] =
   let a0 = qc_varint_acc(len(exprs), acc) in
   fold(exprs, a0, fn(st: Accum[Int], e: QcExpr) => qc_tform_expr_acc(e, st))
 
-fn qc_put_site_val_acc(sv: QcSiteVal, acc: Accum[Int]) -> Accum[Int] =
+fn qc_put_site_val_acc(sv: QcFieldType, acc: Accum[Int]) -> Accum[Int] =
   let a0 = qc_str_acc(sv.name, acc) in
   qc_tform_type_acc(sv.ty, a0)
 
@@ -1158,14 +1153,14 @@ fn qc_put_site_acc(s: QcSite, acc: Accum[Int]) -> Accum[Int] =
     None => AccPush(a1, 0)
   } in
   let a3 = qc_varint_acc(len(s.values), a2) in
-  fold(s.values, a3, fn(st: Accum[Int], sv: QcSiteVal) => qc_put_site_val_acc(sv, st))
+  fold(s.values, a3, fn(st: Accum[Int], sv: QcFieldType) => qc_put_site_val_acc(sv, st))
 
 fn qc_put_func_meta_acc(f: QcFuncMeta, acc: Accum[Int]) -> Accum[Int] =
   let a0 = qc_str_acc(f.name, acc) in
   let a1 = qc_str_acc(f.export, a0) in
   let a2 = AccPush(a1, if f.is_test then 1 else 0) in
   let a3 = qc_varint_acc(len(f.params), a2) in
-  let a4 = fold(f.params, a3, fn(st: Accum[Int], p: QcParam) =>
+  let a4 = fold(f.params, a3, fn(st: Accum[Int], p: QcFieldType) =>
     qc_tform_type_acc(p.ty, qc_str_acc(p.name, st))
   ) in
   let a5 = qc_tform_type_acc(f.ret, a4) in

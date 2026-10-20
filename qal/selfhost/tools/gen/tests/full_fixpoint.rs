@@ -31,3 +31,16 @@ fn full_selfhosted_fixpoint() {
     let stage3 = Qal.compile(&t2, &Entry::All, &CompileOptions::compiler()).unwrap_or_else(|d| panic!("stage2 compile: {d:?}"));
     assert_eq!(stage2.wasm, stage3.wasm, "stage 2 vs stage 3");
 }
+
+/// The versioned seed `selfhost/qalc.wasm` is the fixpoint: since Stage 1 == Stage 2 == Stage 3,
+/// it equals `qalc` as compiled by the Rust pipeline (`qal selfhost bootstrap --out` writes it).
+#[test]
+fn seed_module_is_the_fixpoint() {
+    let root = qal_gen::qal_root();
+    let src = std::fs::read_to_string(root.join("selfhost/qalc.qal")).expect("read qalc.qal");
+    let seed = std::fs::read(root.join("selfhost/qalc.wasm")).expect("read selfhost/qalc.wasm");
+    let p = Rust.parse(&src).expect("rust parse");
+    let t = Rust.check(&p, &|_| true).expect("rust check");
+    let m = Rust.compile(&t, &Entry::All, &CompileOptions::compiler()).expect("rust compile");
+    assert!(m.wasm == seed, "selfhost/qalc.wasm is stale: run `qal selfhost bootstrap --out selfhost/qalc.wasm`");
+}

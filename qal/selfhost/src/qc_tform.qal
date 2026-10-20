@@ -217,7 +217,7 @@ fn qc_tform_fndef_acc(f: QcFnDef, acc: Accum[Int]) -> Accum[Int] =
   let a1 = qc_varint_acc(len(f.tparams), qc_str_acc(f.name, acc)) in
   let a2 = fold(f.tparams, a1, fn(st: Accum[Int], p: Str) => qc_str_acc(p, st)) in
   let a3 = qc_varint_acc(len(f.params), a2) in
-  let a4 = fold(f.params, a3, fn(st: Accum[Int], p: QcParam) => qc_tform_type_acc(p.ty, qc_str_acc(p.name, st))) in
+  let a4 = fold(f.params, a3, fn(st: Accum[Int], p: QcFieldType) => qc_tform_type_acc(p.ty, qc_str_acc(p.name, st))) in
   let a5 = qc_tform_type_acc(f.ret, a4) in
   let a6 = qc_varint_acc(len(f.effects), a5) in
   let a7 = fold(f.effects, a6, fn(st: Accum[Int], e: Str) => qc_str_acc(e, st)) in
@@ -470,12 +470,12 @@ fn qc_tform_dec_variants_loop(r: QcReader, count: Int, acc: Accum[QcVariant]) ->
     let fs_res = qc_tform_dec_types(vn_res.r) in
     qc_tform_dec_variants_loop(fs_res.r, count - 1, AccPush(acc, QcVariant { name: vn_res.val, fields: fs_res.val }))
 
-fn qc_tform_dec_params_loop(r: QcReader, count: Int, acc: Accum[QcParam]) -> QcReadRes[List[QcParam]] =
+fn qc_tform_dec_params_loop(r: QcReader, count: Int, acc: Accum[QcFieldType]) -> QcReadRes[List[QcFieldType]] =
   if count <= 0 then QcReadRes { val: acc_list(acc), r: r }
   else
     let pn_res = qc_reader_str(r) in
     let pt_res = qc_tform_dec_type(pn_res.r) in
-    qc_tform_dec_params_loop(pt_res.r, count - 1, AccPush(acc, QcParam { name: pn_res.val, ty: pt_res.val }))
+    qc_tform_dec_params_loop(pt_res.r, count - 1, AccPush(acc, QcFieldType { name: pn_res.val, ty: pt_res.val }))
 
 fn qc_tform_dec_typedef(r: QcReader) -> QcReadRes[QcTypeDef] =
   let n_res = qc_reader_str(r) in

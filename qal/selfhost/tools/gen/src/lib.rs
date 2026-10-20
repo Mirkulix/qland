@@ -3,7 +3,7 @@
 //! - [`corpus`]: (1) every `.qal` file of `qal/examples/` and `qal/crates/*/tests/fixtures/`, the
 //!   20 benchmark solutions, the packages `std` and `todo` (with `std`, which it imports), and (2)
 //!   the programs extracted from the Rust tests into `qal/selfhost/corpus/` by
-//!   `qal/selfhost/tools/extract_corpus.py`. (`shop.qalpkg` and `qalc.qalpkg` join when they exist.)
+//!   `qal/selfhost/tools/extract_corpus.py`. (`shop.qalpkg` joins when it exists; `qalc.qalpkg` is left out, see `corpus()`.)
 //! - [`well_typed`]: a random program built from a typed grammar; it always checks.
 //! - [`mutate`]: a corpus program with a few token-level mutations (delete, swap, replace a name,
 //!   exchange a type); usually ill-typed or unparsable, which is the point.
@@ -61,7 +61,10 @@ pub fn file_corpus() -> Vec<Source> {
     }
     // Packages; one that imports std is checked together with it.
     out.push(std.clone());
-    for pkg in ["examples/todo/todo.qalpkg", "examples/shop/shop.qalpkg", "selfhost/qalc.qalpkg"] {
+    // `selfhost/qalc.qalpkg` is not part of the corpus yet: the store operations TYPED, DEFINE and
+    // HASH run as one execution and exceed 1 GiB on the compiler's own package (CHECK_FILE is
+    // split via FORK/JOIN; these are not). The bootstrap fixpoint covers qalc (full_fixpoint.rs).
+    for pkg in ["examples/todo/todo.qalpkg", "examples/shop/shop.qalpkg"] {
         let p = root.join(pkg);
         if p.exists() {
             let s = read(&root, &p);

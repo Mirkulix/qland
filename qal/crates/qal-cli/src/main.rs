@@ -158,6 +158,7 @@ fn main() -> ExitCode {
         "verify" => verify(rest),
         "serve" => serve(rest),
         "request" => request(rest),
+        "selfhost" => selfhost(rest),
         _ => usage(),
     }
 }
@@ -442,6 +443,45 @@ fn team(args: &[String]) -> ExitCode {
         ("sync-std", []) => qal_cli::team::sync_std(&c),
         _ => return bad_usage(TEAM_USAGE),
     })
+}
+
+const SELFHOST_USAGE: &str = "usage: qal selfhost bootstrap [--src selfhost/qalc.qal] [--out <seed.wasm>] [--jobs 4]";
+
+/// `qal selfhost bootstrap`: Stage 1..3 and the fixpoint check; `--out` writes the Stage 3 seed.
+fn selfhost(args: &[String]) -> ExitCode {
+    let Some((sub, rest)) = args.split_first() else {
+        return bad_usage(SELFHOST_USAGE);
+    };
+    if sub != "bootstrap" {
+        return bad_usage(SELFHOST_USAGE);
+    }
+    let s = match split(rest, &["src", "out", "jobs"], &[], &all) {
+        Ok(s) if s.targets.is_empty() => s,
+        _ => return bad_usage(SELFHOST_USAGE),
+    };
+    let jobs = match s.one("jobs").map(str::parse::<usize>) {
+        None => qal_run::selfhost::default_jobs(),
+        Some(Ok(n)) if (1..=64).contains(&n) => n,
+        Some(_) => return bad_usage("--jobs takes a number from 1 to 64"),
+    };
+    let src = match read(s.one("src").unwrap_or("selfhost/qalc.qal")) {
+        Ok(t) => t,
+        Err(code) => return code,
+    };
+    let (report, stage3) = match qal_cli::bootstrap::bootstrap(&src, jobs) {
+        Ok(r) => r,
+        Err(d) => return emit(Reply::diagnostics(vec![d])),
+    };
+    let fixpoint = report["ok"] == serde_json::Value::Bool(true);
+    if let (true, Some(out)) = (fixpoint, s.one("out")) {
+        if let Err(e) = std::fs::write(out, &stage3.wasm) {
+            return bad_usage(&format!("cannot write {out}: {e}"));
+        }
+    }
+    let line = report.to_string();
+    let mut o = std::io::stdout().lock();
+    let _ = writeln!(o, "{line}").and_then(|_| o.flush());
+    if fixpoint { ExitCode::SUCCESS } else { ExitCode::from(1) }
 }
 
 fn verify(args: &[String]) -> ExitCode {
