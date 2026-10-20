@@ -1,0 +1,101 @@
+name: Production CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, Mac ]
+  pull_request:
+    branches: [ main, Mac ]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  qal-test-suite:
+    name: QAL Rust Workspace Tests
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Install System Dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake clang libsqlite3-dev
+
+      - name: Cache Cargo Dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            qal/target
+            gen3/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Check QAL Compilation
+        run: cargo check --manifest-path qal/Cargo.toml --workspace --all-targets
+
+      - name: Run QAL Unit & Integration Tests (548 Tests)
+        run: cargo test --manifest-path qal/Cargo.toml --workspace --no-fail-fast
+
+  gen3-substrate-suite:
+    name: Gen-3 AI-Native Substrate (TGS Engine)
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest]
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run Substrate Tests & JIT Verification
+        run: |
+          cd gen3
+          cargo test --verbose
+
+      - name: Execute TGS Benchmark
+        run: |
+          cd gen3
+          cargo run --release -- bench
+
+  igqk-python-suite:
+    name: IGQK Quantum Compression & Multimodal Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Python Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install torch torchvision numpy scipy pytest
+
+      - name: Run IGQK Multimodal & Training Tests
+        run: |
+          python -m pytest IGQK_Complete_Package/igqk_v4/tests/test_multimodal.py
+          python -m pytest IGQK_Complete_Package/igqk_v4/tests/test_training.py

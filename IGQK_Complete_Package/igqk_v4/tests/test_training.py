@@ -54,7 +54,6 @@ def test_quantum_gpt_training():
     print(f">> Final loss: {history['train_loss'][-1]:.4f}")
     assert history['train_loss'][-1] <= history['train_loss'][0], "Loss should decrease"
     print("[PASS] QuantumGPT Training - PASSED!")
-    return True
 
 
 def test_multimodal_training():
@@ -93,7 +92,6 @@ def test_multimodal_training():
     print(f">> Final contrastive loss: {history['train_loss'][-1]:.4f}")
     assert history['train_loss'][-1] <= history['train_loss'][0] + 0.1, "Loss should not explode"
     print("[PASS] MultiModalModel Training - PASSED!")
-    return True
 
 
 def test_advanced_math_integrations():
@@ -133,7 +131,6 @@ def test_advanced_math_integrations():
     print(f">> Unique weight sample values: {len(unique_vals)} unique values")
 
     print("[PASS] HLWT + TLGT + FCHL Integration - PASSED!")
-    return True
 
 
 def test_checkpointing(tmp_path="/tmp/igqk_test_checkpoint.pt"):
@@ -160,7 +157,6 @@ def test_checkpointing(tmp_path="/tmp/igqk_test_checkpoint.pt"):
         assert torch.allclose(p1, p2), "Model parameters must match after loading checkpoint"
 
     print("[PASS] Checkpoint Save & Load - PASSED!")
-    return True
 
 
 def main():

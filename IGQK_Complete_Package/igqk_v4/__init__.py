@@ -39,6 +39,12 @@ from .multimodal import (
     MultiModalModel,
 )
 
+# Phase 3 - Compression & 2-Bit Quantization (IMPLEMENTED)
+from .compression import (
+    TernaryBitPacker,
+    LLMWeightCompressor,
+)
+
 # TODO: Phase 3+ - Advanced Features (Not yet implemented)
 # from .distributed.ddp.distributed_quantum_trainer import DistributedQuantumTrainer
 # from .distributed.fsdp.fully_sharded_trainer import FullyShardedTrainer
@@ -66,6 +72,10 @@ __all__ = [
     "QuantumMultiModalFusion",
     "MultiModalModel",
 
+    # Compression (Phase 3 - IMPLEMENTED)
+    "TernaryBitPacker",
+    "LLMWeightCompressor",
+
     # Theory
     "HybridLaplaceWavelet",
     "TernaryLieGroup",
@@ -80,12 +90,13 @@ def get_version():
 def get_features():
     """Get list of available features in v4.0."""
     return {
-        # Phase 1 & 2 - IMPLEMENTED
+        # Phase 1, 2 & 3 - IMPLEMENTED
         "quantum_training": True,
         "models_gpt": True,
         "models_bert": True,
         "models_vit": True,
         "multimodal": True,
+        "compression": True,
         "hlwt": True,
         "tlgt": True,
         "fchl": True,

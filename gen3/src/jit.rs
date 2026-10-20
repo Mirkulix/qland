@@ -5,7 +5,7 @@
 
 use crate::dag::{Graph, OpCode};
 
-#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+#[cfg(all(any(target_os = "macos", target_os = "linux"), target_arch = "aarch64"))]
 extern "C" {
     fn mmap(
         addr: *mut std::ffi::c_void,
@@ -16,29 +16,37 @@ extern "C" {
         offset: i64,
     ) -> *mut std::ffi::c_void;
     fn munmap(addr: *mut std::ffi::c_void, len: usize) -> i32;
+    #[cfg(target_os = "macos")]
     fn pthread_jit_write_protect_np(enabled: i32);
+    #[cfg(target_os = "macos")]
     fn sys_icache_invalidate(start: *mut std::ffi::c_void, len: usize);
+    #[cfg(target_os = "linux")]
+    fn mprotect(addr: *mut std::ffi::c_void, len: usize, prot: i32) -> i32;
 }
 
-#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+#[cfg(all(any(target_os = "macos", target_os = "linux"), target_arch = "aarch64"))]
 const PROT_READ: i32 = 0x01;
-#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+#[cfg(all(any(target_os = "macos", target_os = "linux"), target_arch = "aarch64"))]
 const PROT_WRITE: i32 = 0x02;
-#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+#[cfg(all(any(target_os = "macos", target_os = "linux"), target_arch = "aarch64"))]
 const PROT_EXEC: i32 = 0x04;
-#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+#[cfg(all(any(target_os = "macos", target_os = "linux"), target_arch = "aarch64"))]
 const MAP_PRIVATE: i32 = 0x0002;
-#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+
+#[cfg(target_os = "macos")]
 const MAP_ANON: i32 = 0x1000;
-#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+#[cfg(target_os = "macos")]
 const MAP_JIT: i32 = 0x0800;
+
+#[cfg(target_os = "linux")]
+const MAP_ANON: i32 = 0x0020;
 
 pub struct JitEngine;
 
 pub struct CompiledFunction {
-    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    #[cfg(all(any(target_os = "macos", target_os = "linux"), target_arch = "aarch64"))]
     code_ptr: *mut u8,
-    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    #[cfg(all(any(target_os = "macos", target_os = "linux"), target_arch = "aarch64"))]
     size: usize,
 }
 
@@ -47,7 +55,7 @@ unsafe impl Sync for CompiledFunction {}
 
 impl Drop for CompiledFunction {
     fn drop(&mut self) {
-        #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+        #[cfg(all(any(target_os = "macos", target_os = "linux"), target_arch = "aarch64"))]
         unsafe {
             if !self.code_ptr.is_null() {
                 munmap(self.code_ptr as *mut std::ffi::c_void, self.size);
@@ -59,12 +67,12 @@ impl Drop for CompiledFunction {
 impl CompiledFunction {
     /// Executes the JIT compiled function with two i64 arguments.
     pub unsafe fn call_i64_2(&self, arg0: i64, arg1: i64) -> i64 {
-        #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+        #[cfg(all(any(target_os = "macos", target_os = "linux"), target_arch = "aarch64"))]
         {
             let func: extern "C" fn(i64, i64) -> i64 = std::mem::transmute(self.code_ptr);
             func(arg0, arg1)
         }
-        #[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
+        #[cfg(not(all(any(target_os = "macos", target_os = "linux"), target_arch = "aarch64")))]
         {
             let _ = (arg0, arg1);
             0
@@ -73,12 +81,12 @@ impl CompiledFunction {
 
     /// Executes a JIT compiled tensor reduction with (ptr, len) returning f64 in d0.
     pub unsafe fn call_tensor_reduce(&self, ptr: *const f64, len: usize) -> f64 {
-        #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+        #[cfg(all(any(target_os = "macos", target_os = "linux"), target_arch = "aarch64"))]
         {
             let func: extern "C" fn(*const f64, usize) -> f64 = std::mem::transmute(self.code_ptr);
             func(ptr, len)
         }
-        #[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
+        #[cfg(not(all(any(target_os = "macos", target_os = "linux"), target_arch = "aarch64")))]
         {
             let _ = (ptr, len);
             0.0
@@ -88,16 +96,16 @@ impl CompiledFunction {
 
 impl JitEngine {
     pub fn is_supported() -> bool {
-        cfg!(all(target_os = "macos", target_arch = "aarch64"))
+        cfg!(all(any(target_os = "macos", target_os = "linux"), target_arch = "aarch64"))
     }
 
     /// Compiles a 64-bit integer DAG into native ARM64 machine code.
     pub fn compile(graph: &Graph) -> Result<CompiledFunction, String> {
         if !Self::is_supported() {
-            return Err("JIT currently requires macOS on ARM64 (Apple Silicon)".to_string());
+            return Err("JIT currently requires AArch64 (ARM64) on macOS or Linux".to_string());
         }
 
-        #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+        #[cfg(all(any(target_os = "macos", target_os = "linux"), target_arch = "aarch64"))]
         {
             if graph.input_types.first() == Some(&crate::dag::DataType::Tensor1D) {
                 Self::compile_arm64_tensor(graph)
@@ -106,14 +114,14 @@ impl JitEngine {
             }
         }
 
-        #[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
+        #[cfg(not(all(any(target_os = "macos", target_os = "linux"), target_arch = "aarch64")))]
         {
             let _ = graph;
             Err("Unsupported platform".to_string())
         }
     }
 
-    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    #[cfg(all(any(target_os = "macos", target_os = "linux"), target_arch = "aarch64"))]
     fn compile_arm64_tensor(graph: &Graph) -> Result<CompiledFunction, String> {
         let mut code: Vec<u32> = Vec::new();
 
@@ -154,7 +162,7 @@ impl JitEngine {
         Self::allocate_executable_memory(code)
     }
 
-    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    #[cfg(all(any(target_os = "macos", target_os = "linux"), target_arch = "aarch64"))]
     fn compile_arm64(graph: &Graph) -> Result<CompiledFunction, String> {
         let mut code: Vec<u32> = Vec::new();
 
@@ -247,12 +255,13 @@ impl JitEngine {
         Self::allocate_executable_memory(code)
     }
 
-    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    #[cfg(all(any(target_os = "macos", target_os = "linux"), target_arch = "aarch64"))]
     fn allocate_executable_memory(code: Vec<u32>) -> Result<CompiledFunction, String> {
         let page_size = 4096;
         let alloc_size = ((code.len() * 4 + page_size - 1) / page_size) * page_size;
 
         unsafe {
+            #[cfg(target_os = "macos")]
             let ptr = mmap(
                 std::ptr::null_mut(),
                 alloc_size,
@@ -262,11 +271,21 @@ impl JitEngine {
                 0,
             );
 
+            #[cfg(target_os = "linux")]
+            let ptr = mmap(
+                std::ptr::null_mut(),
+                alloc_size,
+                PROT_READ | PROT_WRITE,
+                MAP_PRIVATE | MAP_ANON,
+                -1,
+                0,
+            );
+
             if ptr == libc_map_failed() {
                 return Err("Failed to allocate JIT memory via mmap".to_string());
             }
 
-            // Disable JIT write protection to write instructions
+            #[cfg(target_os = "macos")]
             pthread_jit_write_protect_np(0);
 
             let dst = ptr as *mut u32;
@@ -274,11 +293,23 @@ impl JitEngine {
                 *dst.add(i) = *instr;
             }
 
-            // Re-enable JIT write protection (executable mode)
-            pthread_jit_write_protect_np(1);
+            #[cfg(target_os = "macos")]
+            {
+                pthread_jit_write_protect_np(1);
+                sys_icache_invalidate(ptr, alloc_size);
+            }
 
-            // Invalidate instruction cache so CPU fetches new instructions
-            sys_icache_invalidate(ptr, alloc_size);
+            #[cfg(target_os = "linux")]
+            {
+                if mprotect(ptr, alloc_size, PROT_READ | PROT_EXEC) != 0 {
+                    munmap(ptr, alloc_size);
+                    return Err("Failed to mark JIT memory executable via mprotect".to_string());
+                }
+                extern "C" {
+                    fn __clear_cache(start: *mut std::ffi::c_void, end: *mut std::ffi::c_void);
+                }
+                __clear_cache(ptr, (ptr as usize + alloc_size) as *mut std::ffi::c_void);
+            }
 
             Ok(CompiledFunction {
                 code_ptr: ptr as *mut u8,
@@ -379,7 +410,7 @@ impl JitEngine {
     }
 }
 
-#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+#[cfg(all(any(target_os = "macos", target_os = "linux"), target_arch = "aarch64"))]
 fn libc_map_failed() -> *mut std::ffi::c_void {
     (-1isize) as *mut std::ffi::c_void
 }

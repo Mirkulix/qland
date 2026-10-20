@@ -87,7 +87,7 @@ const USAGE: &str = "usage: qal <check|fmt> <file>\n       \
                      qal run <file|name> [--allow <spec>] [--] [args...]\n       \
                      qal serve [<handler>] [--listen <addr>] [--allow <spec>] [--init <fn>] [--workers <n>] [... see `qal serve --help`]\n       \
                      qal request [<handler>] [--allow <spec>] [--init <fn>] <requests.json>\n       \
-                     qal mcp [--root <dir>] [--session-file <file>]\n       \
+                     qal mcp [--root <dir>] [--session-file <file>] | lsp\n       \
                      qal team <init [--owner <id>] | add <id> --role <role> | rekey <id> | revoke <id> | session <id> [--ttl 24h] --out <file> | export-trust --out <file> | status | stats | sync-std>\n       \
                      qal verify [--trust <team.json>] [--from <seq>] [--head <record hash>]";
 
@@ -153,6 +153,7 @@ fn main() -> ExitCode {
         "call" | "test" | "run" => run_command(cmd, rest),
         "prove" => prove_command(rest),
         "mcp" => mcp(rest),
+        "lsp" => lsp(rest),
         "team" => team(rest),
         "verify" => verify(rest),
         "serve" => serve(rest),
@@ -375,6 +376,14 @@ fn mcp(args: &[String]) -> ExitCode {
     match qal_cli::mcp::serve_stdio(&root, session) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => bad_usage(&format!("qal mcp: {e}")),
+    }
+}
+
+fn lsp(_args: &[String]) -> ExitCode {
+    let mut server = qal_cli::lsp::LspServer::new();
+    match server.run() {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => bad_usage(&format!("qal lsp: {e}")),
     }
 }
 

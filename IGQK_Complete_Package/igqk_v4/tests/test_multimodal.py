@@ -47,7 +47,6 @@ def test_vision_encoder():
     print(f"<< Output features: {features.shape}")
     assert features.shape == (2, 128), f"Expected (2, 128), got {features.shape}"
     print("[PASS] QuantumVisionEncoder - PASSED!")
-    return True
 
 
 def test_language_encoder():
@@ -77,7 +76,6 @@ def test_language_encoder():
     print(f"<< Output features: {features.shape}")
     assert features.shape == (2, 128), f"Expected (2, 128), got {features.shape}"
     print("[PASS] QuantumLanguageEncoder - PASSED!")
-    return True
 
 
 def test_quantum_fusion():
@@ -107,7 +105,6 @@ def test_quantum_fusion():
         print(f"   [PASS] Strategy {strategy} - PASSED!")
 
     print("[PASS] QuantumMultiModalFusion - ALL STRATEGIES PASSED!")
-    return True
 
 
 def test_multimodal_model():
@@ -150,7 +147,6 @@ def test_multimodal_model():
     assert not torch.isnan(loss), "Loss cannot be NaN"
 
     print("[PASS] MultiModalModel - PASSED!")
-    return True
 
 
 def test_trainer_multimodal_integration():
@@ -178,7 +174,6 @@ def test_trainer_multimodal_integration():
     print(f">> Successfully initialized trainer with model: {type(trainer.model).__name__}")
     assert isinstance(trainer.model, MultiModalModel), "Trainer model must be MultiModalModel"
     print("[PASS] QuantumLLMTrainer Integration - PASSED!")
-    return True
 
 
 def main():
