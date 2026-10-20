@@ -226,6 +226,12 @@ fn test_arm64_jit_tensor_reduction() {
 #[test]
 fn test_jit_content_addressed_cache() {
     use tgs_engine::cache::JitCache;
+    use tgs_engine::jit::JitEngine;
+
+    if !JitEngine::is_supported() {
+        eprintln!("Skipping JIT cache test: JIT not supported on this platform");
+        return;
+    }
 
     let mut cache = JitCache::new();
 
