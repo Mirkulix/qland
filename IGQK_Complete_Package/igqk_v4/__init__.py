@@ -31,9 +31,13 @@ from .theory.hlwt.hybrid_laplace_wavelet import HybridLaplaceWavelet
 from .theory.tlgt.ternary_lie_group import TernaryLieGroup
 from .theory.fchl.fractional_hebbian import FractionalHebbian
 
-# TODO: Phase 2 - Multi-Modal AI (Not yet implemented)
-# from .multimodal.fusion.quantum_fusion import QuantumMultiModalFusion
-# from .multimodal.models.multimodal_model import MultiModalModel
+# Phase 2 - Multi-Modal AI (IMPLEMENTED)
+from .multimodal import (
+    QuantumVisionEncoder,
+    QuantumLanguageEncoder,
+    QuantumMultiModalFusion,
+    MultiModalModel,
+)
 
 # TODO: Phase 3+ - Advanced Features (Not yet implemented)
 # from .distributed.ddp.distributed_quantum_trainer import DistributedQuantumTrainer
@@ -56,24 +60,16 @@ __all__ = [
     "QuantumBERT",
     "QuantumViT",
 
+    # Multi-Modal (Phase 2 - IMPLEMENTED)
+    "QuantumVisionEncoder",
+    "QuantumLanguageEncoder",
+    "QuantumMultiModalFusion",
+    "MultiModalModel",
+
     # Theory
     "HybridLaplaceWavelet",
     "TernaryLieGroup",
     "FractionalHebbian",
-
-    # TODO: Add these in Phase 2+
-    # "QuantumMultiModalFusion",
-    # "MultiModalModel",
-    # "DistributedQuantumTrainer",
-    # "FullyShardedTrainer",
-    # "AutoTuner",
-    # "HyperparameterSearch",
-    # "EdgeDeployer",
-    # "CloudDeployer",
-    # "ProgressiveLoader",
-    # "TernaryMatMul",
-    # "TernaryConv2d",
-    # "HardwareOptimizer",
 ]
 
 # Version info
@@ -84,23 +80,21 @@ def get_version():
 def get_features():
     """Get list of available features in v4.0."""
     return {
-        # Phase 1 - IMPLEMENTED
+        # Phase 1 & 2 - IMPLEMENTED
         "quantum_training": True,
         "models_gpt": True,
         "models_bert": True,
         "models_vit": True,
+        "multimodal": True,
         "hlwt": True,
         "tlgt": True,
         "fchl": True,
 
-        # Phase 2+ - NOT YET IMPLEMENTED
-        "multimodal": False,
+        # Phase 4+ - NOT YET IMPLEMENTED
         "distributed": False,
         "automl": False,
         "hardware_acceleration": False,
-        "edge_deployment": False,
-        "cloud_deployment": False,
-        "progressive_loading": False,
+        "deployment": False,
     }
 
 print(f"IGQK v{__version__} loaded successfully!")
