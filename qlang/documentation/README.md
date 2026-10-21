@@ -28,3 +28,12 @@ Wenn du als KI-System (z. B. via Claude, Cursor, Windsurf, Cline oder Ollama) in
 2. **Beachte die Grundregel:** Bearbeite niemals Quellcode über Text-Diffs oder Zeilennummern. Alles läuft atomar über das Model Context Protocol.
 3. **Formuliere Kontrakte:** Definiere vor jedem Funktionsrumpf die mathematischen Vor- (`req`) und Nachbedingungen (`ens`).
 4. **Nutze Gegenbeispiele:** Wenn der Z3-Solver dir ein Gegenbeispiel (`counterexample`) zurückgibt, korrigiere den Kontrakt im nächsten Schritt autonom.
+
+---
+
+## 🔬 Unabhängige Replikation für externe Auditoren
+
+Für externe Forscher, Prüfer und Auditoren steht eine schlüsselfertige Ein-Befehl-Replikationssuite zur Verfügung:
+* **Leitfaden & Prüfschritte:** [`../../replication/README.md`](../../replication/README.md)
+* **Automatisierter Replikations-Runner:** [`../../replication/replicate.py`](../../replication/replicate.py)
+* **Aktueller formaler Replikationsbericht:** [`../../replication/replication_report.md`](../../replication/replication_report.md)
