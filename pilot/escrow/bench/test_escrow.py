@@ -4,11 +4,30 @@ Tests 20 distinct scenarios (standard workflows, boundary conditions, and advers
 against any HTTP server implementing the pilot specification.
 """
 
+import os
 import sys
 import time
 import requests
 import unittest
 from concurrent.futures import ThreadPoolExecutor
+
+# Optional authentication injection for protected production gateways
+_API_KEY = os.getenv("ESCROW_API_KEY", "")
+if _API_KEY:
+    _orig_get = requests.get
+    _orig_post = requests.post
+    def _patched_get(url, *args, **kwargs):
+        headers = dict(kwargs.get("headers") or {})
+        headers.setdefault("X-API-Key", _API_KEY)
+        kwargs["headers"] = headers
+        return _orig_get(url, *args, **kwargs)
+    def _patched_post(url, *args, **kwargs):
+        headers = dict(kwargs.get("headers") or {})
+        headers.setdefault("X-API-Key", _API_KEY)
+        kwargs["headers"] = headers
+        return _orig_post(url, *args, **kwargs)
+    requests.get = _patched_get
+    requests.post = _patched_post
 
 class EscrowServiceTestSuite(unittest.TestCase):
     BASE_URL = "http://127.0.0.1:8088"
