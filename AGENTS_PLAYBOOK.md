@@ -6,7 +6,7 @@
 
 ## 1. Executive Summary & Core Paradigm Shift
 
-This document defines the operational directives for AI agents interacting with the **QAL (Quantitative Assurance Language)** system.
+This document defines the operational directives for AI agents interacting with the **QAL (QLANG Agent Language)** system.
 
 | Traditional Programming (Python/TS/Rust) | The QAL Autonomous Agent Paradigm |
 | :--- | :--- |

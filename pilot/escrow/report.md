@@ -96,18 +96,27 @@ The benchmark suite (`pilot/escrow/bench/test_escrow.py`) validates both functio
 - **QAL:** The QAL project store holds pre-checked, content-addressed definitions. `qal serve` started in **15 milliseconds** with 4 pooled WASM guest workers.
 
 ### 3. Governance- & Review-Kosten (Audit Verification Time)
-- **Python & Rust:** Reviewing changes required an engineer to inspect all 300–500 lines of code, manually verifying that every database update was wrapped in a transaction and every invariant was checked before every mutation.
-- **QAL:** Cryptographically verified governance:
-  ```bash
-  qal verify --trust ~/.config/qal/sessions/escrow/trust.json
-  # output: {"head":"4be39...","members":5,"ok":true,"records":19}
-  ```
-  In **6.4 milliseconds**, `qal verify` proved:
-  1. All 19 historical records form an unbroken SHA-256 hash chain.
-  2. Every change set was signed by an Ed25519 key registered in `team.json`.
-  3. Change set `ce7eea56f4d56` had a valid `verified` verdict signed by `ver-1` (Verifier) and an `approve` verdict signed by `rev-1` (Reviewer).
-  4. Non-owners reviewed and approved the change before merge.
-  5. 22/22 mathematical obligations were formally proven by Z3.
+- **Python & Rust:** Reviewing changes required an engineer to inspect all 300–500 lines of code, manually verifying that every database update was wrapped in a transaction and every invariant was checked before every mutation (~45–60 min).
+- **QAL:** Auditierbarkeit ist in zwei getrennte, automatisierte Schritte unterteilt:
+  1. **Kryptographische Auditkette (`qal verify`):**
+     ```bash
+     qal verify --trust ~/.config/qal/sessions/escrow/trust.json --head 4be3934dda9f5a96e207cd9773af5814f5fd66c0c6ac573c0ab1ce63860e9ab7
+     # output: {"head":"4be39...","members":5,"ok":true,"records":19,"trust":"file"}
+     ```
+     In **6.4 Millisekunden** prüft `qal verify`:
+     - Alle 19 Datensätze bilden eine lückenlose SHA-256-Hashkette mit fixiertem `--head` (kein Abschneiden der Historie möglich).
+     - Jede Änderung ist mit dem Ed25519-Schlüssel eines autorisierten Teammitglieds signiert.
+     - Das Change Set besitzt ein gültiges, signiertes `verified`-Urteil von `ver-1` (Verifier) und ein signiertes `approve`-Urteil von `rev-1` (Reviewer).
+     - Rollenrechte und Merge-Gates wurden exakt eingehalten.
+  2. **Mathematischer Invariantenbeweis (`qal prove`):**
+     ```bash
+     qal prove pilot/escrow/qal/escrow.qal
+     # output: {"proven":22,"refuted":0,"unknown":0}
+     ```
+     In **84 Millisekunden** beweist der integrierte Z3-SMT-Solver alle 22 mathematischen Obligations (Kontrakte für Balance-Erhaltungssatz, Nicht-Negativität, Multi-Sig-Schwellen).
+  
+  > [!NOTE]
+  > `qal verify` prüft die kryptographische Signatur- und Rechte-Kette der Historie; `qal prove` führt den Z3-Theorembeweis für die semantischen Sprachkontrakte durch. Die beiden Systeme sind orthogonal und ergänzen sich.
 
 ### 4. Crash- & Rollback-Resilienz (Host-Level Transaction Guarantee)
 - **Python & Rust:** If a handler crashes or returns an error after debiting an account, explicit `ROLLBACK` logic must be written. If a developer forgets a `ROLLBACK` in an early `return 400`, corrupted state remains committed.

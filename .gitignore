@@ -60,3 +60,6 @@ nul
 
 # QAL team keys (Phase 4): never versioned
 *.ed25519
+
+# Study temporary workdirs
+pilot/escrow/study/workdirs/
