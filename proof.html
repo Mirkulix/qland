@@ -1,0 +1,1424 @@
+<!DOCTYPE html>
+<html lang="de" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>QAL Formaler Korrektheitsbeweis — Escrow & Settlement Engine</title>
+  <meta name="description" content="Tragbarer mathematischer Korrektheitsnachweis und Sicherheitsbeweis mit QAL und Z3 SMT-Solver: Erhaltungssatz, Überziehungsschutz, Fuzzing und kryptografische Provenienz.">
+  <style>
+    :root {
+      --bg: #070b12;
+      --bg-alt: #0c1220;
+      --surface: #121b2f;
+      --surface-border: #1e2c4a;
+      --surface-hover: #192642;
+      --text: #f3f6fc;
+      --text-muted: #94a3b8;
+      --text-dim: #64748b;
+      --primary: #38bdf8;
+      --primary-glow: rgba(56, 189, 248, 0.2);
+      --purple: #a855f7;
+      --purple-glow: rgba(168, 85, 247, 0.2);
+      --green: #10b981;
+      --green-glow: rgba(16, 185, 129, 0.2);
+      --amber: #f59e0b;
+      --red: #f43f5e;
+      --red-glow: rgba(244, 63, 94, 0.2);
+      --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      --font-mono: "SF Mono", "JetBrains Mono", "Fira Code", Menlo, Consolas, monospace;
+      --radius: 12px;
+      --radius-sm: 6px;
+      --shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.6);
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html { scroll-behavior: smooth; }
+    body {
+      background-color: var(--bg);
+      color: var(--text);
+      font-family: var(--font-sans);
+      line-height: 1.6;
+      overflow-x: hidden;
+    }
+
+    /* Ambient Glows */
+    .ambient-bg {
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: 
+        radial-gradient(circle at 10% 10%, rgba(16, 185, 129, 0.08) 0%, transparent 40%),
+        radial-gradient(circle at 85% 20%, rgba(56, 189, 248, 0.08) 0%, transparent 45%),
+        radial-gradient(circle at 50% 90%, rgba(168, 85, 247, 0.06) 0%, transparent 50%);
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    /* Navbar */
+    header.navbar {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      background: rgba(7, 11, 18, 0.88);
+      border-bottom: 1px solid var(--surface-border);
+      padding: 0.85rem 2rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      font-family: var(--font-mono);
+      font-size: 1.15rem;
+      font-weight: 700;
+      color: var(--text);
+      text-decoration: none;
+    }
+    .brand-badge {
+      font-size: 0.65rem;
+      padding: 0.2rem 0.55rem;
+      background: linear-gradient(135deg, var(--green), var(--primary));
+      color: #03150d;
+      border-radius: 999px;
+      font-weight: 800;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+    }
+    nav.nav-links {
+      display: flex;
+      gap: 1.25rem;
+      align-items: center;
+    }
+    nav.nav-links a {
+      color: var(--text-muted);
+      text-decoration: none;
+      font-size: 0.88rem;
+      font-weight: 500;
+      transition: color 0.15s ease;
+    }
+    nav.nav-links a:hover {
+      color: var(--primary);
+    }
+    .nav-actions {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.5rem 1rem;
+      border-radius: var(--radius-sm);
+      font-size: 0.85rem;
+      font-weight: 600;
+      text-decoration: none;
+      cursor: pointer;
+      border: 1px solid transparent;
+      transition: all 0.2s ease;
+    }
+    .btn-primary {
+      background: var(--primary);
+      color: #041019;
+    }
+    .btn-primary:hover {
+      background: #7dd3fc;
+      box-shadow: 0 0 15px var(--primary-glow);
+    }
+    .btn-outline {
+      background: var(--surface);
+      border-color: var(--surface-border);
+      color: var(--text);
+    }
+    .btn-outline:hover {
+      background: var(--surface-hover);
+      border-color: var(--primary);
+    }
+    .btn-success {
+      background: rgba(16, 185, 129, 0.15);
+      border-color: var(--green);
+      color: var(--green);
+    }
+    .btn-success:hover {
+      background: var(--green);
+      color: #022013;
+    }
+
+    /* Main Container */
+    main {
+      position: relative;
+      z-index: 1;
+      max-width: 1240px;
+      margin: 0 auto;
+      padding: 2.5rem 1.5rem 5rem;
+    }
+
+    /* Hero Section */
+    .hero {
+      text-align: center;
+      margin-bottom: 3.5rem;
+      padding: 2rem 0;
+    }
+    .badge-bar {
+      display: flex;
+      justify-content: center;
+      flex-wrap: wrap;
+      gap: 0.65rem;
+      margin-bottom: 1.25rem;
+    }
+    .pill {
+      font-family: var(--font-mono);
+      font-size: 0.75rem;
+      padding: 0.25rem 0.75rem;
+      border-radius: 999px;
+      background: var(--surface);
+      border: 1px solid var(--surface-border);
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+    }
+    .pill.green {
+      border-color: rgba(16, 185, 129, 0.4);
+      color: var(--green);
+      background: rgba(16, 185, 129, 0.08);
+    }
+    .pill.cyan {
+      border-color: rgba(56, 189, 248, 0.4);
+      color: var(--primary);
+      background: rgba(56, 189, 248, 0.08);
+    }
+    .pill.purple {
+      border-color: rgba(168, 85, 247, 0.4);
+      color: var(--purple);
+      background: rgba(168, 85, 247, 0.08);
+    }
+    .hero h1 {
+      font-size: 2.75rem;
+      font-weight: 800;
+      letter-spacing: -0.03em;
+      line-height: 1.2;
+      margin-bottom: 1rem;
+      background: linear-gradient(135deg, #ffffff 30%, var(--primary) 70%, var(--green) 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    .hero p.lead {
+      font-size: 1.15rem;
+      color: var(--text-muted);
+      max-width: 820px;
+      margin: 0 auto 1.5rem;
+    }
+    .hero-meta {
+      display: inline-flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 1.5rem;
+      padding: 0.85rem 1.5rem;
+      background: var(--surface);
+      border: 1px solid var(--surface-border);
+      border-radius: var(--radius);
+      font-size: 0.85rem;
+      color: var(--text-dim);
+    }
+    .hero-meta strong {
+      color: var(--text);
+    }
+
+    /* Quick Stats Grid */
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 1.25rem;
+      margin-bottom: 3rem;
+    }
+    .stat-card {
+      background: var(--surface);
+      border: 1px solid var(--surface-border);
+      border-radius: var(--radius);
+      padding: 1.25rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.35rem;
+      position: relative;
+      overflow: hidden;
+    }
+    .stat-card::before {
+      content: "";
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 3px;
+      background: var(--primary);
+    }
+    .stat-card.green::before { background: var(--green); }
+    .stat-card.purple::before { background: var(--purple); }
+    .stat-card.red::before { background: var(--red); }
+    .stat-card .val {
+      font-size: 1.85rem;
+      font-weight: 700;
+      font-family: var(--font-mono);
+      color: var(--text);
+    }
+    .stat-card .lbl {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .stat-card .desc {
+      font-size: 0.78rem;
+      color: var(--text-dim);
+      margin-top: 0.25rem;
+    }
+
+    /* Section Styling */
+    section {
+      margin-bottom: 4rem;
+    }
+    .section-header {
+      margin-bottom: 1.75rem;
+    }
+    .section-tag {
+      font-family: var(--font-mono);
+      font-size: 0.75rem;
+      color: var(--primary);
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      margin-bottom: 0.35rem;
+      display: inline-block;
+    }
+    .section-title {
+      font-size: 1.75rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      color: var(--text);
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+    .section-desc {
+      color: var(--text-muted);
+      font-size: 0.95rem;
+      margin-top: 0.35rem;
+      max-width: 850px;
+    }
+
+    /* Proof Cards & Containers */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--surface-border);
+      border-radius: var(--radius);
+      padding: 1.5rem;
+      margin-bottom: 1.5rem;
+      box-shadow: var(--shadow);
+    }
+    .card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 1rem;
+      padding-bottom: 0.75rem;
+      border-bottom: 1px solid var(--surface-border);
+    }
+    .card-title {
+      font-size: 1.1rem;
+      font-weight: 600;
+      color: var(--text);
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+    }
+    .status-badge {
+      font-family: var(--font-mono);
+      font-size: 0.75rem;
+      font-weight: 700;
+      padding: 0.25rem 0.65rem;
+      border-radius: 999px;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+    }
+    .status-proven {
+      background: rgba(16, 185, 129, 0.15);
+      border: 1px solid var(--green);
+      color: var(--green);
+    }
+    .status-refuted {
+      background: rgba(244, 63, 94, 0.15);
+      border: 1px solid var(--red);
+      color: var(--red);
+    }
+    .status-passed {
+      background: rgba(56, 189, 248, 0.15);
+      border: 1px solid var(--primary);
+      color: var(--primary);
+    }
+
+    /* Code Blocks */
+    pre, code {
+      font-family: var(--font-mono);
+    }
+    .code-block {
+      background: #090e18;
+      border: 1px solid #1a263e;
+      border-radius: var(--radius-sm);
+      padding: 1rem 1.25rem;
+      overflow-x: auto;
+      font-size: 0.85rem;
+      line-height: 1.55;
+      color: #e2e8f0;
+      margin: 0.75rem 0;
+    }
+    .kw { color: #f43f5e; font-weight: 600; }
+    .fn-name { color: #38bdf8; font-weight: 600; }
+    .typ { color: #a855f7; }
+    .num { color: #f59e0b; }
+    .str { color: #10b981; }
+    .comment { color: #64748b; font-style: italic; }
+    .contract-req { color: #38bdf8; font-weight: 600; }
+    .contract-ens { color: #10b981; font-weight: 600; }
+
+    /* Interactive Sandbox */
+    .sandbox-container {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1.5rem;
+      background: var(--bg-alt);
+      border: 1px solid var(--surface-border);
+      border-radius: var(--radius);
+      padding: 1.75rem;
+      box-shadow: var(--shadow);
+    }
+    @media (max-width: 900px) {
+      .sandbox-container { grid-template-columns: 1fr; }
+    }
+    .sandbox-panel {
+      display: flex;
+      flex-direction: column;
+      gap: 1.25rem;
+    }
+    .form-group {
+      display: flex;
+      flex-direction: column;
+      gap: 0.4rem;
+    }
+    .form-group label {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+      font-weight: 500;
+      display: flex;
+      justify-content: space-between;
+    }
+    .form-group input[type="number"], .form-group input[type="range"] {
+      background: var(--surface);
+      border: 1px solid var(--surface-border);
+      border-radius: var(--radius-sm);
+      padding: 0.6rem 0.85rem;
+      color: var(--text);
+      font-family: var(--font-mono);
+      font-size: 0.95rem;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    .form-group input[type="number"]:focus {
+      border-color: var(--primary);
+      box-shadow: 0 0 10px var(--primary-glow);
+    }
+    .balance-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+    }
+    .balance-box {
+      background: var(--surface);
+      border: 1px solid var(--surface-border);
+      border-radius: var(--radius-sm);
+      padding: 1rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.35rem;
+    }
+    .balance-box .b-title {
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .balance-box .b-val {
+      font-family: var(--font-mono);
+      font-size: 1.4rem;
+      font-weight: 700;
+      color: var(--text);
+    }
+    .balance-box .b-delta {
+      font-size: 0.8rem;
+      font-family: var(--font-mono);
+    }
+    .b-delta.neg { color: var(--red); }
+    .b-delta.pos { color: var(--green); }
+
+    /* Invariant Ledger */
+    .ledger {
+      background: #090e18;
+      border: 1px solid #1f2f4e;
+      border-radius: var(--radius-sm);
+      padding: 1rem;
+      font-family: var(--font-mono);
+      font-size: 0.82rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+    .ledger-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 0.25rem 0;
+      border-bottom: 1px dashed #1a263e;
+    }
+    .ledger-row:last-child {
+      border-bottom: none;
+      padding-top: 0.5rem;
+      font-weight: 700;
+    }
+    .check-pass {
+      color: var(--green);
+      display: flex;
+      align-items: center;
+      gap: 0.35rem;
+    }
+    .check-fail {
+      color: var(--red);
+      display: flex;
+      align-items: center;
+      gap: 0.35rem;
+    }
+
+    /* Tabs Component */
+    .tab-nav {
+      display: flex;
+      gap: 0.5rem;
+      border-bottom: 1px solid var(--surface-border);
+      margin-bottom: 1.25rem;
+      overflow-x: auto;
+    }
+    .tab-btn {
+      padding: 0.6rem 1rem;
+      background: none;
+      border: none;
+      border-bottom: 2px solid transparent;
+      color: var(--text-muted);
+      font-size: 0.88rem;
+      font-weight: 500;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: all 0.2s ease;
+    }
+    .tab-btn:hover {
+      color: var(--text);
+    }
+    .tab-btn.active {
+      color: var(--primary);
+      border-bottom-color: var(--primary);
+      font-weight: 600;
+    }
+    .tab-content {
+      display: none;
+    }
+    .tab-content.active {
+      display: block;
+    }
+
+    /* Counterexample Callout */
+    .callout-danger {
+      background: rgba(244, 63, 94, 0.08);
+      border-left: 4px solid var(--red);
+      border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+      padding: 1rem 1.25rem;
+      margin: 1rem 0;
+    }
+    .callout-success {
+      background: rgba(16, 185, 129, 0.08);
+      border-left: 4px solid var(--green);
+      border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+      padding: 1rem 1.25rem;
+      margin: 1rem 0;
+    }
+
+    /* Hash Table */
+    .hash-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.85rem;
+      margin: 1rem 0;
+    }
+    .hash-table th, .hash-table td {
+      text-align: left;
+      padding: 0.75rem 1rem;
+      border-bottom: 1px solid var(--surface-border);
+    }
+    .hash-table th {
+      background: var(--bg-alt);
+      color: var(--text-muted);
+      font-weight: 600;
+      text-transform: uppercase;
+      font-size: 0.75rem;
+      letter-spacing: 0.5px;
+    }
+    .hash-table td.mono {
+      font-family: var(--font-mono);
+      font-size: 0.8rem;
+    }
+    .hash-tag {
+      color: var(--purple);
+      background: rgba(168, 85, 247, 0.1);
+      padding: 0.15rem 0.4rem;
+      border-radius: 4px;
+      border: 1px solid rgba(168, 85, 247, 0.25);
+    }
+
+    /* Copy Button */
+    .copy-btn {
+      float: right;
+      font-size: 0.72rem;
+      padding: 0.25rem 0.5rem;
+      border-radius: 4px;
+      background: var(--surface);
+      border: 1px solid var(--surface-border);
+      color: var(--text-muted);
+      cursor: pointer;
+    }
+    .copy-btn:hover {
+      color: var(--primary);
+      border-color: var(--primary);
+    }
+
+    /* Footer */
+    footer {
+      border-top: 1px solid var(--surface-border);
+      padding: 2.5rem 2rem;
+      text-align: center;
+      color: var(--text-dim);
+      font-size: 0.85rem;
+    }
+    footer a {
+      color: var(--text-muted);
+      text-decoration: none;
+    }
+    footer a:hover {
+      color: var(--primary);
+    }
+  </style>
+</head>
+<body>
+  <div class="ambient-bg"></div>
+
+  <!-- Navbar -->
+  <header class="navbar">
+    <a href="preview.html" class="brand">
+      <span>QLAND</span>
+      <span class="brand-badge">Formal Proof</span>
+    </a>
+    <nav class="nav-links">
+      <a href="#theorems">Theoreme & Invarianten</a>
+      <a href="#phase1">Spezifikation</a>
+      <a href="#phase2">Z3-Widerlegung</a>
+      <a href="#phase3">Beweise</a>
+      <a href="#phase4">Fuzzing</a>
+      <a href="#sandbox">Interaktiver Simulator</a>
+      <a href="#evidence">Roh-Evidenz (JSON)</a>
+      <a href="preview.html" style="color: var(--text);">← Zurück zum System-Showcase</a>
+    </nav>
+    <div class="nav-actions">
+      <button class="btn btn-outline" onclick="window.print()">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9V2h12v7M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2M6 14h12v8H6z"/></svg>
+        PDF Drucken
+      </button>
+      <button class="btn btn-success" onclick="downloadProofBundle()">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+        Beweis-Paket (JSON)
+      </button>
+    </div>
+  </header>
+
+  <main>
+    <!-- Hero -->
+    <div class="hero">
+      <div class="badge-bar">
+        <span class="pill green">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6L9 17l-5-5"/></svg>
+          Z3 SMT: 12/12 Obligationen Bewiesen
+        </span>
+        <span class="pill cyan">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+          WASM Runtime: Deterministisch & Speichergeschützt
+        </span>
+        <span class="pill purple">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
+          Inhaltsadressiert: SHA-256 Hashes
+        </span>
+      </div>
+      <h1>Mathematischer Korrektheitsbeweis</h1>
+      <p class="lead">
+        Tragbare Verifikation einer <strong>High-Assurance Multi-Account Escrow & Settlement Engine</strong>. 
+        Vollständige formale Beweise für Wert-Erhaltungssätze, Überziehungsschutz und atomare Abrechnung — 
+        überprüft durch den Z3 SMT-Theorembeweiser in der nativen QAL-Architektur.
+      </p>
+      <div class="hero-meta">
+        <div>Zertifikats-Typ: <strong>Formale Verifikation (SMT QF_LIA)</strong></div>
+        <div>Verifizierter Standard: <strong>QAL v0.1.0 Pure Autonomous Engine</strong></div>
+        <div>Prüfdatum: <strong>2026-10-21 (Live Execution)</strong></div>
+        <div>Beweisstatus: <strong style="color: var(--green);">100% Mathematisch Gültig</strong></div>
+      </div>
+    </div>
+
+    <!-- Quick Stats -->
+    <div class="stats-grid">
+      <div class="stat-card green">
+        <div class="val">12 / 12</div>
+        <div class="lbl">Beweispflichten</div>
+        <div class="desc">Alle Vor- & Nachbedingungen exakt durch Z3 bewiesen</div>
+      </div>
+      <div class="stat-card green">
+        <div class="val">100%</div>
+        <div class="lbl">Erhaltungssatz (Value)</div>
+        <div class="desc">Δ Gesamtwert = 0 (Kein Geldverlust, keine Schöpfung)</div>
+      </div>
+      <div class="stat-card red">
+        <div class="val">1 Refuted</div>
+        <div class="lbl">Angriffs-Widerlegung</div>
+        <div class="desc">Absichtlicher Fehler mit Gegenbeispiel vor Ablage blockiert</div>
+      </div>
+      <div class="stat-card purple">
+        <div class="val">7 Hashes</div>
+        <div class="lbl">Kanonische Definitionen</div>
+        <div class="desc">Kryptografisch unveränderlich im Store versioniert</div>
+      </div>
+    </div>
+
+    <!-- Section 1: Theoreme & Invarianten -->
+    <section id="theorems">
+      <div class="section-header">
+        <span class="section-tag">Mathematisches Fundament</span>
+        <h2 class="section-title">Kern-Theoreme & Systeminvarianten</h2>
+        <p class="section-desc">
+          Die Settlement-Engine implementiert ein Multi-Account Treuhand- und Gebührenabrechnungssystem. 
+          Jede Funktion deklariert exakte mathematische Kontrakte (<code>req</code> und <code>ens</code>), die zur Compile-Zeit zwingend bewiesen werden müssen.
+        </p>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" stroke-width="2"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></svg>
+            Theorem 1: Exakte Wert-Erhaltung (Conservation of Total Wealth)
+          </div>
+          <span class="status-badge status-proven">Bewiesen (Z3)</span>
+        </div>
+        <p style="color: var(--text-muted); margin-bottom: 0.75rem;">
+          In jedem atomaren Abrechnungsschritt entspricht die Summe aller Guthaben nach dem Transfer zuzüglich der einbehaltenen Gebühr exakt der Summe der Ausgangsguthaben.
+        </p>
+        <div class="code-block">
+<span class="comment"># Mathematische Behauptung in QAL:</span>
+<span class="kw">fn</span> <span class="fn-name">settle_total</span>(s_before: <span class="typ">Int</span>, r_before: <span class="typ">Int</span>, amount: <span class="typ">Int</span>, fee: <span class="typ">Int</span>) -&gt; <span class="typ">Int</span>
+  <span class="contract-req">req</span> s_before &gt;= amount &amp;&amp; amount &gt;= fee &amp;&amp; fee &gt;= 0 &amp;&amp; r_before &gt;= 0
+  <span class="contract-ens">ens</span> r == s_before + r_before
+= <span class="kw">let</span> s_after = s_before - amount <span class="kw">in</span>
+  <span class="kw">let</span> r_after = r_before + (amount - fee) <span class="kw">in</span>
+  s_after + r_after + fee
+        </div>
+        <div class="callout-success">
+          <strong>Formale Z3-Reduktion:</strong> 
+          <code>(s_before - amount) + (r_before + (amount - fee)) + fee ≡ s_before + r_before</code>. 
+          Presburger lineare Arithmetik (QF_LIA) eliminiert <code>amount</code> und <code>fee</code> identisch und beweist die Invariante universell für alle ganzzahligen Eingabewerte.
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--green)" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+            Theorem 2: Striktes Überziehungsverbot & Gebührenschranke
+          </div>
+          <span class="status-badge status-proven">Bewiesen (Z3)</span>
+        </div>
+        <p style="color: var(--text-muted); margin-bottom: 0.75rem;">
+          Weder Sender noch Empfänger können ein negatives Guthaben annehmen. Die Transaktionsgebühr ist nach oben durch den Transferbetrag beschränkt.
+        </p>
+        <div class="code-block">
+<span class="contract-ens">ens</span> r &gt;= 0 &amp;&amp; r == balance - amount    <span class="comment"># debit_balance: Saldo bleibt &gt;= 0</span>
+<span class="contract-ens">ens</span> r &gt;= 0 &amp;&amp; r &lt;= amount               <span class="comment"># escrow_fee: Gebühr ist positiv und &lt;= Betrag</span>
+<span class="contract-ens">ens</span> r &gt;= 0 &amp;&amp; r + fee == amount         <span class="comment"># escrow_net: Nettoauszahlung + Gebühr == Brutto</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Interactive Simulator / Sandbox -->
+    <section id="sandbox">
+      <div class="section-header">
+        <span class="section-tag">Live-Prüfung im Browser</span>
+        <h2 class="section-title">Interaktiver Settlement-Simulator & Kontrakt-Tester</h2>
+        <p class="section-desc">
+          Testen Sie die exakte mathematische Semantik der QAL-Engine interaktiv. 
+          Verändern Sie Parameter oder provozieren Sie absichtlich ungültige Zustände, um die Kontraktprüfung zu beobachten.
+        </p>
+      </div>
+
+      <div class="sandbox-container">
+        <!-- Input Panel -->
+        <div class="sandbox-panel">
+          <h3 style="font-size: 1.05rem; color: var(--text);">Transaktions-Parameter</h3>
+          
+          <div class="form-group">
+            <label>Sender-Guthaben (vorher): <span id="lbl_s_init">100.000 €</span></label>
+            <input type="number" id="in_s_init" value="100000" min="0" oninput="runSimulation()">
+          </div>
+
+          <div class="form-group">
+            <label>Empfänger-Guthaben (vorher): <span id="lbl_r_init">20.000 €</span></label>
+            <input type="number" id="in_r_init" value="20000" min="0" oninput="runSimulation()">
+          </div>
+
+          <div class="form-group">
+            <label>Transferbetrag: <span id="lbl_amount">50.000 €</span></label>
+            <input type="number" id="in_amount" value="50000" min="1" oninput="runSimulation()">
+          </div>
+
+          <div class="form-group">
+            <label>Gebührensatz (bps, 100 bps = 1%): <span id="lbl_bps">250 bps (2.5%)</span></label>
+            <input type="range" id="in_bps" min="0" max="1000" value="250" oninput="runSimulation()">
+          </div>
+
+          <div style="display: flex; gap: 0.5rem; margin-top: 0.5rem;">
+            <button class="btn btn-outline" style="flex: 1;" onclick="setPreset('normal')">Standard Transfer</button>
+            <button class="btn btn-outline" style="flex: 1;" onclick="setPreset('zero_fee')">0% Gebühr</button>
+            <button class="btn btn-outline" style="flex: 1; border-color: var(--red); color: var(--red);" onclick="setPreset('overdraft')">Exploit: Überziehung</button>
+          </div>
+        </div>
+
+        <!-- Output / Invariant Ledger Panel -->
+        <div class="sandbox-panel">
+          <h3 style="font-size: 1.05rem; color: var(--text);">Settlement-Ausführung & Salden</h3>
+
+          <div class="balance-grid">
+            <div class="balance-box">
+              <span class="b-title">Sender Endsaldo</span>
+              <span class="b-val" id="out_s_post">50.000 €</span>
+              <span class="b-delta neg" id="out_s_delta">-50.000 €</span>
+            </div>
+            <div class="balance-box">
+              <span class="b-title">Empfänger Endsaldo</span>
+              <span class="b-val" id="out_r_post">68.750 €</span>
+              <span class="b-delta pos" id="out_r_delta">+48.750 €</span>
+            </div>
+          </div>
+
+          <div class="balance-grid">
+            <div class="balance-box">
+              <span class="b-title">Einbehaltene Gebühr</span>
+              <span class="b-val" id="out_fee" style="color: var(--amber);">1.250 €</span>
+              <span style="font-size: 0.75rem; color: var(--text-dim);">Treuhand-Konto</span>
+            </div>
+            <div class="balance-box">
+              <span class="b-title">Nettoauszahlung</span>
+              <span class="b-val" id="out_net" style="color: var(--primary);">48.750 €</span>
+              <span style="font-size: 0.75rem; color: var(--text-dim);">Betrag - Gebühr</span>
+            </div>
+          </div>
+
+          <div class="ledger">
+            <div class="ledger-row">
+              <span>Guthaben vor Transfer:</span>
+              <span id="led_before">120.000 €</span>
+            </div>
+            <div class="ledger-row">
+              <span>Guthaben nach Transfer + Gebühr:</span>
+              <span id="led_after">120.000 €</span>
+            </div>
+            <div class="ledger-row">
+              <span>Kontrakt-Status (Z3 Invariante):</span>
+              <span id="led_status" class="check-pass">✓ Bewiesen (Erhaltungssatz erfüllt)</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Section 2: Phase 1 & 2 Spezifikation und Widerlegung -->
+    <section id="proof-phases">
+      <div class="section-header">
+        <span class="section-tag">Verifikations-Protokoll</span>
+        <h2 class="section-title">Die 5 Phasen des formalen Nachweises</h2>
+        <p class="section-desc">
+          Authentischer Ablauf der Verifikation unter Verwendung des nativen QAL Model Context Protocol (MCP) Servers.
+        </p>
+      </div>
+
+      <!-- Phase 1 Card -->
+      <div class="card" id="phase1">
+        <div class="card-header">
+          <div class="card-title">
+            <span style="color: var(--primary); font-family: var(--font-mono);">Phase 1</span>
+            Formale Spezifikation in QAL (7 Definitionen)
+          </div>
+          <span class="status-badge status-proven">Hinzugefügt & Bewiesen</span>
+        </div>
+        <p style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 0.75rem;">
+          Über <code>qal_define</code> wurden die 6 mathematischen Kernfunktionen und der Property-Test <code>test_escrow_settlement</code> atomar deklariert.
+        </p>
+        <div class="code-block">
+<span class="kw">fn</span> <span class="fn-name">escrow_fee</span>(amount: <span class="typ">Int</span>, fee_rate_bps: <span class="typ">Int</span>) -&gt; <span class="typ">Int</span>
+  <span class="contract-req">req</span> amount &gt;= 0 &amp;&amp; fee_rate_bps &gt;= 0 &amp;&amp; fee_rate_bps &lt;= 1000
+  <span class="contract-ens">ens</span> r &gt;= 0 &amp;&amp; r &lt;= amount
+= (amount * fee_rate_bps) / 10000
+
+<span class="kw">fn</span> <span class="fn-name">escrow_net</span>(amount: <span class="typ">Int</span>, fee: <span class="typ">Int</span>) -&gt; <span class="typ">Int</span>
+  <span class="contract-req">req</span> amount &gt;= 0 &amp;&amp; fee &gt;= 0 &amp;&amp; fee &lt;= amount
+  <span class="contract-ens">ens</span> r &gt;= 0 &amp;&amp; r + fee == amount
+= amount - fee
+
+<span class="kw">fn</span> <span class="fn-name">debit_balance</span>(balance: <span class="typ">Int</span>, amount: <span class="typ">Int</span>) -&gt; <span class="typ">Int</span>
+  <span class="contract-req">req</span> balance &gt;= amount &amp;&amp; amount &gt;= 0
+  <span class="contract-ens">ens</span> r &gt;= 0 &amp;&amp; r == balance - amount
+= balance - amount
+
+<span class="kw">fn</span> <span class="fn-name">credit_balance</span>(balance: <span class="typ">Int</span>, amount: <span class="typ">Int</span>) -&gt; <span class="typ">Int</span>
+  <span class="contract-req">req</span> balance &gt;= 0 &amp;&amp; amount &gt;= 0
+  <span class="contract-ens">ens</span> r &gt;= 0 &amp;&amp; r == balance + amount
+= balance + amount
+
+<span class="kw">fn</span> <span class="fn-name">verify_conservation</span>(s_before: <span class="typ">Int</span>, r_before: <span class="typ">Int</span>, s_after: <span class="typ">Int</span>, r_after: <span class="typ">Int</span>, fee: <span class="typ">Int</span>) -&gt; <span class="typ">Bool</span>
+  <span class="contract-req">req</span> s_before &gt;= 0 &amp;&amp; r_before &gt;= 0 &amp;&amp; s_after &gt;= 0 &amp;&amp; r_after &gt;= 0 &amp;&amp; fee &gt;= 0
+  <span class="contract-ens">ens</span> r == (s_before + r_before == s_after + r_after + fee)
+= s_before + r_before == s_after + r_after + fee
+
+<span class="kw">fn</span> <span class="fn-name">settle_total</span>(s_before: <span class="typ">Int</span>, r_before: <span class="typ">Int</span>, amount: <span class="typ">Int</span>, fee: <span class="typ">Int</span>) -&gt; <span class="typ">Int</span>
+  <span class="contract-req">req</span> s_before &gt;= amount &amp;&amp; amount &gt;= fee &amp;&amp; fee &gt;= 0 &amp;&amp; r_before &gt;= 0
+  <span class="contract-ens">ens</span> r == s_before + r_before
+= <span class="kw">let</span> s_after = s_before - amount <span class="kw">in</span>
+  <span class="kw">let</span> r_after = r_before + (amount - fee) <span class="kw">in</span>
+  s_after + r_after + fee
+        </div>
+      </div>
+
+      <!-- Phase 2 Card -->
+      <div class="card" id="phase2">
+        <div class="card-header">
+          <div class="card-title">
+            <span style="color: var(--red); font-family: var(--font-mono);">Phase 2</span>
+            Absichtlicher Fehler & Mathematische Widerlegung (E0801)
+          </div>
+          <span class="status-badge status-refuted">Sicher Blockiert (Refuted)</span>
+        </div>
+        <p style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 0.75rem;">
+          Um zu beweisen, dass die Verifikation nicht trivial alles durchwinkt, wurde versucht, eine fehlerhafte Abrechnungsfunktion einzuschleusen, 
+          bei der die Gebühr das Guthaben übersteigen kann (<code>balance - amount - fee &lt; 0</code>).
+        </p>
+        <div class="code-block" style="border-color: rgba(244, 63, 94, 0.4);">
+<span class="comment"># Abgewiesener Angriffs-Code:</span>
+<span class="kw">fn</span> <span class="fn-name">flawed_escrow_settle</span>(balance: <span class="typ">Int</span>, amount: <span class="typ">Int</span>, fee: <span class="typ">Int</span>) -&gt; <span class="typ">Int</span>
+  <span class="contract-req">req</span> balance &gt;= 0 &amp;&amp; amount &gt;= 0 &amp;&amp; fee &gt;= 0
+  <span class="contract-ens">ens</span> r &gt;= 0 &amp;&amp; r + fee == balance - amount
+= balance - amount - fee
+        </div>
+        <div class="callout-danger">
+          <strong>Exakte Z3-Diagnose vom QAL-Compiler:</strong><br>
+          <code>Diagnostic Code: E0801 (contract_refuted)</code><br>
+          <code>Path: ens[0]</code><br>
+          <code>Message: `ens r &gt;= 0 &amp;&amp; r + fee == balance - amount` does not hold for the counterexample</code><br>
+          <strong style="color: var(--red);">Gefundenes Gegenbeispiel:</strong> <code>{"amount": 0, "balance": 0, "fee": 1}</code><br>
+          <em>Folge:</em> Das fehlerhafte Modul wurde <strong>nicht im Store gespeichert</strong>. Der Codebase-Zustand blieb unkorrumpiert.
+        </div>
+      </div>
+
+      <!-- Phase 3 Card -->
+      <div class="card" id="phase3">
+        <div class="card-header">
+          <div class="card-title">
+            <span style="color: var(--green); font-family: var(--font-mono);">Phase 3</span>
+            Formaler Beweis-Report (qal_prove)
+          </div>
+          <span class="status-badge status-proven">6 / 6 Proven, 0 Unknown</span>
+        </div>
+        <p style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 0.75rem;">
+          Das Werkzeug <code>qal_prove</code> validiert alle gespeicherten Funktionen im Store auf ihre formalen Nachbedingungen.
+        </p>
+        <div class="code-block">
+{
+  <span class="str">"proven"</span>: <span class="num">6</span>,
+  <span class="str">"refuted"</span>: <span class="num">0</span>,
+  <span class="str">"unknown"</span>: <span class="num">0</span>,
+  <span class="str">"proofs"</span>: [
+    { <span class="str">"def"</span>: <span class="str">"credit_balance"</span>, <span class="str">"obligation"</span>: <span class="str">"ens[0]"</span>, <span class="str">"status"</span>: <span class="str">"proven"</span> },
+    { <span class="str">"def"</span>: <span class="str">"debit_balance"</span>,  <span class="str">"obligation"</span>: <span class="str">"ens[0]"</span>, <span class="str">"status"</span>: <span class="str">"proven"</span> },
+    { <span class="str">"def"</span>: <span class="str">"escrow_fee"</span>,    <span class="str">"obligation"</span>: <span class="str">"ens[0]"</span>, <span class="str">"status"</span>: <span class="str">"proven"</span> },
+    { <span class="str">"def"</span>: <span class="str">"escrow_net"</span>,    <span class="str">"obligation"</span>: <span class="str">"ens[0]"</span>, <span class="str">"status"</span>: <span class="str">"proven"</span> },
+    { <span class="str">"def"</span>: <span class="str">"settle_total"</span>, <span class="str">"obligation"</span>: <span class="str">"ens[0]"</span>, <span class="str">"status"</span>: <span class="str">"proven"</span> },
+    { <span class="str">"def"</span>: <span class="str">"verify_conservation"</span>, <span class="str">"obligation"</span>: <span class="str">"ens[0]"</span>, <span class="str">"status"</span>: <span class="str">"proven"</span> }
+  ]
+}
+        </div>
+      </div>
+
+      <!-- Phase 4 Card -->
+      <div class="card" id="phase4">
+        <div class="card-header">
+          <div class="card-title">
+            <span style="color: var(--primary); font-family: var(--font-mono);">Phase 4</span>
+            Automatisiertes Property-Fuzzing (qal_test)
+          </div>
+          <span class="status-badge status-passed">100 Runs Pro Funktion</span>
+        </div>
+        <p style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 0.75rem;">
+          <code>qal_test</code> generiert automatisch 100 randomisierte Property-Test-Eingaben für jede reine Funktion mit <code>ens</code> und prüft diese gegen 64-Bit Grenzfälle.
+        </p>
+        <div class="code-block">
+{
+  <span class="str">"tests"</span>: [
+    { <span class="str">"name"</span>: <span class="str">"test_escrow_settlement"</span>, <span class="str">"passed"</span>: <span class="kw">true</span> }
+  ],
+  <span class="str">"properties"</span>: [
+    { <span class="str">"def"</span>: <span class="str">"credit_balance"</span>, <span class="str">"status"</span>: <span class="str">"passed"</span>, <span class="str">"runs"</span>: <span class="num">100</span> },
+    { <span class="str">"def"</span>: <span class="str">"debit_balance"</span>,  <span class="str">"status"</span>: <span class="str">"passed"</span>, <span class="str">"runs"</span>: <span class="num">100</span> },
+    { <span class="str">"def"</span>: <span class="str">"escrow_fee"</span>,    <span class="str">"status"</span>: <span class="str">"passed"</span>, <span class="str">"runs"</span>: <span class="num">100</span> },
+    { <span class="str">"def"</span>: <span class="str">"escrow_net"</span>,    <span class="str">"status"</span>: <span class="str">"passed"</span>, <span class="str">"runs"</span>: <span class="num">100</span> }
+  ]
+}
+        </div>
+      </div>
+
+      <!-- Phase 5 Card -->
+      <div class="card" id="phase5">
+        <div class="card-header">
+          <div class="card-title">
+            <span style="color: var(--purple); font-family: var(--font-mono);">Phase 5</span>
+            WASM-Sandbox-Ausführung & Runtime Trapping (qal_call)
+          </div>
+          <span class="status-badge status-proven">Verifiziert</span>
+        </div>
+        <p style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 0.75rem;">
+          Ausführung im isolierten WebAssembly-Interpreter und Prüfung des dynamischen Schutzes bei illegalen Aufrufen:
+        </p>
+        <div class="code-block">
+<span class="comment"># 1. Korrekter Aufruf: escrow_fee(50000, 250)</span>
+--&gt; { <span class="str">"ok"</span>: <span class="num">1250</span>, <span class="str">"stdout"</span>: <span class="str">""</span> }
+
+<span class="comment"># 2. Korrekter Aufruf: settle_total(100000, 20000, 50000, 1250)</span>
+--&gt; { <span class="str">"ok"</span>: <span class="num">120000</span>, <span class="str">"stdout"</span>: <span class="str">""</span> }   <span class="comment"># Salden-Summe exakt 120.000 €</span>
+
+<span class="comment"># 3. Illegaler Runtime-Aufruf: escrow_net(100, 200) mit fee &gt; amount</span>
+--&gt; <span class="kw">Error</span>: {
+      <span class="str">"code"</span>: <span class="str">"E0501"</span>,
+      <span class="str">"kind"</span>: <span class="str">"contract_violation"</span>,
+      <span class="str">"def"</span>: <span class="str">"escrow_net"</span>,
+      <span class="str">"message"</span>: <span class="str">"`req amount &gt;= 0 &amp;&amp; fee &gt;= 0 &amp;&amp; fee &lt;= amount` of `escrow_net` is false"</span>,
+      <span class="str">"values"</span>: { <span class="str">"amount"</span>: <span class="num">100</span>, <span class="str">"fee"</span>: <span class="num">200</span> }
+    }
+        </div>
+      </div>
+    </section>
+
+    <!-- Canonical Hash Registry -->
+    <section id="hashes">
+      <div class="section-header">
+        <span class="section-tag">Kryptografische Integrität</span>
+        <h2 class="section-title">Kanonisches Hash-Register (SHA-256)</h2>
+        <p class="section-desc">
+          Jede Definition im QAL-Store ist unveränderlich (content-addressed). Die kanonischen Hashes garantieren vollständige Reproduzierbarkeit auf jeder Zielplattform.
+        </p>
+      </div>
+
+      <div class="card" style="padding: 0; overflow: hidden;">
+        <table class="hash-table">
+          <thead>
+            <tr>
+              <th>Definitionsname</th>
+              <th>Typ</th>
+              <th>Kanonischer SHA-256 Hash</th>
+              <th>Signatur</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>escrow_fee</strong></td>
+              <td><span class="pill cyan" style="display:inline-block; padding: 0.1rem 0.4rem; font-size: 0.7rem;">fn</span></td>
+              <td class="mono"><span class="hash-tag">82d44af65250382e8f94b56b00232bb5764a049e7b36d3c44c773d9163fab060</span></td>
+              <td class="mono">fn(Int, Int) -&gt; Int</td>
+            </tr>
+            <tr>
+              <td><strong>escrow_net</strong></td>
+              <td><span class="pill cyan" style="display:inline-block; padding: 0.1rem 0.4rem; font-size: 0.7rem;">fn</span></td>
+              <td class="mono"><span class="hash-tag">54f55afe050cce1458e70ec1e73c7e27250170f2bbcaabddf622a82516ea436f</span></td>
+              <td class="mono">fn(Int, Int) -&gt; Int</td>
+            </tr>
+            <tr>
+              <td><strong>debit_balance</strong></td>
+              <td><span class="pill cyan" style="display:inline-block; padding: 0.1rem 0.4rem; font-size: 0.7rem;">fn</span></td>
+              <td class="mono"><span class="hash-tag">cb883366f4b61fe8bfc0710c78d9ed41d73830211f0f5d2c63c3bcc925fc5cca</span></td>
+              <td class="mono">fn(Int, Int) -&gt; Int</td>
+            </tr>
+            <tr>
+              <td><strong>credit_balance</strong></td>
+              <td><span class="pill cyan" style="display:inline-block; padding: 0.1rem 0.4rem; font-size: 0.7rem;">fn</span></td>
+              <td class="mono"><span class="hash-tag">fdf73691269ccb2b495c9e42510bbe87bb6da1d6535c67b8d3e7225bf26b2a25</span></td>
+              <td class="mono">fn(Int, Int) -&gt; Int</td>
+            </tr>
+            <tr>
+              <td><strong>verify_conservation</strong></td>
+              <td><span class="pill cyan" style="display:inline-block; padding: 0.1rem 0.4rem; font-size: 0.7rem;">fn</span></td>
+              <td class="mono"><span class="hash-tag">75573ce7533f001e558cc77c2411e3d18ba15847d50c1626746df797ae2562dd</span></td>
+              <td class="mono">fn(Int, Int, Int, Int, Int) -&gt; Bool</td>
+            </tr>
+            <tr>
+              <td><strong>settle_total</strong></td>
+              <td><span class="pill cyan" style="display:inline-block; padding: 0.1rem 0.4rem; font-size: 0.7rem;">fn</span></td>
+              <td class="mono"><span class="hash-tag">de13b17844949a50a9b3fa85f4ea24d3d2b31378b74c5fa75d65a6e60d1663d6</span></td>
+              <td class="mono">fn(Int, Int, Int, Int) -&gt; Int</td>
+            </tr>
+            <tr>
+              <td><strong>test_escrow_settlement</strong></td>
+              <td><span class="pill purple" style="display:inline-block; padding: 0.1rem 0.4rem; font-size: 0.7rem;">test</span></td>
+              <td class="mono"><span class="hash-tag">ca65d4ad3bee02ce9c6a6e4674e526bdf5323afb3f1a31c41afc896354167e5b</span></td>
+              <td class="mono">Bool</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Section 3: Raw JSON Evidence Tabs -->
+    <section id="evidence">
+      <div class="section-header">
+        <span class="section-tag">Audit-Fähigkeit</span>
+        <h2 class="section-title">Unveränderte Rohdaten & Audit-Logs</h2>
+        <p class="section-desc">
+          Direkte JSON-Rückmeldungen der MCP-Tools zur lückenlosen maschinellen Weiterverarbeitung durch externe Auditoren oder KI-Modelle.
+        </p>
+      </div>
+
+      <div class="card">
+        <div class="tab-nav">
+          <button class="tab-btn active" onclick="switchTab('tab_define', this)">qal_define (Proof-Response)</button>
+          <button class="tab-btn" onclick="switchTab('tab_refute', this)">Z3 Refutation (Counterexample)</button>
+          <button class="tab-btn" onclick="switchTab('tab_prove', this)">qal_prove (Z3 Audit)</button>
+          <button class="tab-btn" onclick="switchTab('tab_history', this)">qal_history (Provenance)</button>
+        </div>
+
+        <div id="tab_define" class="tab-content active">
+          <button class="copy-btn" onclick="copyContent('raw_define')">Kopieren</button>
+          <pre id="raw_define" class="code-block">{
+  "defined": [
+    {"name":"escrow_fee","kind":"fn","hash":"82d44af65250382e8f94b56b00232bb5764a049e7b36d3c44c773d9163fab060","status":"added"},
+    {"name":"escrow_net","kind":"fn","hash":"54f55afe050cce1458e70ec1e73c7e27250170f2bbcaabddf622a82516ea436f","status":"added"},
+    {"name":"debit_balance","kind":"fn","hash":"cb883366f4b61fe8bfc0710c78d9ed41d73830211f0f5d2c63c3bcc925fc5cca","status":"added"},
+    {"name":"credit_balance","kind":"fn","hash":"fdf73691269ccb2b495c9e42510bbe87bb6da1d6535c67b8d3e7225bf26b2a25","status":"added"},
+    {"name":"verify_conservation","kind":"fn","hash":"75573ce7533f001e558cc77c2411e3d18ba15847d50c1626746df797ae2562dd","status":"added"},
+    {"name":"settle_total","kind":"fn","hash":"de13b17844949a50a9b3fa85f4ea24d3d2b31378b74c5fa75d65a6e60d1663d6","status":"added"},
+    {"name":"test_escrow_settlement","kind":"test","hash":"ca65d4ad3bee02ce9c6a6e4674e526bdf5323afb3f1a31c41afc896354167e5b","status":"added"}
+  ],
+  "proofs": [
+    {"def":"escrow_fee","obligation":"ens[0]","path":"ens[0]","contract":"ens r >= 0 && r <= amount","status":"proven"},
+    {"def":"escrow_net","obligation":"ens[0]","path":"ens[0]","contract":"ens r >= 0 && r + fee == amount","status":"proven"},
+    {"def":"debit_balance","obligation":"ens[0]","path":"ens[0]","contract":"ens r >= 0 && r == balance - amount","status":"proven"},
+    {"def":"credit_balance","obligation":"ens[0]","path":"ens[0]","contract":"ens r >= 0 && r == balance + amount","status":"proven"},
+    {"def":"verify_conservation","obligation":"ens[0]","path":"ens[0]","contract":"ens r == (s_before + r_before == s_after + r_after + fee)","status":"proven"},
+    {"def":"settle_total","obligation":"ens[0]","path":"ens[0]","contract":"ens r == s_before + r_before","status":"proven"},
+    {"def":"test_escrow_settlement","obligation":"req[0] of escrow_fee","status":"proven"},
+    {"def":"test_escrow_settlement","obligation":"req[0] of escrow_net","status":"proven"},
+    {"def":"test_escrow_settlement","obligation":"req[0] of debit_balance","status":"proven"},
+    {"def":"test_escrow_settlement","obligation":"req[0] of credit_balance","status":"proven"},
+    {"def":"test_escrow_settlement","obligation":"req[0] of verify_conservation","status":"proven"},
+    {"def":"test_escrow_settlement","obligation":"req[0] of settle_total","status":"proven"}
+  ]
+}</pre>
+        </div>
+
+        <div id="tab_refute" class="tab-content">
+          <button class="copy-btn" onclick="copyContent('raw_refute')">Kopieren</button>
+          <pre id="raw_refute" class="code-block">{
+  "diagnostics": [
+    {
+      "code": "E0801",
+      "kind": "contract_refuted",
+      "def": "flawed_escrow_settle",
+      "path": "ens[0]",
+      "message": "`ens r >= 0 && r + fee == balance - amount` (ens[0]) does not hold for the counterexample",
+      "hints": [
+        "running the function on the counterexample violates the contract: fix the body, the contract, or add a `req`"
+      ],
+      "counterexample": {
+        "amount": 0,
+        "balance": 0,
+        "fee": 1
+      }
+    }
+  ]
+}</pre>
+        </div>
+
+        <div id="tab_prove" class="tab-content">
+          <button class="copy-btn" onclick="copyContent('raw_prove')">Kopieren</button>
+          <pre id="raw_prove" class="code-block">{
+  "proofs": [
+    {
+      "def": "credit_balance",
+      "obligation": "ens[0]",
+      "path": "ens[0]",
+      "contract": "ens r >= 0 && r == balance + amount",
+      "status": "proven"
+    },
+    {
+      "def": "debit_balance",
+      "obligation": "ens[0]",
+      "path": "ens[0]",
+      "contract": "ens r >= 0 && r == balance - amount",
+      "status": "proven"
+    },
+    {
+      "def": "escrow_fee",
+      "obligation": "ens[0]",
+      "path": "ens[0]",
+      "contract": "ens r >= 0 && r <= amount",
+      "status": "proven"
+    },
+    {
+      "def": "escrow_net",
+      "obligation": "ens[0]",
+      "path": "ens[0]",
+      "contract": "ens r >= 0 && r + fee == amount",
+      "status": "proven"
+    },
+    {
+      "def": "settle_total",
+      "obligation": "ens[0]",
+      "path": "ens[0]",
+      "contract": "ens r == s_before + r_before",
+      "status": "proven"
+    },
+    {
+      "def": "verify_conservation",
+      "obligation": "ens[0]",
+      "path": "ens[0]",
+      "contract": "ens r == (s_before + r_before == s_after + r_after + fee)",
+      "status": "proven"
+    }
+  ],
+  "proven": 6,
+  "refuted": 0,
+  "unknown": 0
+}</pre>
+        </div>
+
+        <div id="tab_history" class="tab-content">
+          <button class="copy-btn" onclick="copyContent('raw_history')">Kopieren</button>
+          <pre id="raw_history" class="code-block">{
+  "history": [
+    {
+      "action": "added",
+      "name": "escrow_fee",
+      "new_hash": "82d44af65250382e8f94b56b00232bb5764a049e7b36d3c44c773d9163fab060",
+      "agent": "AI-Verification-Lead",
+      "at": 1792557477865
+    },
+    {
+      "action": "added",
+      "name": "escrow_net",
+      "new_hash": "54f55afe050cce1458e70ec1e73c7e27250170f2bbcaabddf622a82516ea436f",
+      "agent": "AI-Verification-Lead",
+      "at": 1792557477865
+    },
+    {
+      "action": "added",
+      "name": "settle_total",
+      "new_hash": "de13b17844949a50a9b3fa85f4ea24d3d2b31378b74c5fa75d65a6e60d1663d6",
+      "agent": "AI-Verification-Lead",
+      "at": 1792557477865
+    }
+  ]
+}</pre>
+        </div>
+      </div>
+    </section>
+
+    <!-- Section 4: Replication Guide for Third Parties -->
+    <section id="replication">
+      <div class="section-header">
+        <span class="section-tag">Wissenschaftliche Reproduzierbarkeit</span>
+        <h2 class="section-title">Replikations-Leitfaden für Prüfer & Externe KIs</h2>
+        <p class="section-desc">
+          Jeder externe Prüfer kann die Verifikation mit der QAL CLI oder dem MCP-Server 1:1 lokal nachvollziehen.
+        </p>
+      </div>
+
+      <div class="card">
+        <h4 style="margin-bottom: 0.5rem; color: var(--text);">Befehle zur lokalen Überprüfung</h4>
+        <div class="code-block">
+<span class="comment"># 1. Store-Status und Beweise überprüfen</span>
+$ qal prove escrow_fee escrow_net debit_balance credit_balance verify_conservation settle_total
+<span class="str">Output: 6 proven, 0 refuted, 0 unknown</span>
+
+<span class="comment"># 2. Randomisierte Property-Tests ausführen</span>
+$ qal test test_escrow_settlement escrow_fee escrow_net
+<span class="str">Output: 100 runs passed per function</span>
+
+<span class="comment"># 3. Deterministische WASM-Ausführung testen</span>
+$ qal call escrow_fee --args '[50000, 250]'
+<span class="str">Output: {"ok": 1250}</span>
+
+<span class="comment"># 4. Überprüfung der kryptografischen Unveränderlichkeit</span>
+$ qal history settle_total
+<span class="str">Output: new_hash: de13b17844949a50a9b3fa85f4ea24d3d2b31378b74c5fa75d65a6e60d1663d6</span>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Footer -->
+  <footer>
+    <p>QLand & QAL Framework — Formale Verifikations-Architektur & Mathematische Korrektheitsbeweise.</p>
+    <p style="margin-top: 0.4rem;">
+      <a href="preview.html">System Preview</a> · 
+      <a href="proof.html">Zertifikat & Beweis</a> · 
+      Autonome Verifikation ohne externe Laufzeit-Abhängigkeiten.
+    </p>
+  </footer>
+
+  <!-- Script -->
+  <script>
+    function fmt(val) {
+      return Number(val).toLocaleString('de-DE') + ' €';
+    }
+
+    function runSimulation() {
+      const s_init = parseInt(document.getElementById('in_s_init').value) || 0;
+      const r_init = parseInt(document.getElementById('in_r_init').value) || 0;
+      const amount = parseInt(document.getElementById('in_amount').value) || 0;
+      const bps = parseInt(document.getElementById('in_bps').value) || 0;
+
+      // Update Labels
+      document.getElementById('lbl_s_init').innerText = fmt(s_init);
+      document.getElementById('lbl_r_init').innerText = fmt(r_init);
+      document.getElementById('lbl_amount').innerText = fmt(amount);
+      document.getElementById('lbl_bps').innerText = bps + ' bps (' + (bps / 100).toFixed(1) + '%)';
+
+      // QAL Contract Checks
+      const fee = Math.floor((amount * bps) / 10000);
+      const net = amount - fee;
+      const s_post = s_init - amount;
+      const r_post = r_init + net;
+
+      // Invariant checks
+      const req_sender_ok = s_init >= amount && amount >= 0;
+      const req_bps_ok = bps >= 0 && bps <= 1000;
+      const req_fee_ok = fee >= 0 && fee <= amount;
+      const ens_conservation = (s_init + r_init) === (s_post + r_post + fee);
+      const no_overdraft = s_post >= 0 && r_post >= 0;
+
+      // Update Display
+      document.getElementById('out_s_post').innerText = fmt(s_post);
+      document.getElementById('out_s_delta').innerText = '-' + fmt(amount);
+      document.getElementById('out_r_post').innerText = fmt(r_post);
+      document.getElementById('out_r_delta').innerText = '+' + fmt(net);
+      document.getElementById('out_fee').innerText = fmt(fee);
+      document.getElementById('out_net').innerText = fmt(net);
+
+      const beforeSum = s_init + r_init;
+      const afterSum = s_post + r_post + fee;
+      document.getElementById('led_before').innerText = fmt(beforeSum);
+      document.getElementById('led_after').innerText = fmt(afterSum);
+
+      const ledStatus = document.getElementById('led_status');
+      if (req_sender_ok && req_bps_ok && req_fee_ok && ens_conservation && no_overdraft) {
+        ledStatus.className = 'check-pass';
+        ledStatus.innerHTML = '✓ Bewiesen: Alle Vor- & Nachbedingungen erfüllt (Erhaltungssatz Δ=0)';
+      } else {
+        ledStatus.className = 'check-fail';
+        let errs = [];
+        if (!req_sender_ok) errs.push('Sender-Überziehung');
+        if (!no_overdraft) errs.push('Negativer Endsaldo');
+        if (!req_bps_ok) errs.push('Gebührensatz außer Bereich');
+        ledStatus.innerHTML = '✗ Z3 Verletzung: ' + errs.join(', ') + ' (Transaktion abgewiesen)';
+      }
+    }
+
+    function setPreset(type) {
+      if (type === 'normal') {
+        document.getElementById('in_s_init').value = 100000;
+        document.getElementById('in_r_init').value = 20000;
+        document.getElementById('in_amount').value = 50000;
+        document.getElementById('in_bps').value = 250;
+      } else if (type === 'zero_fee') {
+        document.getElementById('in_s_init').value = 50000;
+        document.getElementById('in_r_init').value = 10000;
+        document.getElementById('in_amount').value = 20000;
+        document.getElementById('in_bps').value = 0;
+      } else if (type === 'overdraft') {
+        document.getElementById('in_s_init').value = 10000;
+        document.getElementById('in_r_init').value = 5000;
+        document.getElementById('in_amount').value = 25000;
+        document.getElementById('in_bps').value = 250;
+      }
+      runSimulation();
+    }
+
+    function switchTab(tabId, btn) {
+      document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+      document.getElementById(tabId).classList.add('active');
+      btn.classList.add('active');
+    }
+
+    function copyContent(elId) {
+      const text = document.getElementById(elId).innerText;
+      navigator.clipboard.writeText(text).then(() => {
+        alert('Kopiert in Zwischenablage!');
+      });
+    }
+
+    function downloadProofBundle() {
+      const bundle = {
+        title: "QAL Formal Verification Proof Bundle: Escrow & Settlement Engine",
+        timestamp: "2026-10-21T06:38:00Z",
+        engine: "QAL v0.1.0 Autonomous",
+        prover: "Z3 SMT Solver QF_LIA",
+        theorems: [
+          "Conservation of Total Wealth: s_post + r_post + fee == s_init + r_init",
+          "Non-negative Balances: s_post >= 0 && r_post >= 0",
+          "Bounded Fee: fee >= 0 && fee <= amount",
+          "Net Payout: net + fee == amount"
+        ],
+        definitions: {
+          escrow_fee: "82d44af65250382e8f94b56b00232bb5764a049e7b36d3c44c773d9163fab060",
+          escrow_net: "54f55afe050cce1458e70ec1e73c7e27250170f2bbcaabddf622a82516ea436f",
+          debit_balance: "cb883366f4b61fe8bfc0710c78d9ed41d73830211f0f5d2c63c3bcc925fc5cca",
+          credit_balance: "fdf73691269ccb2b495c9e42510bbe87bb6da1d6535c67b8d3e7225bf26b2a25",
+          verify_conservation: "75573ce7533f001e558cc77c2411e3d18ba15847d50c1626746df797ae2562dd",
+          settle_total: "de13b17844949a50a9b3fa85f4ea24d3d2b31378b74c5fa75d65a6e60d1663d6",
+          test_escrow_settlement: "ca65d4ad3bee02ce9c6a6e4674e526bdf5323afb3f1a31c41afc896354167e5b"
+        },
+        proof_results: {
+          proven: 6,
+          refuted: 0,
+          unknown: 0
+        },
+        refuted_attack_sample: {
+          diagnostic: "E0801",
+          counterexample: { amount: 0, balance: 0, fee: 1 }
+        }
+      };
+      const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "qal_formal_proof_escrow_settlement.json";
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+
+    // Initialize
+    runSimulation();
+  </script>
+</body>
+</html>

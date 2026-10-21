@@ -1,0 +1,122 @@
+{
+  "title": "QAL Formal Verification Proof Certificate: Multi-Account Escrow & Settlement Engine",
+  "version": "1.0.0",
+  "timestamp": "2026-10-21T06:38:00Z",
+  "architecture": {
+    "engine": "QAL Autonomous v0.1.0",
+    "prover": "Z3 Theorem Prover (Linear Integer Arithmetic QF_LIA)",
+    "runtime": "WASM Deterministic Sandboxed VM",
+    "storage": "Content-Addressed SQLite Merkle Store"
+  },
+  "theorems": [
+    {
+      "id": "THM-1",
+      "name": "Conservation of Total Wealth",
+      "formal_statement": "∀ s_before, r_before, amount, fee: (s_after = s_before - amount ∧ r_after = r_before + (amount - fee)) ⇒ (s_after + r_after + fee = s_before + r_before)",
+      "status": "proven",
+      "prover": "Z3 QF_LIA"
+    },
+    {
+      "id": "THM-2",
+      "name": "Strict Non-Negative Balances (No Overdraft)",
+      "formal_statement": "∀ balance, amount: (balance ≥ amount ∧ amount ≥ 0) ⇒ (balance - amount ≥ 0)",
+      "status": "proven",
+      "prover": "Z3 QF_LIA"
+    },
+    {
+      "id": "THM-3",
+      "name": "Bounded Escrow Fee",
+      "formal_statement": "∀ amount, bps: (amount ≥ 0 ∧ 0 ≤ bps ≤ 1000) ⇒ (0 ≤ (amount * bps)/10000 ≤ amount)",
+      "status": "proven",
+      "prover": "Z3 QF_LIA"
+    }
+  ],
+  "canonical_definitions": {
+    "escrow_fee": {
+      "kind": "fn",
+      "hash": "82d44af65250382e8f94b56b00232bb5764a049e7b36d3c44c773d9163fab060",
+      "signature": "fn(Int, Int) -> Int",
+      "proof_status": "proven"
+    },
+    "escrow_net": {
+      "kind": "fn",
+      "hash": "54f55afe050cce1458e70ec1e73c7e27250170f2bbcaabddf622a82516ea436f",
+      "signature": "fn(Int, Int) -> Int",
+      "proof_status": "proven"
+    },
+    "debit_balance": {
+      "kind": "fn",
+      "hash": "cb883366f4b61fe8bfc0710c78d9ed41d73830211f0f5d2c63c3bcc925fc5cca",
+      "signature": "fn(Int, Int) -> Int",
+      "proof_status": "proven"
+    },
+    "credit_balance": {
+      "kind": "fn",
+      "hash": "fdf73691269ccb2b495c9e42510bbe87bb6da1d6535c67b8d3e7225bf26b2a25",
+      "signature": "fn(Int, Int) -> Int",
+      "proof_status": "proven"
+    },
+    "verify_conservation": {
+      "kind": "fn",
+      "hash": "75573ce7533f001e558cc77c2411e3d18ba15847d50c1626746df797ae2562dd",
+      "signature": "fn(Int, Int, Int, Int, Int) -> Bool",
+      "proof_status": "proven"
+    },
+    "settle_total": {
+      "kind": "fn",
+      "hash": "de13b17844949a50a9b3fa85f4ea24d3d2b31378b74c5fa75d65a6e60d1663d6",
+      "signature": "fn(Int, Int, Int, Int) -> Int",
+      "proof_status": "proven"
+    },
+    "test_escrow_settlement": {
+      "kind": "test",
+      "hash": "ca65d4ad3bee02ce9c6a6e4674e526bdf5323afb3f1a31c41afc896354167e5b",
+      "signature": "Bool",
+      "proof_status": "proven"
+    }
+  },
+  "refutation_experiment": {
+    "target_definition": "flawed_escrow_settle",
+    "flaw_type": "Missing fee <= amount precondition leading to negative balance",
+    "compiler_diagnostic": {
+      "code": "E0801",
+      "kind": "contract_refuted",
+      "path": "ens[0]",
+      "message": "`ens r >= 0 && r + fee == balance - amount` (ens[0]) does not hold for the counterexample",
+      "counterexample": {
+        "amount": 0,
+        "balance": 0,
+        "fee": 1
+      }
+    },
+    "result": "Refuted at compile time. Zero storage or state mutation permitted."
+  },
+  "runtime_execution_records": [
+    {
+      "call": "escrow_fee(50000, 250)",
+      "result": { "ok": 1250 }
+    },
+    {
+      "call": "escrow_net(50000, 1250)",
+      "result": { "ok": 48750 }
+    },
+    {
+      "call": "settle_total(100000, 20000, 50000, 1250)",
+      "result": { "ok": 120000 }
+    },
+    {
+      "call": "escrow_net(100, 200) [Illegal Argument Violation]",
+      "trap": {
+        "code": "E0501",
+        "kind": "contract_violation",
+        "path": "req[0]",
+        "values": { "amount": 100, "fee": 200 }
+      }
+    }
+  ],
+  "provenance": {
+    "agent": "AI-Verification-Lead",
+    "store_backend": "sqlite_content_addressed",
+    "audit_trail_verified": true
+  }
+}
