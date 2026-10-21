@@ -89,4 +89,7 @@ Funktionen, die mit der Außenwelt interagieren, müssen ihre Effekte explizit i
 | `!time` | Zeitstempel (`now_ms`). | `fn timestamp() -> Int !time` |
 | `!rand` | Pseudozufallszahlen (`rand_int`). | `fn roll_dice() -> Int !rand` |
 
-> **Effekt-Garantie:** Eine Funktion ohne Effekt-Annotation kann **physisch niemals** Daten ins Netzwerk senden oder Festplattendateien überschreiben. Der Compiler erzwingt diese Schranke statisch.
+> **Effekt-Garantie (Statische Typ- und Host-Sandbox-Schranke):**
+> Eine Funktion ohne deklarierte Effekte (`!io`, `!fs`, `!db`, `!net`) kann weder I/O-Operationen ausführen noch Daten ins Netzwerk übertragen. Diese Garantie wird auf zwei Ebenen erzwungen:
+> 1. **Statische Typprüfung:** Der Compiler weist Aufrufe von effektbehafteten Hilfsfunktionen in reinen Kontexten mit `E0301 effect_violation` vor der Codegenerierung ab.
+> 2. **Wasmtime-Sandbox:** Das erzeugte Wasm-Modul enthält für reine Funktionen keinerlei Host-Imports für Dateisystem-, Netzwerk- oder Datenbank-Syscalls. Nicht deklarierte Fähigkeiten existieren im Wasm-Gäste-Modul physisch nicht.

@@ -68,3 +68,12 @@ Beweisergebnisse werden in der SQLite-Tabelle `proofs` gecacht. Der Cache-Schlü
 3. Dem Bestätigungsbudget (`confirm_fuel`).
 
 > **Garantie (Work Package 3):** Ein mit kleinem Budget unbestätigter Eintrag verhindert niemals eine erneute Prüfung mit höherem `confirm_fuel`.
+
+---
+
+## 5. Teilkorrektheit vs. Totalkorrektheit (Partial vs. Total Correctness)
+
+Ein formaler Beweis (`qal prove`) garantiert **Teilkorrektheit (Partial Correctness)**:
+* **Garantie:** *Wenn* eine Funktion für Eingaben terminiert, die die Vorbedingung `req` erfüllen, garantiert Z3 mathematisch, dass der Rückgabewert die Nachbedingung `ens` erfüllt.
+* **Keine automatische Terminierungsgarantie:** QAL erzwingt keine künstliche `decreases`-Metrik auf rekursiven Funktionen. Das System beweist daher nicht statisch, dass jede beliebige Rekursion terminiert (Halteproblem).
+* **Laufzeitschutz gegen Nicht-Termination:** Gegen Endlosschleifen und DoS schützt das deterministische **Wasmtime-Fuel-Accounting**. Jeder ausgeführte WebAssembly-Befehl verbraucht Fuel. Erschöpft ein Aufruf sein Budget (Standard 1.000.000 Einheiten), bricht die Sandbox deterministisch mit `E0401 execution_trapped` ab, woraufhin der Host alle Transaktionen atomar rollbacked.

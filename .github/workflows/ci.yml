@@ -263,6 +263,48 @@ jobs:
       - name: Self-Hosted Bootstrap Fixpoint Verification (Stage 1 == Stage 2 == Stage 3)
         run: cargo test --manifest-path qal/Cargo.toml --features qal-compiler/reference --test full_fixpoint
 
+  # 8. Escrow Operational Readiness, Truncation & Independent Replication Gate
+  qal-replication-and-ops:
+    name: QAL Replication & Operational Escrow Gate
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install System Dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake clang libsqlite3-dev
+
+      - name: Install Python Dependencies
+        run: pip install requests
+
+      - name: Build QAL Release Binary
+        run: cargo build --manifest-path qal/Cargo.toml -p qal-cli --release
+
+      - name: Verify Truncation Attack Rejection
+        run: python3 tools/test_truncation_detection.py
+
+      - name: Execute Operational Escrow Verification (20/20, Concurrency, Backup/Restore)
+        run: python3 pilot/escrow/ops/verify_ops.py
+
+      - name: Execute Autonomous Independent Replication Suite (5/5 Claims)
+        run: python3 replication/replicate.py
+
   gen3-substrate-suite:
     name: Gen-3 AI-Native Substrate (TGS Engine)
     runs-on: ${{ matrix.os }}
