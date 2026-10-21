@@ -19,11 +19,15 @@ import urllib.error
 import urllib.request
 from typing import Dict, Tuple
 
-BACKEND_URL = os.getenv("BACKEND_URL", "http://127.0.0.1:8090")
+BACKEND_URL = os.getenv("BACKEND_URL", "http://127.0.0.1:8290")
 GATEWAY_PORT = int(os.getenv("GATEWAY_PORT", "8080"))
 GATEWAY_HOST = os.getenv("GATEWAY_HOST", "0.0.0.0")
 API_KEY = os.getenv("ESCROW_API_KEY", "escrow-prod-secret-key-2026")
 REQUIRE_AUTH = os.getenv("REQUIRE_AUTH", "true").lower() in ("true", "1", "yes")
+
+OPS_DIR = os.path.dirname(os.path.abspath(__file__))
+PILOT_DIR = os.path.abspath(os.path.join(OPS_DIR, ".."))
+REPO_ROOT = os.path.abspath(os.path.join(PILOT_DIR, "..", ".."))
 
 # Rate limiter settings: 50 requests/sec with burst of 100
 RATE_LIMIT_RPS = float(os.getenv("RATE_LIMIT_RPS", "50.0"))
@@ -177,12 +181,39 @@ class EscrowGatewayHandler(http.server.BaseHTTPRequestHandler):
     def do_OPTIONS(self):
         self.send_response(204)
         self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, HEAD")
         self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-API-Key")
         self.end_headers()
 
+    def do_HEAD(self):
+        self.do_GET()
+
     def do_GET(self):
         path = self.path.split("?")[0]
+
+        # 0. Static Web Cockpit & Interactive Showcases (Public)
+        static_files = {
+            "/": "dashboard.html",
+            "/dashboard": "dashboard.html",
+            "/dashboard.html": "dashboard.html",
+            "/preview": "preview.html",
+            "/preview.html": "preview.html",
+            "/proof": "proof.html",
+            "/proof.html": "proof.html",
+        }
+        if path in static_files:
+            file_name = static_files[path]
+            file_path = os.path.join(REPO_ROOT, file_name)
+            if os.path.exists(file_path):
+                with open(file_path, "rb") as f:
+                    content = f.read()
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(content)))
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(content)
+                return
 
         # 1. Health endpoint
         if path == "/healthz":
