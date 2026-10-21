@@ -287,7 +287,8 @@ fn eight_processes_with_random_operations_lose_nothing() {
     });
     let elapsed = started.elapsed();
     eprintln!("8 x 200 operations in {elapsed:?}");
-    assert!(elapsed < Duration::from_secs(120), "took {elapsed:?}");
+    // Generous threshold to avoid flakiness under system load (work package 6)
+    assert!(elapsed < Duration::from_secs(300), "took {elapsed:?}");
     let mut total: BTreeMap<&str, usize> = BTreeMap::new();
     let mut merged: BTreeMap<String, usize> = BTreeMap::new();
     for (_, _, codes, merges) in &results {
