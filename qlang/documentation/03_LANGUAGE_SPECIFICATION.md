@@ -85,7 +85,7 @@ Funktionen, die mit der Außenwelt interagieren, müssen ihre Effekte explizit i
 | `!io` | Terminal-Ausgabe & Eingabe (`print`, `read_line`, `read_all`). | `fn greet(name: Str) -> Unit !io` |
 | `!fs` | Dateisystem-Zugriffe innerhalb des Projektverzeichnisses (`read_file`, `write_file`). | `fn save(data: Str) -> Result[Unit, Str] !fs` |
 | `!db` | SQLite-Datenbankabfragen (`db_exec`, `db_query`). | `fn get_user(id: Int) -> DbRows !db` |
-| `!net` | Ausgehende HTTP-Anfragen (`http`). | `fn fetch_api(url: Str) -> HttpResponse !net` |
+| `!net` | Ausgehende HTTP-Anfragen (`http`). | `fn fetch(c: HttpCall) -> Result[HttpResponse, NetError] !net` |
 | `!time` | Zeitstempel (`now_ms`). | `fn timestamp() -> Int !time` |
 | `!rand` | Pseudozufallszahlen (`rand_int`). | `fn roll_dice() -> Int !rand` |
 

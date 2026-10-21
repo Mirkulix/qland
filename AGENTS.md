@@ -4,7 +4,7 @@ This file provides guidance to Codex (Codex.ai/code) and all autonomous AI syste
 
 > [!IMPORTANT]
 > **For Autonomous AI Agents working with the QAL System & Provable Engine:**
-> Consult the comprehensive [**QAL Autonomous Agent Playbook**](file:///Users/aleksandarbarisic/Workspace/qland/AGENTS_PLAYBOOK.md) for full operational guidelines, MCP tool protocols (`qal_define`, `qal_prove`, `qal_test`, `qal_call`), Z3 contract proving rules, and self-healing algorithms.
+> Consult the comprehensive [**QAL Autonomous Agent Playbook**](./AGENTS_PLAYBOOK.md) for full operational guidelines, MCP tool protocols (`qal_define`, `qal_prove`, `qal_test`, `qal_call`), Z3 contract proving rules, and self-healing algorithms.
 
 ## Project Overview
 

@@ -1067,8 +1067,8 @@ impl Labeller<'_> {
             let before = labels.iter().collect::<BTreeSet<_>>().len();
             let lab = self.by_def(&labels);
             let mut keys = Vec::with_capacity(labels.len());
-            for i in 0..labels.len() {
-                keys.push((labels[i], self.encode(i, &lab)?));
+            for (i, &l) in labels.iter().enumerate() {
+                keys.push((l, self.encode(i, &lab)?));
             }
             let mut distinct: Vec<&(u32, Vec<u8>)> = keys.iter().collect();
             distinct.sort();

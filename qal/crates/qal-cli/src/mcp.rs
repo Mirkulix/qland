@@ -209,7 +209,23 @@ fn error_line(id: &J, e: &RpcError) -> String {
     to_line(&ErrorResponse { jsonrpc: "2.0", id, error: ErrorBody { code: e.code, message: &e.message, data: &e.data } })
 }
 
+fn ensure_compiler() {
+    if !qal_compiler::has_qal_driver() {
+        let wants_qal = |c: &str| c == "qal" || c == "both";
+        let needs_seed = !cfg!(feature = "reference")
+            || std::env::var("QAL_COMPILER").is_ok_and(|c| wants_qal(&c));
+        if needs_seed {
+            let _ = qal_run::selfhost::init_seed_backend(qal_run::selfhost::default_jobs());
+        }
+    }
+}
+
+fn tool_needs_compiler(name: &str) -> bool {
+    matches!(name, "qal_define" | "qal_run" | "qal_test" | "qal_build" | "qal_prove" | "qal_request" | "qal_call" | "qal_merge" | "qal_rebase" | "qal_rename")
+}
+
 impl Server {
+
     pub fn new(root: &Path) -> std::io::Result<Server> {
         let root = root.canonicalize().map_err(|e| std::io::Error::new(e.kind(), format!("{}: {e}", root.display())))?;
         if !root.is_dir() {
@@ -554,7 +570,12 @@ impl Server {
         }
         match name {
             "qal_whoami" => return whoami(store, log, who, &a, pending.take()),
-            "qal_change" | "qal_lease" | "qal_review" | "qal_merge" | "qal_rebase" => return Ok(team_action(store, who, name, &a)),
+            "qal_change" | "qal_lease" | "qal_review" | "qal_merge" | "qal_rebase" => {
+                if matches!(name, "qal_merge" | "qal_rebase") {
+                    ensure_compiler();
+                }
+                return Ok(team_action(store, who, name, &a));
+            }
             "qal_verify" => {
                 let a = Args::new(name, args)?;
                 let from = match a.get("from") {
@@ -592,6 +613,9 @@ impl Server {
     }
 
     fn tool(&self, name: &str, args: &Map<String, J>, client: Option<&str>, team: Option<&TeamCall>) -> Result<Reply, String> {
+        if tool_needs_compiler(name) {
+            ensure_compiler();
+        }
         let a = Args::new(name, args)?;
         let agent = |a: &Args| -> Result<String, String> {
             // In a team store the member is the agent (the `agent` argument is ignored).

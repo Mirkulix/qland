@@ -1,7 +1,7 @@
 //! Drives the real `qal` binary and checks its JSON output.
 
 use serde_json::{json, Value};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 fn example(name: &str) -> String {
@@ -196,7 +196,7 @@ fn qal_in(dir: &PathBuf, args: &[&str]) -> (i32, Value) {
     (out.status.code().unwrap(), serde_json::from_str(&stdout).unwrap_or_else(|e| panic!("not JSON ({e}): {stdout}")))
 }
 
-fn write(dir: &PathBuf, name: &str, content: &str) -> String {
+fn write(dir: &Path, name: &str, content: &str) -> String {
     let path = dir.join(name);
     std::fs::write(&path, content).unwrap();
     path.to_string_lossy().into_owned()

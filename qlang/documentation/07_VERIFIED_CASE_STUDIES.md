@@ -4,7 +4,9 @@
 ---
 
 > [!NOTE] Einordnung des Geltungsbereichs
-> Diese Beispiele sind reine mathematische Kernels (pure functions). Sie demonstrieren, wie Z3 lineare Invarianten (Erhaltungssätze, Schranken) statisch garantiert und bei Fehlern Gegenbeispiele generiert. Sie stellen keine kompletten Produktionssysteme mit Persistenz, Netzwerkprotokollen oder Authentifizierung dar, sondern isolierte, formale Verifikations-Benchmarks.
+> Diese Beispiele sind reine mathematische Kernels (pure functions). Sie demonstrieren, wie Z3 lineare Invarianten (Erhaltungssätze, Schranken) statisch garantiert und bei Fehlern Gegenbeispiele generiert. 
+> 
+> **Geltungsbereich der Verifikation:** Lineare Presburger-Arithmetik (QF_LIA) ist vollständig entscheidbar und garantiert. Nichtlineare Ausdrücke sind im SMT-Solver zwar prinzipiell möglich, liegen jedoch außerhalb des QF_LIA-Garantiebereichs. Diese Beispiele stellen keine kompletten Produktionssysteme mit Persistenz, Netzwerkprotokollen oder Authentifizierung dar, sondern isolierte, formale Verifikations-Benchmarks.
 
 ---
 

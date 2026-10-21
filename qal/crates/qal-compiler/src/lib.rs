@@ -74,6 +74,7 @@ impl Backend for Rust {
         qal_text::print_expr(e)
     }
 
+    #[allow(clippy::type_complexity)]
     fn check(&self, p: &Program, is_new: &dyn Fn(&str) -> bool) -> Result<TProgram, Vec<Diagnostic>> {
         qal_check::check_stored(p, is_new)
     }
@@ -184,6 +185,7 @@ impl Backend for Qal {
         qal_core::print_expr(e)
     }
 
+    #[allow(clippy::type_complexity)]
     fn check(&self, p: &Program, is_new: &dyn Fn(&str) -> bool) -> Result<TProgram, Vec<Diagnostic>> {
         let text = self.print(p);
         let all_new = p.defs.iter().all(|d| is_new(d.name()));
@@ -329,6 +331,7 @@ impl Backend for Both {
         s1
     }
 
+    #[allow(clippy::type_complexity)]
     fn check(&self, p: &Program, is_new: &dyn Fn(&str) -> bool) -> Result<TProgram, Vec<Diagnostic>> {
         let r1 = Rust.check(p, is_new);
         let r2 = Qal.check(p, is_new);

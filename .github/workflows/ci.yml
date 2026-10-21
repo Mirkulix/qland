@@ -11,8 +11,9 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  qal-reference-comparison:
-    name: QAL Reference Comparison (Differential Parity & Bootstrap)
+  # 1. cargo test --workspace (default = kein Reference)
+  qal-workspace-default:
+    name: QAL Workspace Default (Autonomous, No Reference)
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -25,8 +26,42 @@ jobs:
 
       - name: Set up Rust Toolchain
         uses: dtolnay/rust-toolchain@stable
+
+      - name: Install System Dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake clang libsqlite3-dev
+
+      - name: Cache Cargo Dependencies
+        uses: actions/cache@v4
         with:
-          components: clippy, rustfmt
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            qal/target
+          key: ${{ runner.os }}-cargo-default-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-default-
+
+      - name: Run Workspace Default Unit & Property Tests
+        run: cargo test --manifest-path qal/Cargo.toml --workspace --no-fail-fast
+
+  # 2. cargo test --workspace --features qal-compiler/reference
+  qal-workspace-reference:
+    name: QAL Workspace Reference (Rust Compiler Parity)
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
 
       - name: Install System Dependencies (Linux)
         if: runner.os == 'Linux'
@@ -45,23 +80,12 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-ref-
 
-      - name: Check Reference Compilation
-        run: cargo check --manifest-path qal/Cargo.toml --features qal-compiler/reference --all-targets
+      - name: Run Workspace With Reference Compiler Feature
+        run: cargo test --manifest-path qal/Cargo.toml --workspace --features qal-compiler/reference --no-fail-fast
 
-      - name: Differential Frontend Tests (Parser, Printer, Lexer)
-        run: cargo test --manifest-path qal/Cargo.toml --features qal-compiler/reference --test frontend_diff
-
-      - name: Differential Typechecker Tests (Checker, Unifier, Exhaustiveness)
-        run: cargo test --manifest-path qal/Cargo.toml --features qal-compiler/reference --test checker_diff
-
-      - name: Differential Codegen & Fixpoint Tests (WASM Lowering)
-        run: cargo test --manifest-path qal/Cargo.toml --features qal-compiler/reference --test codegen_diff
-
-      - name: Self-Hosted Bootstrap Fixpoint Verification (Stage 1 == Stage 2 == Stage 3)
-        run: cargo test --manifest-path qal/Cargo.toml --features qal-compiler/reference --test full_fixpoint
-
-  qal-autonomous-operation:
-    name: QAL Autonomous Operation (Pure Self-Hosted CLI)
+  # 3. cargo test -p qal-cli --release --test mcp (autonom)
+  qal-autonomous-mcp:
+    name: QAL Autonomous CLI & MCP (Release Binary)
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -74,8 +98,6 @@ jobs:
 
       - name: Set up Rust Toolchain
         uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy, rustfmt
 
       - name: Install System Dependencies (Linux)
         if: runner.os == 'Linux'
@@ -106,18 +128,140 @@ jobs:
             exit 1
           fi
 
-      - name: Autonomous CLI Integration Tests
+      - name: Autonomous CLI & MCP Integration Tests
         run: |
-          cargo test --manifest-path qal/Cargo.toml -p qal-cli --release --test cli
           cargo test --manifest-path qal/Cargo.toml -p qal-cli --release --test mcp
+          cargo test --manifest-path qal/Cargo.toml -p qal-cli --release --test cli
           cargo test --manifest-path qal/Cargo.toml -p qal-cli --release --test todo_scenarios
           cargo test --manifest-path qal/Cargo.toml -p qal-cli --release --test shop_scenarios
           cargo test --manifest-path qal/Cargo.toml -p qal-cli --release --test team
           cargo test --manifest-path qal/Cargo.toml -p qal-cli --release --test concurrency
           cargo test --manifest-path qal/Cargo.toml -p qal-cli --release --test production
 
-      - name: Autonomous Workspace Unit & Property Tests
-        run: cargo test --manifest-path qal/Cargo.toml --workspace --no-fail-fast
+  # 4. QAL_COMPILER=qal cargo test … für Store/Run/Prove/Serve
+  qal-selfhost-compiler:
+    name: QAL Selfhost Compiler (QAL_COMPILER=qal Engine Matrix)
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install System Dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake clang libsqlite3-dev
+
+      - name: Cache Cargo Dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            qal/target
+          key: ${{ runner.os }}-cargo-selfhost-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-selfhost-
+
+      - name: Run Self-Hosted Wasm Engine Matrix
+        run: QAL_COMPILER=qal cargo test --manifest-path qal/Cargo.toml -p qal-store -p qal-run -p qal-prove -p qal-serve --no-fail-fast
+
+  # 5. Clippy-Restriktion
+  qal-clippy-gate:
+    name: QAL Clippy Restriction Gate
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Install System Dependencies (Linux)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake clang libsqlite3-dev
+
+      - name: Cache Cargo Dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            qal/target
+          key: ubuntu-cargo-clippy-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ubuntu-cargo-clippy-
+
+      - name: Run Clippy Workspace Check
+        run: cargo clippy --manifest-path qal/Cargo.toml --workspace --all-targets --features qal-compiler/reference -- -D warnings -A clippy::result_large_err -A clippy::type_complexity -A clippy::needless_range_loop -A clippy::doc_lazy_continuation -A clippy::manual_is_multiple_of -A clippy::cmp_owned -A clippy::identity_op -A clippy::cloned_ref_to_slice_refs
+
+  # 6. Doku-Schema-/Link-Check
+  docs-and-schema-check:
+    name: Documentation & Schema Parity Gate
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Verify Documentation Links and MCP Schemas
+        run: python3 tools/verify_docs_and_schema.py
+
+  # 7. qalc.qalpkg-Korpus & full_fixpoint
+  qal-corpus-fixpoint:
+    name: QAL Corpus & Self-Hosted Bootstrap Fixpoint
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install System Dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake clang libsqlite3-dev
+
+      - name: Cache Cargo Dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            qal/target
+          key: ${{ runner.os }}-cargo-corpus-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-corpus-
+
+      - name: Verify Extracted Corpus Parity
+        run: cargo test --manifest-path qal/Cargo.toml -p qal-gen --test corpus
+
+      - name: Self-Hosted Bootstrap Fixpoint Verification (Stage 1 == Stage 2 == Stage 3)
+        run: cargo test --manifest-path qal/Cargo.toml --features qal-compiler/reference --test full_fixpoint
 
   gen3-substrate-suite:
     name: Gen-3 AI-Native Substrate (TGS Engine)

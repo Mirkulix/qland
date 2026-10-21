@@ -183,7 +183,7 @@ type Outcome = (BTreeMap<String, BTreeMap<String, String>>, Vec<(String, String,
 
 #[test]
 fn eight_processes_with_random_operations_lose_nothing() {
-    let seed: u64 = 0x5eed_4c;
+    let seed: u64 = 0x005e_ed4c;
     eprintln!("seed {seed:#x}");
     // 2 architects and 4 implementers write; a verifier and a reviewer review, and the reviewer and
     // the architects merge (Phase 4c: merge is part of the mix, criterion 3).

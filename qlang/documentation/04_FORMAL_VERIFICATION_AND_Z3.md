@@ -22,15 +22,15 @@ fn safe_div(a: Int, b: Int) -> Int
 
 Der QAL-Compiler nutzt für Verträge den Z3 SMT-Solver im Fragment der **quantorenfreien linearen Ganzzahlarithmetik (QF_LIA)**:
 
-### Was exakt bewiesen wird:
-* Lineare Ganzzahl-Relationen: Addition (`+`), Subtraktion (`-`), Vergleiche (`<`, `<=`, `>`, `>=`, `==`, `!=`).
+### Was exakt bewiesen wird (Garantiebereich):
+* **Lineare Arithmetik ist vollständig garantiert:** Addition (`+`), Subtraktion (`-`), Vergleiche (`<`, `<=`, `>`, `>=`, `==`, `!=`).
 * Multiplikation und Division mit ganzzahligen Konstanten (z. B. `(amount * 250) / 10000`).
 * Boolesche Aussagenlogik: `&&`, `||`, `!`.
 * Zusammengesetzte Aufrufe: Beim Beweis einer Funktion werden **die Verträge (ens) der aufgerufenen Hilfsfunktionen** genutzt, nicht deren Rümpfe.
 
-### Was approximiert wird:
+### Was approximiert wird & Grenzen:
+* **Nichtlineare Arithmetik:** Lineare Relationen sind garantiert; nichtlineare Terme (z. B. die Multiplikation zweier freier Variablen `a * b`) sind im Solver zwar punktuell möglich, liegen aber außerhalb von Presburger QF_LIA. Sie sind unvollständig und führen bei Nichtlösbarkeit deterministisch zu `unknown` (`E0802`).
 * **Record-Felder:** Record-Strukturen werden im SMT-Solver approximiert. Findet Z3 einen potentiellen Gegenbeispiel-Kandidaten, führt QAL diesen auf der WASM-Runtime aus, um das Gegenbeispiel zu verifizieren. Kann der Kandidat nicht bestätigt werden, wird der Vertrag nicht als refuted markiert, sondern bleibt `unknown` (`E0802 contract_unproven`) und wird zur Laufzeit dynamisch geprüft.
-* **Nichtlineare Arithmetik:** Multiplikation zweier freier Variablen (`a * b`) liegt außerhalb von Presburger QF_LIA.
 
 ---
 

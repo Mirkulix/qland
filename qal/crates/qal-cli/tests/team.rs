@@ -687,6 +687,7 @@ fn team_reads_do_not_wait_for_the_write_lock() {
     let t = Team::new();
     let mut rev = t.agent("rev-1");
     rev.call("qal_whoami", json!({}));
+    rev.call("qal_prove", json!({"names": ["base"]}));
     let s = qal_store::Store::open(&t.project.join(".qal/store.db")).unwrap();
     s.notify("rev-1", "merged", &json!({"n": 1})).unwrap();
     drop(s);

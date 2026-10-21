@@ -106,6 +106,7 @@ fn all_tests_pass(src: &str) {
 }
 
 #[test]
+#[allow(clippy::identity_op)]
 fn arithmetic_and_precedence() {
     let m = build("fn f(a: Int, b: Int) -> Int = a + b * 2 - a / b % 3", Entry::All);
     assert_eq!(call_i64(&m, "f", &[7, 2]), Ok(7 + 2 * 2 - (7 / 2) % 3));

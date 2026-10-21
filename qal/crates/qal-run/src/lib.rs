@@ -237,10 +237,30 @@ fn base_config() -> Config {
     config
 }
 
+/// Loads a WebAssembly module from precompiled cache if available and valid, or compiles and caches it.
+fn load_module(engine: &Engine, wasm: &[u8]) -> Result<Module, String> {
+    let hash = qal_core::canon::Hash::of(wasm).to_hex();
+    let cache_dir = std::env::var_os("QAL_CACHE_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::env::temp_dir().join("qal-cache"));
+    let cache_file = cache_dir.join(format!("mod-{hash}.cwasm"));
+    if let Ok(bytes) = std::fs::read(&cache_file) {
+        if let Ok(m) = unsafe { Module::deserialize(engine, &bytes) } {
+            return Ok(m);
+        }
+    }
+    let m = Module::new(engine, wasm).map_err(|e| e.to_string())?;
+    if let Ok(bytes) = m.serialize() {
+        let _ = std::fs::create_dir_all(&cache_dir);
+        let _ = std::fs::write(&cache_file, bytes);
+    }
+    Ok(m)
+}
+
 impl Runner {
     pub fn new(meta: CompiledModule) -> Result<Runner, String> {
         let engine = Engine::new(&base_config()).map_err(|e| e.to_string())?;
-        let module = Module::new(&engine, &meta.wasm).map_err(|e| e.to_string())?;
+        let module = load_module(&engine, &meta.wasm)?;
         let types = TProgram { types: meta.types.clone(), ..TProgram::default() };
         Ok(Runner { engine, module, meta, types, fuel: DEFAULT_FUEL, memory_limit: DEFAULT_MEMORY_LIMIT, perms: Permissions::default(), stdin: None, timeout: None, stdout_limit: None, budgets: Limits::default(), pre: None, ticker: None, pooled: false, exact_results: None })
     }
@@ -260,11 +280,11 @@ impl Runner {
         pool.max_memories_per_module(1).max_tables_per_module(1).table_elements(table).max_memory_size(memory_limit);
         let mut config = base_config();
         config.allocation_strategy(InstanceAllocationStrategy::Pooling(pool));
-        let (engine, pooled) = match Engine::new(&config).and_then(|e| Module::new(&e, &meta.wasm).map(|m| (e, m))) {
-            Ok((e, m)) => ((e, m), true),
-            Err(_) => {
+        let (engine, pooled) = match Engine::new(&config).ok().and_then(|e| load_module(&e, &meta.wasm).ok().map(|m| (e, m))) {
+            Some((e, m)) => ((e, m), true),
+            None => {
                 let e = Engine::new(&base_config()).map_err(|e| e.to_string())?;
-                let m = Module::new(&e, &meta.wasm).map_err(|e| e.to_string())?;
+                let m = load_module(&e, &meta.wasm)?;
                 ((e, m), false)
             }
         };

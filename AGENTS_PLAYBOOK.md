@@ -20,20 +20,22 @@ This document defines the operational directives for AI agents interacting with 
 
 ## 2. The 12 Native MCP Tools
 
-QAL provides exactly **12 native Model Context Protocol (MCP) tools**:
+QAL provides exactly **12 native Model Context Protocol (MCP) tools**. Parameter names and constraints match the exact schema delivered by `tools/list`:
 
-1. **`qal_define`**: Atomically add or replace types, functions, or tests. Triggers Z3 contract prover.
-2. **`qal_prove`**: Audit formal proof status of stored functions (`proven`, `refuted`, `unknown`).
-3. **`qal_test`**: Run unit tests and execute 100 synthesized property-based fuzzing runs per contract.
-4. **`qal_call`**: Execute any stored function in the isolated WASM sandbox with JSON arguments.
-5. **`qal_run`**: Execute an application entry point (`fn main(args: List[Str]) -> Int !...`).
-6. **`qal_view`**: Read exact definition source code, signature, hash, and direct dependencies (`deps`).
-7. **`qal_query`**: Search definition index by name prefix, signature pattern, or dependency usage.
-8. **`qal_request`**: Test HTTP service handlers (`fn handle(HttpRequest) -> HttpResponse !...`).
-9. **`qal_rename`**: Rename an existing definition without altering its hash or breaking dependents.
-10. **`qal_delete`**: Delete unused definitions (fails with `has_dependents` if referenced).
-11. **`qal_history`**: Query the immutable audit trail (actions, agent signatures, timestamps, SHA-256 hashes).
-12. **`qal_build`**: Compile a definition into a standalone WebAssembly binary artifact.
+| Tool | Parameters (Schema) | Purpose & Required Arguments |
+| :--- | :--- | :--- |
+| **`qal_define`** | `source`: Str **[req]**<br>`agent`: Opt[Str] | Atomically add or replace types, functions, or tests. Triggers Z3 contract prover. |
+| **`qal_prove`** | `names`: Opt[List[Str]] | Audit formal proof status of stored functions (`proven`, `refuted`, `unknown`). Omit to check all. |
+| **`qal_test`** | `names`: Opt[List[Str]]<br>`seed`: Opt[Int] | Run unit tests and execute 100 synthesized property-based fuzzing runs per contract. |
+| **`qal_call`** | `fn`: Str **[req]**<br>`args`: Opt[Array]<br>`stdin`: Opt[Str]<br>`allow`: Opt[List[Str]] | Execute stored function in isolated WASM sandbox with JSON arguments. |
+| **`qal_run`** | `entry`: Opt[Str] *(default: main)*<br>`args`: Opt[List[Str]]<br>`stdin`: Opt[Str]<br>`allow`: Opt[List[Str]] | Execute stored application entry point `fn(List[Str]) -> Int !...`. |
+| **`qal_view`** | `names`: List[Str] **[req]** | Read definition source code, signature, hash, and direct dependencies (`deps`). Accepts names or `#<hash>`. |
+| **`qal_query`** | `name`: Opt[Str]<br>`type`: Opt[Str]<br>`uses`: Opt[Str] | Search index by name prefix, signature pattern (`_` wildcard), or reference/hash. |
+| **`qal_request`**| `requests`: List[Obj] **[req]** *(max 50)*<br>`handler`: Opt[Str] *(default: handle)*<br>`init`: Opt[Str]<br>`allow`: Opt[List[Str]] | Test HTTP service handlers (`fn(HttpRequest) -> HttpResponse !...`) without running a server. |
+| **`qal_rename`** | `old`: Str **[req]**<br>`new`: Str **[req]**<br>`agent`: Opt[Str] | Rename an existing definition without altering its hash or breaking dependents. |
+| **`qal_delete`** | `name`: Str **[req]**<br>`with`: Opt[List[Str]]<br>`agent`: Opt[Str] | Delete an unused definition. Fails with `has_dependents` if referenced by others. |
+| **`qal_history`**| `name`: Str **[req]** | Query immutable audit trail (actions, agent signatures, timestamps, SHA-256 hashes). |
+| **`qal_build`**  | `entry`: Str **[req]** | Compile a definition into a standalone WebAssembly module `.qal/build/<entry>.wasm`. |
 
 ---
 
@@ -99,7 +101,8 @@ Declare required system capabilities explicitly after the return type:
 | **`E0502`** | `int_overflow` | 64-bit integer overflow trapped at runtime. Add realistic upper bounds in `req`. |
 | **`E0404`** | `alias_reference` | A definition refers to multiple names that share the identical definition hash. Reference only one alias name. |
 | **`E0201`** | `unknown_name` | Identifier not found in store or prelude. Use `qal_query` to locate exact names. |
-| **`E0301`** | `type_mismatch` | Argument or return type conflict. Inspect signature via `qal_view`. |
+| **`E0203`** | `type_mismatch` | Argument or return type conflict (expected vs. found). Inspect signature via `qal_view`. |
+| **`E0301`** | `effect_violation` | Operation performed whose effect is not declared in the function signature (e.g. I/O without `!io`). |
 | **`E0901`** | `lease_conflict` | Another agent holds an active lease on this definition name. |
 
 ---

@@ -22,6 +22,7 @@ impl Rng {
         Rng(seed)
     }
 
+    #[allow(clippy::should_implement_trait)]
     pub fn next(&mut self) -> u64 {
         self.0 = self.0.wrapping_add(0x9E37_79B9_7F4A_7C15);
         let mut z = self.0;
@@ -333,9 +334,7 @@ fn shrink_seq<T: Clone>(xs: &[T]) -> Vec<Vec<T>> {
     for i in (0..n).take(8) {
         let mut ys = xs.to_vec();
         ys.remove(i);
-        if !ys.is_empty() && n > 2 {
-            out.push(ys);
-        } else if n == 2 {
+        if !ys.is_empty() && n >= 2 {
             out.push(ys);
         }
     }

@@ -5,22 +5,22 @@
 
 ## 1. Die 12 MCP-Werkzeuge (Model Context Protocol)
 
-Der native QAL MCP-Server stellt exakt **12 Werkzeuge** bereit:
+Der native QAL MCP-Server stellt exakt **12 Werkzeuge** bereit. Die Parameter entsprechen exakt dem von `tools/list` ausgelieferten JSON-Schema:
 
-| Werkzeug | Parameter | Funktion |
+| Werkzeug | Parameter (Schema) | Funktion & Pflichtfelder |
 | :--- | :--- | :--- |
-| **`qal_define`** | `source` (Str), `agent` (Opt[Str]) | Fügt Typen, Funktionen und Tests atomar hinzu. Prüft Typen und startet den Z3-Beweiser für Verträge. |
-| **`qal_prove`** | `names` (List[Str]) | Gibt den formalen Beweisstatus der benannten Funktionen zurück (`proven`, `refuted`, `unknown`). |
-| **`qal_test`** | `names` (Opt[List[Str]]) | Führt Unit-Tests aus und generiert 100 synthetische Property-Testläufe je Funktion mit Kontrakt. |
-| **`qal_call`** | `fn` (Str), `args` (List[Any]), `allow` (Opt[List[Str]]) | Führt eine Funktion in der WASM-Sandbox aus. Trappt bei Kontraktverletzung (`E0501`). |
-| **`qal_run`** | `file` / `name`, `args` (List[Str]), `allow` (Opt[List[Str]]) | Startet einen Programmeinstiegspunkt (`fn main(args: List[Str]) -> Int !...`). |
-| **`qal_view`** | `names` (List[Str]) | Liefert den Quelltext, die Signatur, den Hash und die direkten Abhängigkeiten (`deps`) der Namen. |
-| **`qal_query`** | `name` (Opt[Str]), `type` (Opt[Str]), `uses` (Opt[Str]) | Durchsucht den Definitions-Index nach Namenspräfix, Signaturmuster oder Referenz. |
-| **`qal_request`**| `handler` (Str), `requests` (Str/Pfad), `allow` (Opt) | Testet Service-Handler (`fn handle(HttpRequest) -> HttpResponse`) mit Test-Requests. |
-| **`qal_rename`** | `old` (Str), `new` (Str), `agent` (Opt[Str]), `breaking` (Bool)| Benennt eine Definition um. Da Hashes unverändert bleiben, folgen alle Referenzen automatisch. |
-| **`qal_delete`** | `names` (List[Str]), `agent` (Opt[Str]), `breaking` (Bool)| Entfernt ungenutzte Definitionen. Schlägt fehl (`has_dependents`), wenn andere Namen sie nutzen. |
-| **`qal_history`**| `name` (Str) | Gibt die chronologische Änderungshistorie des Namens mit Hashes, Agent und Zeitstempel aus. |
-| **`qal_build`**  | `name` (Str) | Kompiliert eine Funktion zu einem eigenständigen Wasm-Artefakt. |
+| **`qal_define`** | `source`: Str **[req]**<br>`agent`: Opt[Str] | Fügt Typen, Funktionen und Tests atomar hinzu. Prüft Typen und startet den Z3-Beweiser für Verträge. |
+| **`qal_prove`** | `names`: Opt[List[Str]] | Gibt den formalen Beweisstatus der Funktionen/Tests zurück (`proven`, `refuted`, `unknown`). Ohne Angabe: alle. |
+| **`qal_test`** | `names`: Opt[List[Str]]<br>`seed`: Opt[Int] | Führt Unit-Tests aus und generiert 100 synthetische Property-Testläufe je Funktion mit Kontrakt. |
+| **`qal_call`** | `fn`: Str **[req]**<br>`args`: Opt[Array]<br>`stdin`: Opt[Str]<br>`allow`: Opt[List[Str]] | Führt eine Funktion in der WASM-Sandbox aus. Trappt bei Kontraktverletzung (`E0501`). |
+| **`qal_run`** | `entry`: Opt[Str] *(default: main)*<br>`args`: Opt[List[Str]]<br>`stdin`: Opt[Str]<br>`allow`: Opt[List[Str]] | Startet einen Programmeinstiegspunkt (`fn(List[Str]) -> Int !...`). |
+| **`qal_view`** | `names`: List[Str] **[req]** | Liefert Quelltext, Signatur, Hash und direkte Abhängigkeiten (`deps`). Unterstützt Namen oder `#<hash>`. |
+| **`qal_query`** | `name`: Opt[Str]<br>`type`: Opt[Str]<br>`uses`: Opt[Str] | Durchsucht den Index nach Namenspräfix, Signaturmuster (`_` als Wildcard) oder Referenz/Hash. |
+| **`qal_request`**| `requests`: List[Obj] **[req]** *(max 50)*<br>`handler`: Opt[Str] *(default: handle)*<br>`init`: Opt[Str]<br>`allow`: Opt[List[Str]] | Sendet HTTP-Requests an einen gespeicherten Service-Handler (`fn(HttpRequest) -> HttpResponse !...`). |
+| **`qal_rename`** | `old`: Str **[req]**<br>`new`: Str **[req]**<br>`agent`: Opt[Str] | Benennt eine Definition um. Da Hashes unverändert bleiben, folgen alle Referenzen automatisch. |
+| **`qal_delete`** | `name`: Str **[req]**<br>`with`: Opt[List[Str]]<br>`agent`: Opt[Str] | Entfernt eine ungenutzte Definition. Schlägt fehl (`has_dependents`), wenn andere Namen sie nutzen. |
+| **`qal_history`**| `name`: Str **[req]** | Gibt die chronologische Änderungshistorie des Namens mit Hashes, Agent und Zeitstempel aus. |
+| **`qal_build`**  | `entry`: Str **[req]** | Kompiliert eine Funktion zu einem eigenständigen Wasm-Artefakt (`.qal/build/<entry>.wasm`). |
 
 ---
 
@@ -69,5 +69,6 @@ Der Fehler **`E0404 alias_reference`** tritt ausschließlich auf, wenn:
 | **`E0502`** | `int_overflow` | Laufzeit-Überlauf bei 64-Bit Ganzzahloperationen (`+`, `-`, `*`). Ergänze realistische Schranken in `req`. |
 | **`E0404`** | `alias_reference` | Gleichzeitiges Referenzieren zweier Namen desselben Hashes in einer Definition. |
 | **`E0201`** | `unknown_name` | Ein Bezeichner ist weder im Store noch in der Prelude vorhanden. Nutze `qal_query`. |
-| **`E0301`** | `type_mismatch` | Typsignatur weicht ab. Untersuche die genaue Signatur mit `qal_view`. |
+| **`E0203`** | `type_mismatch` | Typsignatur weicht ab (erwarteter Typ vs. gefundener Typ). Untersuche die genaue Signatur mit `qal_view`. |
+| **`E0301`** | `effect_violation` | Eine Funktion führt Operationen aus, deren Effekt nicht deklariert ist (z. B. I/O ohne `!io`). Ergänze den Effekt in der Signatur oder entferne den Seiteneffekt. |
 | **`E0901`** | `lease_conflict` | Ein anderer Agent hält aktuell eine Schreibsperre auf diesem Namen. |

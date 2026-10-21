@@ -138,6 +138,12 @@ fn main() -> ExitCode {
         Ok(res) => res,
         Err(e) => return bad_usage(&e),
     };
+    let Some(cmd) = args.first() else {
+        return usage();
+    };
+    if cmd == "--help" || cmd == "-h" || cmd == "help" {
+        return usage();
+    }
     // The seed compiler is instantiated only when the QAL backend can run: always without the
     // reference compiler, otherwise only when `--compiler` or QAL_COMPILER asks for qal or both
     // (instantiating it costs seconds, which every other command must not pay).
@@ -145,7 +151,8 @@ fn main() -> ExitCode {
     let needs_seed = !cfg!(feature = "reference")
         || compiler_opt.as_deref().is_some_and(wants_qal)
         || std::env::var("QAL_COMPILER").is_ok_and(|c| wants_qal(&c));
-    if needs_seed && !qal_compiler::has_qal_driver() {
+    let fast_cmd = matches!(cmd.as_str(), "mcp" | "lsp" | "team" | "verify" | "help" | "--help" | "-h" | "version" | "--version" | "-v");
+    if needs_seed && !fast_cmd && !qal_compiler::has_qal_driver() {
         let _ = qal_run::selfhost::init_seed_backend(qal_run::selfhost::default_jobs());
     }
     #[cfg(not(feature = "reference"))]
@@ -162,9 +169,6 @@ fn main() -> ExitCode {
             return bad_usage(&e);
         }
     }
-    let Some(cmd) = args.first() else {
-        return usage();
-    };
     let rest = &args[1..];
     match cmd.as_str() {
         "check" | "fmt" => file_command(cmd, rest),
@@ -472,7 +476,7 @@ fn selfhost(args: &[String]) -> ExitCode {
     #[cfg(not(feature = "reference"))]
     {
         let _ = args;
-        bad_usage("selfhost bootstrap requires the reference Rust compiler (rebuild with default features)")
+        bad_usage("selfhost bootstrap requires the reference Rust compiler (rebuild with --features reference)")
     }
     #[cfg(feature = "reference")]
     {

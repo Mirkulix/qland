@@ -491,7 +491,7 @@ fn view_collapses_duplicates_and_is_bounded() {
     let start = Instant::now();
     let (err, v) = c.call("qal_view", json!({"names": names}));
     assert_eq!((err, v["diagnostics"][0]["kind"].as_str()), (true, Some("result_too_large")), "{}", v.to_string().len());
-    assert!(start.elapsed() < Duration::from_secs(2), "{:?}", start.elapsed());
+    assert!(start.elapsed() < Duration::from_secs(if cfg!(debug_assertions) { 10 } else { 2 }), "{:?}", start.elapsed());
     let (err, v) = c.call("qal_test", json!({"names": many_names(257)}));
     assert_eq!((err, v["diagnostics"][0]["kind"].as_str()), (true, Some("bad_arguments")));
 }
@@ -548,7 +548,7 @@ fn a_committed_define_is_never_reported_as_too_large_in(c: &mut Client) {
     assert_eq!(v["defined"].as_array().map(Vec::len), Some(2));
     assert!(v["warnings_omitted"].as_u64().unwrap() > 0, "{}", v.to_string().chars().take(500).collect::<String>());
     assert!(v.to_string().len() < 3 << 20);
-    assert_eq!(c.call("qal_view", json!({"names": ["f"]})).0, false);
+    assert!(!c.call("qal_view", json!({"names": ["f"]})).0);
 
 }
 

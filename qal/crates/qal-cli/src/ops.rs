@@ -794,6 +794,21 @@ fn stored_proofs(ctx: &Ctx, tp: &TProgram, hashes: &std::collections::HashMap<St
     Ok(targets.iter().flat_map(|n| cached.remove(n).unwrap_or_default()).collect())
 }
 
+struct CountingWriter(usize);
+
+impl std::io::Write for CountingWriter {
+    #[inline]
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0 = self.0.saturating_add(buf.len());
+        Ok(buf.len())
+    }
+
+    #[inline]
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
 /// Shows the named definitions. Repeated names count once; the views are built one by one under a
 /// byte budget ([`crate::mcp::MAX_RESULT_BYTES`]), so a request can never make this build more than
 /// it may return.
@@ -824,7 +839,10 @@ pub fn view(ctx: &Ctx, names: &[String]) -> Reply {
                         x.space = Some(sp.id().to_string());
                     }
                 }
-                bytes += v.iter().map(|v| serde_json::to_vec(v).map_or(usize::MAX, |b| b.len())).fold(0, usize::saturating_add);
+                bytes += v.iter().map(|item| {
+                    let mut count = CountingWriter(0);
+                    serde_json::to_writer(&mut count, item).map_or(usize::MAX, |_| count.0)
+                }).fold(0, usize::saturating_add);
                 if bytes > crate::mcp::MAX_RESULT_BYTES {
                     let limit = crate::mcp::MAX_RESULT_BYTES;
                     let d = Diagnostic::new("E0702", "result_too_large", "", "", format!("the views are more than {limit} bytes of JSON")).hint("view fewer or smaller definitions per call");

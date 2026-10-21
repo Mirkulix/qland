@@ -963,9 +963,15 @@ fn serve_request(req: Request) -> Response {
             let mut combined_defs: Vec<Def> = stored.defs.iter().filter(|d| !input_names.contains(d.name())).cloned().collect();
             combined_defs.extend(input.defs.iter().cloned());
             let combined = Program { defs: combined_defs };
-            let typed = match backend.check(&combined, &|n| input_names.contains(n)) {
-                Ok(tp) => tp,
-                Err(ds) => return diagnostics(ds),
+            let typed_bytes = match backend.check(&combined, &|n| input_names.contains(n)) {
+                Ok(tp) => tform::encode(&tp),
+                Err(ds) => {
+                    let real: Vec<Diagnostic> = ds.into_iter().filter(|d| !(d.is_builtin_name() && !input_names.contains(d.def.as_str()))).collect();
+                    if !real.is_empty() {
+                        return diagnostics(real);
+                    }
+                    Vec::new()
+                }
             };
             let hashed = match backend.hash(&combined) {
                 Ok(h) => h,
@@ -1000,7 +1006,7 @@ fn serve_request(req: Request) -> Response {
             }
             let groups: Vec<(Hash, Vec<u8>)> = hashed.groups.into_iter().collect();
             let prepared = Prepared {
-                typed: tform::encode(&typed),
+                typed: typed_bytes,
                 canons,
                 groups,
                 sig_old,
