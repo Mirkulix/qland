@@ -1,11 +1,16 @@
-# 07 — Verifizierte Referenzbeispiele & Fallstudien
-> **Vollständig bewiesene Produktionsfälle mit Z3-Verifikation und kryptografischen Hashes**
+# 07 — Verifizierte Referenzbeispiele (Arithmetische Kernels)
+> **Formal bewiesene Rechen-Kernels mit Z3-Verifikation, Invarianten und kryptografischen Hashes**
 
 ---
 
-## Fallstudie 1: High-Assurance Multi-Account Escrow & Settlement Engine
+> [!NOTE] Einordnung des Geltungsbereichs
+> Diese Beispiele sind reine mathematische Kernels (pure functions). Sie demonstrieren, wie Z3 lineare Invarianten (Erhaltungssätze, Schranken) statisch garantiert und bei Fehlern Gegenbeispiele generiert. Sie stellen keine kompletten Produktionssysteme mit Persistenz, Netzwerkprotokollen oder Authentifizierung dar, sondern isolierte, formale Verifikations-Benchmarks.
 
-Diese Komponente realisiert ein Treuhand-Abrechnungssystem mit atomarer Wert-Erhaltung.
+---
+
+## Fallstudie 1: Formaler Verifikations-Kernel — Treuhand-Wert-Erhaltung (Escrow & Settlement)
+
+Dieser Algorithmen-Kernel demonstriert die statische Verifikation arithmetischer Erhaltungssätze in Presburger QF_LIA:
 
 ### 1. Quelltext & Kontrakte
 ```qal
@@ -56,9 +61,9 @@ fn settle_total(s_before: Int, r_before: Int, amount: Int, fee: Int) -> Int
 
 ---
 
-## Fallstudie 2: Dezentrale Governance & Stimmabgabe
+## Fallstudie 2: Formaler Verifikations-Kernel — Quorum- & Stimmenerhaltungs-Arithmetik (Governance Voting)
 
-Diese Komponente realisiert ein abstimmungsbasiertes Entscheidungssystem mit Quorum und Stimmenerhaltung.
+Dieser Algorithmen-Kernel demonstriert die Verifikation von Schranken, Quorum-Bedingungen und automatischer Gegenbeispiel-Widerlegung (kein vollwertiges Voting-Backend, sondern die mathematische Kern-Arithmetik):
 
 ### 1. Quelltext & Kontrakte
 ```qal

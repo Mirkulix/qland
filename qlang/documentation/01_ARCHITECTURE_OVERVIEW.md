@@ -1,56 +1,56 @@
 # 01 — Systemarchitektur & Paradigmenwechsel
-> **Das Fundament von QLand & QAL: Warum diese Sprache für KI-Agenten statt für Menschen erfunden wurde**
+> **Das Fundament von QLand & QAL: Faktenbasierte Architekturübersicht für KI-Systeme**
 
 ---
 
-## 1. Das Problem mit traditioneller Softwareentwicklung für KIs
+## 1. Das Problem traditioneller dateibasierter Entwicklung für KIs
 
-Bisherige Programmiersprachen (Python, JavaScript, Rust, C++) basieren auf einem Konzept aus den 1970er Jahren:
-* **Textdateien:** Quellcode ist reiner Fließtext, aufgeteilt auf hunderte Dateien. KIs müssen hunderte Zeilen Kontext einlesen, um 3 Zeilen zu ändern.
-* **Merge-Konflikte:** Wenn mehrere KIs parallel arbeiten, entstehen Git-Textkonflikte an Zeilenumbrüchen und Einrückungen.
-* **Späte Fehlererkennung:** Logikfehler und Grenzwertprobleme (Division durch Null, negative Salden) crashen erst zur Laufzeit beim Endnutzer.
-* **Fehlende Schranken:** Traditionelle Sprachen geben Programmen standardmäßig unbegrenzte Rechte auf Festplatte, Netzwerk und Speicher.
+Bisherige Programmiersprachen (Python, JavaScript, Rust, C++) basieren auf textuellen Dateien:
+* **Dateibasierte Fragmentierung:** Quellcode ist Fließtext. Werkzeuge operieren auf Dateipfaden, Zeilennummern und Zeichenoffsets.
+* **Textuelle Merge-Konflikte:** Parallele Änderungen an benachbarten Zeilen erzeugen Git-Konflikte, selbst wenn die Änderungen semantisch disjunkt sind.
+* **Späte Fehlererkennung:** Logische Invariantenverletzungen (Grenzwerte, Division durch Null, Saldeninkonsistenzen) werden erst zur Laufzeit oder über dynamische Tests erkannt.
+* **Grobgranulare Berechtigungen:** Klassische Sprachen gewähren Programmen standardmäßig unbegrenzten Zugriff auf Syscalls, Dateisystem und Netzwerk, sofern keine OS-Container vorgeschaltet sind.
 
 ---
 
-## 2. Die 6 Säulen der QAL-Architektur
+## 2. Die 6 Architektursäulen von QAL
 
-QAL bricht radikal mit dem Textdatei-Prinzip und ersetzt es durch ein mathematisch geschlossenes Substrat:
+QAL implementiert ein content-addressiertes, beweisbares Substrat:
 
 ```
    ┌─────────────────────────────────────────────────────────────┐
    │                  AUTONOME KI-AGENTEN                        │
-   │  (Claude, Cursor, Windsurf, DeepSeek, Qwen via MCP / vLLM)  │
+   │      (Interaktion via MCP: Model Context Protocol)          │
    └──────────────┬──────────────────────────┬───────────────────┘
                   │                          │
-                  ▼ (JSON Tool-Calls)        ▼
+                  ▼ (12 MCP-Werkzeuge)       ▼
    ┌─────────────────────────────────────────────────────────────┐
    │                  QAL CORE SUBSTRAT                          │
    │                                                             │
    │  [1. Parser & Typechecker]                                  │
-   │      • Strikte statische Typisierung                        │
-   │      • Keine Null-Pointer, keine impliziten Casts           │
+   │      • Statische Typisierung (Int, Float, Bool, Str, etc.)   │
+   │      • Keine Null-Pointer, keine impliziten Typumwandlungen │
    │                                                             │
    │  [2. Z3 SMT Theorem Prover]                                 │
-   │      • Statischer Beweis von Vor- und Nachbedingungen       │
-   │      • Presburger Lineare Arithmetik (QF_LIA)               │
-   │      • Automatische Gegenbeispiel-Generierung bei Fehlern   │
+   │      • Statische Verifikation von Verträgen (req / ens)     │
+   │      • Lineare Ganzzahlarithmetik (Presburger QF_LIA)       │
+   │      • Rekonstruktion konkreter Gegenbeispiele bei Fehlern  │
    │                                                             │
    │  [3. Content-Addressed Merkle Store (.qal/store.db)]        │
-   │      • Code als relationale Wissensdatenbank                │
-   │      • SHA-256 Hashes für jede Definition                  │
-   │      • Null Git-Konflikte bei Agenten-Schwärmen             │
+   │      • Codebasis als SQLite DAG (defs, names, deps, proofs) │
+   │      • Kanonische SHA-256 Hashes je Definition              │
+   │      • Team-Modus mit Leases und Change-Sets                │
    │                                                             │
    │  [4. Zero-Trust Effekt-System]                              │
-   │      • Deklaration von I/O: !io, !fs, !db, !net             │
-   │      • Reine Funktionen können keine Nebeneffekte haben     │
+   │      • Statisch deklarierte Effekte: !io, !fs, !db, !net    │
+   │      • Pure Funktionen besitzen keine Systemberechtigungen  │
    │                                                             │
-   │  [5. Deterministische WASM Runtime]                         │
+   │  [5. WASM Runtime Sandbox]                                  │
    │      • Speicherisolierte WebAssembly-Ausführung             │
-   │      • Automatisches Fuzzing (100 synthetische Runs)        │
+   │      • Automatisches Property-Fuzzing (100 synthetische Runs│
    │                                                             │
-   │  [6. Self-Hosting Fixpoint]                                 │
-   │      • Compiler kompiliert sich selbst in Wasm              │
+   │  [6. Autarker Compiler & Seed-Fixpunkt]                     │
+   │      • Reiner QAL-Compiler (qalc.wasm) ohne Host-Compiler   │
    │      • Stage 1 = Stage 2 = Stage 3 byte-identisch           │
    └─────────────────────────────────────────────────────────────┘
 ```
@@ -59,24 +59,29 @@ QAL bricht radikal mit dem Textdatei-Prinzip und ersetzt es durch ein mathematis
 
 ## 3. Der relationale Merkle-Store vs. Textdateien
 
-In QAL gibt es im Projektverzeichnis **keine Quellcode-Dateien für Logik**.  
-Der gesamte Code wird in einer SQLite-Datenbank (`.qal/store.db`) als gerichteter azyklischer Graph (DAG) verwaltet:
+Im QAL-Projektverzeichnis existieren für die Programmlogik keine Textdateien. Der gesamte Code wird in einer SQLite-Datenbank (`.qal/store.db`) verwaltet:
 
-1. **Jede Definition hat einen kryptografischen Hash:**  
-   `fn add(a: Int, b: Int) -> Int = a + b` besitzt den kanonischen SHA-256 Hash `#146fb343...`.
-2. **Abhängigkeiten binden an Hashes:**  
-   Wenn Funktion `calc` die Funktion `add` aufruft, referenziert sie deren unveränderlichen Hash.
-3. **Konfliktfreie Schwarmarbeit:**  
-   Wenn Agent A an `user_auth` arbeitet und Agent B an `payment_settle`, arbeiten sie auf getrennten Datenbankknoten. Es gibt **keine Git-Zeilenkonflikte**. Ein Merge auf Definitionsebene gelingt immer dann automatisch, wenn die Schnittstellen kompatibel sind.
+1. **Inhaltsadressierung (`defs`):** Jede Definition wird kanonisch formatiert und per SHA-256 gehasht.
+2. **Namensbindung (`names`):** Namen sind veränderliche Zeiger auf unveränderliche Hashes.
+3. **Abhängigkeitsgraph (`deps`):** Referenzen binden direkt an Hashes. Änderungen an einer Funktion führen zum automatischen Relinking abhängiger Funktionen, sofern die Signatur kompatibel bleibt.
 
 ---
 
-## 4. Warum KIs in QAL 90% weniger Token verbrauchen
+## 4. Zusammenarbeit in Agenten-Teams (Zusammenführungsregeln)
 
-In Python muss ein Agent oft eine 1.500-Zeilen-Datei komplett lesen (`read_file`), modifizieren (`edit_file`) und hoffen, dass keine Indentationsfehler auftreten.
+Die Zusammenführung (Merge) von Änderungen erfolgt auf Definitionsebene, nicht zeilenbasiert:
 
-In QAL:
-* Der Agent ruft `qal_view(names: ["settle_total"])` auf.
-* Die Antwort enthält **exakt die 8 Zeilen der Funktion** und deren direkte Abhängigkeiten.
-* Der Agent ändert die Funktion atomar per `qal_define`.
-* **Ergebnis:** Dramatisch reduzierte Token-Kosten, minimale Latenz und keine Zeilenversatz-Fehler mehr.
+* **Disjunkte Namen:** Werden zwei verschiedene Funktionen von separaten Agenten hinzugefügt, merge-n sie ohne Zeilenkonflikte in den Hauptzweig.
+* **Leases (`leases`-Tabelle):** Um gleichzeitiges Überschreiben desselben Namens zu verhindern, reservieren Agenten Namen über Leases (`ttl_s`). Ein kollidierender Erwerb schlägt deterministisch mit `E0901 lease_conflict` fehl.
+* **Signatur-Inkompatibilität:** Ändert ein Agent die Typsignatur einer bestehenden Funktion, wird die Änderung abgewiesen (`signature_change`), bis alle aufrufenden Abhängigkeiten im selben Change-Set aktualisiert oder rebased wurden.
+
+---
+
+## 5. Token-Verbrauch bei KI-Interaktion: Die empirischen Fakten
+
+Entgegen pauschalen Prozentversprechen hängt der Token-Verbrauch von der Art der Aufgabe ab (siehe empirische Studie in `docs/superpowers/specs/2026-10-20-qal-agent-advantage-study.md`):
+
+* **Vorteil bei punktuellen Modifikationen:**  
+  Durch `qal_view(names: ["fn_name"])` liest der Agent gezielt nur die betroffene Funktion und deren direkte Typen, statt 1.000+ Zeilen umfassende Dateien laden zu müssen.
+* **Verbrauch bei formaler Verifikation:**  
+  Muss ein Vertrag mehrfach nachgebessert werden (Feedback-Schleife über Z3-Gegenbeispiele), entstehen zusätzliche Token-Kosten durch die Diagnosen, die jedoch zur Compile-Zeit die Korrektheit beweisen und Fehlersuch-Kosten zur Laufzeit einsparen.

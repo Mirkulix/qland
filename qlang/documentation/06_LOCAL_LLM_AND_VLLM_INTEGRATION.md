@@ -1,118 +1,74 @@
 # 06 — Lokale KI-Anbindung (vLLM & Ollama)
-> **Wie lokale Open-Source-Modelle autonom, kostenlos und privat in QAL entwickeln**
+> **Praktischer Leitfaden zur Anbindung lokaler Modelle an das QAL-CLI-Binary**
 
 ---
 
-## 1. Die Architektur für lokale autonome KIs
+## 1. Die Schnittstellen-Architektur
 
-Durch die Kombination von **lokalen Sprachmodellen (via vLLM oder Ollama)** mit dem **QAL MCP-Server** entsteht eine vollständige, autarke Softwarefabrik:
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│ 1. LOKALE KI-ENGINE (vLLM oder Ollama)                      │
-│    • vLLM (Linux / NVIDIA GPU): Port 8000                   │
-│    • Ollama (macOS / Apple Silicon): Port 11434             │
-│    • Modell: Qwen 2.5 Coder (14B / 32B) oder DeepSeek       │
-└──────────────────────────────┬──────────────────────────────┘
-                               │ OpenAI-kompatible API:
-                               │ POST /v1/chat/completions (Tools)
-                               ▼
-┌─────────────────────────────────────────────────────────────┐
-│ 2. DER AUTONOME AGENTEN-LOOP (z. B. Python-Controller)      │
-│    • Liest das AGENTS_PLAYBOOK.md als System-Prompt         │
-│    • Übergibt dem Modell die QAL-Tools als JSON-Schema      │
-│    • Vermittelt zwischen Modell-Output und QAL-Compiler     │
-└──────────────────────────────┬──────────────────────────────┘
-                               │ MCP-Funktionsaufrufe
-                               ▼
-┌─────────────────────────────────────────────────────────────┐
-│ 3. QAL PROVABLE ENGINE                                      │
-│    • qal_define: Prüft Typen & beweist Verträge mit Z3      │
-│    • Bei Fehler: Z3 liefert Gegenbeispiel zurück an Modell  │
-│    • Bei Erfolg: Atomare Speicherung im Merkle-Store        │
-└─────────────────────────────────────────────────────────────┘
-```
+Lokale Open-Source-Modelle (wie `Qwen 2.5 Coder` oder `SparkX-2.5`) werden über standardisierte Schnittstellen angebunden:
+* **LLM Serving Engine:** Ollama (`http://localhost:11434/v1`) oder vLLM (`http://localhost:8000/v1`) via OpenAI-kompatiblem Chat-Completions-Protokoll mit Tool Calling.
+* **QAL Backend:** Ausführung über das Release-Binary (`qal/target/release/qal`) oder den nativen MCP-Server (`qal mcp`).
 
 ---
 
-## 2. Der Agenten-Loop in 60 Zeilen Python
+## 2. Der verifizierte Controller (`tools/run_agent.py`)
 
-Hier ist der universelle Controller, der ein lokales Modell an QAL koppelt:
+Um Fehleinschätzungen bei CLI-Aufrufen zu verhindern, zeigt folgendes Skript den **tatsächlich funktionierenden Aufruf** von QAL aus Python (wie in `tools/run_agent.py` implementiert):
+
+> [!IMPORTANT]
+> Das QAL-CLI-Kommando `define` akzeptiert keinen `--source`-Parameter! Es erwartet einen Dateipfad: `qal define <filepath> [--agent <name>]`. Für dynamischen Quelltext nutzt der Controller eine temporäre Datei oder spricht mit `qal mcp` über stdin/stdout.
 
 ```python
-import requests
+import os
 import json
+import tempfile
 import subprocess
+import requests
 
+QAL_BINARY = os.path.abspath("qal/target/release/qal")
 OLLAMA_API = "http://localhost:11434/v1/chat/completions"
-MODEL = "qwen2.5:7b-instruct-32k"
 
-# 1. System Prompt aus dem Playbook laden
-with open("AGENTS_PLAYBOOK.md", "r") as f:
-    SYSTEM_PROMPT = f.read()
-
-# 2. Tool-Definition für das Modell
-TOOLS = [
-    {
-        "type": "function",
-        "function": {
-            "name": "qal_define",
-            "description": "Define functions in QAL with Z3 proof",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "source": {"type": "string", "description": "QAL source code"},
-                    "agent": {"type": "string", "description": "Agent name"}
-                },
-                "required": ["source"]
-            }
-        }
-    }
-]
-
-def run_agent_task(prompt):
-    messages = [
-        {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": prompt}
-    ]
-    
-    while True:
-        resp = requests.post(OLLAMA_API, json={
-            "model": MODEL,
-            "messages": messages,
-            "tools": TOOLS
-        }).json()
+def qal_define(source: str, agent_name: str = "Local-Agent") -> dict:
+    """Führt eine atomare QAL-Definition über das CLI-Binary aus."""
+    with tempfile.NamedTemporaryFile("w", suffix=".qal", delete=False) as f:
+        f.write(source)
+        tmp_path = f.name
         
-        msg = resp["choices"][0]["message"]
-        messages.append(msg)
-        
-        # Prüfen, ob die KI ein Tool aufgerufen hat
-        if "tool_calls" in msg and msg["tool_calls"]:
-            for call in msg["tool_calls"]:
-                fn_name = call["function"]["name"]
-                args = json.loads(call["function"]["arguments"])
-                
-                # QAL-Befehl ausführen
-                result = subprocess.run(
-                    ["qal", "define", "--source", args["source"]],
-                    capture_output=True, text=True
-                )
-                
-                # Feedback an die KI zurücksenden (inkl. Z3-Gegenbeispielen)
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": call["id"],
-                    "content": result.stdout if result.returncode == 0 else result.stderr
-                })
-        else:
-            print("Agent abgeschlossen:", msg["content"])
-            break
+    try:
+        # Aufruf mit Dateipfad: qal define <file> --agent <agent>
+        cmd = [QAL_BINARY, "define", tmp_path, "--agent", agent_name]
+        res = subprocess.run(cmd, capture_output=True, text=True)
+        raw_output = res.stdout if res.stdout else res.stderr
+        return json.loads(raw_output)
+    finally:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+
+def qal_prove(names: list[str]) -> dict:
+    """Ruft den Z3-Beweisstatus für gespeicherte Namen ab."""
+    cmd = [QAL_BINARY, "prove"] + names
+    res = subprocess.run(cmd, capture_output=True, text=True)
+    return json.loads(res.stdout or res.stderr)
+
+def qal_test(names: list[str]) -> dict:
+    """Führt Unit-Tests und 100 synthetische Fuzzing-Läufe aus."""
+    cmd = [QAL_BINARY, "test"] + names
+    res = subprocess.run(cmd, capture_output=True, text=True)
+    return json.loads(res.stdout or res.stderr)
 ```
 
 ---
 
-## 3. Die 3 großen Vorteile lokaler Modelle mit QAL
+## 3. Tool-Calling Format & Kontextgröße
 
-1. **0 € API-Kosten:** KIs können zehntausende Iterationen durchlaufen, ohne dass Token-Kosten entstehen.
-2. **100% Datenschutz:** Kein Code und keine Geschäftslogik verlässt das lokale System.
-3. **Schwarm-Skalierung:** Auf eigener Hardware können mehrere Agenten parallel im Hintergrund Software entwickeln und im gemeinsamen QAL-Store verankern.
+Bei der Anbindung von lokalen Modellen sind zwei Konfigurationsparameter entscheidend:
+
+1. **Kontextlänge (`num_ctx`):**  
+   Ollama initialisiert Modelle standardmäßig mit 4.096 Tokens. Da das Playbook und Tool-Definitionen etwa 4.000 Tokens umfassen, muss in den Request-Optionen oder im Modelfile ein größerer Kontext gewählt werden:
+   ```json
+   "options": {
+     "num_ctx": 32768
+   }
+   ```
+2. **JSON-Schema-Validierung:**  
+   Ollama verlangt für jeden Parameter vom Typ `array` zwingend ein definiertes `items`-Objekt (`"items": {"type": "string"}`).

@@ -15,7 +15,7 @@ Willkommen im Dokumentationszentrum von **QLand** und der **QAL (Quantitative As
 | **04** | [`04_FORMAL_VERIFICATION_AND_Z3.md`](file:///Users/aleksandarbarisic/Workspace/qland/qlang/documentation/04_FORMAL_VERIFICATION_AND_Z3.md) | **Mathematische Beweise mit Z3:** Kontrakte (`req` / `ens`), Presburger QF_LIA-Arithmetik, Gegenbeispiel-Struktur (`E0801`) und Proof-Caching. |
 | **05** | [`05_MERKLE_STORE_AND_RESILIENCE.md`](file:///Users/aleksandarbarisic/Workspace/qland/qlang/documentation/05_MERKLE_STORE_AND_RESILIENCE.md) | **Inhaltsadressierter Speicher & Resilienz:** SQLite Merkle-Store, konfliktfreie Agenten-Zusammenarbeit, WAL-Locking und Crash-Sicherheit bei `SIGKILL`. |
 | **06** | [`06_LOCAL_LLM_AND_VLLM_INTEGRATION.md`](file:///Users/aleksandarbarisic/Workspace/qland/qlang/documentation/06_LOCAL_LLM_AND_VLLM_INTEGRATION.md) | **Lokale KI-Anbindung (vLLM & Ollama):** Wie lokale Open-Source-Modelle (Qwen, DeepSeek) für 0 € und 100% privat als autonome Entwickler eingesetzt werden. |
-| **07** | [`07_VERIFIED_CASE_STUDIES.md`](file:///Users/aleksandarbarisic/Workspace/qland/qlang/documentation/07_VERIFIED_CASE_STUDIES.md) | **Verifizierte Referenzbeispiele:** Vollständige, bewiesene Produktionsfälle (Escrow-Settlement, Governance-Voting) mit Z3-Logs und SHA-256 Hashes. |
+| **07** | [`07_VERIFIED_CASE_STUDIES.md`](file:///Users/aleksandarbarisic/Workspace/qland/qlang/documentation/07_VERIFIED_CASE_STUDIES.md) | **Verifizierte Algorithmen-Kernels:** Formal bewiesene mathematische Benchmark-Kernels (Escrow-Erhaltung, Quorum-Voting) mit Z3-Logs und SHA-256 Hashes. |
 
 ---
 

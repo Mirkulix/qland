@@ -1,13 +1,13 @@
 # 04 — Formale Verifikation & der Z3 SMT-Solver
-> **Mathematische Beweise von Softwarekontrakten, Presburger-Arithmetik und Gegenbeispiele**
+> **Mathematische Beweise von Softwarekontrakten, QF_LIA-Gültigkeitsbereich und Gegenbeispiele**
 
 ---
 
 ## 1. Das Kontrakt-Modell: `req` und `ens`
 
 In QAL deklarieren Funktionen formale Verträge:
-* **`req` (Vorbedingung / Precondition):** Was der Aufrufer vor dem Aufruf garantieren muss.
-* **`ens` (Nachbedingung / Postcondition):** Was die Funktion nach ihrer Ausführung garantiert. Die Pseudovariable `r` steht für den Rückgabewert der Funktion.
+* **`req` (Vorbedingung / Precondition):** Was der Aufrufer vor dem Aufruf sicherstellen muss.
+* **`ens` (Nachbedingung / Postcondition):** Was die Funktion nach ihrer Ausführung garantiert. Die Pseudovariable `r` repräsentiert den Rückgabewert.
 
 ```qal
 fn safe_div(a: Int, b: Int) -> Int
@@ -18,44 +18,36 @@ fn safe_div(a: Int, b: Int) -> Int
 
 ---
 
-## 2. Der integrierte Z3 SMT-Theorembeweiser
+## 2. Der genaue mathematische Gültigkeitsbereich (Z3 SMT Presburger QF_LIA)
 
-Beim Aufruf von `qal_define` übersetzt der QAL-Compiler die Kontrakte in **Presburger Lineare Arithmetik (QF_LIA - Quantifier-Free Linear Integer Arithmetic)** und übergibt sie an den eingebetteten Z3 SMT-Solver.
+Der QAL-Compiler nutzt für Verträge den Z3 SMT-Solver im Fragment der **quantorenfreien linearen Ganzzahlarithmetik (QF_LIA)**:
 
-### Was Z3 exakt beweisen kann:
-* Lineare Ganzzahl-Relationen: `+`, `-`, Vergleiche (`<`, `<=`, `>`, `>=`, `==`, `!=`).
-* Multiplikation und Division mit Konstanten (z. B. `(amount * 250) / 10000`).
-* Aussagenlogische Verknüpfungen: `&&`, `||`, `!`.
-* Wert-Erhaltungssätze über algebraische Identitäten:  
-  `(s_before - amount) + (r_before + (amount - fee)) + fee ≡ s_before + r_before`.
+### Was exakt bewiesen wird:
+* Lineare Ganzzahl-Relationen: Addition (`+`), Subtraktion (`-`), Vergleiche (`<`, `<=`, `>`, `>=`, `==`, `!=`).
+* Multiplikation und Division mit ganzzahligen Konstanten (z. B. `(amount * 250) / 10000`).
+* Boolesche Aussagenlogik: `&&`, `||`, `!`.
+* Zusammengesetzte Aufrufe: Beim Beweis einer Funktion werden **die Verträge (ens) der aufgerufenen Hilfsfunktionen** genutzt, nicht deren Rümpfe.
 
-### Was Z3 approximiert:
-* Beliebige nichtlineare Terme (`a * b` mit zwei freien Variablen).
-* Tief verschachtelte Record-Felder. Hier empfiehlt sich die Deklaration skalarer Kontrakte auf `Int`-Ebene.
+### Was approximiert wird:
+* **Record-Felder:** Record-Strukturen werden im SMT-Solver approximiert. Findet Z3 einen potentiellen Gegenbeispiel-Kandidaten, führt QAL diesen auf der WASM-Runtime aus, um das Gegenbeispiel zu verifizieren. Kann der Kandidat nicht bestätigt werden, wird der Vertrag nicht als refuted markiert, sondern bleibt `unknown` (`E0802 contract_unproven`) und wird zur Laufzeit dynamisch geprüft.
+* **Nichtlineare Arithmetik:** Multiplikation zweier freier Variablen (`a * b`) liegt außerhalb von Presburger QF_LIA.
 
 ---
 
-## 3. Der Widerlegungs-Mechanismus (`contract_refuted`)
+## 3. Der Widerlegungs-Mechanismus (`E0801 contract_refuted`)
 
-Wenn ein Kontrakt mathematisch ungültig ist, lehnt Z3 den Code ab und liefert eine Belegung der Variablen, bei der die Nachbedingung verletzt wird:
+Widerlegt Z3 einen Vertrag, wird die Definition **nicht im Store abgelegt**. Die JSON-Diagnose enthält das exakte Gegenbeispiel:
 
-### Beispiel aus der Praxis:
-```qal
-# Fehlerhafter Versuch der KI:
-fn flawed_calc(balance: Int, amount: Int, fee: Int) -> Int
-  req balance >= 0 && amount >= 0 && fee >= 0
-  ens r >= 0 && r + fee == balance - amount
-= balance - amount - fee
-```
-
-**Diagnose des QAL-Compilers:**
 ```json
 {
   "code": "E0801",
   "kind": "contract_refuted",
-  "def": "flawed_calc",
+  "def": "flawed_escrow_settle",
   "path": "ens[0]",
-  "message": "`ens r >= 0 && r + fee == balance - amount` does not hold for the counterexample",
+  "message": "`ens r >= 0 && r + fee == balance - amount` (ens[0]) does not hold for the counterexample",
+  "hints": [
+    "running the function on the counterexample violates the contract: fix the body, the contract, or add a `req`"
+  ],
   "counterexample": {
     "amount": 0,
     "balance": 0,
@@ -64,14 +56,15 @@ fn flawed_calc(balance: Int, amount: Int, fee: Int) -> Int
 }
 ```
 
-**Erklärung für KIs:**
-Z3 beweist, dass bei `balance = 0`, `amount = 0`, `fee = 1` das Ergebnis `0 - 0 - 1 = -1` ist. Dies verletzt die Nachbedingung `r >= 0`.  
-**Sofortige Abhilfe:** Der Agent ergänzt `req balance >= amount + fee` und reicht den Code erneut ein.
+*Verhalten:* Die Datenbank bleibt vollkommen unberührt. Der Agent nutzt die Variablenbelegung des Gegenbeispiels, um die Vorbedingungen anzupassen.
 
 ---
 
-## 4. Beweis-Caching mit `confirm_fuel`
+## 4. Der Beweis-Cache (`proofs`-Tabelle) & `confirm_fuel`
 
-Um Wiederholungsprüfungen zu beschleunigen, besitzt QAL einen integrierten Beweis-Cache:
-* Der Cache-Schlüssel umfasst: Quelltext-Hash, Kontrakt-Hash, Z3-Version und das Bestätigungsbudget (`confirm_fuel`).
-* Ein unvollständiges Ergebnis mit kleinem Budget blockiert niemals eine spätere Prüfung mit größerem Budget.
+Beweisergebnisse werden in der SQLite-Tabelle `proofs` gecacht. Der Cache-Schlüssel setzt sich zusammen aus:
+1. Dem Inhalts-Hash der Definition (welcher callees über Hashes bindet),
+2. Dem Prover-Key (Z3-Version, Solver-Konfiguration),
+3. Dem Bestätigungsbudget (`confirm_fuel`).
+
+> **Garantie (Work Package 3):** Ein mit kleinem Budget unbestätigter Eintrag verhindert niemals eine erneute Prüfung mit höherem `confirm_fuel`.

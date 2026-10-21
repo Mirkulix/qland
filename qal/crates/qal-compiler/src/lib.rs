@@ -384,7 +384,7 @@ static QAL: Qal = Qal;
 #[cfg(feature = "reference")]
 static BOTH: Both = Both;
 
-static CURRENT_BACKEND: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(1); // 0=Rust, 1=Qal, 2=Both
+static CURRENT_BACKEND: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0); // 0=Rust, 1=Qal, 2=Both
 
 /// Sets the default backend for free functions (`rust`, `qal`, `both`).
 pub fn set_backend(name: &str) -> Result<(), String> {
