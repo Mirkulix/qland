@@ -29,6 +29,8 @@ Cargo.lock
 # IGQK specific
 *.db
 *.db-journal
+*.db-shm
+*.db-wal
 compressed_models/
 models_cache/
 datasets_cache/
