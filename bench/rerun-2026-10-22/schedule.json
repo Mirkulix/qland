@@ -1,0 +1,407 @@
+{
+ "seed": "qal-1e-rerun",
+ "runs": 2,
+ "model": "sonnet",
+ "entries": [
+  {
+   "task": "07-tokenizer",
+   "arm": "qal",
+   "run": 2
+  },
+  {
+   "task": "15-caesar",
+   "arm": "rust",
+   "run": 2
+  },
+  {
+   "task": "13-word-freq",
+   "arm": "rust",
+   "run": 2
+  },
+  {
+   "task": "06-bank",
+   "arm": "qal",
+   "run": 1
+  },
+  {
+   "task": "10-file-stats",
+   "arm": "qal",
+   "run": 1
+  },
+  {
+   "task": "20-ini-query",
+   "arm": "rust",
+   "run": 1
+  },
+  {
+   "task": "08-expr-eval",
+   "arm": "qal",
+   "run": 1
+  },
+  {
+   "task": "19-base-convert",
+   "arm": "rust",
+   "run": 2
+  },
+  {
+   "task": "15-caesar",
+   "arm": "qal",
+   "run": 1
+  },
+  {
+   "task": "04-binary-search",
+   "arm": "rust",
+   "run": 1
+  },
+  {
+   "task": "11-prime-factors",
+   "arm": "qal",
+   "run": 1
+  },
+  {
+   "task": "01-word-count",
+   "arm": "qal",
+   "run": 2
+  },
+  {
+   "task": "01-word-count",
+   "arm": "rust",
+   "run": 2
+  },
+  {
+   "task": "02-roman",
+   "arm": "qal",
+   "run": 2
+  },
+  {
+   "task": "05-brackets",
+   "arm": "rust",
+   "run": 2
+  },
+  {
+   "task": "13-word-freq",
+   "arm": "rust",
+   "run": 1
+  },
+  {
+   "task": "02-roman",
+   "arm": "qal",
+   "run": 1
+  },
+  {
+   "task": "06-bank",
+   "arm": "qal",
+   "run": 2
+  },
+  {
+   "task": "07-tokenizer",
+   "arm": "rust",
+   "run": 1
+  },
+  {
+   "task": "09-rle",
+   "arm": "rust",
+   "run": 2
+  },
+  {
+   "task": "04-binary-search",
+   "arm": "rust",
+   "run": 2
+  },
+  {
+   "task": "11-prime-factors",
+   "arm": "rust",
+   "run": 2
+  },
+  {
+   "task": "10-file-stats",
+   "arm": "rust",
+   "run": 1
+  },
+  {
+   "task": "05-brackets",
+   "arm": "qal",
+   "run": 1
+  },
+  {
+   "task": "04-binary-search",
+   "arm": "qal",
+   "run": 2
+  },
+  {
+   "task": "16-anagrams",
+   "arm": "qal",
+   "run": 1
+  },
+  {
+   "task": "05-brackets",
+   "arm": "rust",
+   "run": 1
+  },
+  {
+   "task": "05-brackets",
+   "arm": "qal",
+   "run": 2
+  },
+  {
+   "task": "07-tokenizer",
+   "arm": "rust",
+   "run": 2
+  },
+  {
+   "task": "18-date-diff",
+   "arm": "qal",
+   "run": 2
+  },
+  {
+   "task": "10-file-stats",
+   "arm": "qal",
+   "run": 2
+  },
+  {
+   "task": "14-bst",
+   "arm": "qal",
+   "run": 1
+  },
+  {
+   "task": "09-rle",
+   "arm": "qal",
+   "run": 2
+  },
+  {
+   "task": "19-base-convert",
+   "arm": "rust",
+   "run": 1
+  },
+  {
+   "task": "20-ini-query",
+   "arm": "qal",
+   "run": 1
+  },
+  {
+   "task": "08-expr-eval",
+   "arm": "rust",
+   "run": 1
+  },
+  {
+   "task": "19-base-convert",
+   "arm": "qal",
+   "run": 2
+  },
+  {
+   "task": "03-csv-sum",
+   "arm": "rust",
+   "run": 2
+  },
+  {
+   "task": "08-expr-eval",
+   "arm": "rust",
+   "run": 2
+  },
+  {
+   "task": "13-word-freq",
+   "arm": "qal",
+   "run": 1
+  },
+  {
+   "task": "01-word-count",
+   "arm": "qal",
+   "run": 1
+  },
+  {
+   "task": "12-sort-words",
+   "arm": "rust",
+   "run": 1
+  },
+  {
+   "task": "15-caesar",
+   "arm": "rust",
+   "run": 1
+  },
+  {
+   "task": "18-date-diff",
+   "arm": "qal",
+   "run": 1
+  },
+  {
+   "task": "16-anagrams",
+   "arm": "rust",
+   "run": 2
+  },
+  {
+   "task": "06-bank",
+   "arm": "rust",
+   "run": 2
+  },
+  {
+   "task": "16-anagrams",
+   "arm": "qal",
+   "run": 2
+  },
+  {
+   "task": "10-file-stats",
+   "arm": "rust",
+   "run": 2
+  },
+  {
+   "task": "18-date-diff",
+   "arm": "rust",
+   "run": 2
+  },
+  {
+   "task": "03-csv-sum",
+   "arm": "rust",
+   "run": 1
+  },
+  {
+   "task": "15-caesar",
+   "arm": "qal",
+   "run": 2
+  },
+  {
+   "task": "20-ini-query",
+   "arm": "qal",
+   "run": 2
+  },
+  {
+   "task": "02-roman",
+   "arm": "rust",
+   "run": 1
+  },
+  {
+   "task": "09-rle",
+   "arm": "rust",
+   "run": 1
+  },
+  {
+   "task": "13-word-freq",
+   "arm": "qal",
+   "run": 2
+  },
+  {
+   "task": "12-sort-words",
+   "arm": "qal",
+   "run": 1
+  },
+  {
+   "task": "14-bst",
+   "arm": "rust",
+   "run": 1
+  },
+  {
+   "task": "03-csv-sum",
+   "arm": "qal",
+   "run": 1
+  },
+  {
+   "task": "03-csv-sum",
+   "arm": "qal",
+   "run": 2
+  },
+  {
+   "task": "02-roman",
+   "arm": "rust",
+   "run": 2
+  },
+  {
+   "task": "11-prime-factors",
+   "arm": "qal",
+   "run": 2
+  },
+  {
+   "task": "17-word-wrap",
+   "arm": "rust",
+   "run": 1
+  },
+  {
+   "task": "20-ini-query",
+   "arm": "rust",
+   "run": 2
+  },
+  {
+   "task": "07-tokenizer",
+   "arm": "qal",
+   "run": 1
+  },
+  {
+   "task": "17-word-wrap",
+   "arm": "qal",
+   "run": 1
+  },
+  {
+   "task": "12-sort-words",
+   "arm": "rust",
+   "run": 2
+  },
+  {
+   "task": "01-word-count",
+   "arm": "rust",
+   "run": 1
+  },
+  {
+   "task": "16-anagrams",
+   "arm": "rust",
+   "run": 1
+  },
+  {
+   "task": "04-binary-search",
+   "arm": "qal",
+   "run": 1
+  },
+  {
+   "task": "17-word-wrap",
+   "arm": "qal",
+   "run": 2
+  },
+  {
+   "task": "14-bst",
+   "arm": "qal",
+   "run": 2
+  },
+  {
+   "task": "12-sort-words",
+   "arm": "qal",
+   "run": 2
+  },
+  {
+   "task": "14-bst",
+   "arm": "rust",
+   "run": 2
+  },
+  {
+   "task": "17-word-wrap",
+   "arm": "rust",
+   "run": 2
+  },
+  {
+   "task": "19-base-convert",
+   "arm": "qal",
+   "run": 1
+  },
+  {
+   "task": "09-rle",
+   "arm": "qal",
+   "run": 1
+  },
+  {
+   "task": "06-bank",
+   "arm": "rust",
+   "run": 1
+  },
+  {
+   "task": "08-expr-eval",
+   "arm": "qal",
+   "run": 2
+  },
+  {
+   "task": "18-date-diff",
+   "arm": "rust",
+   "run": 1
+  },
+  {
+   "task": "11-prime-factors",
+   "arm": "rust",
+   "run": 1
+  }
+ ]
+}
