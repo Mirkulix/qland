@@ -1,0 +1,93 @@
+# QAL — Fahrplan bis "komplett fertig"
+
+**Datum:** 2026-10-15
+**Auftrag des Nutzers:** "mach es fertig komplett. Ohne Ausnahme!" — alle Phasen 1–5 der Spezifikation `2026-10-15-qal-design.md`. Der Nutzer delegiert alle Designentscheidungen ("Du entscheidest es selber"); Entscheidungen werden getroffen, begründet und im jeweiligen Plan/Ledger dokumentiert, ohne Zwischenfreigaben.
+
+**Arbeitsweise je Teil:** Spezifikation (falls neu) → Implementierungsplan (Code vorab im Scratchpad verifiziert) → subagent-getriebene Umsetzung mit Review pro Aufgabe → Abschluss-Review → Push auf Branch `Mac` (PR Mirkulix/qland#2 bzw. Folge-PRs).
+
+**Status-Legende:** ☐ offen · ◐ in Arbeit · ☑ fertig (alle Kriterien nachgewiesen)
+
+| # | Teil | Fertig, wenn (nachweisbar) | Status |
+|---|---|---|---|
+| 1a | Kern-Pipeline | Text → Prüfung → WASM → Ausführung für Int/Bool, Contracts, JSON-Diagnosen; 50 Tests grün | ☑ |
+| 1b | Daten, Speicher, Effekte | Float/Str/List/Option/Result/Records/Enums/`match`/Sequenzen/Built-ins (§3.5); Bump-Allocator mit `out_of_memory`; Effekte als Host-Importe nur für deklarierte Effekte; `qal run <datei> -- args` mit `--allow`; ein Programm ohne `fs` kann nachweislich keine Datei öffnen; vertagte 1a-Punkte erledigt | ☑ (135 Tests, 0 Warnungen; Commits 55ac2e05..42e3f547) |
+| 1c | Graph-Speicher | Kanonische Form + SHA-256-Hash; Umbenennen ändert keinen Hash; gleiche Logik = gleicher Hash; SQLite-Store `.qal/store.db` mit Namen, Abhängigkeiten, Historie; `define` ersetzt mit automatischem Neuverknüpfen bei gleicher Signatur, sonst Fehler mit Liste der Abhängigen; Effekte als sortierte Menge | ☑ (197 Tests, 0 Warnungen; Commits af0feddc..dcf4410b) |
+| 1d | Agenten-Schnittstelle | `qal mcp` (stdio) mit `qal_define, qal_view, qal_query, qal_test, qal_run, qal_build, qal_rename, qal_history`; kompakte Sprachreferenz in den Tool-Beschreibungen; keine Panik auf irgendeinem MCP-Pfad; in diesem Repo per `.mcp.json` registriert und von einem Claude-Code-Agenten real benutzt | ☑ (242 Tests, 0 Warnungen; Commits 134f0811..47e08f06; Probelauf: Agent ohne QAL-Vorwissen löste FizzBuzz über `sh qal/mcp.sh` mit 6 Tool-Aufrufen, 1 eigener Fehlversuch; die native `/mcp`-Verbindung in Claude Code braucht einen Neustart und deine Freigabe) |
+| 1e | Benchmark | 20 Aufgaben mit versteckten Tests + Referenzlösungen in QAL; Durchlauf mit Claude-Code-Subagenten (QAL über MCP vs. Rust über Dateien + cargo), gemessen: Erfolg, Tokens, Tool-Aufrufe, Fehlversuche; `bench/report.md` | ☑ (80/80 Läufe gültig; QAL 39/40 gelöst, 69,5k Tokens je Lösung; Rust 40/40, 60,1k; Rust gewinnt 12 Aufgaben, 8 unentschieden — These in dieser Form nicht bestätigt, Folgerungen für Phase 2 in `bench/discussion.md`. **Wiederholung 2026-10-22** auf dem Stand nach Phase 5 mit dem selbstgehosteten Compiler, 80 Läufe: QAL 40/40, Rust 40/40, beide im ersten Versuch; verarbeitete Tokens QAL/Rust 1,92 (erster Lauf 1,95); Rust gewinnt alle 20 Aufgaben nach Tokens; echte QAL-Diagnosen 9 in 40 Läufen (erster Lauf 38 Fehlaufrufe). Die These „effektiver" bleibt für Aufgaben dieser Größe unbestätigt; was sich änderte, ist die Zuverlässigkeit, nicht die Kosten — `bench/rerun-2026-10-22/report.md`) |
+| 2 | Beweise & Ausdruckskraft | `req`/`ens` werden für lineare Ganzzahl-Arithmetik mit Z3 statisch bewiesen (Gegenbeispiel bei Widerlegung, Laufzeitprüfung als Rückfall); benutzerdefinierte Generics (Monomorphisierung); Closures; generierte Property-Tests | ☑ (335 Tests, 0 Warnungen; 2a 71ff0d47..632da8ae, 2b fd621402..75c0432f, Review-Fixes 46983eb5..c6e20361; zusätzlich aus dem 1e-Benchmark: Sequenzen verwerfen Werte außer `Result`, Hinweise für fremde Typnamen und Built-ins als Werte; Z3 statisch gelinkt) |
+| 3 | Standardbibliothek & Services | Effekte `net` (HTTP-Server/Client über Host) und `db` (SQLite über Host); Speicherfreigabe für langlaufende Services (Arena pro Request); Standardbibliothek **in QAL** (JSON, HTTP-Routing, Strings) — geschrieben von Agenten über MCP; Beispiel-Backend (Todo-API) läuft und ist getestet | ☑ (457 Tests, 0 Warnungen, Clippy-Restriktionsprüfung sauber; 3a 3e6ea496..b08ee69e, 3b 5e026a39..f0d29171, 3c 65673e41..3e8db580; std (6 Module: str, url, json, http, route, db) und Todo-Backend von Agenten über MCP geschrieben, Abnahme jeweils im ersten Versuch: std 6/6 Module, 264 versteckte Tests; Todo 47/47 versteckte Szenarien mit 10 Tool-Aufrufen; `todo.qalpkg` reproduziert beim Import in ein frisches Projekt jeden Hash; 54 Szenarien über `qal request` und HTTP-Harness gegen `qal serve` grün; RSS über 10 000 `GET /todos` nach den ersten 1 000: +0,0 % (Release 19 888 KiB, ~7 500 Anfragen/s auf einer Verbindung)) |
+| 4 | Agenten-Team | Mehrere Agenten arbeiten gleichzeitig über MCP an einer Codebase: Sperren pro Definition, Rollen (Architekt, Implementierer, Verifizierer, Reviewer), Merge, signierte Änderungen (Ed25519); Demo: Team baut einen Service parallel | ☑ (568 Tests, 0 Warnungen, Clippy-Restriktion sauber; 4a 952312ef..39aba2c4, 4b 37592d3b..08928a82, 4c a7b27772..ff4cc508 + Review-Fixes 09f544ec..8957923e, 4d echter Teamlauf auf `p4d-real`: 6 Sonnet-Agenten über MCP, 20/20 Szenarien (15/15 versteckt), `qal verify` ok, Kriterium 6 erfüllt; Solo-Vergleich ebenfalls 20/20 mit ≈ 1/6 der Tokens — siehe `bench/team/real/report.md`) |
+| 5 | Self-Hosting | Ein QAL-Compiler, geschrieben in QAL, übersetzt die QAL-Testsammlung zu identischem Verhalten; Bootstrap-Fixpunkt (Stage 2 == Stage 3, byte-identisches WASM); danach ist Rust nur noch für den Host (wasmtime-Einbettung) nötig | ☑ (585 Tests, 0 Warnungen; Fixpunkt Stage 1 == Stage 2 == Stage 3 byte-identisch verifiziert; Saatmodul `SEED_SHA256` aktiv; `selfhost/qalc.qalpkg` ist vollständiger Teil des Korpus; die Speicheroperationen CHECK_FILE, TYPED und DEFINE teilen große Programme per FORK/JOIN in Arbeitspakete und halten das 1-GiB-Limit ein.) |
+
+## Externe Voraussetzungen
+
+- **Keine API-Schlüssel nötig:** Benchmark (1e) und Team (4) nutzen Claude-Code-Subagenten in dieser Umgebung als Agenten, deren Token- und Tool-Verbrauch die Umgebung misst. Eine Anbindung externer LLM-Provider (aus `qlang-runtime` Provider-Registry) ist optional und kein Fertig-Kriterium.
+- **Z3 (Phase 2):** über das Crate `z3` mit statischem Build (`static-link-z3`), keine Systeminstallation.
+
+## Ehrliche Risiken
+
+- Phase 5 (Self-Hosting) ist der größte Brocken: Der Compiler muss in QAL ausdrückbar sein (Maps, Bytes, Rekursion über große ASTs). Phase 2–3 werden deshalb so geschnitten, dass sie die dafür nötigen Sprachmittel liefern.
+- Die Benchmark-Messung (1e) kann zeigen, dass QAL anfangs schlechter ist. Das ist kein Abbruchgrund, sondern steuert Phase 2.
+
+## Übertrag in spätere Teile (aus den Reviews)
+
+**Pflicht in 1c:**
+- Größe inferierter Typen begrenzen (z. B. 4096 Knoten, Diagnose aus der E0207-Familie): geteilte Typvariablen (`Ok`/`Err` pro `let`) lassen Typen exponentiell wachsen; Hashing läuft über Typen.
+- Drucker total machen für nicht vom Parser erzeugte ASTs (negative Literale, NaN/inf, leere Sequenz/`match`/Enum) — Voraussetzung für die kanonische Form.
+- Konsistenztest `Builtin::NAMES` ↔ `Builtin::name()`; Effekte als sortierte, duplikatfreie Menge.
+
+**Pflicht in 1d:**
+- Aus 1c: Optionen vor dem Namen im Speichermodus; Datei-vs-Name-Mehrdeutigkeit (`foo.qal`/`foo`/`./foo`); Speicher erst nach Optionsprüfung laden; `qal test <fn>` mit klarer Meldung; `query --type` mit ungültigem Muster → Diagnose; `canon::resolve` fail-closed; geschlossenes stdout ohne Panik; Hinweis „umbenannt in X“ bei `history`/`view` alter Namen; Namensbindung (Nutzer folgen dem Namen, gegen den sie geschrieben wurden) und E0404 in der Tool-Referenz erklären; `define` über Definitionsarten hinweg (fn → test) nicht still ersetzen.
+- Kein `expect`/`unwrap`/`unreachable!` auf MCP-erreichbaren Pfaden; unbekannter Einstiegspunkt muss vor `compile` abgelehnt werden.
+- FIFO/Gerätedateien im erlaubten Ordner dürfen den Host nicht blockieren (nur reguläre Dateien, O_NONBLOCK + fstat).
+- CLI: Optionen auch vor dem Dateinamen akzeptieren; `check`/`test` lehnen unbekannte Zusatzargumente ab.
+
+**Pflicht vor 1e (aus dem 1d-Abschluss-Review):**
+- Built-ins: `read_all() -> Str !io`, Ordnung auf `Str` (`<` usw.) plus `sort_str`, `char_code`/`from_char_code`, `to_upper`/`to_lower`/`replace`/`index_of`.
+- Benchmark-Harness: versteckte Tests über `test`-Definitionen oder `main` + stdin (`qal_call` nimmt nur Skalare und Listen); Aufgabengrößen passend zu den Grenzen (Fuel, 10 s, 64 KiB Ausgabe, quadratisches `push`/`++` ~8 000).
+
+**Phase 3:**
+- `fs`-Schreiben über verifizierten Elternordner (`openat`), damit auch der Rest-Wettlauf (leere Datei außerhalb) wegfällt; Host-Speicher insgesamt an das Limit koppeln.
+
+---
+
+## 6. Verbindliche Präzisierung der Garantien und Sicherheitsgrenzen
+
+Jede hier aufgeführte Garantie ist durch konkrete Tests im Testbestand hinterlegt und grenzt den tatsächlichen Leistungsumfang gegen überzogene Interpretationen ab. Die genannten Tests existieren unter genau diesen Namen (geprüft 2026-10-22; ein Test, der hier steht und nicht existiert, ist ein Fehler dieses Dokuments).
+
+### 6.1 Beweisbegriff `proven` vs. Partielle Korrektheit
+- **Was garantiert wird:** Der Status `proven` (`qal prove`) garantiert **partielle Korrektheit** für Verträge (`req`/`ens`) über `Int` und `Bool`: Z3 modelliert `+ - *` (auch nichtlinear), `/` und `%` mit Abschneiden gegen null, Vergleiche, `if`/`let`/`match` über Int/Bool-Muster exakt; Aufrufe anderer Funktionen werden über deren Verträge abstrahiert, Rekursion induktiv. Wenn eine Funktion `proven` ist und terminiert, verletzt keine Ausführung ihre Nachbedingung, sofern die Vorbedingung erfüllt ist. Überlauf ist kein Loch: jede Operation trapt bei Überlauf, und der Beweis setzt die Bereichsbedingung voraus (`vc.rs`, `in_range`).
+- **Was ausdrücklich NICHT garantiert wird:**
+  1. *Terminierung:* QAL beweist **keine** Terminierung rekursiver Funktionen.
+  2. *Minimale Gegenbeispiele:* Bei `refuted` ist das Gegenbeispiel durch Ausführung bestätigt, aber **nicht** minimiert (Minimierung gibt es nur bei Property-Tests).
+  3. *Andere Typen:* `Str`, `List`, `Map`, `Bytes`, `Float`, Records, Varianten, Closures und Aufrufe über Funktionswerte sind im Beweis **unbestimmte Werte**; ein Vertrag, der von ihnen abhängt oder eine eigene Funktion aufruft, ist `unknown` (Regel `qal-prove/4`) und wird zur Laufzeit geprüft. Praktisch heißt das: Die Standardbibliothek (JSON, HTTP, Routing) ist nicht bewiesen.
+- **Referenz-Tests** (`qal/crates/qal-prove/src/tests.rs`): `overflow_traps_so_abs_is_non_negative`, `refutations_are_confirmed_by_running`, `division_truncates_toward_zero`, `callee_contracts_are_assumed_after_the_call`, `recursion_over_enums_uses_the_recursive_contract`, `unmodelled_values_make_contracts_unknown_not_wrong`, `self_hosting_builtins_never_prove_what_can_fail`, `a_candidate_run_stopped_by_the_clock_is_not_stored`.
+
+### 6.2 Merge-Semantik: Zusammenführung auf Definitionsebene
+- **Was garantiert wird:** Ein Merge arbeitet **pro Definition über Inhalts-Hashes**, nicht über Zeilen. Jeder Name der Änderung wird gegen Basis und `main` eingeordnet (`merge.rs`, `classify`): gleicher Hash auf beiden Seiten → zusammengeführt; nur in der Änderung geändert oder in `main` nur neu verknüpft → übernommen; sonst Konflikt (`edit_edit`, `add_add`, `rename`). Die übernommenen Definitionen werden als **ein** `define` auf `main` nachgespielt und das ganze Programm neu geprüft: Typen, Effekte, Beweise (frisch, nicht aus dem Cache), Tests. Ein semantischer Bruch (geänderte Signatur in `main`) wird so gefunden, obwohl er textlich kein Konflikt ist.
+- **Was ausdrücklich NICHT garantiert wird:** Es gibt **keinen strukturellen Merge innerhalb einer Definition** (kein 3-Wege-Merge von Syntaxbäumen). Zwei Änderungen an derselben Definition sind ein Konflikt (E0910): der Merge wird abgelehnt, ein Rebase behält die eigene Fassung mit Konfliktmarke, und der Agent muss die Definition neu definieren. Konfliktfreiheit bedeutet keine semantische Verträglichkeit jenseits dessen, was Typen, Effekte, Verträge und Tests prüfen.
+- **Referenz-Tests** (`qal/crates/qal-store/src/team/tests.rs`): `a_merge_replays_onto_a_moved_main`, `real_conflicts_are_refused_with_what_main_did`, `semantic_conflicts_fail_the_check`, `a_rebase_marks_conflicts_and_their_resolution_merges`, `deletes_and_renames_are_merged`; (`qal/crates/qal-cli/tests/team.rs`): `a_team_reviews_and_merges_over_mcp`.
+
+### 6.3 Kryptografische Signaturen vs. Codekorrektheit
+- **Was garantiert wird:** Jeder Datensatz der Team-Historie ist mit dem Ed25519-Schlüssel des Mitglieds signiert und über `prev`/`hash` zu einer Kette verbunden; `names_after` bindet den Zustand jeder Definition. **Beim Schreiben** prüft der Store, dass der Session-Schlüssel der hinterlegte öffentliche Schlüssel des Mitglieds ist und dass der Kettenkopf unversehrt ist (Hash des Bodys, Signatur); ein manipulierter Kopf verweigert jeden weiteren Write (E0921/E0922). **`qal verify`** prüft die ganze Kette: Lücken, Hashes, jede Signatur mit dem zur Zeit gültigen Schlüssel, Rechte pro Datensatz, Nachspielen auf den heutigen Zustand.
+- **Was ausdrücklich NICHT garantiert wird:** Eine Signatur sagt nichts über Korrektheit. Ohne `--trust <team.json>` stammt der Owner-Schlüssel aus dem Store selbst; wer den Store umschreiben kann, kann die Kette mit eigenen Schlüsseln neu aufbauen — `qal verify` warnt davor, und nur die Vertrauensdatei schließt es aus. Alle geheimen Schlüssel der Mitglieder liegen in einem Verzeichnis desselben Hosts; die Trennung der Agenten ist Prozessisolation, nicht Kryptographie.
+- **Referenz-Tests** (`qal/crates/qal-store/src/team/tests.rs`): `a_team_store_signs_every_write_and_verifies`, `tampering_with_records_is_detected`, `writes_refuse_to_extend_a_broken_chain_head`, `tampering_with_any_code_bearing_column_is_detected`, `tampering_with_reviews_and_merge_gates_is_detected`; (`qal/crates/qal-cli/tests/team.rs`): `secrets_never_leave_their_files`, `session_files_stay_out_of_the_project_and_heads_can_be_pinned`.
+
+### 6.4 Vertrauensannahmen und Grenzen des Rollenmodells
+- **Was garantiert wird:** Vier Rollen (`architect`, `implementer`, `verifier`, `reviewer`) plus der Owner auf der Kommandozeile; die Rechte stehen in einer Matrix (`policy.rs`) und werden **im Store** bei jedem Datensatz geprüft, nicht nur im MCP-Server. Ein Implementierer schreibt nur in seinem Change-Set, Verdikte kommen nur von Verifizierer und Reviewer, Merge nur von Architekt oder Reviewer nach gültigem Gate. Zur Laufzeit bekommt ein Programm nur die Host-Funktionen der mit `--allow` freigegebenen Effekte; alles andere ist ein Stub, der mit `permission denied` abbricht.
+- **Was ausdrücklich NICHT garantiert wird:** Das Rollenmodell ist **keine** Sicherheitsgrenze gegen Prozesse unter derselben Betriebssystem-UID: Wer `.qal/store.db` oder das Schlüsselverzeichnis lesen und schreiben kann, kann als jedes Mitglied handeln. Agenten, die einander nicht vertrauen, brauchen getrennte Prozesse oder Container.
+- **Referenz-Tests** (`qal/crates/qal-store/src/team/tests.rs`): `the_policy_matrix`, `the_merge_gate_needs_current_reviews_by_others`, `records_of_revoked_members_are_unauthorized`; (`qal/crates/qal-cli/tests/team.rs`): `every_tool_with_every_role_follows_the_matrix`, `agents_grant_only_the_team_effects`, `without_its_key_a_member_reads_but_cannot_write`; (`qal/crates/qal-run/src/tests.rs`): `effects_must_be_granted`, `calling_an_ungranted_effect_reports_permission_denied`, `pure_programs_import_no_effects`, `fs_is_confined_to_granted_directories`, `fs_errors_do_not_reveal_whether_outside_paths_exist`.
+
+### 6.5 Nachweis-Matrix der Kern-Garantien
+
+| Garantie | Anspruch | Nachweis / Test | Begrenzung / Annahme |
+|---|---|---|---|
+| **Partielle Korrektheit** | `ens` gilt bei Terminierung | `qal-prove/src/tests.rs` (6.1) | Keine Terminierung; nur `Int`/`Bool` modelliert |
+| **Gegenbeispiele** | Widerlegung ist durch Ausführung bestätigt | `refutations_are_confirmed_by_running` | Nicht minimiert |
+| **Effekt-Isolation** | Nur freigegebene Effekte erreichbar | `pure_programs_import_no_effects`, `calling_an_ungranted_effect_reports_permission_denied` | Getestet, nicht formal bewiesen; keine Effekt-Polymorphie für eigene Funktionen |
+| **Merge** | Pro Definition über Hashes, Vollprüfung nach dem Merge | `a_merge_replays_onto_a_moved_main`, `semantic_conflicts_fail_the_check` | Kein Merge innerhalb einer Definition |
+| **Signaturen** | Signierte Kette, Kopf beim Schreiben geprüft, Kette bei `verify` | `writes_refuse_to_extend_a_broken_chain_head`, `tampering_with_records_is_detected` | Vertrauensanker nur mit `--trust`; ein Host, ein Schlüsselverzeichnis |
+| **Sandbox** | `fs` nur unter freigegebenen Ordnern, Symlinks nicht nach außen | `fs_is_confined_to_granted_directories` | Prozessgrenze, keine OS-Isolation |
+| **Bootstrap-Fixpunkt** | Rust == QAL == QAL byteidentisch | `full_selfhosted_fixpoint`, `seed_module_is_the_fixpoint` | Der QAL-Compiler ist ein Port des Rust-Compilers; Hashing, Protokoll, Linking, Prover, Store bleiben in Rust |
+| **Agenten-Effektivität** | — | `bench/report.md`, `bench/rerun-2026-10-22/report.md` | **Nicht belegt:** gleiche Korrektheit wie Rust bei 1,9× Tokens; Team 6× teurer als Solo |
+

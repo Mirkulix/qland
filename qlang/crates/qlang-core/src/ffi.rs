@@ -18,6 +18,10 @@ use crate::verify;
 ///
 /// The caller must free the returned graph with `qlang_graph_free`.
 /// Returns null on invalid input.
+///
+/// # Safety
+///
+/// `name` must be null or point to a valid NUL-terminated C string that stays valid for the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn qlang_graph_new(name: *const c_char) -> *mut Graph {
     if name.is_null() {
@@ -34,6 +38,10 @@ pub unsafe extern "C" fn qlang_graph_new(name: *const c_char) -> *mut Graph {
 /// Free a graph previously created by `qlang_graph_new`.
 ///
 /// Passing null is a no-op.
+///
+/// # Safety
+///
+/// `graph` must be null or a pointer returned by `qlang_graph_new` that has not already been freed; it must not be used afterwards.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn qlang_graph_free(graph: *mut Graph) {
     if !graph.is_null() {
@@ -50,6 +58,12 @@ pub unsafe extern "C" fn qlang_graph_free(graph: *mut Graph) {
 /// - `shape_len`: number of dimensions.
 ///
 /// Returns the node ID of the new input node, or `u32::MAX` on error.
+///
+/// # Safety
+///
+/// `graph` must be null or a pointer obtained from `qlang_graph_new` that has not been freed, with no other live references to it during the call.
+/// `name` must be null or point to a valid NUL-terminated C string that stays valid for the call.
+/// `shape_ptr` must be null or point to `shape_len` readable `usize` values.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn qlang_graph_add_input(
     graph: *mut Graph,
@@ -79,7 +93,13 @@ pub unsafe extern "C" fn qlang_graph_add_input(
             .collect()
     };
     let tt = TensorType::new(dt, Shape(dims));
-    graph.add_node(Op::Input { name: name_str.to_string() }, vec![], vec![tt])
+    graph.add_node(
+        Op::Input {
+            name: name_str.to_string(),
+        },
+        vec![],
+        vec![tt],
+    )
 }
 
 /// Add an operation node to the graph.
@@ -90,6 +110,11 @@ pub unsafe extern "C" fn qlang_graph_add_input(
 ///
 /// This creates the node and connecting edges with a default f32-scalar type.
 /// Returns the new node ID, or `u32::MAX` on error.
+///
+/// # Safety
+///
+/// `graph` must be null or a pointer obtained from `qlang_graph_new` that has not been freed, with no other live references to it during the call.
+/// `op_name` must be null or point to a valid NUL-terminated C string that stays valid for the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn qlang_graph_add_op(
     graph: *mut Graph,
@@ -138,6 +163,11 @@ pub unsafe extern "C" fn qlang_graph_add_op(
 /// - `source`: node ID whose output feeds this output node.
 ///
 /// Returns the new node ID, or `u32::MAX` on error.
+///
+/// # Safety
+///
+/// `graph` must be null or a pointer obtained from `qlang_graph_new` that has not been freed, with no other live references to it during the call.
+/// `name` must be null or point to a valid NUL-terminated C string that stays valid for the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn qlang_graph_add_output(
     graph: *mut Graph,
@@ -154,7 +184,9 @@ pub unsafe extern "C" fn qlang_graph_add_output(
     };
     let placeholder = TensorType::f32_scalar();
     let node_id = graph.add_node(
-        Op::Output { name: name_str.to_string() },
+        Op::Output {
+            name: name_str.to_string(),
+        },
         vec![placeholder.clone()],
         vec![],
     );
@@ -177,6 +209,10 @@ pub unsafe extern "C" fn qlang_graph_add_output(
 /// - `output_len`: length of the output buffer.
 ///
 /// Returns 0 on success, negative on error.
+///
+/// # Safety
+///
+/// All pointer arguments are currently ignored, so any values are accepted; once implemented they must be valid for the sizes given.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn qlang_graph_execute(
     _graph: *mut Graph,
@@ -192,6 +228,10 @@ pub unsafe extern "C" fn qlang_graph_execute(
 
 /// Serialize the graph to JSON. The returned string must be freed with
 /// `qlang_free_string`. Returns null on error.
+///
+/// # Safety
+///
+/// `graph` must be null or a pointer obtained from `qlang_graph_new` that has not been freed, with no other live references to it during the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn qlang_graph_to_json(graph: *mut Graph) -> *mut c_char {
     if graph.is_null() {
@@ -209,6 +249,10 @@ pub unsafe extern "C" fn qlang_graph_to_json(graph: *mut Graph) -> *mut c_char {
 
 /// Free a string previously returned by `qlang_graph_to_json` or
 /// `qlang_version`.
+///
+/// # Safety
+///
+/// `s` must be null or a pointer returned by `qlang_graph_to_json` that has not already been freed.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn qlang_free_string(s: *mut c_char) {
     if !s.is_null() {
@@ -217,6 +261,10 @@ pub unsafe extern "C" fn qlang_free_string(s: *mut c_char) {
 }
 
 /// Return the number of nodes in the graph, or 0 if the pointer is null.
+///
+/// # Safety
+///
+/// `graph` must be null or a pointer obtained from `qlang_graph_new` that has not been freed, with no other live references to it during the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn qlang_graph_num_nodes(graph: *mut Graph) -> u32 {
     if graph.is_null() {
@@ -228,6 +276,10 @@ pub unsafe extern "C" fn qlang_graph_num_nodes(graph: *mut Graph) -> u32 {
 
 /// Verify the graph. Returns 0 if verification passes, -1 on null pointer,
 /// or a positive integer equal to the number of verification failures.
+///
+/// # Safety
+///
+/// `graph` must be null or a pointer obtained from `qlang_graph_new` that has not been freed, with no other live references to it during the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn qlang_graph_verify(graph: *mut Graph) -> i32 {
     if graph.is_null() {
@@ -266,6 +318,7 @@ fn dtype_from_u32(v: u32) -> Option<Dtype> {
         6 => Some(Dtype::I64),
         7 => Some(Dtype::Bool),
         8 => Some(Dtype::Ternary),
+        9 => Some(Dtype::Utf8),
         _ => None,
     }
 }
@@ -292,6 +345,12 @@ fn op_from_str(s: &str) -> Option<Op> {
         "residual" => Some(Op::Residual),
         "gelu" => Some(Op::Gelu),
         "constant" => Some(Op::Constant),
+        "ollama_generate" => Some(Op::OllamaGenerate {
+            model: "llama3".into(),
+        }),
+        "ollama_chat" => Some(Op::OllamaChat {
+            model: "llama3".into(),
+        }),
         _ => None,
     }
 }
@@ -434,14 +493,7 @@ mod tests {
         let name = CString::new("exec_test").unwrap();
         unsafe {
             let g = qlang_graph_new(name.as_ptr());
-            let result = qlang_graph_execute(
-                g,
-                ptr::null(),
-                ptr::null(),
-                0,
-                ptr::null_mut(),
-                0,
-            );
+            let result = qlang_graph_execute(g, ptr::null(), ptr::null(), 0, ptr::null_mut(), 0);
             assert_eq!(result, -1);
             qlang_graph_free(g);
         }

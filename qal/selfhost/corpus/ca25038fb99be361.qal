@@ -1,0 +1,2 @@
+fn say(p: P) -> Unit !io
+= print(show(p))

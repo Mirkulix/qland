@@ -1,0 +1,5 @@
+fn setup() -> Result[Int, DbError] !db = db_exec("CREATE TABLE IF NOT EXISTS todos (id INTEGER PRIMARY KEY, title TEXT NOT NULL UNIQUE, done INTEGER NOT NULL DEFAULT 0)", [])
+fn add(t: Str) -> Int !db = match db_query("INSERT INTO todos (title) VALUES (?) RETURNING id", [SqlText(t)]) { Ok(r) => match get(r.rows, 0) { Some(row) => match get(row, 0) { Some(SqlInt(id)) => id, _ => 0 - 2 }, None => 0 - 3 }, Err(DbConstraint(_)) => 0 - 1, Err(_) => 0 - 4 }
+fn count() -> Int !db = match db_query("SELECT count(*) AS n, ? AS echo FROM todos", [SqlText("x'); DROP TABLE todos; --")]) { Ok(r) => match get(r.rows, 0) { Some(row) => match get(row, 0) { Some(SqlInt(n)) => n, _ => 0 - 2 }, None => 0 - 3 }, Err(_) => 0 - 4 }
+fn cols() -> List[Str] !db = match db_query("SELECT id, title AS name FROM todos", []) { Ok(r) => r.columns, Err(_) => [] }
+fn main(args: List[Str]) -> Int !db = { let s = setup() in match get(args, 0) { Some("add") => match get(args, 1) { Some(t) => if add(t) > 0 then 0 else 1, None => 2 }, Some("fail") => { let x = add("temp") in 3 }, Some("trap") => { let x = add("temp") in 1 / (x - x) }, _ => count() } }

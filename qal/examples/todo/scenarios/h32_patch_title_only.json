@@ -1,0 +1,86 @@
+{
+ "name": "h32_patch_title_only",
+ "description": "PATCH title keeps done",
+ "steps": [
+  {
+   "name": "create a",
+   "request": {
+    "method": "POST",
+    "path": "/todos",
+    "json": {
+     "title": "x",
+     "done": true
+    }
+   },
+   "expect": {
+    "status": 201,
+    "json": {
+     "id": {
+      "$var": "a"
+     },
+     "title": "x",
+     "done": true,
+     "created_at": {
+      "$type": "int"
+     }
+    },
+    "headers": {
+     "location": "/todos/{{a}}",
+     "content-type": "application/json"
+    }
+   },
+   "capture": {
+    "a": "/id"
+   }
+  },
+  {
+   "name": "title",
+   "request": {
+    "method": "PATCH",
+    "path": "/todos/{{a}}",
+    "json": {
+     "title": "y"
+    }
+   },
+   "expect": {
+    "status": 200,
+    "json": {
+     "id": {
+      "$var": "a"
+     },
+     "title": "y",
+     "done": true,
+     "created_at": {
+      "$type": "int"
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "get a",
+   "request": {
+    "method": "GET",
+    "path": "/todos/{{a}}"
+   },
+   "expect": {
+    "status": 200,
+    "json": {
+     "id": {
+      "$var": "a"
+     },
+     "title": "y",
+     "done": true,
+     "created_at": {
+      "$type": "int"
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  }
+ ]
+}

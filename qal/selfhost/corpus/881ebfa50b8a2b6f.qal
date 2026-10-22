@@ -1,0 +1,2 @@
+fn std.a.abs(x: Int) -> Int ens r >= 0 = if x < 0 then 0 - x else x
+test std.a.t = std.a.abs(-2) == 2

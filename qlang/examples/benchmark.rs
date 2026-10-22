@@ -6,8 +6,6 @@
 //! This demonstrates why QLANG compiles to machine code
 //! instead of interpreting graphs like Python.
 
-use std::time::Instant;
-
 fn main() {
     #[cfg(not(feature = "llvm"))]
     {
@@ -21,6 +19,7 @@ fn main() {
 
 #[cfg(feature = "llvm")]
 fn run() {
+    use std::time::Instant;
     println!("=== QLANG Performance Benchmark ===\n");
 
     use inkwell::context::Context;
@@ -33,8 +32,10 @@ fn run() {
 
     println!("Warming up JIT compiler...\n");
 
-    println!("{:>10} {:>14} {:>14} {:>14} {:>10} {:>10}",
-        "Elements", "Interpreter", "JIT Scalar", "JIT SIMD", "JIT/Int", "SIMD/Int");
+    println!(
+        "{:>10} {:>14} {:>14} {:>14} {:>10} {:>10}",
+        "Elements", "Interpreter", "JIT Scalar", "JIT SIMD", "JIT/Int", "SIMD/Int"
+    );
     println!("{}", "-".repeat(88));
 
     for &n in &sizes {
@@ -47,12 +48,16 @@ fn run() {
         e.output("y", activated, TT::f32_vector(n));
         let graph = e.build();
 
-        let input_a: Vec<f32> = (0..n).map(|i| (i as f32 * 0.01) - (n as f32 * 0.005)).collect();
+        let input_a: Vec<f32> = (0..n)
+            .map(|i| (i as f32 * 0.01) - (n as f32 * 0.005))
+            .collect();
         let input_b: Vec<f32> = (0..n).map(|i| i as f32 * 0.005).collect();
 
         // === Compile ONCE (not measured) ===
         let context = Context::create();
-        let compiled = qlang_compile::codegen::compile_graph(&context, &graph, OptimizationLevel::Aggressive).unwrap();
+        let compiled =
+            qlang_compile::codegen::compile_graph(&context, &graph, OptimizationLevel::Aggressive)
+                .unwrap();
         let simd_compiled = qlang_compile::simd::compile_graph_simd(&context, &graph).unwrap();
 
         // === Warmup ===
@@ -65,8 +70,14 @@ fn run() {
         let mut best_interp = std::time::Duration::from_secs(999);
         for _ in 0..n_runs {
             let mut inputs = std::collections::HashMap::new();
-            inputs.insert("a".into(), qlang_core::tensor::TensorData::from_f32(Shape::vector(n), &input_a));
-            inputs.insert("b".into(), qlang_core::tensor::TensorData::from_f32(Shape::vector(n), &input_b));
+            inputs.insert(
+                "a".into(),
+                qlang_core::tensor::TensorData::from_f32(Shape::vector(n), &input_a),
+            );
+            inputs.insert(
+                "b".into(),
+                qlang_core::tensor::TensorData::from_f32(Shape::vector(n), &input_b),
+            );
             let start = Instant::now();
             let _ = qlang_runtime::executor::execute(&graph, inputs).unwrap();
             best_interp = best_interp.min(start.elapsed());
@@ -76,7 +87,8 @@ fn run() {
         let mut best_jit = std::time::Duration::from_secs(999);
         for _ in 0..n_runs {
             let start = Instant::now();
-            let _ = qlang_compile::codegen::execute_compiled(&compiled, &input_a, &input_b).unwrap();
+            let _ =
+                qlang_compile::codegen::execute_compiled(&compiled, &input_a, &input_b).unwrap();
             best_jit = best_jit.min(start.elapsed());
         }
 
@@ -84,7 +96,8 @@ fn run() {
         let mut best_simd = std::time::Duration::from_secs(999);
         for _ in 0..n_runs {
             let start = Instant::now();
-            let _ = qlang_compile::aligned::execute_aligned(&simd_compiled, &input_a, &input_b).unwrap();
+            let _ = qlang_compile::aligned::execute_aligned(&simd_compiled, &input_a, &input_b)
+                .unwrap();
             best_simd = best_simd.min(start.elapsed());
         }
 

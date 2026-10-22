@@ -1,0 +1,92 @@
+{
+ "name": "h19_title_empty",
+ "description": "empty titles",
+ "steps": [
+  {
+   "name": "empty",
+   "request": {
+    "method": "POST",
+    "path": "/todos",
+    "json": {
+     "title": ""
+    }
+   },
+   "expect": {
+    "status": 400,
+    "json": {
+     "error": {
+      "code": "invalid_value",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "spaces",
+   "request": {
+    "method": "POST",
+    "path": "/todos",
+    "json": {
+     "title": "   "
+    }
+   },
+   "expect": {
+    "status": 400,
+    "json": {
+     "error": {
+      "code": "invalid_value",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "whitespace mix",
+   "request": {
+    "method": "POST",
+    "path": "/todos",
+    "json": {
+     "title": " \t\r\n "
+    }
+   },
+   "expect": {
+    "status": 400,
+    "json": {
+     "error": {
+      "code": "invalid_value",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "nothing created",
+   "request": {
+    "method": "GET",
+    "path": "/todos"
+   },
+   "expect": {
+    "status": 200,
+    "json": [],
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  }
+ ]
+}

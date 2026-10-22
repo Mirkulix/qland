@@ -1,0 +1,1 @@
+test t = match 1 { std.a.x => 1 }

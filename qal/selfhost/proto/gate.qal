@@ -1,0 +1,57 @@
+# Measurement gate of Phase 5a (self-hosting spec §6.2): the workloads whose cost decides whether
+# the self-hosted compiler must split its work into packages (§4.3) from the start.
+#
+#   gate_lex(src)        a bytes_at-based lexer over QAL text: tokens kept as an Accum of records
+#   gate_puts(n, keys)   n map_put on Str keys ("k" ++ i mod keys), the checker's symbol tables
+#   gate_module(n)       an n-piece module (each piece LEB128-encoded) joined with bytes_join
+
+type Tok = { kind: Int, start: Int, stop: Int }
+
+fn is_alpha(c: Int) -> Bool = (c >= 97 && c <= 122) || (c >= 65 && c <= 90) || c == 95
+
+fn is_digit(c: Int) -> Bool = c >= 48 && c <= 57
+
+fn ident_end(b: Bytes, i: Int, n: Int) -> Int =
+  if i < n && (is_alpha(bytes_at(b, i)) || is_digit(bytes_at(b, i)) || bytes_at(b, i) == 46) then ident_end(b, i + 1, n) else i
+
+fn digits_end(b: Bytes, i: Int, n: Int) -> Int = if i < n && (is_digit(bytes_at(b, i)) || bytes_at(b, i) == 46) then digits_end(b, i + 1, n) else i
+
+fn line_end(b: Bytes, i: Int, n: Int) -> Int = if i < n && bytes_at(b, i) != 10 then line_end(b, i + 1, n) else i
+
+fn str_end(b: Bytes, i: Int, n: Int) -> Int =
+  if i >= n then n else let c = bytes_at(b, i) in if c == 34 then i + 1 else if c == 92 then str_end(b, i + 2, n) else str_end(b, i + 1, n)
+
+fn pair(c: Int, d: Int) -> Bool =
+  (d == 62 && (c == 61 || c == 45)) || (d == 61 && (c == 61 || c == 33 || c == 60 || c == 62)) || (c == d && (c == 38 || c == 124 || c == 43))
+
+fn lex(b: Bytes, i: Int, n: Int, a: Accum[Tok]) -> Accum[Tok] =
+  if i >= n then a
+  else let c = bytes_at(b, i) in
+  if c == 32 || c == 10 || c == 9 || c == 13 then lex(b, i + 1, n, a)
+  else if c == 35 then lex(b, line_end(b, i, n), n, a)
+  else if is_alpha(c) then (let j = ident_end(b, i + 1, n) in lex(b, j, n, AccPush(a, Tok { kind: 1, start: i, stop: j })))
+  else if is_digit(c) then (let j = digits_end(b, i + 1, n) in lex(b, j, n, AccPush(a, Tok { kind: 2, start: i, stop: j })))
+  else if c == 34 then (let j = str_end(b, i + 1, n) in lex(b, j, n, AccPush(a, Tok { kind: 3, start: i, stop: j })))
+  else if i + 1 < n && pair(c, bytes_at(b, i + 1)) then lex(b, i + 2, n, AccPush(a, Tok { kind: 4, start: i, stop: i + 2 }))
+  else lex(b, i + 1, n, AccPush(a, Tok { kind: 4, start: i, stop: i + 1 }))
+
+fn gate_lex(src: Bytes) -> Int = len(acc_list(lex(src, 0, bytes_len(src), AccEnd)))
+
+fn puts(i: Int, n: Int, keys: Int, m: Map[Str, Int]) -> Map[Str, Int] =
+  if i == n then m else puts(i + 1, n, keys, map_put(m, "k" ++ from_int(i % keys), i))
+
+fn gate_puts(n: Int, keys: Int) -> Int = map_size(puts(0, n, keys, map_new()))
+
+fn uint_bytes(n: Int, a: Accum[Int]) -> Accum[Int] =
+  if n < 128 then AccPush(a, n) else uint_bytes(ushr(n, 7), AccPush(a, bit_or(bit_and(n, 127), 128)))
+
+# About 10 bytes: an opcode-like prefix of 7 bytes and a LEB128 immediate (10^5 pieces ~ 1 MB).
+fn piece(i: Int) -> Bytes = bytes_from(acc_list(uint_bytes(bit_and(i * 7919, 1048575), AccPush(AccPush(AccPush(AccPush(AccPush(AccPush(AccPush(AccEnd, 32), 65), 0), 11), 16), 1), 4))))
+
+fn pieces(i: Int, n: Int, a: Accum[Bytes]) -> Accum[Bytes] = if i == n then a else pieces(i + 1, n, AccPush(a, piece(i)))
+
+fn gate_module(n: Int) -> Int = bytes_len(bytes_join(acc_list(pieces(0, n, AccEnd))))
+
+test lexes = gate_lex(to_bytes("fn f(x: Int) -> Int = x + 1 # c\ntest t = \"a\\\"b\" == \"c\"")) == 19
+test puts_keep_distinct_keys = gate_puts(100, 10) == 10
+test module_pieces = gate_module(3) == 26

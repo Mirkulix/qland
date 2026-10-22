@@ -1,0 +1,1 @@
+fn f(a: Accum[Accum[Str]]) -> List[Accum[Str]] = acc_list(a)

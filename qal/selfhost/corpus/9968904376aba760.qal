@@ -1,0 +1,2 @@
+fn collect(i: Int, n: Int, acc: List[Int]) -> List[Int] = if i == n then acc else collect(i + 1, n, push(acc, i))
+fn build(n: Int) -> Int = len(collect(0, n, []))

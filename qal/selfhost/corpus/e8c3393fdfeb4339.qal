@@ -1,0 +1,2 @@
+fn keys[K, V](m: Map[K, V]) -> List[K] = map_keys(m)
+fn f(m: Map[fn() -> Int, Int]) -> Int = 0

@@ -1,0 +1,1 @@
+fn s(a: Str, b: Str) -> Int ens r >= -1 && r <= 1 = compare(a, b)

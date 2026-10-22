@@ -1,0 +1,2 @@
+# another agent's style
+fn   plus_one( n:Int )->Int=(n)+1

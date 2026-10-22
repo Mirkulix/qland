@@ -1,0 +1,29 @@
+[package]
+name = "qal-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = []
+reference = ["qal-compiler/reference", "qal-core/canon-encode"]
+
+[[bin]]
+name = "qal"
+path = "src/main.rs"
+
+[dependencies]
+qal-core = { workspace = true }
+qal-compiler = { workspace = true }
+qal-run = { workspace = true }
+qal-store = { workspace = true }
+qal-prove = { workspace = true }
+qal-serve = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+ureq = { workspace = true }
+zeroize = { workspace = true }
+
+[dev-dependencies]
+# Tests hold the store's write lock to show that team reads never wait for it.
+rusqlite = { workspace = true }

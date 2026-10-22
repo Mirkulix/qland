@@ -1,0 +1,5 @@
+type P = { name: Str, tags: Map[Str, Int] }
+type Shape = Dot | Line(Int) | Poly(List[Shape])
+fn name_len(p: P) -> Int ens r < 5 = len(p.name)
+fn depth(s: Shape) -> Int ens r < 2 = match s { Dot => 0, Line(_) => 0, Poly(xs) => 1 + fold(xs, 0, fn(m, x) => if depth(x) > m then depth(x) else m) }
+fn bytes_ok(b: Bytes, o: Option[Result[Bool, Float]]) -> Int ens r >= 0 = bytes_len(b)

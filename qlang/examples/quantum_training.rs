@@ -25,16 +25,21 @@ fn main() {
 
     println!("  ρ₀ = {rho}");
     println!("  Pure state (rank 1): all probability on one configuration");
-    println!("  Entropy S(ρ₀) = {:.6} (zero = pure, log(d)={:.4} = maximally mixed)",
-        rho.entropy(), (dim as f64).ln());
+    println!(
+        "  Entropy S(ρ₀) = {:.6} (zero = pure, log(d)={:.4} = maximally mixed)",
+        rho.entropy(),
+        (dim as f64).ln()
+    );
 
     // ─── Step 2: Quantum gradient flow evolution ─────────
     println!("\n[2] Evolving via quantum gradient flow...");
     println!("  dρ/dt = -i[H, ρ] - γ{{G⁻¹∇L, ρ}}");
 
     let params = EvolutionParams::default();
-    println!("  Parameters: ℏ={}, γ={}, dt={}, steps={}",
-        params.hbar, params.gamma, params.dt, params.steps);
+    println!(
+        "  Parameters: ℏ={}, γ={}, dt={}, steps={}",
+        params.hbar, params.gamma, params.dt, params.steps
+    );
 
     // Simulate evolution: gradually mix the pure state
     // In real IGQK, this would use the Laplace-Beltrami operator and Fisher metric
@@ -68,14 +73,22 @@ fn main() {
         evolved.renormalize();
 
         if step % 3 == 0 {
-            println!("  Step {}: S(ρ)={:.4}, Tr(ρ)={:.6}, rank={}",
-                step, evolved.entropy(), evolved.trace(), evolved.rank());
+            println!(
+                "  Step {}: S(ρ)={:.4}, Tr(ρ)={:.6}, rank={}",
+                step,
+                evolved.entropy(),
+                evolved.trace(),
+                evolved.rank()
+            );
         }
     }
 
     println!("  Final: {evolved}");
-    println!("  Purity: {:.4} (1.0 = pure, {:.4} = maximally mixed)",
-        evolved.purity(), 1.0 / dim as f64);
+    println!(
+        "  Purity: {:.4} (1.0 = pure, {:.4} = maximally mixed)",
+        evolved.purity(),
+        1.0 / dim as f64
+    );
 
     // ─── Step 3: Build QLANG graph for the full pipeline ─────────
     println!("\n[3] Building QLANG computation graph...");
@@ -100,15 +113,26 @@ fn main() {
     // IGQK: Compress to ternary
     let compressed = e.to_ternary(projected, TT::f32_vector(dim));
 
-    e.output("compressed_weights", compressed, TT::new(Dtype::Ternary, Shape::vector(dim)));
+    e.output(
+        "compressed_weights",
+        compressed,
+        TT::new(Dtype::Ternary, Shape::vector(dim)),
+    );
 
     let graph = e.build();
-    println!("  Graph: {} nodes, {} edges", graph.nodes.len(), graph.edges.len());
+    println!(
+        "  Graph: {} nodes, {} edges",
+        graph.nodes.len(),
+        graph.edges.len()
+    );
 
     // Verify
     let verification = qlang_core::verify::verify_graph(&graph);
-    println!("  Verification: {} passed, {} failed",
-        verification.passed.len(), verification.failed.len());
+    println!(
+        "  Verification: {} passed, {} failed",
+        verification.passed.len(),
+        verification.failed.len()
+    );
 
     // ─── Step 4: Execute the graph ─────────
     println!("\n[4] Executing quantum training graph...");
@@ -116,12 +140,19 @@ fn main() {
     let mut inputs = HashMap::new();
     inputs.insert(
         "weights".into(),
-        TensorData::from_f32(Shape::vector(dim), &initial_weights.iter().map(|&x| x as f32).collect::<Vec<_>>()),
+        TensorData::from_f32(
+            Shape::vector(dim),
+            &initial_weights
+                .iter()
+                .map(|&x| x as f32)
+                .collect::<Vec<_>>(),
+        ),
     );
     // Simulated gradient: push weights toward their signs
-    let grad: Vec<f32> = initial_weights.iter().map(|&w| {
-        if w > 0.0 { 0.1 } else { -0.1 }
-    }).collect();
+    let grad: Vec<f32> = initial_weights
+        .iter()
+        .map(|&w| if w > 0.0 { 0.1 } else { -0.1 })
+        .collect();
     inputs.insert(
         "gradient".into(),
         TensorData::from_f32(Shape::vector(dim), &grad),
@@ -141,8 +172,10 @@ fn main() {
                         0 => " 0",
                         _ => " ?",
                     };
-                    println!("    w[{i}]: {:.2} → {:.2} + {:.2} → relu → {val}",
-                        initial_weights[i], initial_weights[i], grad[i]);
+                    println!(
+                        "    w[{i}]: {:.2} → {:.2} + {:.2} → relu → {val}",
+                        initial_weights[i], initial_weights[i], grad[i]
+                    );
                 }
             }
         }
@@ -199,7 +232,9 @@ fn main() {
         compressor.clone(),
         graph,
         HashMap::new(),
-        MessageIntent::Compress { method: "ternary".into() },
+        MessageIntent::Compress {
+            method: "ternary".into(),
+        },
         None,
     );
 
@@ -212,14 +247,19 @@ fn main() {
         trainer,
         compressed_graph,
         HashMap::new(),
-        MessageIntent::Result { original_message_id: msg_id },
+        MessageIntent::Result {
+            original_message_id: msg_id,
+        },
         Some(msg_id),
     );
     println!("  [1] IGQK-Compressor → IGQK-Trainer: 'Here are the compressed weights'");
 
     let binary = conv.to_binary().unwrap();
     println!("\n  Conversation serialized: {} bytes", binary.len());
-    println!("  Magic: {:?} = 'QLMS' (QLANG Message Stream)", &binary[0..4]);
+    println!(
+        "  Magic: {:?} = 'QLMS' (QLANG Message Stream)",
+        &binary[0..4]
+    );
 
     println!("\n=== IGQK Quantum Training Complete ===");
 }

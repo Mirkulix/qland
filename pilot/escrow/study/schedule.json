@@ -1,0 +1,42 @@
+{
+  "seed": 20261021,
+  "runs_per_arm": 3,
+  "entries": [
+    {
+      "arm": "qal",
+      "run": 1
+    },
+    {
+      "arm": "qal",
+      "run": 2
+    },
+    {
+      "arm": "rust",
+      "run": 1
+    },
+    {
+      "arm": "rust",
+      "run": 3
+    },
+    {
+      "arm": "python",
+      "run": 2
+    },
+    {
+      "arm": "python",
+      "run": 1
+    },
+    {
+      "arm": "rust",
+      "run": 2
+    },
+    {
+      "arm": "python",
+      "run": 3
+    },
+    {
+      "arm": "qal",
+      "run": 3
+    }
+  ]
+}

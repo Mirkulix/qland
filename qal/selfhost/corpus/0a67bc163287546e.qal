@@ -1,0 +1,1 @@
+fn big(n: Int) -> Int = map_size(fold(range(0, n), map_new(), fn(m, i) => map_put(m, (i * 7919) % n, i)))

@@ -1,0 +1,10 @@
+editors/theia/node_modules/
+editors/theia/lib/
+editors/theia/yarn.lock
+editors/theia/plugins/qlang/node_modules/
+editors/vscode/node_modules/
+editors/vscode/out/
+data/models/
+data/text/
+data/mnist/
+target/

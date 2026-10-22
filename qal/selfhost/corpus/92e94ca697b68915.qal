@@ -1,0 +1,3 @@
+fn a(x: Int) -> Int ens r > x = x + 1
+fn pos(x: Int) -> Int req x > 0 = x
+fn user(y: Int) -> Int req y > 1 = pos(y)

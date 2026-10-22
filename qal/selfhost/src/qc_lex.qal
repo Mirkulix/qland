@@ -1,0 +1,341 @@
+# Lexer for QAL self-hosting compiler (spec §7: qc_lex, port of qal-text/src/lexer.rs)
+
+fn qc_diag_parse(line: Int, col: Int, msg: Str) -> QcDiag =
+  QcDiag {
+    code: "E0100",
+    kind: "parse",
+    def: "",
+    path: from_int(line) ++ ":" ++ from_int(col),
+    message: msg,
+    expected: None,
+    found: None,
+    hints: [],
+    dependents: [],
+    counterexample: None
+  }
+
+fn qc_diag_parse_hint(line: Int, col: Int, msg: Str, hint: Str) -> QcDiag =
+  QcDiag {
+    code: "E0100",
+    kind: "parse",
+    def: "",
+    path: from_int(line) ++ ":" ++ from_int(col),
+    message: msg,
+    expected: None,
+    found: None,
+    hints: [hint],
+    dependents: [],
+    counterexample: None
+  }
+
+fn qc_is_digit(c: Int) -> Bool = c >= 48 && c <= 57
+
+fn qc_is_lower(c: Int) -> Bool = c >= 97 && c <= 122
+
+fn qc_is_alpha(c: Int) -> Bool = (c >= 97 && c <= 122) || (c >= 65 && c <= 90)
+
+fn qc_is_ident_start(c: Int) -> Bool = qc_is_alpha(c) || c == 95
+
+fn qc_is_ident_char(c: Int) -> Bool = qc_is_alpha(c) || qc_is_digit(c) || c == 95
+
+fn qc_is_hexdigit(c: Int) -> Bool = qc_is_digit(c) || (c >= 97 && c <= 102) || (c >= 65 && c <= 70)
+
+fn qc_hex_val(c: Int) -> Int =
+  if qc_is_digit(c) then c - 48
+  else if c >= 97 && c <= 102 then c - 97 + 10
+  else c - 65 + 10
+
+fn qc_is_keyword(s: Str) -> Bool =
+  s == "fn" || s == "type" || s == "test" || s == "let" || s == "in" ||
+  s == "if" || s == "then" || s == "else" || s == "match" || s == "req" ||
+  s == "ens" || s == "true" || s == "false" || s == "std"
+
+fn qc_scan_digits(b: Bytes, i: Int, n: Int) -> Int =
+  if i < n && qc_is_digit(bytes_at(b, i)) then qc_scan_digits(b, i + 1, n)
+  else i
+
+fn qc_scan_ident(b: Bytes, i: Int, n: Int) -> Int =
+  if i < n && qc_is_ident_char(bytes_at(b, i)) then qc_scan_ident(b, i + 1, n)
+  else i
+
+fn qc_skip_comment(b: Bytes, i: Int, n: Int) -> Int =
+  if i < n && bytes_at(b, i) != 10 then qc_skip_comment(b, i + 1, n)
+  else i
+
+type QcStrRes = {
+  res: Result[Str, QcDiag],
+  next_i: Int,
+  next_line: Int,
+  next_col: Int
+}
+
+fn qc_lex_escape(b: Bytes, i: Int, n: Int, line: Int, col: Int, acc: Accum[Int]) -> QcStrRes =
+  if i >= n then
+    QcStrRes { res: Err(qc_diag_parse(line, col, "unterminated string literal")), next_i: n, next_line: line, next_col: col }
+  else
+    let e = bytes_at(b, i) in
+    if e == 110 then qc_lex_str_body(b, i + 1, n, line, col + 1, AccPush(acc, 10))
+    else if e == 116 then qc_lex_str_body(b, i + 1, n, line, col + 1, AccPush(acc, 9))
+    else if e == 114 then qc_lex_str_body(b, i + 1, n, line, col + 1, AccPush(acc, 13))
+    else if e == 48 then qc_lex_str_body(b, i + 1, n, line, col + 1, AccPush(acc, 0))
+    else if e == 92 then qc_lex_str_body(b, i + 1, n, line, col + 1, AccPush(acc, 92))
+    else if e == 34 then qc_lex_str_body(b, i + 1, n, line, col + 1, AccPush(acc, 34))
+    else if e == 117 then qc_lex_unicode(b, i + 1, n, line, col + 1, acc)
+    else
+      let ch = match bytes_to_str(bytes_slice(b, i, i + 1)) { Some(s) => s, None => "?" } in
+      let bad = "\\" ++ ch in
+      QcStrRes { res: Err(qc_diag_parse(line, col - 1, "invalid escape `" ++ bad ++ "` in string literal")), next_i: i + 1, next_line: line, next_col: col + 1 }
+
+fn qc_scan_hex(b: Bytes, i: Int, n: Int, count: Int, acc: Int) -> Int =
+  if count < 6 && i < n && qc_is_hexdigit(bytes_at(b, i)) then
+    qc_scan_hex(b, i + 1, n, count + 1, bit_or(shl(acc, 4), qc_hex_val(bytes_at(b, i))))
+  else acc
+
+fn qc_count_hex(b: Bytes, i: Int, n: Int, count: Int) -> Int =
+  if count < 6 && i < n && qc_is_hexdigit(bytes_at(b, i)) then
+    qc_count_hex(b, i + 1, n, count + 1)
+  else count
+
+fn qc_utf8_encode(cp: Int, acc: Accum[Int]) -> Accum[Int] =
+  if cp < 128 then AccPush(acc, cp)
+  else if cp < 2048 then
+    AccPush(AccPush(acc, bit_or(192, shr(cp, 6))), bit_or(128, bit_and(cp, 63)))
+  else if cp < 65536 then
+    AccPush(AccPush(AccPush(acc, bit_or(224, shr(cp, 12))), bit_or(128, bit_and(shr(cp, 6), 63))), bit_or(128, bit_and(cp, 63)))
+  else
+    AccPush(AccPush(AccPush(AccPush(acc, bit_or(240, shr(cp, 18))), bit_or(128, bit_and(shr(cp, 12), 63))), bit_or(128, bit_and(shr(cp, 6), 63))), bit_or(128, bit_and(cp, 63)))
+
+fn qc_lex_unicode(b: Bytes, i: Int, n: Int, line: Int, col: Int, acc: Accum[Int]) -> QcStrRes =
+  if i >= n || bytes_at(b, i) != 123 then
+    QcStrRes { res: Err(qc_diag_parse(line, col - 2, "invalid escape `\\u` in string literal")), next_i: i, next_line: line, next_col: col }
+  else
+    let start = i + 1 in
+    let cnt = qc_count_hex(b, start, n, 0) in
+    let end_pos = start + cnt in
+    if cnt == 0 || end_pos >= n || bytes_at(b, end_pos) != 125 then
+      let hex_str = match bytes_to_str(bytes_slice(b, start, end_pos)) { Some(s) => s, None => "" } in
+      QcStrRes { res: Err(qc_diag_parse(line, col - 2, "invalid escape `\\u{" ++ hex_str ++ "` in string literal")), next_i: end_pos + 1, next_line: line, next_col: col + cnt + 2 }
+    else
+      let cp = qc_scan_hex(b, start, n, 0, 0) in
+      if cp < 0 || cp > 1114111 || (cp >= 55296 && cp <= 57343) then
+        let hex_str = match bytes_to_str(bytes_slice(b, start, end_pos)) { Some(s) => s, None => "" } in
+        QcStrRes { res: Err(qc_diag_parse(line, col - 2, "invalid escape `\\u{" ++ hex_str ++ "}` in string literal")), next_i: end_pos + 1, next_line: line, next_col: col + cnt + 2 }
+      else
+        let acc2 = qc_utf8_encode(cp, acc) in
+        qc_lex_str_body(b, end_pos + 1, n, line, col + cnt + 2, acc2)
+
+fn qc_lex_str_body(b: Bytes, i: Int, n: Int, line: Int, col: Int, acc: Accum[Int]) -> QcStrRes =
+  if i >= n then
+    QcStrRes { res: Err(qc_diag_parse(line, col, "unterminated string literal")), next_i: n, next_line: line, next_col: col }
+  else
+    let c = bytes_at(b, i) in
+    if c == 34 then
+      let out_str = match bytes_to_str(bytes_from(acc_list(acc))) { Some(s) => s, None => "" } in
+      QcStrRes { res: Ok(out_str), next_i: i + 1, next_line: line, next_col: col + 1 }
+    else if c == 10 then
+      qc_lex_str_body(b, i + 1, n, line + 1, 1, AccPush(acc, 10))
+    else if c == 92 then
+      qc_lex_escape(b, i + 1, n, line, col + 1, acc)
+    else
+      qc_lex_str_body(b, i + 1, n, line, col + 1, AccPush(acc, c))
+
+type QcQualRes = {
+  res: Result[Str, QcDiag],
+  next_i: Int
+}
+
+fn qc_is_std_name_parts(mod_str: Str, last_str: Str, full_len: Int) -> Bool =
+  full_len <= 128 &&
+  len(mod_str) > 0 &&
+  qc_is_lower(bytes_at(to_bytes(mod_str), 0)) &&
+  !qc_is_keyword(mod_str) &&
+  len(last_str) > 0 &&
+  qc_is_ident_start(bytes_at(to_bytes(last_str), 0)) &&
+  last_str != "_" &&
+  !qc_is_keyword(last_str)
+
+fn qc_lex_qualified(b: Bytes, i: Int, n: Int, line: Int, col: Int) -> QcQualRes =
+  let p1 = i + 1 in
+  let end1 = qc_scan_ident(b, p1, n) in
+  if end1 == p1 then
+    QcQualRes { res: Err(qc_diag_parse_hint(line, col, "`std` is not a standard library name", "standard library names have the form `std.<module>.<name>`: a lowercase module (e.g. `std.json.parse`, `std.json.Json`, `std.json.Str(\"a\")`)")), next_i: p1 }
+  else if end1 >= n || bytes_at(b, end1) != 46 then
+    let mod_s = match bytes_to_str(bytes_slice(b, p1, end1)) { Some(s) => s, None => "" } in
+    QcQualRes { res: Err(qc_diag_parse_hint(line, col, "`std." ++ mod_s ++ "` is not a standard library name", "standard library names have the form `std.<module>.<name>`: a lowercase module (e.g. `std.json.parse`, `std.json.Json`, `std.json.Str(\"a\")`)")), next_i: end1 }
+  else
+    let p2 = end1 + 1 in
+    let end2 = qc_scan_ident(b, p2, n) in
+    let mod_s = match bytes_to_str(bytes_slice(b, p1, end1)) { Some(s) => s, None => "" } in
+    let last_s = match bytes_to_str(bytes_slice(b, p2, end2)) { Some(s) => s, None => "" } in
+    let full = "std." ++ mod_s ++ "." ++ last_s in
+    if end2 - (i - 3) > 128 then
+      QcQualRes { res: Err(qc_diag_parse(line, col, "identifier longer than 128 characters")), next_i: end2 }
+    else if !qc_is_std_name_parts(mod_s, last_s, len(full)) then
+      QcQualRes { res: Err(qc_diag_parse_hint(line, col, "`" ++ full ++ "` is not a standard library name", "standard library names have the form `std.<module>.<name>`: a lowercase module (e.g. `std.json.parse`, `std.json.Json`, `std.json.Str(\"a\")`)")), next_i: end2 }
+    else
+      QcQualRes { res: Ok(full), next_i: end2 }
+
+fn qc_match_2sym(c1: Int, c2: Int) -> Option[Str] =
+  if c1 == 45 && c2 == 62 then Some("->")
+  else if c1 == 61 && c2 == 62 then Some("=>")
+  else if c1 == 61 && c2 == 61 then Some("==")
+  else if c1 == 33 && c2 == 61 then Some("!=")
+  else if c1 == 60 && c2 == 61 then Some("<=")
+  else if c1 == 62 && c2 == 61 then Some(">=")
+  else if c1 == 38 && c2 == 38 then Some("&&")
+  else if c1 == 124 && c2 == 124 then Some("||")
+  else if c1 == 43 && c2 == 43 then Some("++")
+  else None
+
+fn qc_match_1sym(c: Int) -> Option[Str] =
+  if c == 40 then Some("(")
+  else if c == 41 then Some(")")
+  else if c == 91 then Some("[")
+  else if c == 93 then Some("]")
+  else if c == 123 then Some("{")
+  else if c == 125 then Some("}")
+  else if c == 44 then Some(",")
+  else if c == 59 then Some(";")
+  else if c == 58 then Some(":")
+  else if c == 46 then Some(".")
+  else if c == 124 then Some("|")
+  else if c == 61 then Some("=")
+  else if c == 60 then Some("<")
+  else if c == 62 then Some(">")
+  else if c == 43 then Some("+")
+  else if c == 45 then Some("-")
+  else if c == 42 then Some("*")
+  else if c == 47 then Some("/")
+  else if c == 37 then Some("%")
+  else if c == 33 then Some("!")
+  else None
+
+type QcLexRes = {
+  tokens: List[QcToken],
+  diag: Option[QcDiag]
+}
+
+fn qc_lex_loop(b: Bytes, i: Int, n: Int, line: Int, col: Int, prev_dot: Bool, acc: Accum[QcToken]) -> QcLexRes =
+  if i >= n then
+    let eof_tok = QcToken { tok: QcTokEof, line: line, col: col } in
+    QcLexRes { tokens: acc_list(AccPush(acc, eof_tok)), diag: None }
+  else
+    let c = bytes_at(b, i) in
+    if c == 10 then
+      qc_lex_loop(b, i + 1, n, line + 1, 1, false, acc)
+    else if c == 32 || c == 9 || c == 13 then
+      qc_lex_loop(b, i + 1, n, line, col + 1, false, acc)
+    else if c == 35 then
+      let j = qc_skip_comment(b, i + 1, n) in
+      qc_lex_loop(b, j, n, line, col + (j - i), false, acc)
+    else if qc_is_digit(c) then
+      qc_lex_number(b, i, n, line, col, acc)
+    else if qc_is_ident_start(c) then
+      qc_lex_identifier(b, i, n, line, col, prev_dot, acc)
+    else if c == 34 then
+      let sr = qc_lex_str_body(b, i + 1, n, line, col + 1, AccEnd) in
+      match sr.res {
+        Err(d) => QcLexRes { tokens: [], diag: Some(d) },
+        Ok(s) =>
+          let t = QcToken { tok: QcTokStr(s), line: line, col: col } in
+          qc_lex_loop(b, sr.next_i, n, sr.next_line, sr.next_col, false, AccPush(acc, t))
+      }
+    else
+      let sym2 = if i + 1 < n then qc_match_2sym(c, bytes_at(b, i + 1)) else None in
+      match sym2 {
+        Some(s) =>
+          let t = QcToken { tok: QcTokSym(s), line: line, col: col } in
+          qc_lex_loop(b, i + 2, n, line, col + 2, false, AccPush(acc, t)),
+        None =>
+          match qc_match_1sym(c) {
+            Some(s) =>
+              let is_dot = c == 46 in
+              let t = QcToken { tok: QcTokSym(s), line: line, col: col } in
+              qc_lex_loop(b, i + 1, n, line, col + 1, is_dot, AccPush(acc, t)),
+            None =>
+              let bad_ch = match bytes_to_str(bytes_slice(b, i, i + 1)) { Some(s) => s, None => "?" } in
+              QcLexRes { tokens: [], diag: Some(qc_diag_parse(line, col, "unexpected character `" ++ bad_ch ++ "`")) }
+          }
+      }
+
+fn qc_skip_leading_zeros(b: Bytes, i: Int, n: Int) -> Int =
+  if i + 1 < n && bytes_at(b, i) == 48 then qc_skip_leading_zeros(b, i + 1, n)
+  else i
+
+fn qc_is_i64_min_mag(s: Str) -> Bool =
+  let b = to_bytes(s) in
+  let start = qc_skip_leading_zeros(b, 0, bytes_len(b)) in
+  match bytes_to_str(bytes_slice(b, start, bytes_len(b))) {
+    Some(trimmed) => trimmed == "9223372036854775808",
+    None => false
+  }
+
+fn qc_lex_number(b: Bytes, i: Int, n: Int, line: Int, col: Int, acc: Accum[QcToken]) -> QcLexRes =
+  let int_end = qc_scan_digits(b, i, n) in
+  let has_dot = int_end + 1 < n && bytes_at(b, int_end) == 46 && qc_is_digit(bytes_at(b, int_end + 1)) in
+  let frac_end = if has_dot then qc_scan_digits(b, int_end + 2, n) else int_end in
+  let has_exp = frac_end < n && (bytes_at(b, frac_end) == 101 || bytes_at(b, frac_end) == 69) in
+  let exp_sign = if has_exp && frac_end + 1 < n && (bytes_at(b, frac_end + 1) == 43 || bytes_at(b, frac_end + 1) == 45) then 1 else 0 in
+  let has_exp_digits = has_exp && frac_end + 1 + exp_sign < n && qc_is_digit(bytes_at(b, frac_end + 1 + exp_sign)) in
+  let num_end = if has_exp_digits then qc_scan_digits(b, frac_end + 1 + exp_sign, n) else frac_end in
+  let is_float = has_dot || has_exp_digits in
+  if num_end < n && (qc_is_ident_char(bytes_at(b, num_end))) then
+    let bad_end = qc_scan_ident(b, num_end, n) in
+    let bad_text = match bytes_to_str(bytes_slice(b, i, bad_end)) { Some(s) => s, None => "" } in
+    QcLexRes { tokens: [], diag: Some(qc_diag_parse(line, col, "invalid number literal `" ++ bad_text ++ "`")) }
+  else
+    let num_str = match bytes_to_str(bytes_slice(b, i, num_end)) { Some(s) => s, None => "" } in
+    let len_num = num_end - i in
+    if is_float then
+      match to_float(num_str) {
+        Some(f) =>
+          let t = QcToken { tok: QcTokFloat(f), line: line, col: col } in
+          qc_lex_loop(b, num_end, n, line, col + len_num, false, AccPush(acc, t)),
+        None =>
+          QcLexRes { tokens: [], diag: Some(qc_diag_parse(line, col, "float literal `" ++ num_str ++ "` is out of range")) }
+      }
+    else
+      match to_int(num_str) {
+        Some(v) =>
+          let t = QcToken { tok: QcTokInt(v), line: line, col: col } in
+          qc_lex_loop(b, num_end, n, line, col + len_num, false, AccPush(acc, t)),
+        None =>
+          if qc_is_i64_min_mag(num_str) then
+            let t = QcToken { tok: QcTokInt(shl(1, 63)), line: line, col: col } in
+            qc_lex_loop(b, num_end, n, line, col + len_num, false, AccPush(acc, t))
+          else
+            QcLexRes { tokens: [], diag: Some(qc_diag_parse(line, col, "integer literal `" ++ num_str ++ "` does not fit in Int (64-bit)")) }
+      }
+
+fn qc_lex_identifier(b: Bytes, i: Int, n: Int, line: Int, col: Int, prev_dot: Bool, acc: Accum[QcToken]) -> QcLexRes =
+  let end_pos = qc_scan_ident(b, i, n) in
+  let id_len = end_pos - i in
+  if id_len > 128 then
+    QcLexRes { tokens: [], diag: Some(qc_diag_parse(line, col, "identifier longer than 128 characters")) }
+  else
+    let text = match bytes_to_str(bytes_slice(b, i, end_pos)) { Some(s) => s, None => "" } in
+    if text == "std" && !prev_dot && end_pos < n && bytes_at(b, end_pos) == 46 then
+      let qr = qc_lex_qualified(b, end_pos, n, line, col) in
+      match qr.res {
+        Err(d) => QcLexRes { tokens: [], diag: Some(d) },
+        Ok(qname) =>
+          let t = QcToken { tok: QcTokIdent(qname), line: line, col: col } in
+          qc_lex_loop(b, qr.next_i, n, line, col + (qr.next_i - i), false, AccPush(acc, t))
+      }
+    else
+      let t = QcToken { tok: QcTokIdent(text), line: line, col: col } in
+      qc_lex_loop(b, end_pos, n, line, col + id_len, false, AccPush(acc, t))
+
+fn qc_lex(src: Str) -> Result[List[QcToken], QcDiag] =
+  let b = to_bytes(src) in
+  let r = qc_lex_loop(b, 0, bytes_len(b), 1, 1, false, AccEnd) in
+  match r.diag {
+    Some(d) => Err(d),
+    None => Ok(r.tokens)
+  }
+
+test qc_lex_test =
+  match qc_lex("fn f(x: Int) -> Int = x + 1\ntest t = f(1) == 2") {
+    Ok(toks) => len(toks) == 23,
+    Err(_) => false
+  }

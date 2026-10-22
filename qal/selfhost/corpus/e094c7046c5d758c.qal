@@ -1,0 +1,4 @@
+fn h(rq: HttpRequest) -> HttpResponse = match to_int(rq.query) {
+  Some(s) => HttpResponse { status: s, headers: if rq.path == "/typed" then [HttpHeader { name: "content-type", value: "application/json" }] else [], body: "" },
+  None => HttpResponse { status: 400, headers: [], body: "no status" }
+}

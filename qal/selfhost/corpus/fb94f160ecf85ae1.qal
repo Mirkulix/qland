@@ -1,0 +1,5 @@
+type Sink[T] = { put: fn(T) -> Unit }
+fn run(cb: fn() -> Unit) -> Unit = cb()
+fn pure_sink() -> Sink[fn() -> Unit] = Sink { put: run }
+fn feed(s: Sink[fn() -> Unit !io]) -> Unit !io = let p = s.put in p(fn() => print("x"))
+fn main(args: List[Str]) -> Int !io = { feed(pure_sink()); 0 }

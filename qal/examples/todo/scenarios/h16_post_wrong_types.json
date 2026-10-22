@@ -1,0 +1,243 @@
+{
+ "name": "h16_post_wrong_types",
+ "description": "wrong field types",
+ "steps": [
+  {
+   "name": "title int",
+   "request": {
+    "method": "POST",
+    "path": "/todos",
+    "json": {
+     "title": 5
+    }
+   },
+   "expect": {
+    "status": 400,
+    "json": {
+     "error": {
+      "code": "invalid_type",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "title null",
+   "request": {
+    "method": "POST",
+    "path": "/todos",
+    "json": {
+     "title": null
+    }
+   },
+   "expect": {
+    "status": 400,
+    "json": {
+     "error": {
+      "code": "invalid_type",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "title bool",
+   "request": {
+    "method": "POST",
+    "path": "/todos",
+    "json": {
+     "title": true
+    }
+   },
+   "expect": {
+    "status": 400,
+    "json": {
+     "error": {
+      "code": "invalid_type",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "title array",
+   "request": {
+    "method": "POST",
+    "path": "/todos",
+    "json": {
+     "title": [
+      "a"
+     ]
+    }
+   },
+   "expect": {
+    "status": 400,
+    "json": {
+     "error": {
+      "code": "invalid_type",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "title object",
+   "request": {
+    "method": "POST",
+    "path": "/todos",
+    "json": {
+     "title": {
+      "t": "a"
+     }
+    }
+   },
+   "expect": {
+    "status": 400,
+    "json": {
+     "error": {
+      "code": "invalid_type",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "title float",
+   "request": {
+    "method": "POST",
+    "path": "/todos",
+    "json": {
+     "title": 1.5
+    }
+   },
+   "expect": {
+    "status": 400,
+    "json": {
+     "error": {
+      "code": "invalid_type",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "done string",
+   "request": {
+    "method": "POST",
+    "path": "/todos",
+    "json": {
+     "title": "a",
+     "done": "true"
+    }
+   },
+   "expect": {
+    "status": 400,
+    "json": {
+     "error": {
+      "code": "invalid_type",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "done int",
+   "request": {
+    "method": "POST",
+    "path": "/todos",
+    "json": {
+     "title": "a",
+     "done": 1
+    }
+   },
+   "expect": {
+    "status": 400,
+    "json": {
+     "error": {
+      "code": "invalid_type",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "done null",
+   "request": {
+    "method": "POST",
+    "path": "/todos",
+    "json": {
+     "title": "a",
+     "done": null
+    }
+   },
+   "expect": {
+    "status": 400,
+    "json": {
+     "error": {
+      "code": "invalid_type",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "nothing created",
+   "request": {
+    "method": "GET",
+    "path": "/todos"
+   },
+   "expect": {
+    "status": 200,
+    "json": [],
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  }
+ ]
+}

@@ -1,0 +1,7 @@
+fn max(a: Int, b: Int) -> Int = if a > b then a else b
+fn both(a: Bool, b: Bool) -> Bool = a && !b || false
+fn twice(x: Int) -> Int = let y = x + x in let y = y + 1 in y
+fn u() -> Unit = ()
+test t1 = max(3, 9) == 9 && max(-1, -5) == -1
+test t2 = both(true, false) && !both(true, true)
+test t3 = twice(4) == 9 && u() == ()

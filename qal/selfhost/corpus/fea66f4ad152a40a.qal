@@ -1,0 +1,2 @@
+fn total(price: Int) -> Int = price + tax(price)
+test t_total = total(100) == 119

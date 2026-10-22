@@ -1,0 +1,2 @@
+fn helper(n: Int) -> Int = n * 2
+fn f(x: Int) -> Int = let y = helper(x) in y + x

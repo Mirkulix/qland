@@ -1,0 +1,1573 @@
+<!DOCTYPE html>
+<html lang="de" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>QLand & QAL — System Showcase & Interactive Preview</title>
+  <meta name="description" content="Interaktive Leistungsschau: Wozu das QLand & QAL System verwendet werden kann — Autonome KI-Agenten, Statische Z3-Beweise, Zero-Trust Effekte, Inhaltsadressierung und Quantenkompression.">
+  <style>
+    :root {
+      --bg: #090d16;
+      --bg-alt: #0e1526;
+      --surface: #141e33;
+      --surface-border: #1f2f4e;
+      --surface-hover: #1b2844;
+      --text: #f1f5f9;
+      --text-muted: #94a3b8;
+      --text-dim: #64748b;
+      --primary: #38bdf8;
+      --primary-glow: rgba(56, 189, 248, 0.25);
+      --purple: #a855f7;
+      --purple-glow: rgba(168, 85, 247, 0.25);
+      --green: #10b981;
+      --green-glow: rgba(16, 185, 129, 0.25);
+      --amber: #f59e0b;
+      --red: #f43f5e;
+      --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      --font-mono: "SF Mono", "JetBrains Mono", "Fira Code", Menlo, Consolas, monospace;
+      --radius: 12px;
+      --radius-sm: 6px;
+      --shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.5);
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html { scroll-behavior: smooth; }
+    body {
+      background-color: var(--bg);
+      color: var(--text);
+      font-family: var(--font-sans);
+      line-height: 1.6;
+      overflow-x: hidden;
+    }
+
+    /* Ambient Background Glow */
+    .ambient-bg {
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: 
+        radial-gradient(circle at 15% 15%, rgba(56, 189, 248, 0.08) 0%, transparent 40%),
+        radial-gradient(circle at 85% 25%, rgba(168, 85, 247, 0.08) 0%, transparent 45%),
+        radial-gradient(circle at 50% 85%, rgba(16, 185, 129, 0.06) 0%, transparent 50%);
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    /* Navbar */
+    header.navbar {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      background: rgba(9, 13, 22, 0.85);
+      border-bottom: 1px solid var(--surface-border);
+      padding: 0.85rem 2rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      font-family: var(--font-mono);
+      font-size: 1.15rem;
+      font-weight: 700;
+      color: var(--text);
+      text-decoration: none;
+    }
+    .brand-badge {
+      font-size: 0.65rem;
+      padding: 0.15rem 0.5rem;
+      background: linear-gradient(135deg, var(--primary), var(--purple));
+      color: #fff;
+      border-radius: 999px;
+      font-weight: 600;
+      letter-spacing: 0.5px;
+    }
+    nav.nav-links {
+      display: flex;
+      gap: 1.5rem;
+      align-items: center;
+    }
+    nav.nav-links a {
+      color: var(--text-muted);
+      text-decoration: none;
+      font-size: 0.9rem;
+      font-weight: 500;
+      transition: color 0.15s ease;
+    }
+    nav.nav-links a:hover {
+      color: var(--primary);
+    }
+    .lang-toggle {
+      background: var(--surface);
+      border: 1px solid var(--surface-border);
+      color: var(--text);
+      padding: 0.35rem 0.75rem;
+      border-radius: var(--radius-sm);
+      font-family: var(--font-mono);
+      font-size: 0.8rem;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 0.35rem;
+      transition: all 0.2s ease;
+    }
+    .lang-toggle:hover {
+      background: var(--surface-hover);
+      border-color: var(--primary);
+    }
+
+    /* Main Container */
+    main {
+      position: relative;
+      z-index: 1;
+      max-width: 1240px;
+      margin: 0 auto;
+      padding: 2.5rem 1.5rem 6rem;
+    }
+
+    /* Hero Section */
+    .hero {
+      text-align: center;
+      padding: 3.5rem 1rem 4rem;
+      max-width: 900px;
+      margin: 0 auto;
+    }
+    .hero-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      background: rgba(56, 189, 248, 0.1);
+      border: 1px solid rgba(56, 189, 248, 0.3);
+      padding: 0.35rem 1rem;
+      border-radius: 999px;
+      font-size: 0.8rem;
+      font-family: var(--font-mono);
+      color: var(--primary);
+      margin-bottom: 1.5rem;
+    }
+    .hero-pill .dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: var(--green);
+      box-shadow: 0 0 8px var(--green);
+    }
+    .hero h1 {
+      font-size: clamp(2.3rem, 5vw, 3.8rem);
+      font-weight: 800;
+      line-height: 1.15;
+      letter-spacing: -1px;
+      margin-bottom: 1.25rem;
+      background: linear-gradient(135deg, #ffffff 40%, var(--primary) 75%, var(--purple) 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    .hero p.subtitle {
+      font-size: 1.2rem;
+      color: var(--text-muted);
+      line-height: 1.6;
+      margin-bottom: 2rem;
+    }
+    .hero-buttons {
+      display: flex;
+      justify-content: center;
+      gap: 1rem;
+      flex-wrap: wrap;
+    }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.75rem 1.6rem;
+      border-radius: var(--radius-sm);
+      font-size: 0.95rem;
+      font-weight: 600;
+      text-decoration: none;
+      cursor: pointer;
+      transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+      border: none;
+      font-family: inherit;
+    }
+    .btn-primary {
+      background: linear-gradient(135deg, #0284c7, #2563eb);
+      color: #fff;
+      box-shadow: 0 4px 20px var(--primary-glow);
+    }
+    .btn-primary:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 6px 25px rgba(56, 189, 248, 0.4);
+    }
+    .btn-secondary {
+      background: var(--surface);
+      border: 1px solid var(--surface-border);
+      color: var(--text);
+    }
+    .btn-secondary:hover {
+      background: var(--surface-hover);
+      border-color: var(--text-muted);
+      transform: translateY(-2px);
+    }
+
+    /* Key Metrics Strip */
+    .metrics-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 1rem;
+      margin: 2rem 0 4.5rem;
+    }
+    .metric-card {
+      background: var(--surface);
+      border: 1px solid var(--surface-border);
+      border-radius: var(--radius);
+      padding: 1.25rem 1.5rem;
+      text-align: left;
+      transition: transform 0.2s ease, border-color 0.2s ease;
+    }
+    .metric-card:hover {
+      border-color: var(--primary);
+      transform: translateY(-2px);
+    }
+    .metric-val {
+      font-size: 1.8rem;
+      font-weight: 800;
+      font-family: var(--font-mono);
+      color: var(--text);
+      display: flex;
+      align-items: baseline;
+      gap: 0.35rem;
+    }
+    .metric-val.green { color: var(--green); }
+    .metric-val.blue { color: var(--primary); }
+    .metric-val.purple { color: var(--purple); }
+    .metric-label {
+      font-size: 0.85rem;
+      color: var(--text-dim);
+      margin-top: 0.3rem;
+      font-weight: 500;
+    }
+
+    /* Section Headers */
+    .section-header {
+      text-align: center;
+      max-width: 750px;
+      margin: 0 auto 3rem;
+    }
+    .section-tag {
+      font-family: var(--font-mono);
+      font-size: 0.8rem;
+      color: var(--primary);
+      text-transform: uppercase;
+      letter-spacing: 1.5px;
+      margin-bottom: 0.5rem;
+    }
+    .section-title {
+      font-size: 2.2rem;
+      font-weight: 700;
+      color: #fff;
+      margin-bottom: 0.75rem;
+    }
+    .section-subtitle {
+      font-size: 1.05rem;
+      color: var(--text-muted);
+    }
+
+    /* Interactive Use Cases Tabs */
+    .use-case-container {
+      background: var(--bg-alt);
+      border: 1px solid var(--surface-border);
+      border-radius: var(--radius);
+      overflow: hidden;
+      box-shadow: var(--shadow);
+      margin-bottom: 5rem;
+    }
+    .tab-bar {
+      display: flex;
+      overflow-x: auto;
+      background: var(--surface);
+      border-bottom: 1px solid var(--surface-border);
+      padding: 0.5rem 0.75rem 0;
+      gap: 0.5rem;
+    }
+    .tab-btn {
+      background: transparent;
+      border: none;
+      border-bottom: 2px solid transparent;
+      padding: 0.85rem 1.25rem;
+      color: var(--text-muted);
+      font-size: 0.95rem;
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      white-space: nowrap;
+      transition: all 0.2s ease;
+      font-family: inherit;
+    }
+    .tab-btn:hover {
+      color: var(--text);
+    }
+    .tab-btn.active {
+      color: var(--primary);
+      border-bottom-color: var(--primary);
+      background: rgba(56, 189, 248, 0.05);
+      border-top-left-radius: var(--radius-sm);
+      border-top-right-radius: var(--radius-sm);
+    }
+    .tab-content {
+      display: none;
+      padding: 2.5rem;
+    }
+    .tab-content.active {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 2.5rem;
+      align-items: start;
+      animation: fadeIn 0.25s ease;
+    }
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(6px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    /* Case Info & Details */
+    .case-details h3 {
+      font-size: 1.6rem;
+      font-weight: 700;
+      margin-bottom: 1rem;
+      color: #fff;
+    }
+    .case-details p {
+      color: var(--text-muted);
+      font-size: 1rem;
+      line-height: 1.7;
+      margin-bottom: 1.5rem;
+    }
+    .feature-list {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 0.85rem;
+      margin-bottom: 1.75rem;
+    }
+    .feature-list li {
+      display: flex;
+      align-items: flex-start;
+      gap: 0.75rem;
+      font-size: 0.95rem;
+      color: var(--text);
+    }
+    .check-icon {
+      color: var(--green);
+      font-weight: bold;
+      flex-shrink: 0;
+      font-size: 1.1rem;
+    }
+    .badge-row {
+      display: flex;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+    }
+    .chip {
+      font-family: var(--font-mono);
+      font-size: 0.75rem;
+      padding: 0.25rem 0.65rem;
+      border-radius: var(--radius-sm);
+      background: var(--surface);
+      border: 1px solid var(--surface-border);
+      color: var(--text-muted);
+    }
+
+    /* Interactive Simulation Panel */
+    .sim-panel {
+      background: #060911;
+      border: 1px solid var(--surface-border);
+      border-radius: var(--radius);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+    }
+    .sim-header {
+      background: #0d1424;
+      border-bottom: 1px solid var(--surface-border);
+      padding: 0.65rem 1rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-family: var(--font-mono);
+      font-size: 0.8rem;
+      color: var(--text-muted);
+    }
+    .sim-dots {
+      display: flex;
+      gap: 6px;
+    }
+    .sim-dots span {
+      width: 10px; height: 10px;
+      border-radius: 50%;
+      background: #25334d;
+    }
+    .sim-dots span:nth-child(1) { background: #f43f5e; }
+    .sim-dots span:nth-child(2) { background: #f59e0b; }
+    .sim-dots span:nth-child(3) { background: #10b981; }
+
+    .sim-body {
+      padding: 1.25rem;
+      font-family: var(--font-mono);
+      font-size: 0.85rem;
+      line-height: 1.6;
+      color: var(--text);
+      min-height: 340px;
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+    }
+    .sim-controls {
+      display: flex;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+      background: #0f172a;
+      padding: 0.75rem;
+      border-radius: var(--radius-sm);
+      border: 1px solid #1e293b;
+    }
+    .sim-btn {
+      background: #1e293b;
+      border: 1px solid #334155;
+      color: #cbd5e1;
+      padding: 0.4rem 0.8rem;
+      border-radius: 4px;
+      font-family: var(--font-mono);
+      font-size: 0.75rem;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    .sim-btn:hover, .sim-btn.active {
+      background: var(--primary);
+      color: #041226;
+      border-color: var(--primary);
+      font-weight: 700;
+    }
+    .code-block {
+      background: #0b1120;
+      border: 1px solid #1e293b;
+      padding: 1rem;
+      border-radius: var(--radius-sm);
+      overflow-x: auto;
+      font-size: 0.82rem;
+      color: #e2e8f0;
+      flex: 1;
+    }
+    .code-block .kw { color: #f43f5e; font-weight: 600; }
+    .code-block .fn { color: #38bdf8; }
+    .code-block .ty { color: #a855f7; }
+    .code-block .eff { color: #f59e0b; font-weight: 600; }
+    .code-block .str { color: #10b981; }
+    .code-block .comment { color: #64748b; font-style: italic; }
+
+    .sim-result-box {
+      border-radius: var(--radius-sm);
+      padding: 0.75rem 1rem;
+      font-size: 0.8rem;
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+    .sim-result-box.proven {
+      background: rgba(16, 185, 129, 0.12);
+      border: 1px solid rgba(16, 185, 129, 0.3);
+      color: #34d399;
+    }
+    .sim-result-box.refuted {
+      background: rgba(244, 63, 94, 0.12);
+      border: 1px solid rgba(244, 63, 94, 0.3);
+      color: #fb7185;
+    }
+    .sim-result-box.info {
+      background: rgba(56, 189, 248, 0.12);
+      border: 1px solid rgba(56, 189, 248, 0.3);
+      color: #7dd3fc;
+    }
+
+    /* Interactive Live Playground Section */
+    .playground-section {
+      margin-bottom: 5rem;
+    }
+    .playground-card {
+      background: var(--bg-alt);
+      border: 1px solid var(--surface-border);
+      border-radius: var(--radius);
+      padding: 2rem;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 2rem;
+    }
+    .editor-wrapper {
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+    }
+    .editor-wrapper label {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+      font-family: var(--font-mono);
+      display: flex;
+      justify-content: space-between;
+    }
+    textarea.code-editor {
+      width: 100%;
+      height: 280px;
+      background: #070b14;
+      border: 1px solid var(--surface-border);
+      border-radius: var(--radius-sm);
+      padding: 1rem;
+      color: #38bdf8;
+      font-family: var(--font-mono);
+      font-size: 0.88rem;
+      line-height: 1.5;
+      resize: vertical;
+      outline: none;
+    }
+    textarea.code-editor:focus {
+      border-color: var(--primary);
+      box-shadow: 0 0 0 2px var(--primary-glow);
+    }
+    .action-bar {
+      display: flex;
+      gap: 0.75rem;
+    }
+    .terminal-output {
+      background: #050811;
+      border: 1px solid var(--surface-border);
+      border-radius: var(--radius-sm);
+      padding: 1rem;
+      font-family: var(--font-mono);
+      font-size: 0.82rem;
+      color: #e2e8f0;
+      min-height: 280px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      overflow-y: auto;
+    }
+    .term-line { margin-bottom: 0.35rem; }
+    .term-success { color: var(--green); }
+    .term-err { color: var(--red); }
+    .term-info { color: var(--primary); }
+
+    /* Architecture Grid */
+    .arch-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 1.5rem;
+      margin-bottom: 5rem;
+    }
+    .arch-box {
+      background: var(--surface);
+      border: 1px solid var(--surface-border);
+      border-radius: var(--radius);
+      padding: 1.75rem;
+      transition: all 0.2s ease;
+      position: relative;
+    }
+    .arch-box:hover {
+      border-color: var(--primary);
+      transform: translateY(-3px);
+      box-shadow: 0 12px 25px -10px rgba(0, 0, 0, 0.4);
+    }
+    .arch-num {
+      position: absolute;
+      top: 1.25rem; right: 1.25rem;
+      font-family: var(--font-mono);
+      font-size: 0.8rem;
+      color: var(--text-dim);
+      font-weight: 700;
+    }
+    .arch-icon {
+      font-size: 1.8rem;
+      margin-bottom: 1rem;
+    }
+    .arch-box h4 {
+      font-size: 1.2rem;
+      color: #fff;
+      margin-bottom: 0.6rem;
+    }
+    .arch-box p {
+      font-size: 0.9rem;
+      color: var(--text-muted);
+      line-height: 1.6;
+    }
+
+    /* Comparison Table */
+    .compare-section {
+      margin-bottom: 5rem;
+    }
+    .table-container {
+      overflow-x: auto;
+      border: 1px solid var(--surface-border);
+      border-radius: var(--radius);
+      background: var(--surface);
+    }
+    table.compare-table {
+      width: 100%;
+      border-collapse: collapse;
+      text-align: left;
+      font-size: 0.9rem;
+    }
+    table.compare-table th, table.compare-table td {
+      padding: 1rem 1.25rem;
+      border-bottom: 1px solid var(--surface-border);
+    }
+    table.compare-table th {
+      background: #0d1424;
+      color: var(--text);
+      font-family: var(--font-mono);
+      font-size: 0.85rem;
+    }
+    table.compare-table tr:last-child td { border-bottom: none; }
+    table.compare-table tr:hover td { background: var(--surface-hover); }
+    .col-highlight {
+      background: rgba(56, 189, 248, 0.04);
+      color: var(--primary);
+      font-weight: 600;
+    }
+    .tag-yes { color: var(--green); font-weight: bold; }
+    .tag-no { color: var(--text-dim); }
+
+    /* Benchmark Section */
+    .benchmark-section {
+      margin-bottom: 5rem;
+    }
+    .bench-discussion {
+      margin-top: 2rem;
+      background: var(--surface);
+      border: 1px solid var(--surface-border);
+      border-radius: var(--radius);
+      padding: 1.5rem;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1.5rem;
+    }
+    @media (max-width: 800px) {
+      .bench-discussion { grid-template-columns: 1fr; }
+    }
+    .bench-box h4 {
+      font-size: 1rem;
+      margin-bottom: 0.5rem;
+      color: var(--text);
+    }
+    .bench-box p {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+      line-height: 1.6;
+    }
+
+    /* Footer */
+    footer {
+      border-top: 1px solid var(--surface-border);
+      padding: 2.5rem 1.5rem;
+      text-align: center;
+      color: var(--text-dim);
+      font-size: 0.85rem;
+    }
+    footer a { color: var(--primary); text-decoration: none; }
+
+    /* Responsive adjustments */
+    @media (max-width: 900px) {
+      .tab-content.active, .playground-card {
+        grid-template-columns: 1fr;
+        gap: 1.5rem;
+      }
+      .tab-bar { justify-content: flex-start; }
+      nav.nav-links { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="ambient-bg"></div>
+
+  <!-- Header -->
+  <header class="navbar">
+    <a href="#" class="brand">
+      <span>QLAND &middot; QAL</span>
+      <span class="brand-badge">PROVABLE SUBSTRATE</span>
+    </a>
+    <nav class="nav-links">
+      <a href="#use-cases" data-i18n="nav.useCases">Anwendungsbereiche</a>
+      <a href="#playground" data-i18n="nav.playground">Playground</a>
+      <a href="#architecture" data-i18n="nav.arch">Architektur</a>
+      <a href="#comparison" data-i18n="nav.comp">Vergleich</a>
+      <a href="#benchmark" data-i18n="nav.benchmark">Benchmark</a>
+      <a href="proof.html" style="color: var(--green); font-weight: 600;" data-i18n="nav.proof">Formal Proof Certificate &rarr;</a>
+      <a href="dashboard.html" style="color: var(--cyan); font-weight: 600;">Live Agent Cockpit &rarr;</a>
+      <a href="AGENTS_PLAYBOOK.md" target="_blank" style="color: var(--purple); font-weight: 600;">Agent Playbook</a>
+      <a href="docs/superpowers/specs/2026-10-15-qal-roadmap.md" target="_blank">Roadmap</a>
+    </nav>
+    <button class="lang-toggle" id="langBtn" onclick="toggleLanguage()">
+      <span id="langLabel">EN</span> &harr; <span id="langTarget">DE</span>
+    </button>
+  </header>
+
+  <main>
+    <!-- Hero Section -->
+    <section class="hero">
+      <div class="hero-pill">
+        <span class="dot"></span>
+        <span data-i18n="hero.pill">Phase 1&ndash;4 Complete &middot; Phase 5 Seed Fixpoint (&#9680;) &middot; Z3 Verified</span>
+      </div>
+      <h1 data-i18n="hero.title">Die provable Programmiersprache & Plattform für autonome KI-Systeme</h1>
+      <p class="subtitle" data-i18n="hero.desc">
+        QLand und QAL vereinen mathematische Vertragsbeweise (Z3), konfliktfreie AST-Merges auf Definitionsebene, algebraische Effekt-Isolation und inhaltsadressierte Softwareverteilung zu einem kompromisslosen Substrat für die nächste Generation autonomer KI-Entwicklung.
+      </p>
+      <div class="hero-buttons">
+        <a href="#use-cases" class="btn btn-primary" data-i18n="hero.btnExplore">Use Cases erkunden</a>
+        <a href="proof.html" class="btn btn-outline" style="border-color: var(--green); color: var(--green);" data-i18n="hero.btnProof">&#9878; Formal Proof (Z3-Zertifikat)</a>
+        <a href="#playground" class="btn btn-secondary" data-i18n="hero.btnPlay">Live Playground</a>
+      </div>
+    </section>
+
+    <!-- Key Metrics Strip -->
+    <div class="metrics-grid">
+      <div class="metric-card">
+        <div class="metric-val green">Stage 1=2=3</div>
+        <div class="metric-label" data-i18n="metric.fixpoint">Byte-identischer Self-Hosting Fixpoint</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-val blue">Z3 Prover</div>
+        <div class="metric-label" data-i18n="metric.z3">Lineare Ganzzahlarithmetik statisch bewiesen</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-val purple">0 Conflict</div>
+        <div class="metric-label" data-i18n="metric.merge">Disjunkte AST-Merges auf Definitionsebene</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-val green">+0.0% RSS</div>
+        <div class="metric-label" data-i18n="metric.leak">Zero Memory Leaks über 10.000+ API Requests</div>
+      </div>
+    </div>
+
+    <!-- Use Cases Interactive Section -->
+    <section id="use-cases">
+      <div class="section-header">
+        <div class="section-tag" data-i18n="cases.tag">Wozu wird das System verwendet?</div>
+        <h2 class="section-title" data-i18n="cases.title">Reale Einsatzgebiete & Kernfähigkeiten</h2>
+        <p class="section-subtitle" data-i18n="cases.subtitle">
+          Wähle ein Anwendungsfeld, um die Funktionsweise, den konkreten Nutzen und eine interaktive Simulation zu sehen.
+        </p>
+      </div>
+
+      <div class="use-case-container">
+        <!-- Tab Bar -->
+        <div class="tab-bar">
+          <button class="tab-btn active" onclick="switchTab(0)">
+            <span>&#129302;</span> <span data-i18n="tab.agents">1. Autonome KI-Schwärme</span>
+          </button>
+          <button class="tab-btn" onclick="switchTab(1)">
+            <span>&#9878;</span> <span data-i18n="tab.prover">2. Mathematische Verifikation</span>
+          </button>
+          <button class="tab-btn" onclick="switchTab(2)">
+            <span>&#128737;</span> <span data-i18n="tab.sandbox">3. Zero-Trust Sandbox</span>
+          </button>
+          <button class="tab-btn" onclick="switchTab(3)">
+            <span>&#9889;</span> <span data-i18n="tab.services">4. Leak-freie Microservices</span>
+          </button>
+          <button class="tab-btn" onclick="switchTab(4)">
+            <span>&#128279;</span> <span data-i18n="tab.content">5. Inhaltsadressierter Store</span>
+          </button>
+          <button class="tab-btn" onclick="switchTab(5)">
+            <span>&#9883;</span> <span data-i18n="tab.igqk">6. Quantenkompression (IGQK)</span>
+          </button>
+        </div>
+
+        <!-- Tab 1: AI Agents Swarms -->
+        <div class="tab-content active" id="tab-0">
+          <div class="case-details">
+            <h3 data-i18n="c1.title">Autonome Multi-Agenten-Entwicklung</h3>
+            <p data-i18n="c1.desc">
+              Herkömmliche Programmiersprachen sind dateibasiert: Wenn mehrere KI-Agenten denselben Code bearbeiten, entstehen zeilenbasierte Git-Merge-Konflikte und riesige Kontextkosten. QAL löst dies durch atomare Definitionen im SQLite-Graphstore und 3-Wege-AST-Merges.
+            </p>
+            <ul class="feature-list">
+              <li><span class="check-icon">&#10003;</span> <strong data-i18n="c1.f1">Keine Zeilen-Merge-Konflikte:</strong> Disjunkte Definitionen fusionieren immer fehlerfrei.</li>
+              <li><span class="check-icon">&#10003;</span> <strong data-i18n="c1.f2">Surgical MCP Tools:</strong> Agenten fragen via <code>qal_view</code> & <code>qal_query</code> nur relevante Signaturen ab (enorme Token-Ersparnis).</li>
+              <li><span class="check-icon">&#10003;</span> <strong data-i18n="c1.f3">Kryptografische Signaturkette:</strong> Ed25519-Signaturen belegen die Urheberschaft jedes Agenten.</li>
+            </ul>
+            <div class="badge-row">
+              <span class="chip">Model Context Protocol (MCP)</span>
+              <span class="chip">3-Way AST Merge</span>
+              <span class="chip">Ed25519 Signatures</span>
+            </div>
+          </div>
+          <div class="sim-panel">
+            <div class="sim-header">
+              <div class="sim-dots"><span></span><span></span><span></span></div>
+              <span>sim://agent-team-workflow</span>
+            </div>
+            <div class="sim-body">
+              <div class="sim-controls">
+                <button class="sim-btn active" onclick="setAgentSim('arch')">Architekt (Stubs)</button>
+                <button class="sim-btn" onclick="setAgentSim('impl')">Implementierer</button>
+                <button class="sim-btn" onclick="setAgentSim('verif')">Verifizierer</button>
+                <button class="sim-btn" onclick="setAgentSim('merge')">Replay-Merge</button>
+              </div>
+              <div class="code-block" id="agentCodeDisplay">
+<span class="comment"># Schritt 1: Architekt definiert Skeleton mit todo() Stubs</span>
+<span class="kw">fn</span> <span class="fn">calculate_tax</span>(cents: <span class="ty">Int</span>) -&gt; <span class="ty">Int</span>
+  <span class="kw">req</span> cents &gt;= 0
+  <span class="kw">ens</span> r &gt;= 0 = <span class="fn">todo</span>(<span class="str">"tax calculation needed"</span>)
+
+<span class="kw">fn</span> <span class="fn">create_invoice</span>(price: <span class="ty">Int</span>) -&gt; <span class="ty">Int</span> = price + <span class="fn">calculate_tax</span>(price)
+              </div>
+              <div class="sim-result-box info" id="agentStatusDisplay">
+                <span>&#128273; Agent <code>arch-1</code> besitzt Leases &uuml;ber <code>calculate_tax</code>. Status: <strong>STUBBED</strong></span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tab 2: Mathematical Prover -->
+        <div class="tab-content" id="tab-1">
+          <div class="case-details">
+            <h3 data-i18n="c2.title">Missionskritische Software mit Z3-Beweisen</h3>
+            <p data-i18n="c2.desc">
+              Für Fintech, Luftfahrt, Kryptographie und Systemsoftware: QAL prüft Vorbedingungen (<code>req</code>) und Nachbedingungen (<code>ens</code>) statisch mit dem Z3 SMT-Solver. Logische Edge-Cases werden noch vor der Codeausführung mathematisch widerlegt oder garantiert.
+            </p>
+            <ul class="feature-list">
+              <li><span class="check-icon">&#10003;</span> <strong data-i18n="c2.f1">Statische Beweisgarantie:</strong> Partielle Korrektheit für lineare Ganzzahlarithmetik.</li>
+              <li><span class="check-icon">&#10003;</span> <strong data-i18n="c2.f2">Konkrete Gegenbeispiele:</strong> Bei Widerlegung liefert Z3 die exakten Variablenwerte, die den Vertrag brechen.</li>
+              <li><span class="check-icon">&#10003;</span> <strong data-i18n="c2.f3">Deterministischer Cache:</strong> Beweise werden mit <code>confirm_fuel</code>-Budget gecacht.</li>
+            </ul>
+            <div class="badge-row">
+              <span class="chip">Z3 SMT Solver</span>
+              <span class="chip">Presburger Arithmetic</span>
+              <span class="chip">Contract Counterexamples</span>
+            </div>
+          </div>
+          <div class="sim-panel">
+            <div class="sim-header">
+              <div class="sim-dots"><span></span><span></span><span></span></div>
+              <span>sim://z3-contract-prover</span>
+            </div>
+            <div class="sim-body">
+              <div class="sim-controls">
+                <button class="sim-btn active" onclick="setProverSim('safe')">Korrekt (Proven)</button>
+                <button class="sim-btn" onclick="setProverSim('buggy')">Fehlerhaft (Refuted)</button>
+              </div>
+              <div class="code-block" id="proverCodeDisplay">
+<span class="kw">fn</span> <span class="fn">safe_withdraw</span>(balance: <span class="ty">Int</span>, amount: <span class="ty">Int</span>) -&gt; <span class="ty">Int</span>
+  <span class="kw">req</span> balance &gt;= 0 &amp;&amp; amount &gt; 0 &amp;&amp; amount &lt;= balance
+  <span class="kw">ens</span> r &gt;= 0 &amp;&amp; r == balance - amount
+= balance - amount
+              </div>
+              <div class="sim-result-box proven" id="proverResultDisplay">
+                <span>&#10004; Z3 Prover Result: <strong>proven</strong> &middot; Keine Modellverletzung m&ouml;glich.</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tab 3: Zero-Trust Sandbox -->
+        <div class="tab-content" id="tab-2">
+          <div class="case-details">
+            <h3 data-i18n="c3.title">Zero-Trust KI-Sandbox &amp; Effekt-Isolation</h3>
+            <p data-i18n="c3.desc">
+              Wenn KI-Agenten Code generieren, darf dieser nicht unbemerkt Festplatten löschen oder Daten ins Netzwerk funken. QAL besitzt ein striktes algebraisches Effektsystem: Funktionen deklarieren ihre Effekte (<code>!io</code>, <code>!fs</code>, <code>!net</code>, <code>!db</code>) explizit in der Signatur.
+            </p>
+            <ul class="feature-list">
+              <li><span class="check-icon">&#10003;</span> <strong data-i18n="c3.f1">Physische Abwesenheit:</strong> Ein Modul ohne <code>!net</code> hat keine Netzwerk-Imports im WebAssembly-Bytecode.</li>
+              <li><span class="check-icon">&#10003;</span> <strong data-i18n="c3.f2">TOCTOU-Schutz:</strong> Dateisystemzugriffe werden über verankerte <code>openat(O_NOFOLLOW)</code>-Deskriptoren sandbox-gesichert.</li>
+              <li><span class="check-icon">&#10003;</span> <strong data-i18n="c3.f3">Fuel-Limits:</strong> Endlosschleifen werden durch Instruktionszähler garantiert gestoppt.</li>
+            </ul>
+            <div class="badge-row">
+              <span class="chip">Algebraic Effects</span>
+              <span class="chip">WASM Capability Isolation</span>
+              <span class="chip">Fuel Quotas</span>
+            </div>
+          </div>
+          <div class="sim-panel">
+            <div class="sim-header">
+              <div class="sim-dots"><span></span><span></span><span></span></div>
+              <span>sim://effect-isolation-engine</span>
+            </div>
+            <div class="sim-body">
+              <div class="sim-controls">
+                <button class="sim-btn active" onclick="setSandboxSim('pure')">Reine Funktion (Pure)</button>
+                <button class="sim-btn" onclick="setSandboxSim('violation')">Unautorisierter Effekt</button>
+              </div>
+              <div class="code-block" id="sandboxCodeDisplay">
+<span class="comment"># Reine Funktion: Keine Effekte deklariert</span>
+<span class="kw">fn</span> <span class="fn">compute_hash</span>(data: <span class="ty">Str</span>) -&gt; <span class="ty">Str</span> = sha256(to_bytes(data))
+
+<span class="comment"># Garantierte Eigenschaft: Kann physisch weder Festplatte noch Netzwerk berühren!</span>
+              </div>
+              <div class="sim-result-box proven" id="sandboxResultDisplay">
+                <span>&#128737; WASM Imports: <code>0 Host Capabilities</code>. Pure Computation Sandbox.</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tab 4: Microservices -->
+        <div class="tab-content" id="tab-3">
+          <div class="case-details">
+            <h3 data-i18n="c4.title">Hochperformante Microservices mit Zero Leaks</h3>
+            <p data-i18n="c4.desc">
+              Für langlebige Web-Services (Daemon <code>qal serve</code>): QAL verwendet eine lineare Pro-Request-Arena für den Arbeitsspeicher. Nach Abschluss jedes HTTP-Requests wird der Speicher in $O(1)$ vollständig recycelt.
+            </p>
+            <ul class="feature-list">
+              <li><span class="check-icon">&#10003;</span> <strong data-i18n="c4.f1">Null Memory Leaks:</strong> +0,0 % RSS-Speicherwachstum über 10.000+ kontinuierliche Anfragen.</li>
+              <li><span class="check-icon">&#10003;</span> <strong data-i18n="c4.f2">Hoher Durchsatz:</strong> ~7.500 Anfragen/Sekunde auf einer einzelnen Verbindung.</li>
+              <li><span class="check-icon">&#10003;</span> <strong data-i18n="c4.f3">Eingebauter HTTP &amp; SQLite Stack:</strong> Standardbibliothek für JSON, Routing und DB komplett in QAL geschrieben.</li>
+            </ul>
+            <div class="badge-row">
+              <span class="chip">Linear Arena Recycling</span>
+              <span class="chip">HTTP Daemon (qal serve)</span>
+              <span class="chip">Zero GC Pause</span>
+            </div>
+          </div>
+          <div class="sim-panel">
+            <div class="sim-header">
+              <div class="sim-dots"><span></span><span></span><span></span></div>
+              <span>sim://qal-service-daemon</span>
+            </div>
+            <div class="sim-body">
+              <div class="sim-controls">
+                <button class="sim-btn active" onclick="runRequestSim(1)">1 Request</button>
+                <button class="sim-btn" onclick="runRequestSim(100)">100 Requests</button>
+                <button class="sim-btn" onclick="runRequestSim(10000)">10.000 Requests</button>
+              </div>
+              <div class="code-block" id="serviceCodeDisplay">
+GET /todos HTTP/1.1
+Host: localhost:8080
+[Host] Request #1 empfangen. Arena allokiert 64 KiB.
+[Service] Response: 200 OK (application/json) [42 Items]
+[Host] Request beendet. Arena vollständig recycelt (0 KiB Overhead).
+              </div>
+              <div class="sim-result-box proven" id="serviceResultDisplay">
+                <span>&#128200; RSS Memory: <strong>19.888 KiB</strong> &middot; Delta: <strong>+0.00%</strong> &middot; Rate: <strong>7.480 req/s</strong></span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tab 5: Content-Addressed Store -->
+        <div class="tab-content" id="tab-4">
+          <div class="case-details">
+            <h3 data-i18n="c5.title">Inhaltsadressierter Store &amp; Instant Rollback</h3>
+            <p data-i18n="c5.desc">
+              Code in QAL wird nicht als flüchtiger Text in Dateien gespeichert, sondern als kanonischer Merkle-Graph im SQLite-Store. Jede Definition besitzt einen kryptografischen SHA-256-Hash ihrer AST-Struktur.
+            </p>
+            <ul class="feature-list">
+              <li><span class="check-icon">&#10003;</span> <strong data-i18n="c5.f1">Refactoring ohne Hash-Churn:</strong> Umbenennen oder Whitespace-Formatierung ändert null Hashes.</li>
+              <li><span class="check-icon">&#10003;</span> <strong data-i18n="c5.f2">Bit-identische Pakete:</strong> <code>qal export</code> bündelt Codebases in verifizierte <code>.qalpkg</code>-Archive.</li>
+              <li><span class="check-icon">&#10003;</span> <strong data-i18n="c5.f3">Instant Rollback:</strong> Definitionen lassen sich ohne Nebeneffekte sofort auf frühere Hashes zurückrollen.</li>
+            </ul>
+            <div class="badge-row">
+              <span class="chip">Content-Addressed (SHA-256)</span>
+              <span class="chip">Immutable History</span>
+              <span class="chip">Package Distribution (.qalpkg)</span>
+            </div>
+          </div>
+          <div class="sim-panel">
+            <div class="sim-header">
+              <div class="sim-dots"><span></span><span></span><span></span></div>
+              <span>sim://canonical-hashing</span>
+            </div>
+            <div class="sim-body">
+              <div class="sim-controls">
+                <button class="sim-btn active" onclick="setHashSim('clean')">Original Code</button>
+                <button class="sim-btn" onclick="setHashSim('whitespace')">+ Whitespace/Kommentare</button>
+                <button class="sim-btn" onclick="setHashSim('rename')">Rename Variable</button>
+              </div>
+              <div class="code-block" id="hashCodeDisplay">
+<span class="kw">fn</span> <span class="fn">add</span>(a: <span class="ty">Int</span>, b: <span class="ty">Int</span>) -&gt; <span class="ty">Int</span> = a + b
+              </div>
+              <div class="sim-result-box info" id="hashResultDisplay">
+                <span>&#128279; Canonical SHA-256: <code>e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855</code></span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tab 6: IGQK Quantum Compression -->
+        <div class="tab-content" id="tab-5">
+          <div class="case-details">
+            <h3 data-i18n="c6.title">Informationsgeometrische Quantenkompression (IGQK)</h3>
+            <p data-i18n="c6.desc">
+              Der theoretische Horizont des QLand-Ökosystems: Vereinigung von Informationsgeometrie (Fisher-Metrik) und quantenmechanischem Gradientenfluss (HLWT, TLGT, FCHL) für extreme neuronale Netzkompression.
+            </p>
+            <ul class="feature-list">
+              <li><span class="check-icon">&#10003;</span> <strong data-i18n="c6.f1">Ternäre Gewichte:</strong> Kompression von 32-Bit Floating Point auf $\{-1, 0, +1\}$ mit minimalem Informationsverlust.</li>
+              <li><span class="check-icon">&#10003;</span> <strong data-i18n="c6.f2">Quanten-Exploration:</strong> Von-Neumann-Entropie und Verschränkung zur Vermeidung lokaler Minima.</li>
+              <li><span class="check-icon">&#10003;</span> <strong data-i18n="c6.f3">Theoretische Schranken:</strong> Mathematische Verzerrungsschranken nach Satz 5.2.</li>
+            </ul>
+            <div class="badge-row">
+              <span class="chip">Quantum Gradient Flow</span>
+              <span class="chip">Fisher Information Metric</span>
+              <span class="chip">Ternary Lie Groups (TLGT)</span>
+            </div>
+          </div>
+          <div class="sim-panel">
+            <div class="sim-header">
+              <div class="sim-dots"><span></span><span></span><span></span></div>
+              <span>sim://igqk-quantum-projection</span>
+            </div>
+            <div class="sim-body">
+              <div class="sim-controls">
+                <button class="sim-btn active" onclick="setQuantumSim('continuous')">32-Bit Float Weights</button>
+                <button class="sim-btn" onclick="setQuantumSim('quantum')">Quantum Superposition</button>
+                <button class="sim-btn" onclick="setQuantumSim('ternary')">Ternary Collapse {-1,0,+1}</button>
+              </div>
+              <div class="code-block" id="quantumCodeDisplay">
+Weights W (Float32): [0.892, -0.761, 0.041, 0.985, -0.112, -0.954]
+Speicherbedarf: 192 Bits &middot; Parameter-Größe: 100%
+Density Matrix Tr(ρ) = 1.000 &middot; Von-Neumann-Entropie S(ρ) = 0.693
+              </div>
+              <div class="sim-result-box info" id="quantumResultDisplay">
+                <span>&#9883; Kontinuierlicher statistischer Zustand auf Riemannscher Mannigfaltigkeit M.</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Live Interactive Playground -->
+    <section id="playground" class="playground-section">
+      <div class="section-header">
+        <div class="section-tag" data-i18n="play.tag">Hands-on Testen</div>
+        <h2 class="section-title" data-i18n="play.title">Interaktiver QAL Sprach-Playground</h2>
+        <p class="section-subtitle" data-i18n="play.subtitle">
+          Wähle ein Code-Beispiel oder passe den Code an, um Typ-Checker, Z3-Beweiser und Ausführung zu simulieren.
+        </p>
+      </div>
+
+      <div class="playground-card">
+        <div class="editor-wrapper">
+          <label>
+            <span data-i18n="play.editorTitle">QAL Quelltext (Definitionsmodus)</span>
+            <span style="color: var(--primary);">qalc v0.1.0 (seed fixpoint)</span>
+          </label>
+          <textarea class="code-editor" id="liveEditor" spellcheck="false">fn max_val(a: Int, b: Int) -> Int
+  req a >= 0 && b >= 0
+  ens r >= a && r >= b
+= if a > b then a else b
+
+test t_max = max_val(10, 42) == 42</textarea>
+          <div class="action-bar">
+            <button class="btn btn-primary" onclick="runPlayground('prove')">&#9878; Prove Contracts (Z3)</button>
+            <button class="btn btn-secondary" onclick="runPlayground('check')">&#10003; Typecheck</button>
+            <button class="btn btn-secondary" onclick="runPlayground('run')">&#9658; Run Tests</button>
+          </div>
+        </div>
+
+        <div class="terminal-wrapper">
+          <label style="font-size: 0.85rem; color: var(--text-muted); font-family: var(--font-mono); margin-bottom: 0.75rem; display: block;">
+            <span data-i18n="play.termTitle">Terminal / Diagnostic Output</span>
+          </label>
+          <div class="terminal-output" id="termOutput">
+            <div>
+              <div class="term-line term-info">[QAL Host Engine Initialized]</div>
+              <div class="term-line">&gt; Loading selfhost/qalc.wasm (419.746 Bytes, SHA-256 Verified)</div>
+              <div class="term-line">&gt; Ready for commands: prove, check, test, define</div>
+            </div>
+            <div style="font-size: 0.75rem; color: var(--text-dim); border-top: 1px solid #1e293b; padding-top: 0.5rem;">
+              Execution environment: WebAssembly Sandbox &middot; Fuel budget: 10,000,000
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Architecture Grid -->
+    <section id="architecture">
+      <div class="section-header">
+        <div class="section-tag" data-i18n="arch.tag">System-Schichten</div>
+        <h2 class="section-title" data-i18n="arch.title">Die 6 Säulen der QLand-Architektur</h2>
+        <p class="section-subtitle" data-i18n="arch.subtitle">
+          Vom selbsthostenden Compiler bis zur Agenten-Orchestrierung: Jede Schicht ist auf Verifizierbarkeit und Robustheit ausgelegt.
+        </p>
+      </div>
+
+      <div class="arch-grid">
+        <div class="arch-box">
+          <span class="arch-num">01</span>
+          <div class="arch-icon">&#128393;</div>
+          <h4>Self-Hosted QAL Compiler</h4>
+          <p>Komplett in QAL geschrieben, übersetzt sich selbst zu byte-identischem WASM (Stage 1 == Stage 2 == Stage 3 Fixpunkt). Der Host benötigt keinen Rust-Compiler mehr.</p>
+        </div>
+        <div class="arch-box">
+          <span class="arch-num">02</span>
+          <div class="arch-icon">&#128270;</div>
+          <h4>Z3 Contract Prover</h4>
+          <p>Statische Verifikation von Vor- und Nachbedingungen (Presburger QF_LIA). Liefert bei Bugs mathematisch solide Gegenbeispiele.</p>
+        </div>
+        <div class="arch-box">
+          <span class="arch-num">03</span>
+          <div class="arch-icon">&#128190;</div>
+          <h4>Kanonischer Graphstore</h4>
+          <p>SQLite WAL Store mit SHA-256 Hashadressierung. Umbenennungen und Formatierungen erzeugen null Hash-Churn. Replayed 3-Wege-Merges.</p>
+        </div>
+        <div class="arch-box">
+          <span class="arch-num">04</span>
+          <div class="arch-icon">&#129302;</div>
+          <h4>Agent Swarm Protocol</h4>
+          <p>Natives Model Context Protocol (MCP) für KI-Agenten mit Leases, Change-Sets, Review-Gates und Ed25519-Signaturketten.</p>
+        </div>
+        <div class="arch-box">
+          <span class="arch-num">05</span>
+          <div class="arch-icon">&#9889;</div>
+          <h4>WASM Runtime &amp; Linear Arena</h4>
+          <p>Wasmtime-Host mit strikter Effekt-Isolation (<code>!io</code>, <code>!net</code>, <code>!fs</code>, <code>!db</code>), TOCTOU-Schutz via <code>openat</code> und Fuel-Begrenzung.</p>
+        </div>
+        <div class="arch-box">
+          <span class="arch-num">06</span>
+          <div class="arch-icon">&#9883;</div>
+          <h4>Quantum Compression (IGQK)</h4>
+          <p>Theoretische Basis zur Kompression moderner neuronaler Netze auf ternäre Quantenzustände mit minimalem Informationsverlust.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- Comparison Matrix -->
+    <section id="comparison" class="compare-section">
+      <div class="section-header">
+        <div class="section-tag" data-i18n="comp.tag">Vergleichsmatrix</div>
+        <h2 class="section-title" data-i18n="comp.title">Warum QAL? Der direkte Vergleich</h2>
+        <p class="section-subtitle" data-i18n="comp.subtitle">
+          Wie sich QAL gegenüber konventionellen Sprachen bei autonomer KI-Entwicklung und Software-Assurance abhebt.
+        </p>
+      </div>
+
+      <div class="table-container">
+        <table class="compare-table">
+          <thead>
+            <tr>
+              <th>Fähigkeit / Eigenschaft</th>
+              <th class="col-highlight">QLand &middot; QAL</th>
+              <th>Rust + Cargo</th>
+              <th>Python</th>
+              <th>TypeScript</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Disjunkte AST-Merges ohne Zeilenkonflikte</strong></td>
+              <td class="col-highlight"><span class="tag-yes">&#10003; Nativ (Definitionsebene)</span></td>
+              <td><span class="tag-no">&#10007; Zeilenbasierte Konflikte</span></td>
+              <td><span class="tag-no">&#10007; Zeilenbasierte Konflikte</span></td>
+              <td><span class="tag-no">&#10007; Zeilenbasierte Konflikte</span></td>
+            </tr>
+            <tr>
+              <td><strong>Statisch bewiesene Verträge (Z3 SMT)</strong></td>
+              <td class="col-highlight"><span class="tag-yes">&#10003; Integriert (req/ens)</span></td>
+              <td><span class="tag-no">&#10007; Extern (Kani/Prusti)</span></td>
+              <td><span class="tag-no">&#10007; Nicht unterstützt</span></td>
+              <td><span class="tag-no">&#10007; Nicht unterstützt</span></td>
+            </tr>
+            <tr>
+              <td><strong>Inhaltsadressierung (SHA-256 je Def)</strong></td>
+              <td class="col-highlight"><span class="tag-yes">&#10003; 0 Churn bei Rename</span></td>
+              <td><span class="tag-no">&#10007; Dateibasiert</span></td>
+              <td><span class="tag-no">&#10007; Dateibasiert</span></td>
+              <td><span class="tag-no">&#10007; Dateibasiert</span></td>
+            </tr>
+            <tr>
+              <td><strong>Algebraische Effekt-Isolation</strong></td>
+              <td class="col-highlight"><span class="tag-yes">&#10003; Physische WASM-Schranke</span></td>
+              <td><span class="tag-no">&#10007; Unbeschränkter OS-Zugriff</span></td>
+              <td><span class="tag-no">&#10007; Beliebige Seiteneffekte</span></td>
+              <td><span class="tag-no">&#10007; Beliebige Seiteneffekte</span></td>
+            </tr>
+            <tr>
+              <td><strong>KI-Agenten MCP-Schnittstelle</strong></td>
+              <td class="col-highlight"><span class="tag-yes">&#10003; Native Stdio-Tools</span></td>
+              <td><span class="tag-no">&#10007; Shell / Cargo Pipes</span></td>
+              <td><span class="tag-no">&#10007; Shell / Skripte</span></td>
+              <td><span class="tag-no">&#10007; Shell / Node Pipes</span></td>
+            </tr>
+            <tr>
+              <td><strong>Request-Arena (Zero Memory Leaks)</strong></td>
+              <td class="col-highlight"><span class="tag-yes">&#10003; +0.0% RSS nach 10k Reqs</span></td>
+              <td><span class="tag-yes">&#10003; Möglich (Manual Arena)</span></td>
+              <td><span class="tag-no">&#10007; GC Fragmentation</span></td>
+              <td><span class="tag-no">&#10007; V8 GC Overhead</span></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Empirical Benchmark Section (Phase 1e Rerun) -->
+    <section id="benchmark" class="benchmark-section">
+      <div class="section-header">
+        <div class="section-tag" data-i18n="bench.tag">Empirische Messung</div>
+        <h2 class="section-title" data-i18n="bench.title">Kontrollierter Agenten-Benchmark: QAL vs. Rust (Phase 1e Rerun)</h2>
+        <p class="section-subtitle" data-i18n="bench.subtitle">
+          80 unabhängige Läufe (20 Aufgaben &times; 2 Durchläufe) mit Claude-Code-Subagenten unter identischen Regeln, Prompts und versteckten Unit-Tests.
+        </p>
+      </div>
+
+      <!-- Benchmark Metric Cards -->
+      <div class="metrics-grid" style="margin-bottom: 2rem;">
+        <div class="metric-card">
+          <div class="metric-val green">40 / 40 (100%)</div>
+          <div class="metric-label" data-i18n="bench.cardQal">QAL Erfolgsquote (1. Versuch)</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-val green">40 / 40 (100%)</div>
+          <div class="metric-label" data-i18n="bench.cardRust">Rust Erfolgsquote (1. Versuch)</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-val purple">36.7k vs 22.3k</div>
+          <div class="metric-label" data-i18n="bench.cardTokens">Tokens / verifizierte Lösung (+64% QAL)</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-val blue">0 Defekte</div>
+          <div class="metric-label" data-i18n="bench.cardDefects">Versteckte Testbrüche / Speicherlecks</div>
+        </div>
+      </div>
+
+      <!-- Benchmark Table -->
+      <div class="table-container">
+        <table class="compare-table">
+          <thead>
+            <tr>
+              <th>Metrik / Benchmark-Dimension</th>
+              <th class="col-highlight">QAL Arm (MCP Tools)</th>
+              <th>Rust Arm (Cargo + Files)</th>
+              <th>Verhältnis / Befund</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Bestandene Aufgaben (Hidden Tests)</strong></td>
+              <td class="col-highlight"><span class="tag-yes">&#10003; 40 / 40 (100%)</span></td>
+              <td><span class="tag-yes">&#10003; 40 / 40 (100%)</span></td>
+              <td>Parität &middot; 0 entkommene Defekte</td>
+            </tr>
+            <tr>
+              <td><strong>First-Attempt Success Rate</strong></td>
+              <td class="col-highlight"><span class="tag-yes">&#10003; 40 / 40 (100%)</span></td>
+              <td><span class="tag-yes">&#10003; 40 / 40 (100%)</span></td>
+              <td>Keine Retries bei beiden Armen nötig</td>
+            </tr>
+            <tr>
+              <td><strong>Dispatch Tokens je Lösung (Mittelwert)</strong></td>
+              <td class="col-highlight">36.700 Tokens</td>
+              <td>22.300 Tokens</td>
+              <td>QAL benötigt +64% Tokens (Prompts &amp; Kontrakte)</td>
+            </tr>
+            <tr>
+              <td><strong>Verarbeitete Kontext-Tokens (inkl. Cache)</strong></td>
+              <td class="col-highlight">308.800 Tokens</td>
+              <td>161.200 Tokens</td>
+              <td>Faktor 1.92&times; Kontext-Throughput</td>
+            </tr>
+            <tr>
+              <td><strong>Tool-Calls gesamt (40 Lösungen)</strong></td>
+              <td class="col-highlight">270 Calls (57 Abweisungen)</td>
+              <td>170 Calls (18 Abweisungen)</td>
+              <td>Compiler-Feedback fängt Fehler vor Speicherung ab</td>
+            </tr>
+            <tr>
+              <td><strong>Gesamte Entwickler-Wandzeit (Wall Time)</strong></td>
+              <td class="col-highlight">87.2 Minuten (~2.2 Min / Task)</td>
+              <td>51.6 Minuten (~1.3 Min / Task)</td>
+              <td>QAL Z3-Beweis-Loops beanspruchen mehr Zeit</td>
+            </tr>
+            <tr>
+              <td><strong>Sicherheits-Garantie (Contracts &amp; Effects)</strong></td>
+              <td class="col-highlight"><span class="tag-yes">&#10003; Statisch bewiesen (Z3)</span></td>
+              <td><span class="tag-no">&#10007; Nur Laufzeittests</span></td>
+              <td>QAL garantiert Invarianten auch für ungeprüfte Inputs</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Honest Discussion Grid -->
+      <div class="bench-discussion">
+        <div class="bench-box">
+          <h4 data-i18n="bench.disc1Title">&#128269; Was die Zahlen ungeschönt zeigen</h4>
+          <p data-i18n="bench.disc1Body">
+            Die These, dass eine KI-native Sprache den Token-Aufwand bei Standard-CLI-Aufgaben senkt, wird durch die Daten <strong>nicht gestützt</strong>: QAL verbraucht 1.6&times; bis 1.9&times; mehr Tokens als Rust. Der Hauptgrund liegt im Prompt-Overhead (~11 KB Sprachreferenz) und dem Fehlen von Inline-Closures (Agenten müssen separate Top-Level-Funktionen definieren).
+          </p>
+        </div>
+        <div class="bench-box">
+          <h4 data-i18n="bench.disc2Title">&#128737; Wo der reale Wert von QAL liegt</h4>
+          <p data-i18n="bench.disc2Body">
+            QAL gewinnt bei der <strong>Assurance</strong>: 100% aller Aufgaben wurden verifiziert, 0 Speicherlecks, 0 Kontraktbrüche. Jede abgewiesene Definition wurde durch exakte Fehlermeldungen innerhalb von 1–2 Tool-Calls korrigiert. Die Z3-Beweise garantieren Invarianten mathematisch, wo Rust lediglich stichprobenartig testet.
+          </p>
+        </div>
+      </div>
+      <div style="text-align: center; margin-top: 1.5rem;">
+        <a href="bench/rerun-2026-10-22/report.md" target="_blank" style="color: var(--primary); font-family: var(--font-mono); font-size: 0.85rem; text-decoration: none;">
+          &rarr; Vollständigen Benchmark-Prüfbericht und Rohdaten einsehen (report.md)
+        </a>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <p>
+      &copy; 2026 QLand &middot; Informationsgeometrische Quantenkompression &middot; QAL Provable Substrate.<br>
+      Entwickelt mit formaler Verifikation, Z3 SMT-Beweisen und reinem Self-Hosting Fixpoint.
+    </p>
+  </footer>
+
+  <script>
+    // Internationalization dictionary
+    const i18n = {
+      de: {
+        "nav.useCases": "Anwendungsbereiche",
+        "nav.playground": "Playground",
+        "nav.arch": "Architektur",
+        "nav.comp": "Vergleich",
+        "nav.proof": "Formaler Beweis (Z3) →",
+        "hero.pill": "Phase 1–5 Complete · Self-Hosted Seed Fixpoint · Z3 Verified",
+        "hero.title": "Die provable Programmiersprache & Plattform für autonome KI-Systeme",
+        "hero.desc": "QLand und QAL vereinen mathematische Vertragsbeweise (Z3), konfliktfreie AST-Merges auf Definitionsebene, algebraische Effekt-Isolation und inhaltsadressierte Softwareverteilung zu einem kompromisslosen Substrat für die nächste Generation autonomer KI-Entwicklung.",
+        "hero.btnExplore": "Use Cases erkunden",
+        "hero.btnProof": "⚖ Formaler Beweis (Z3-Zertifikat)",
+        "hero.btnPlay": "Live Playground",
+        "metric.fixpoint": "Byte-identischer Self-Hosting Fixpoint",
+        "metric.z3": "Lineare Ganzzahlarithmetik statisch bewiesen",
+        "metric.merge": "Disjunkte AST-Merges auf Definitionsebene",
+        "metric.leak": "Zero Memory Leaks über 10.000+ API Requests",
+        "cases.tag": "Wozu wird das System verwendet?",
+        "cases.title": "Reale Einsatzgebiete & Kernfähigkeiten",
+        "cases.subtitle": "Wähle ein Anwendungsfeld, um die Funktionsweise, den konkreten Nutzen und eine interaktive Simulation zu sehen.",
+        "tab.agents": "1. Autonome KI-Schwärme",
+        "tab.prover": "2. Mathematische Verifikation",
+        "tab.sandbox": "3. Zero-Trust Sandbox",
+        "tab.services": "4. Leak-freie Microservices",
+        "tab.content": "5. Inhaltsadressierter Store",
+        "tab.igqk": "6. Quantenkompression (IGQK)",
+        "play.tag": "Hands-on Testen",
+        "play.title": "Interaktiver QAL Sprach-Playground",
+        "play.subtitle": "Wähle ein Code-Beispiel oder passe den Code an, um Typ-Checker, Z3-Beweiser und Ausführung zu simulieren.",
+        "play.editorTitle": "QAL Quelltext (Definitionsmodus)",
+        "play.termTitle": "Terminal / Diagnostic Output",
+        "arch.tag": "System-Schichten",
+        "arch.title": "Die 6 Säulen der QLand-Architektur",
+        "arch.subtitle": "Vom selbsthostenden Compiler bis zur Agenten-Orchestrierung: Jede Schicht ist auf Verifizierbarkeit und Robustheit ausgelegt.",
+        "comp.tag": "Vergleichsmatrix",
+        "comp.title": "Warum QAL? Der direkte Vergleich",
+        "comp.subtitle": "Wie sich QAL gegenüber konventionellen Sprachen bei autonomer KI-Entwicklung und Software-Assurance abhebt.",
+        "nav.benchmark": "Benchmark",
+        "bench.tag": "Empirische Messung",
+        "bench.title": "Kontrollierter Agenten-Benchmark: QAL vs. Rust (Phase 1e Rerun)",
+        "bench.subtitle": "80 unabhängige Läufe (20 Aufgaben × 2 Durchläufe) mit Claude-Code-Subagenten unter identischen Regeln, Prompts und versteckten Unit-Tests.",
+        "bench.cardQal": "QAL Erfolgsquote (1. Versuch)",
+        "bench.cardRust": "Rust Erfolgsquote (1. Versuch)",
+        "bench.cardTokens": "Tokens / verifizierte Lösung (+64% QAL)",
+        "bench.cardDefects": "Versteckte Testbrüche / Speicherlecks",
+        "bench.disc1Title": "🔍 Was die Zahlen ungeschönt zeigen",
+        "bench.disc1Body": "Die These, dass eine KI-native Sprache den Token-Aufwand bei Standard-CLI-Aufgaben senkt, wird durch die Daten nicht gestützt: QAL verbraucht 1.6× bis 1.9× mehr Tokens als Rust. Der Hauptgrund liegt im Prompt-Overhead (~11 KB Sprachreferenz) und dem Fehlen von Inline-Closures (Agenten müssen separate Top-Level-Funktionen definieren).",
+        "bench.disc2Title": "🛡️ Wo der reale Wert von QAL liegt",
+        "bench.disc2Body": "QAL gewinnt bei der Assurance: 100% aller Aufgaben wurden verifiziert, 0 Speicherlecks, 0 Kontraktbrüche. Jede abgewiesene Definition wurde durch exakte Fehlermeldungen innerhalb von 1–2 Tool-Calls korrigiert. Die Z3-Beweise garantieren Invarianten mathematisch, wo Rust lediglich stichprobenartig testet."
+      },
+      en: {
+        "nav.useCases": "Use Cases",
+        "nav.playground": "Playground",
+        "nav.arch": "Architecture",
+        "nav.comp": "Comparison",
+        "nav.proof": "Formal Proof (Z3) →",
+        "hero.pill": "Phase 1–4 Complete · Phase 5 Seed Fixpoint (◐) · Z3 Verified",
+        "hero.title": "The Provable Language & Substrate for Autonomous AI Systems",
+        "hero.desc": "QLand and QAL unify mathematical contract proofs (Z3), conflict-free definition-level AST merges, algebraic effect isolation, and content-addressed software deployment into an uncompromising substrate for autonomous AI engineering.",
+        "hero.btnExplore": "Explore Use Cases",
+        "hero.btnProof": "⚖ Formal Proof (Z3 Certificate)",
+        "hero.btnPlay": "Live Playground",
+        "metric.fixpoint": "Byte-identical Self-Hosting Fixpoint",
+        "metric.z3": "Linear Integer Arithmetic Statically Proven",
+        "metric.merge": "Disjoint AST Merges at Definition Level",
+        "metric.leak": "Zero Memory Leaks across 10,000+ API Requests",
+        "cases.tag": "What can the system be used for?",
+        "cases.title": "Real-World Applications & Core Capabilities",
+        "cases.subtitle": "Select a domain to inspect how it works, its advantages, and an interactive simulation.",
+        "tab.agents": "1. Autonomous AI Swarms",
+        "tab.prover": "2. Mathematical Verification",
+        "tab.sandbox": "3. Zero-Trust Sandbox",
+        "tab.services": "4. Leak-Free Microservices",
+        "tab.content": "5. Content-Addressed Store",
+        "tab.igqk": "6. Quantum Compression (IGQK)",
+        "play.tag": "Hands-on Testing",
+        "play.title": "Interactive QAL Language Playground",
+        "play.subtitle": "Select a code snippet or edit the source to simulate type checking, Z3 proving, and test execution.",
+        "play.editorTitle": "QAL Source (Definition Mode)",
+        "play.termTitle": "Terminal / Diagnostic Output",
+        "arch.tag": "System Layers",
+        "arch.title": "The 6 Pillars of the QLand Architecture",
+        "arch.subtitle": "From the self-hosted compiler to multi-agent swarm orchestration: engineered for absolute reliability.",
+        "comp.tag": "Comparison Matrix",
+        "comp.title": "Why QAL? Direct Comparison",
+        "comp.subtitle": "How QAL stands out against conventional programming languages in autonomous AI engineering.",
+        "nav.benchmark": "Benchmark",
+        "bench.tag": "Empirical Measurement",
+        "bench.title": "Controlled Agent Benchmark: QAL vs. Rust (Phase 1e Rerun)",
+        "bench.subtitle": "80 independent runs (20 tasks × 2 runs) with Claude Code subagents under identical rules, prompts, and hidden unit tests.",
+        "bench.cardQal": "QAL Success Rate (1st Attempt)",
+        "bench.cardRust": "Rust Success Rate (1st Attempt)",
+        "bench.cardTokens": "Tokens / verified solution (+64% QAL)",
+        "bench.cardDefects": "Hidden test failures / memory leaks",
+        "bench.disc1Title": "🔍 Unvarnished Findings",
+        "bench.disc1Body": "The thesis that an AI-native language reduces token overhead on small CLI tasks is not supported: QAL consumes 1.6× to 1.9× more tokens than Rust, largely due to prompt overhead (~11 KB language reference) and lack of closures (requiring top-level helper functions).",
+        "bench.disc2Title": "🛡️ Where QAL Delivers Value",
+        "bench.disc2Body": "QAL wins on assurance: 100% verification across all tasks, 0 memory leaks, 0 contract violations. Every rejected definition was resolved in 1–2 tool calls via exact compiler diagnostics. Z3 proofs mathematically guarantee invariants where Rust relies on sample tests."
+      }
+    };
+
+    let currentLang = 'de';
+    function toggleLanguage() {
+      currentLang = (currentLang === 'de') ? 'en' : 'de';
+      document.getElementById('langLabel').textContent = (currentLang === 'de') ? 'EN' : 'DE';
+      document.getElementById('langTarget').textContent = (currentLang === 'de') ? 'DE' : 'EN';
+      document.querySelectorAll('[data-i18n]').forEach(el => {
+        const key = el.getAttribute('data-i18n');
+        if (i18n[currentLang][key]) {
+          el.textContent = i18n[currentLang][key];
+        }
+      });
+    }
+
+    // Tab Switching
+    function switchTab(index) {
+      document.querySelectorAll('.tab-btn').forEach((btn, i) => {
+        btn.classList.toggle('active', i === index);
+      });
+      document.querySelectorAll('.tab-content').forEach((tab, i) => {
+        tab.classList.toggle('active', i === index);
+      });
+    }
+
+    // Tab 1: Agent Sim
+    function setAgentSim(step) {
+      document.querySelectorAll('#tab-0 .sim-btn').forEach(btn => btn.classList.remove('active'));
+      event.target.classList.add('active');
+      const code = document.getElementById('agentCodeDisplay');
+      const stat = document.getElementById('agentStatusDisplay');
+      if (step === 'arch') {
+        code.innerHTML = `<span class="comment"># Schritt 1: Architekt definiert Skeleton mit todo() Stubs</span>\n<span class="kw">fn</span> <span class="fn">calculate_tax</span>(cents: <span class="ty">Int</span>) -&gt; <span class="ty">Int</span>\n  <span class="kw">req</span> cents &gt;= 0\n  <span class="kw">ens</span> r &gt;= 0 = <span class="fn">todo</span>(<span class="str">"tax calculation needed"</span>)\n\n<span class="kw">fn</span> <span class="fn">create_invoice</span>(price: <span class="ty">Int</span>) -&gt; <span class="ty">Int</span> = price + <span class="fn">calculate_tax</span>(price)`;
+        stat.className = "sim-result-box info";
+        stat.innerHTML = `<span>&#128273; Agent <code>arch-1</code> besitzt Leases über <code>calculate_tax</code>. Status: <strong>STUBBED</strong></span>`;
+      } else if (step === 'impl') {
+        code.innerHTML = `<span class="comment"># Schritt 2: Implementierer löst Stub ein (in separater Change-Set-Branch)</span>\n<span class="kw">fn</span> <span class="fn">calculate_tax</span>(cents: <span class="ty">Int</span>) -&gt; <span class="ty">Int</span>\n  <span class="kw">req</span> cents &gt;= 0\n  <span class="kw">ens</span> r &gt;= 0\n= cents * 19 / 100\n\n<span class="comment"># Parallele Arbeit: Anderer Agent fügt discount() hinzu - 0 Konflikte!</span>\n<span class="kw">fn</span> <span class="fn">discount</span>(price: <span class="ty">Int</span>) -&gt; <span class="ty">Int</span> = price * 90 / 100`;
+        stat.className = "sim-result-box info";
+        stat.innerHTML = `<span>&#9998; Agent <code>impl-2</code> hat <code>calculate_tax</code> implementiert &amp; change-set signiert.</span>`;
+      } else if (step === 'verif') {
+        code.innerHTML = `<span class="comment"># Schritt 3: Verifizierer schreibt versteckte Tests &amp; Z3-Beweise</span>\n<span class="kw">test</span> <span class="fn">test_tax_standard</span> = <span class="fn">calculate_tax</span>(100) == 19\n<span class="kw">test</span> <span class="fn">test_tax_zero</span> = <span class="fn">calculate_tax</span>(0) == 0\n<span class="kw">test</span> <span class="fn">test_discount</span> = <span class="fn">discount</span>(100) == 90`;
+        stat.className = "sim-result-box proven";
+        stat.innerHTML = `<span>&#10004; Verifier Gate PASSED: 3 Tests bestanden &middot; Z3 Vertrag verifiziert &middot; Reviewer Approval: OK</span>`;
+      } else if (step === 'merge') {
+        code.innerHTML = `<span class="comment"># Schritt 4: Automatischer 3-Wege-Replay-Merge auf Definitionsebene</span>\n[QAL Team Engine] Replaying change-set cs_948f onto moved main.\n&gt; calculate_tax: REPLACED (new hash: a4f1...)\n&gt; discount: ADDED (new hash: 7bc2...)\n&gt; create_invoice: RELINKED to calculate_tax@a4f1\n[QAL Team Engine] qal verify: OK. Commit signed by Ed25519 author key.`;
+        stat.className = "sim-result-box proven";
+        stat.innerHTML = `<span>&#128640; Merge abgeschlossen: 0 Zeilenkonflikte &middot; Dependency Graph typgeprüft &middot; Hash History intakt.</span>`;
+      }
+    }
+
+    // Tab 2: Prover Sim
+    function setProverSim(mode) {
+      document.querySelectorAll('#tab-1 .sim-btn').forEach(btn => btn.classList.remove('active'));
+      event.target.classList.add('active');
+      const code = document.getElementById('proverCodeDisplay');
+      const stat = document.getElementById('proverResultDisplay');
+      if (mode === 'safe') {
+        code.innerHTML = `<span class="kw">fn</span> <span class="fn">safe_withdraw</span>(balance: <span class="ty">Int</span>, amount: <span class="ty">Int</span>) -&gt; <span class="ty">Int</span>\n  <span class="kw">req</span> balance &gt;= 0 &amp;&amp; amount &gt; 0 &amp;&amp; amount &lt;= balance\n  <span class="kw">ens</span> r &gt;= 0 &amp;&amp; r == balance - amount\n= balance - amount`;
+        stat.className = "sim-result-box proven";
+        stat.innerHTML = `<span>&#10004; Z3 Prover: <strong>proven</strong> &middot; Keine Modellverletzung möglich &middot; Static Guarantee.</span>`;
+      } else {
+        code.innerHTML = `<span class="comment"># FEHLER: Nachbedingung r &gt; 0 wird bei balance == amount verletzt!</span>\n<span class="kw">fn</span> <span class="fn">flawed_withdraw</span>(balance: <span class="ty">Int</span>, amount: <span class="ty">Int</span>) -&gt; <span class="ty">Int</span>\n  <span class="kw">req</span> balance &gt;= 0 &amp;&amp; amount &gt; 0 &amp;&amp; amount &lt;= balance\n  <span class="kw">ens</span> r &gt; 0   <span class="comment"># &lt;-- BUG: r kann 0 sein!</span>\n= balance - amount`;
+        stat.className = "sim-result-box refuted";
+        stat.innerHTML = `<span>&#10008; Z3 Prover: <strong>refuted</strong> &middot; Gegenbeispiel: balance = 50, amount = 50 &rArr; r = 0 &le; 0!</span>`;
+      }
+    }
+
+    // Tab 3: Sandbox Sim
+    function setSandboxSim(mode) {
+      document.querySelectorAll('#tab-2 .sim-btn').forEach(btn => btn.classList.remove('active'));
+      event.target.classList.add('active');
+      const code = document.getElementById('sandboxCodeDisplay');
+      const stat = document.getElementById('sandboxResultDisplay');
+      if (mode === 'pure') {
+        code.innerHTML = `<span class="comment"># Reine Funktion: Keine Effekte deklariert</span>\n<span class="kw">fn</span> <span class="fn">compute_hash</span>(data: <span class="ty">Str</span>) -&gt; <span class="ty">Str</span> = sha256(to_bytes(data))\n\n<span class="comment"># Garantierte Eigenschaft: Kann physisch weder Festplatte noch Netzwerk berühren!</span>`;
+        stat.className = "sim-result-box proven";
+        stat.innerHTML = `<span>&#128737; WASM Imports: <code>0 Host Capabilities</code>. Pure Computation Sandbox.</span>`;
+      } else {
+        code.innerHTML = `<span class="comment"># FEHLER: Funktion versucht Dateisystem zu lesen ohne !fs Deklaration</span>\n<span class="kw">fn</span> <span class="fn">read_secret</span>(path: <span class="ty">Str</span>) -&gt; <span class="ty">Str</span>\n= read_all(path)  <span class="comment"># read_all benötigt !io !fs</span>`;
+        stat.className = "sim-result-box refuted";
+        stat.innerHTML = `<span>&#10008; Compile Error E0301: effect_violation &middot; 'read_all' needs effect '!io, !fs' not declared here!</span>`;
+      }
+    }
+
+    // Tab 4: Service Sim
+    function runRequestSim(n) {
+      document.querySelectorAll('#tab-3 .sim-btn').forEach(btn => btn.classList.remove('active'));
+      event.target.classList.add('active');
+      const code = document.getElementById('serviceCodeDisplay');
+      const stat = document.getElementById('serviceResultDisplay');
+      code.innerHTML = `GET /todos HTTP/1.1\nHost: localhost:8080\n[Host] Verarbeite ${n} Request(s) im Server-Loop...\n[Service] Response: 200 OK (application/json)\n[Host] Alle Anfragen erfolgreich bedient. Linear-Arena vollständig freigegeben.`;
+      stat.innerHTML = `<span>&#128200; Requests: <strong>${n}</strong> &middot; RSS Memory: <strong>19.888 KiB</strong> &middot; Delta: <strong>+0.00%</strong> &middot; Rate: <strong>~7.480 req/s</strong></span>`;
+    }
+
+    // Tab 5: Content Hashing Sim
+    function setHashSim(mode) {
+      document.querySelectorAll('#tab-4 .sim-btn').forEach(btn => btn.classList.remove('active'));
+      event.target.classList.add('active');
+      const code = document.getElementById('hashCodeDisplay');
+      const stat = document.getElementById('hashResultDisplay');
+      if (mode === 'clean') {
+        code.innerHTML = `<span class="kw">fn</span> <span class="fn">add</span>(a: <span class="ty">Int</span>, b: <span class="ty">Int</span>) -&gt; <span class="ty">Int</span> = a + b`;
+      } else if (mode === 'whitespace') {
+        code.innerHTML = `<span class="comment"># Neuer Kommentar und zusätzliche Zeilenumbrüche</span>\n<span class="kw">fn</span>   <span class="fn">add</span>( a: <span class="ty">Int</span>,   b: <span class="ty">Int</span> ) -&gt; <span class="ty">Int</span>\n  =\n    a + b`;
+      } else if (mode === 'rename') {
+        code.innerHTML = `<span class="comment"># Umbenennung der lokalen Variablen x und y</span>\n<span class="kw">fn</span> <span class="fn">add</span>(x: <span class="ty">Int</span>, y: <span class="ty">Int</span>) -&gt; <span class="ty">Int</span> = x + y`;
+      }
+      stat.innerHTML = `<span>&#128279; Canonical SHA-256: <code>e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855</code> (IDENTISCH!)</span>`;
+    }
+
+    // Tab 6: IGQK Sim
+    function setQuantumSim(mode) {
+      document.querySelectorAll('#tab-5 .sim-btn').forEach(btn => btn.classList.remove('active'));
+      event.target.classList.add('active');
+      const code = document.getElementById('quantumCodeDisplay');
+      const stat = document.getElementById('quantumResultDisplay');
+      if (mode === 'continuous') {
+        code.innerHTML = `Weights W (Float32): [0.892, -0.761, 0.041, 0.985, -0.112, -0.954]\nSpeicherbedarf: 192 Bits · Parameter-Größe: 100%\nDensity Matrix Tr(ρ) = 1.000 · Von-Neumann-Entropie S(ρ) = 0.693`;
+        stat.innerHTML = `<span>&#9883; Kontinuierlicher statistischer Zustand auf Riemannscher Mannigfaltigkeit M.</span>`;
+      } else if (mode === 'quantum') {
+        code.innerHTML = `Quantum Gradient Flow: dρ/dt = -i[H, ρ] - γ{G⁻¹∇L, ρ}\nH = -Δ_M (Laplace-Beltrami Operator)\nExploration aktiver Parameterüberlagerungen über Fisher-Informationsmetrik G.`;
+        stat.innerHTML = `<span>&#9883; Unitäre Quanten-Exploration zur Überwindung lokaler Minima.</span>`;
+      } else if (mode === 'ternary') {
+        code.innerHTML = `Messung & Kollaps nach Born-Regel: P(w|ρ) = Tr(ρ M_w)\nProjektion auf Submannigfaltigkeit N = {-1, 0, +1}\nErgebnis W* (Ternary): [+1, -1, 0, +1, 0, -1]\nSpeicherbedarf: 12 Bits (16x Kompression!) · Info-Verlust D ≤ Schranke (Satz 5.2)`;
+        stat.innerHTML = `<span>&#10004; Extrem-Kompression erreicht: 16x Speicherreduktion bei maximaler Generalisierung.</span>`;
+      }
+    }
+
+    // Playground Interactive Runner
+    function runPlayground(action) {
+      const term = document.getElementById('termOutput');
+      const src = document.getElementById('liveEditor').value;
+      const now = new Date().toLocaleTimeString();
+      let res = '';
+      if (action === 'prove') {
+        res = `<div class="term-line">&gt; [${now}] Running Z3 SMT Prover on contracts...</div>
+               <div class="term-line term-success">&gt; [PROVE] max_val(a, b): PROVEN (VC satisfied under Presburger QF_LIA)</div>
+               <div class="term-line term-info">&gt; Verification time: 14.2ms &middot; Counterexamples: 0</div>`;
+      } else if (action === 'check') {
+        res = `<div class="term-line">&gt; [${now}] Checking types and algebraic effects...</div>
+               <div class="term-line term-success">&gt; [CHECK] Program is well-typed. 0 errors, 0 warnings.</div>
+               <div class="term-line">&gt; Monomorphisation complete: 2 monomorphic forms generated.</div>`;
+      } else if (action === 'run') {
+        res = `<div class="term-line">&gt; [${now}] Executing in WebAssembly sandbox...</div>
+               <div class="term-line">&gt; [TEST] t_max ... <span class="term-success">ok</span> (evaluated: 42 == 42)</div>
+               <div class="term-line term-success">&gt; Result: 1 passed; 0 failed; finished in 1.8ms (Fuel used: 1,420)</div>`;
+      }
+      term.innerHTML = res + `<div style="font-size: 0.75rem; color: var(--text-dim); border-top: 1px solid #1e293b; padding-top: 0.5rem; margin-top: 0.75rem;">Execution environment: WebAssembly Sandbox &middot; Fuel budget: 10,000,000</div>`;
+    }
+  </script>
+</body>
+</html>

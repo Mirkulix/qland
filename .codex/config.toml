@@ -1,0 +1,14 @@
+[mcp_servers.qal]
+command = "sh"
+args = ["qal/mcp.sh"]
+
+[mcp_servers.qal-std]
+command = "sh"
+args = [
+    "qal/mcp.sh",
+    "std",
+]
+
+[mcp_servers.tgs]
+command = "bin/tgs"
+args = ["mcp"]

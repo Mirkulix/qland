@@ -1,0 +1,2 @@
+fn logger(prefix: Str) -> fn(Str) -> Unit !io = fn(s) => print(prefix ++ s)
+fn main(args: List[Str]) -> Int !io = { let log = logger("> ") in { log("a"); log("b") }; fold(args, (), fn(u, a) => print(a)); 0 }

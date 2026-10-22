@@ -1,0 +1,1 @@
+test t = let std.a.x = 1 in 2

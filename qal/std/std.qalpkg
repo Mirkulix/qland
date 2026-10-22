@@ -1,0 +1,797 @@
+# qal-pkg 1
+# package std 7df6acc501ea929b95e67df267f4e4a5d54fc356891be34903be794c04cacf96
+# def std.db.bool c29298b8d26ca83a23809a69e66cfd5d0bd07963ee88e9730f59dd0b95d4d2f2 std-db-1
+# def std.db.cell 2ca80971ee113fe8ecc534b59b6293dff9f4f901f74e54e98e968eaa1f27d208 std-db-1
+# def std.db.col 272fc8a8cc034d273733e12569a7bd0da217a2da0480d25045004b5ab52db090 std-db-1
+# def std.db.field bf5455cfccc67722d3eccdd7d9abc4555d02d4908748812a772d6b078e3538d6 std-db-1
+# def std.db.first 8f89905d7d2e3a44bcd16e7e1f32f07f4b77f24a4e1c14344990de2e8440a889 std-db-1
+# def std.db.float c63d986001332633c3b4488e3fcb125af6a5b0b8a360ba2b3cf717fad30291cd std-db-1
+# def std.db.int 6fc7cc3d18397c806e2af704a134115753c14de30d14c85e4a30e86a93fc7e2a std-db-1
+# def std.db.is_null 79475320b59fade351f41a950d6d837a4934481524514d1d852cf3575c21d25b std-db-1
+# def std.db.obj 3dbb385d39a3994d324adb4edd006342b0a5430b06446048982c26858f59e606 std-db-1
+# def std.db.test_bool ec277ae01a7dfe1ca2acb321999b5ef9b6b6dfc3dcaa4c670a0bfec46c354161 std-db-1
+# def std.db.test_col 0dc4f1b7f68e2b31048957f5ed48a828bcfb4c6514ed8ee41830ea383e034b54 std-db-1
+# def std.db.test_edges ec278ad83a069a31a9cfcebd6e5cdabc74ab3b9672a41755da50820ee9bcb779 std-db-1
+# def std.db.test_first 4fc4192093bd59dfd12ed9beefdf221c62da1daefd337ca3b5132485b11b7fcd std-db-1
+# def std.db.test_float 22f2acc77c5bae2504a86600fdfc0ecba6e6ac1313e17db702494d439e12239f std-db-1
+# def std.db.test_int_text 8354b8d4d4da383522ece44caf98b1accd88469899e6b5b99f671cdaec3b1205 std-db-1
+# def std.db.test_null 52c7a6863ebfea651ddcd704e56e20243d72253605d3fcf824a41c4f4e232dec std-db-1
+# def std.db.test_to_json a2cbaedefead69e4cb5260e4609dd638a8b45014966a1fcb77211bf9cbd6f518 std-db-1
+# def std.db.test_to_json_empty f0ec60147331953523cfc26a30a69e093d443f049fec5f70c0fc17cf38405841 std-db-1
+# def std.db.test_to_json_len 498afb6a0708c8474e745b028b95f75de097d5835889303c1ac22ce311c84661 std-db-1
+# def std.db.text 0f9e12d06bf39d5685ab6f627e4ec48bd2e7fcec8f21d008b62d2798fab7a437 std-db-1
+# def std.db.to_json 63338c0fc3b0906ca28903f7439ddb7f517124fdb4e50f7aeff6dfd1a48f3f6b std-db-1
+# def std.db.val ccd7e84164728db3d42d6a91131284d7962a6bcac724e074111d8a7b1734a262 std-db-1
+# def std.http.bad_request 2f232103a95fa2323b42a36ac0c19cd9613f5101dc7de61dab39084c980b7593 std-http-1
+# def std.http.error f7fc298f77b7762f69620cf23b6b33669fb61d91477241e12219a2a3a089cc58 std-http-1
+# def std.http.header 986d306c03a9a57b956a7ec1b7d31ccb2b89de80c8155207c0039227f2e7623b std-http-1
+# def std.http.json 3ba7145a8e9051a91474e0c1a121a5d393c68a7d76e1325c2502d2c18ef9ac64 std-http-1
+# def std.http.json_body 7a1f3c7a3b8520f68f12827b242baa955695d66564033b5d86004c7f740bf12b std-http-1
+# def std.http.method_not_allowed 859e5ce42c74ba3ea21ad4e53c56542cd4e53cc44e2be60e2904cd5732488379 std-http-1
+# def std.http.not_found 57975733ad43cc079faa3c9cb43ea31118fb87aa0fc250d8e0094b6cef7e40e7 std-http-1
+# def std.http.query 727449cf3826bc8c03aa00bc04ea7cafd9b4ea0bd8a6429f791106dfcc36e2c9 std-http-1
+# def std.http.response ce8842a40b2a4ca4ec80d4f0bf8140981b652b29cc225bd17c4d43b860a3a174 std-http-1
+# def std.http.test_bad_request 6fe660d653f4afd661e78099bac03eb680fbd3ee45def46d981ee1fad0e597a8 std-http-1
+# def std.http.test_error 65c3d3d23b12fe7fa5ba34eb1b921660cd1a6e240d762cb2030002cd53deb8a5 std-http-1
+# def std.http.test_header e7a6c930c0d4a68fbb414544c5deeb86a6c0e3491784efd027d0e7748d7854de std-http-1
+# def std.http.test_header_none 452f77feb4aa063a4026812ad6ba026b6cd09296cbb62f9b369b5b341220d469 std-http-1
+# def std.http.test_json be244f95051fb4cd1a8e93740d35e825af91a3b0ae98cb482d24a5442692dc80 std-http-1
+# def std.http.test_json_body_400 4209596b79d2a55705f0e9ddbd0284910d1070c1c7887ea781d443f4fd1eb4e6 std-http-1
+# def std.http.test_json_body_415 6b2353446fe03d7e953e7bf5181b335da37dd4128c70991e81f540f619a64d02 std-http-1
+# def std.http.test_json_body_empty 76f460dbc51b294a676427a0a2eabd25428c03ea523838e455e3d630bed9f5f9 std-http-1
+# def std.http.test_json_body_ok 65a7688259874fdc6fd143585b2ef96f673060eabac115fda3911a3275b00666 std-http-1
+# def std.http.test_json_body_wrongtype 34678c908b24d2d389f120b7fb78fe2f6a0c6fb2add58e4b45a70166281e8f38 std-http-1
+# def std.http.test_method_not_allowed 61372da41137b838c734ec17625465cdfdbb9ae55b3c3a0b3a0390b739da9414 std-http-1
+# def std.http.test_mna_empty 6be45be87eef8657d4404cf6833fdbb02092fd768a147cb0f66a7d31ad62cb4e std-http-1
+# def std.http.test_query 1d6b546429bd64223f04fee42169d1ef80bda258e2258df21603529df0ae505b std-http-1
+# def std.http.test_response_empty f6c9bb75a08d53c4e807b5337453aa00d23e510d1f150db5ae8b87188c3be8f5 std-http-1
+# def std.http.test_text ee11cac4f6aa9a1eb11962de45569324dbbd29d091d7173b4fca317917d4a31e std-http-1
+# def std.http.test_with_header f293baa36cee0d82fd593f02d42bcc006fef582b0739cac60be271b44c020db2 std-http-1
+# def std.http.test_with_header_replace de9f1622b4a21a9f5b41a101a7fd608192ffd8f44263a2f8e1c45e1c822197d9 std-http-1
+# def std.http.text e4a61d5c3ff505e0365030851fc1a4977650d8d7d53dc8359106b61be8d33132 std-http-1
+# def std.http.with_header 1e6369cb12823ec08c058f8f73e78405a3b369518ccb84b7284b9d02f0e93941 std-http-1
+# def std.json.Error 7783c828b2cce17a27d1113e56cc306c7bf7dd4b134a26e6e138d98f8c4b6b2f std-json-1
+# def std.json.Field 273c5a8fcad6905fbe5a46c94c0b9c07cd9a9a3cc0686797b93a739d35664cfe std-json-1
+# def std.json.Json 0a7214e007bd413b9f21a18bf46004c30b484b59a57cb004d1059faf945332f1 std-json-1
+# def std.json.Parsed 27a508ad3f15297986ee3430a7a01fef4b4fb3f916aa8fffe123cf57a4687b8f std-json-1
+# def std.json.StrEnd b867bd3c26cf343e4060766f94035b1b88965ea6df8e1ece8110698e991a4ad3 std-json-1
+# def std.json.arr 1be633349e5ca6753da2bf3cab3c54400314cb87650f42e7bbf9817086ae40c2 std-json-1
+# def std.json.arr_loop 829001e7543ef15c909e8d8bb5bc40cfb5ca1610635b4e6404120af616a9e251 std-json-1
+# def std.json.as_arr 3dce34b72653821c6797d39fbbcc9b4277773697290fdccf1513d25b7cc001b0 std-json-1
+# def std.json.as_bool 00ee477387df18db1a3d1ca055411bd71cb2a4fb0126bbaf604e113ba64d17ba std-json-1
+# def std.json.as_float d0510f84eb98222226d7a25ef1e3ddbf6fc7530642eb721320e93872166a7384 std-json-1
+# def std.json.as_int 338a400db825b16e69dd5b6df8675f800c5d2cbeab0894b4a979b7a8f4a0a278 std-json-1
+# def std.json.as_obj 28a7ef684c017fb191d8bf2332cf157f6bf020cd11ebc4935b102b42f189f4fe std-json-1
+# def std.json.as_str 5e998cd70b070055bdd08d71ad34c7b3fd086db10629b5cb4dbdbc7ba08a5efa std-json-1
+# def std.json.at 112780b93c08a48c5c6c93e34afe2be0cec177f04afa2cac65bced4d65be29ff std-json-1
+# def std.json.bool 0e8e8843d8fc8559de1c0909f5614f2ddcab0b1758e392b87106d8c827f35f09 std-json-1
+# def std.json.ch 81a99941732d98fe79b90a4de81b9941fcc7a3bfec5d4197fe5ec6ad2a85e286 std-json-1
+# def std.json.dig fc2ef7b2af8fb32b6e595d05d224d97011d0808d24c17af9d7e1bf31a895d988 std-json-1
+# def std.json.epos 952549e5a8ba27cba7bf8cb23dc861c3bdf719b69537e2b3049779023269dd0d std-json-1
+# def std.json.err_at 65af1214d7b3dafa2debf9bbac2ec266cb9e285ee45cd309d87154231e5ab9e9 std-json-1
+# def std.json.esc_char e130cbcbd527d14a02ccf5cd88bf0e40dfcaebbbfba56fd5459b6f62eb0c01a5 std-json-1
+# def std.json.exp_end 2d56940b135e515d7d6ffc73049e2093e46ed40fa293c9024883143731cfaed1 std-json-1
+# def std.json.field 6724eb91fd3a6c08b0d6e6e6b116d36348b8bd0d24056b2d72bed81c19101942 std-json-1
+# def std.json.first_field 35e813a0d735f3beac2ab6b323077696bfbad04dc8f6015e3b107d576112a684 std-json-1
+# def std.json.frac_end 14f5c235b505a13e4be98399e72b1fd2d4f093efe09bbb0560c96fa34998d90b std-json-1
+# def std.json.get a06eb7847dcfc00a62020895bdbe0e40d53a87b9d8d5a0b6ab8796e601c3889d std-json-1
+# def std.json.hex4 7af44ae25803d057f65ff809b334518558f7164d3da19d70be8a2dae501bb6f9 std-json-1
+# def std.json.hexd 8bbbde1829241864cc57ea85ff738c7bd728469cee25e1988dde04d835e9842d std-json-1
+# def std.json.hexv 76dd7b0d4799a0e3888d3a2cae2a8c9da4b936325516d987793a1efdd56f7d0d std-json-1
+# def std.json.int 32a5d48817c5aff91547b22434b422f29308a14e05748e951c7fe273c73d1d4f std-json-1
+# def std.json.lit_loop 82e682d960421ed74459d359d63d8e6b8aeef272c1d059f159355c358d657541 std-json-1
+# def std.json.nest cc9c75df4f0219a9324abb9abde8667ec21260dd2b0ffefe554fd1928aab4cc1 std-json-1
+# def std.json.num_value b62d2377667ac41e708fa9d85c1d17b13cd39e1d8efcf764464a603e04253f7e std-json-1
+# def std.json.obj 5b406f7d39ac686f8d15f80e3bd4e79de7a50553663f0cb61aa549a300b006aa std-json-1
+# def std.json.obj_loop 61c17f76b74a870cc1edc78bb2093ddedf26476b30d1a04f96ecb1a5956f3ba5 std-json-1
+# def std.json.parse 3c0aaccc7eb0c53a7e0984f92f51825a92a0290eca98c24b917b5156fad8795c std-json-1
+# def std.json.parse_arr 3c5db787d460397dfa0e26efcfcf163df2d518e48ca819d2d6623115e135477b std-json-1
+# def std.json.parse_number 1ae8f86c1a5d90e3e02a9f5124615666231d198d9dec3efda1554a7a6f86277f std-json-1
+# def std.json.parse_obj 387aba1ba01531cb3f9d3ccca7e3318d12524386cf34909d4fca9234c99f9c90 std-json-1
+# def std.json.parse_value 17558ef17ce1b43bb1432985fd14595d4821c5bf459faf1f8e79bcea56767090 std-json-1
+# def std.json.print 9a5db90dc027a6f4624cac62ae382d42a5c2f7e00b75ea86e0dc06e51eafab43 std-json-1
+# def std.json.print_float 3157110f14bb7048a95967546f629e046a42cc00ec912f39fa23f4279e1a2c64 std-json-1
+# def std.json.print_str e3ef5029f9e297466e4287e5b4ee14dea4ee9db6ed67256afb082b6ee16a5099 std-json-1
+# def std.json.scan_digits 0f319a986d690a6a70114a2130bdca59eec8c4e5c1714e6a196b46ae276a5d7a std-json-1
+# def std.json.simple_esc f0d4432d8fc19939ca5aa4b3d910413f1359aab1f580aa8e98c5d656e4d81096 std-json-1
+# def std.json.skip_ws 5eb1a4330a8e014811db8c1364f8863ab240a2a27c19b8674a84ea290b1eea00 std-json-1
+# def std.json.str da8bd1ca9bb53b4bff594979bab0f1ffdea6c7ebe95299fa1610825d0c0f5992 std-json-1
+# def std.json.str_esc 787bf5ce0c865b78397aa3b5132692eb884ad42ac872c75795516116373360ec std-json-1
+# def std.json.str_loop cd7a2db9c1d741151b4a28cb7db9a8e8a40d1163c47aebb45e7ed847b00160f9 std-json-1
+# def std.json.str_uni 9b7ca8494917b9fccf0fdf9677c25830d9aff2b118b056c0ca7e71931eafcdec std-json-1
+# def std.json.sub 583099c843a1cfcb515189b45c1c7bfb0a45baa3b04aaacac1b1c159fa714888 std-json-1
+# def std.json.test_access 24a52bbeb0de6fa5a534ff3ff5f0d77250456b32e4eea67233fd3d4a9e44749f std-json-1
+# def std.json.test_accessors 584c67cf343a3403768f4dcf4c8b598a42b7f442979dacc3cbd3211cdee1c21f std-json-1
+# def std.json.test_big_array cdaf4d1b7efd24562cc282f6db02e403605f9bed78d201dd64e2820142a634ee std-json-1
+# def std.json.test_big_obj 8736911ef8f34cb4f8bf04be5da9120e329b3bb8b140371b087b623754d5a056 std-json-1
+# def std.json.test_big_string eb27cc59d8e8596caf4107b9b5f0b4718fa850e9be13e4ea4cb1b76a2d891ee9 std-json-1
+# def std.json.test_depth dfc967411997afb5da655f99c27656d37b91f0d8d83a398d15a8d9a27e3f5503 std-json-1
+# def std.json.test_dup_scopes 818a5eaa8232cc7f15ef82061966986265d16592d68aaa3c7f4f8be3a652f219 std-json-1
+# def std.json.test_overflow 9c0b8ac34a6a8758e00c4da21326c745baff9e9591262a01fc88667ef925a868 std-json-1
+# def std.json.test_parse_duplicate_key 9310b0c06cdf6346f31e56aea7654905126489f50a9c1ce543a40841ea957d14 std-json-1
+# def std.json.test_parse_errors 8ceaec641885785b76af4d8d84d5941c7d029df1e5cb2b64ea5684df4a684f14 std-json-1
+# def std.json.test_parse_escapes 741507d067ddc54300a3a781814c306b9631e830aafc5a12f5f4b3d06f245c66 std-json-1
+# def std.json.test_parse_int_vs_float 339c0f25d12c2063345015b1eac1b68a2d22ef123fdbbc81631ab65994723c4a std-json-1
+# def std.json.test_parse_lone_surrogate 43574e38a9b5534ed24b5161cc37469c0e8588437167634a8ebd5fe53fd43ebc std-json-1
+# def std.json.test_parse_obj ea00c4ee8c07647c6d2ae75a383bba6abf6d51df23c1b93ad185ef9284a931a2 std-json-1
+# def std.json.test_parse_scalars 97f74aafde735a853983a61cff15a8ea3a97514facd58337a4f5344e448b446d std-json-1
+# def std.json.test_pos_basic 7d1765594e60e94b16c5ce502994c7a2d9603519eed435b906e7f2e1c9fad87b std-json-1
+# def std.json.test_pos_numbers e5dd008f64165bb4ba2e7a3ebd741c019f1d207a1032401de15a75f5f24b4757 std-json-1
+# def std.json.test_pos_strings f79d869cde088b713372d5c126d87d338d1bb929929f383084f6f105847fda1d std-json-1
+# def std.json.test_print 91ac5f9c6f5667df21f64623ab952ee6921d9abe5e5124e62faa29668f5342cd std-json-1
+# def std.json.test_print_float 7d1521503507ca0cff7ad75d3d0b33552d21ae0a6febd9ab3ceb2889ca7be2f5 std-json-1
+# def std.json.test_print_inf 3182426118cfe3a8b01ed9dbbf466a370a2bdeab40fb37cd59f116b1645017ee std-json-1
+# def std.json.test_print_nan 997250365929e08e7a9572ac895ab38881ef568fb4dee6068a684b228bc8af00 std-json-1
+# def std.json.test_print_str 0e2afa9f1ae4db21e091e52992caa7f1670d2cbe094e512749414a2e2489f4d7 std-json-1
+# def std.json.test_roundtrip 7234c327bb604b194aad038c11bea20b7bbb8aee3c2bcfd404ceb20bc1920fa1 std-json-1
+# def std.json.test_roundtrip2 5e03ccb8cabb0738b9a05ff13da7ba7cfa3e3d9ac16b82d503826d2ed80646ae std-json-1
+# def std.json.test_strings 27fbd77a8d0a2c311195b8798db724aa9713d2dd631cef5840ba9f1384248999 std-json-1
+# def std.json.test_ws eb79bf403715741d5069a32538be534b04e05318738caa1abf54f10cb2127174 std-json-1
+# def std.route.Result d11e6cc6c8515e35a8751a6fcab87f6d125f018b84c45fb722b059ff29da6a02 std-route-1
+# def std.route.Route 0a4952d716186a1287e22ae1ac0aa5df5d77696d869b5cb1a2760cb82a80101a std-route-1
+# def std.route.all_ok 0a792e2563e07a46a9175047c11363214a35858989cfce66d97f0049dde8fa29 std-route-1
+# def std.route.big_path c1adfaabad34fb6d9f18b3d517d3d95b750bebf8b3033d01214e63b5fbb7f6d4 std-route-1
+# def std.route.big_routes 00b79f00059d443192d0ae5e704d005b8451dc3047b2b7ac2b7b4c5a8225eb69 std-route-1
+# def std.route.dedupe 9db6d57ab48095f6664171eb14dd07faa5b672122c764dabf197487fca55348c std-route-1
+# def std.route.find 4eba0a99113531ff96b9c5ffece6285ba1ff251b9fe0197ac5e51cb6383e3bed std-route-1
+# def std.route.fits 8ed58006ddc50eacd5146d1725c87b393e2b18931e06e54955355abae5760d52 std-route-1
+# def std.route.is_rest b566bb0188bae5fc531e84af26b7ed3887c3b70baf28e16834d849aa8531e98e std-route-1
+# def std.route.is_some_str 08d045d8587dda90dd7ae8c251bc1cd10da735d30c950798935a07543f73fb2d std-route-1
+# def std.route.matches 785c43c527b25f0b37242939572b0905a6747d7b890e3bea23923930829cc155 std-route-1
+# def std.route.opt_str af1417e3fac3527a75a144b0691b93c1cafd85dcac64612fe35e14e5afd70c34 std-route-1
+# def std.route.param 7dff5e8b88a5e7c72d8068a8d424d01958028d1d220b471b1b16ca7698bbbd61 std-route-1
+# def std.route.params c54611ee56ee8d3676f4b7c7f862571bc5a6cd571159e34b50c93caa928f11c7 std-route-1
+# def std.route.route fa4552e7df7a4f3badf29537280ad24ddee295810144c04dcc64854c54951e02 std-route-1
+# def std.route.seg 81a99941732d98fe79b90a4de81b9941fcc7a3bfec5d4197fe5ec6ad2a85e286 std-route-1
+# def std.route.test_405 87accc59dace812c1721f4e1d34f9a71663f06a0ad64122cbf166a94f9821a0b std-route-1
+# def std.route.test_big_405 617877d101e466507357b58bcd96fd2b770225bd6355b1143e855f863a9dc8cf std-route-1
+# def std.route.test_big_get b0ec5e1806b8fb8dc841f65ae5015cea9c5a326c8e4990c5b142682dda4c5758 std-route-1
+# def std.route.test_big_last 10a738b8fef17949e50d61203e68ea631102c8df2f6131a39308f33384a37ad8 std-route-1
+# def std.route.test_big_nf 9f655a01400ae4a0e314eceb1607f559d265a331e66b81e14967f11095731bbd std-route-1
+# def std.route.test_case 4597b427bb818d18079e7995924c09d696e90b1e8d97b9aff3da79696df7bbf5 std-route-1
+# def std.route.test_empty_param 24fdde72ede06a98551cd580b1c6d2eefc9f4dfc2746039fe25aae18fabe669e std-route-1
+# def std.route.test_first_wins 2b13949d0337731987c78691ad1ce3c3c0ce1ee0c7afe55abfd7d1476191ff44 std-route-1
+# def std.route.test_head 416ed948a92d9748bf1e714c894b402b0ef54554eec46396cd7a54c2bea86fcf std-route-1
+# def std.route.test_head_405 33c54898838a02c52f6018d65f420a2bab9a46b43f975420a191b2ae836f7571 std-route-1
+# def std.route.test_literal ce1ae4d205ce318f2cb29fa28910d127cb6e626ab0e4a8747206d8b320f8022d std-route-1
+# def std.route.test_mix 9fe77b853d40e1876e125be38202c09a146abdb4450903e4b91542ddfbfed760 std-route-1
+# def std.route.test_not_found f18f651afedb32cc41a1eb4ebb1fad262e60c850564bf8bfe575cf02ee35cdb0 std-route-1
+# def std.route.test_param 257bd896c9be076095479e37ceb4d4c67a78d89452425ff74d8afa8bbc0fc77e std-route-1
+# def std.route.test_param_lookup 7a3cbccbce8ea8f0a0f9a5de957a44bf8c80ff7b39d285d7acb91b4ced8d6800 std-route-1
+# def std.route.test_rest 8433be21d283cac4345870a3861cd57588bdad840c92659fae9bc75bfd99683f std-route-1
+# def std.route.test_rest_empty 8c032bfe134529e6c1481e5b8cc5a38371f1b0bf38dbc0d1a398acff4e5434dd std-route-1
+# def std.route.test_rest_enc b45f36fcc6ad8cbad19dfc0d861cd01e0b0b2c36d8aebd5e0a1f41e327237af7 std-route-1
+# def std.route.test_rest_none aaeb311a0d6bcf02152a9382e9e03be6d144219b9ad39830c670597bddf8e3c2 std-route-1
+# def std.route.test_rest_notlast 2f8c535181814f68792801ff0beb822fd83c9609f564849d8df7141615218891 std-route-1
+# def std.route.test_undecodable 391e1cbd149db7418e96bf6e1620b9f84bb6c36e20ab0f073659bf3d666b8eb6 std-route-1
+# def std.route.test_utf8 a426d0cfb7f9c5dfe9398f219cd6d81daabe89f8e80f6d6a3277304d9bc4e1f5 std-route-1
+# def std.str.Pair d0ba22219014699336f8e54af16c48178e31db3988842661eceab90a0ed32d8f std-str-1
+# def std.str.char_at 81a99941732d98fe79b90a4de81b9941fcc7a3bfec5d4197fe5ec6ad2a85e286 std-str-1
+# def std.str.end_ns b9bb533b43da6eb3ad4105e45b0c605a6593fb506ae580033fb46873e46ee0dc std-str-1
+# def std.str.ends_with 23662e51058f04db7c5cf05399d0c2a5f25801f317cd7e36d1c356d90e97baf7 std-str-1
+# def std.str.eq_ignore_case 4c068908729799c74191797ab8f6a2d7f4e9e973551e882db54a125ed16ef014 std-str-1
+# def std.str.first_ns 1fd0ed81266ec1f8a61fff131b1f53d39356dd5ebb337dbad5e0bc0a82f0be1c std-str-1
+# def std.str.is_alpha 73e3a17b7b5d817627991aca9ba2da9354054eedfa5bcca33fb5095f768c7c99 std-str-1
+# def std.str.is_digit 192c4ab2290e247a311f02409a0deb4a17be9a679aba12931bd3bbcf10f0ab94 std-str-1
+# def std.str.is_space 6a5d7605c796a04591e54527522373b2b4de677e4b622cdfc96aaef2db5c1a42 std-str-1
+# def std.str.lines 3e2bf9b5409aa3a336f530ad0d6c0bf2c7a784467e551588c7512d058b9aadb5 std-str-1
+# def std.str.pad_left 97eccc5d2136c66165604589b01582aed87938f58b5393bffd690603f159ba6b std-str-1
+# def std.str.pad_right 4e65859d6a879a99dd383175096506045e8902f9bcc8c817ebd6403be2c8172c std-str-1
+# def std.str.padding 2f7e0496bfe0ae860409c85aa29bb25c3cd580ca166d863c1baf062e38ce1bdb std-str-1
+# def std.str.repeat 12939280441a3342df8aaa7a9312c825b9b6fdf26bad7b33b8f1d85441997796 std-str-1
+# def std.str.split_once 31f178fd61fe70a59542afafb50967edce09c3b9c52e0b830bec7440b2b32884 std-str-1
+# def std.str.strip_cr 82f516b2274b3d539e9b0232f2e452f6697770fec809dcf4fa9f109316684d84 std-str-1
+# def std.str.test_big 5ae0dfd5a28946f36757329ca28a856cd6288e4cbd246e513efce445a664ca20 std-str-1
+# def std.str.test_big_repeat b1eadb2be3f1e1c9e14bb0845cb9295fd607ac1ca7afbd26c8fdf08b3652f2e9 std-str-1
+# def std.str.test_class_edge f27f3d92018269cc0199389162518c4b3c8bf25a36ab7f87df14fa067b5ad947 std-str-1
+# def std.str.test_classes 877a4ee395a5e26d89733eda29053946e203de7656626bfd129294983718960d std-str-1
+# def std.str.test_ends_edge e570b95ef7eb3ba74e22f02807324cb2ab763645a6c3444e8bf70311e09618d4 std-str-1
+# def std.str.test_ends_with 114c2c49581ff25429b6ef3e780f20991575cba94eedc6ba31eb9be45983a8d7 std-str-1
+# def std.str.test_eq_ignore_case 7d5d9e0531de94eb983b82438fb54567c516d7cb81feda6b49fa57dca2e9d788 std-str-1
+# def std.str.test_lines bd3533c871b93f08896da94f20dd18e898b0ee84747cb6edfe4c07bb99b2e068 std-str-1
+# def std.str.test_lines_bare_cr e53b37182bae4c465d79f89f950909dd590fb82a4f65c14b34cbf57a76ba6083 std-str-1
+# def std.str.test_lines_edge b0dc44aa9d4d785f29e37a733fc319a1966c0927b193cc8dc0c0da26edc65760 std-str-1
+# def std.str.test_pad 6fcef0317affce89cc674afd8c7f8ebafa093679a51787873d33a81720e73a0e std-str-1
+# def std.str.test_pad_edge 512691adc789cbf53a01ccc7296366c212351e9279d41fe4b567d2f373e69298 std-str-1
+# def std.str.test_repeat 7b0cc86f6f27a9446d9b2981d1d45a384256dfbc0938b47f4f728522ba2b5d9d std-str-1
+# def std.str.test_split_edge a39923824f4624b6ca6d205e88f0dff8926ffd6f9b151e40475fdd095d9507d9 std-str-1
+# def std.str.test_split_once 4b9b529c8690b7c910237f720102e3238ac53aafe4ff3b87c6c7386793cf38ae std-str-1
+# def std.str.test_trim_edge 345fbc628f092f970afef9921d17d3fb1630534a0293d2285d43f42a3c2070f0 std-str-1
+# def std.str.test_trim_sides 555e0357123974bf929e3734ad89792fcf6cc1cc25d913e48629517d0ec83402 std-str-1
+# def std.str.trim_end 87ca1c729207b4ad10dc4d61815130a5affa3f3d710320f9869618b104523a2b std-str-1
+# def std.str.trim_start 451054ebad0708062c256d66805ffabe6330e70a38077c22d1fea900dd4c80db std-str-1
+# def std.url.Param 7e25026b565c5e9d6dbf68c8977a151a0d4f406a354608dbfbd37e3b3194cb07 std-url-1
+# def std.url.at 5cb7ef6402a43d3fbe7787f63d1ee7644579d142dc8c458a6d224949565c36d1 std-url-1
+# def std.url.bad_at b97446de34255809e7ae82fa62369bd4378a0515f1286e1aa733340fc0e31905 std-url-1
+# def std.url.consumed 41f9dee2fe4113e165a0f3b271b2f57b0440df1761c52cd7543f305a6e807280 std-url-1
+# def std.url.decode 693a55757a40effbb3cb7dd97d1352a8d6891bebf4cd0fed3278831ef924f08a std-url-1
+# def std.url.decode_form 694bc38da7a1fe7e3d9024df9a297414605afba981037a61af1ef5101cf0b376 std-url-1
+# def std.url.decode_impl b99ae15c388d76ce33e8dbe6d10da07c1adb85a3dff0b9cf74e42f2e76a13854 std-url-1
+# def std.url.encode f2f47a89c11527bb538d37e4955edcf69260e2a1d410caddaced2397525fff69 std-url-1
+# def std.url.hex_digit 486c2c0c988f52a7b3d7a4a299db0963b22e49fbb45866942bd62f0ed8b98a89 std-url-1
+# def std.url.hex_value b6afc230e8ab0ce5044b7b87a60fdd443ba3001ad1db8988574ec6c9d32b5446 std-url-1
+# def std.url.is_some 4abcfbf61601795914875cbad7ff0e7649e6501a014b5d46837951f662e9888d std-url-1
+# def std.url.param b0be1d74e382cf24efa54cba3ff106f017a13404d75aee1c8f1680907dfb6a39 std-url-1
+# def std.url.parse_piece 50a65989a704e1c9ae4006da28478198ad6574e7569a8f97d003a417f9937c5a std-url-1
+# def std.url.parse_query 0fbbcf47480161a2802c04dd2c668a4cc7ca11b81d9f211c1b06f012f9988db7 std-url-1
+# def std.url.test_decode 1996584db29eda3029b259154aa8596226c2bf04c166ee4de068b315031c5c58 std-url-1
+# def std.url.test_decode_form 6e6c55579c5185c28b4e4faa7d217c780401095e14c7685990bd39ab72a43006 std-url-1
+# def std.url.test_decode_invalid ace0ff5de09ba4f8dc7f8b213f50931a541f7aaa2957c3087ae4004b87f84f3b std-url-1
+# def std.url.test_edges ce481cb6059a873bafa334609f1f662dda724d674c225e3959397658be4e0148 std-url-1
+# def std.url.test_edges2 2bc7c925714ad6a0b768af85312cd66cd00443a4399a1307c9b6d2ad22b90fed std-url-1
+# def std.url.test_edges3 0e75ab0192477de98a75a1a8b1aeefe75812eaa3f9b5fe383be2fd9ae0ca4452 std-url-1
+# def std.url.test_edges4 5c50566d97aebe357ba45e8e0e1269f4ff1938d0273a5c65e97cf44b102813d1 std-url-1
+# def std.url.test_encode 0e1696f53083884e92feeeafa9c9b6b4546052c6d371df10d0076dbed121a650 std-url-1
+# def std.url.test_param 99d46e34151b27680dd5adc52686a70ba71b944c9554a58296b31bd24a88761e std-url-1
+# def std.url.test_parse_query 1f4e6d6162e76b6fb67a47e8a6043909173d4cc0e0ed0a4a7cf2c5f1ca159ac4 std-url-1
+# def std.url.test_parse_query_edges 3b97856249720fd8e5abe4cd6e5207fbb5d1b08bf45e8c624eae5812c7d3812c std-url-1
+# def std.url.test_roundtrip 848e50b945378b41cde356e4ed12c4f2b02e89fca43d9bf0aa04d6ee6566afa9 std-url-1
+# def std.url.unreserved d8441339b2e344bae72d77e6a7d2c68b950e2476296421de8a12591ca926cc9b std-url-1
+
+fn std.db.col(rows: DbRows, name: Str) -> Option[Int]
+= fold(range(0, len(rows.columns)), None, fn(acc: Option[Int], i: Int) => match acc { Some(_) => acc, None => if get(rows.columns, i) == Some(name) then Some(i) else None })
+
+fn std.db.first(rows: DbRows) -> Option[List[SqlValue]]
+= get(rows.rows, 0)
+
+fn std.db.val(row: List[SqlValue], i: Int) -> Option[SqlValue]
+= if i < 0 then None else get(row, i)
+
+fn std.http.response(status: Int, ctype: Str, body: Str) -> HttpResponse
+= HttpResponse { status: status, headers: [HttpHeader { name: "content-type", value: ctype }], body: body }
+
+type std.json.Error = { pos: Int, message: Str }
+
+type std.json.StrEnd = { text: Str, next: Int }
+
+fn std.json.ch(cs: List[Str], i: Int) -> Str
+= match get(cs, i) { Some(c) => c, None => "" }
+
+fn std.json.dig(c: Str) -> Bool
+= c != "" && c >= "0" && c <= "9"
+
+fn std.json.hexd(n: Int) -> Str
+= if n < 10 then from_char_code(48 + n) else from_char_code(87 + n)
+
+fn std.json.hexv(c: Str) -> Int
+= if c == "" then -1 else let k = char_code(c) in if k >= 48 && k <= 57 then k - 48 else if k >= 97 && k <= 102 then k - 87 else if k >= 65 && k <= 70 then k - 55 else -1
+
+fn std.json.nest(n: Int, open: Str, close: Str) -> Str
+= join(map(range(0, n), fn(i) => open), "") ++ join(map(range(0, n), fn(i) => close), "")
+
+fn std.json.simple_esc(e: Str) -> Str
+= if e == "\"" then "\"" else if e == "\\" then "\\" else if e == "/" then "/" else if e == "b" then from_char_code(8) else if e == "f" then from_char_code(12) else if e == "n" then "\n" else if e == "r" then "\r" else if e == "t" then "\t" else ""
+
+type std.route.Route[A] = { method: Str, pattern: Str, tag: A }
+
+fn std.route.big_path() -> Str
+= "/big/" ++ join(map(range(0, 5000), fn(i) => "s" ++ from_int(i)), "/")
+
+fn std.route.fits(m: Str, method: Str) -> Bool
+= m == method || method == "HEAD" && m == "GET"
+
+fn std.route.is_some_str(o: Option[Str]) -> Bool
+= match o { Some(_) => true, None => false }
+
+fn std.route.opt_str(o: Option[Str]) -> Str
+= match o { Some(s) => s, None => "" }
+
+fn std.route.seg(xs: List[Str], i: Int) -> Str
+= match get(xs, i) { Some(s) => s, None => "" }
+
+type std.str.Pair = { left: Str, right: Str }
+
+fn std.str.char_at(xs: List[Str], i: Int) -> Str
+= match get(xs, i) { Some(c) => c, None => "" }
+
+fn std.str.ends_with(s: Str, suf: Str) -> Bool
+= let ls = len(s) in let lf = len(suf) in if lf > ls then false else slice(s, ls - lf, ls) == suf
+
+fn std.str.eq_ignore_case(a: Str, b: Str) -> Bool
+= to_lower(a) == to_lower(b)
+
+fn std.str.is_alpha(c: Str) -> Bool
+= len(c) == 1 && (c >= "a" && c <= "z" || c >= "A" && c <= "Z")
+
+fn std.str.is_digit(c: Str) -> Bool
+= len(c) == 1 && c >= "0" && c <= "9"
+
+fn std.str.is_space(c: Str) -> Bool
+= c == " " || c == "\t" || c == "\n" || c == "\r"
+
+fn std.str.repeat(s: Str, n: Int) -> Str
+  req n >= 0
+= join(map(range(0, n), fn(i) => s), "")
+
+fn std.str.strip_cr(p: Str) -> Str
+= let n = len(p) in if n > 0 && slice(p, n - 1, n) == "\r" then slice(p, 0, n - 1) else p
+
+type std.url.Param = { name: Str, value: Str }
+
+fn std.url.at(bs: List[Int], i: Int) -> Int
+= match get(bs, i) { Some(v) => v, None => -1 }
+
+fn std.url.hex_digit(d: Int) -> Str
+= if d < 10 then from_char_code(48 + d) else from_char_code(55 + d)
+
+fn std.url.hex_value(c: Int) -> Int
+= if c >= 48 && c <= 57 then c - 48 else if c >= 97 && c <= 102 then c - 87 else if c >= 65 && c <= 70 then c - 55 else -1
+
+fn std.url.unreserved(b: Int) -> Bool
+= b >= 65 && b <= 90 || b >= 97 && b <= 122 || b >= 48 && b <= 57 || b == 45 || b == 46 || b == 95 || b == 126
+
+fn std.db.bool(row: List[SqlValue], i: Int) -> Option[Bool]
+= match std.db.val(row, i) { Some(SqlInt(0)) => Some(false), Some(SqlInt(1)) => Some(true), _ => None }
+
+fn std.db.float(row: List[SqlValue], i: Int) -> Option[Float]
+= match std.db.val(row, i) { Some(SqlFloat(x)) => Some(x), Some(SqlInt(n)) => Some(int_to_float(n)), _ => None }
+
+fn std.db.int(row: List[SqlValue], i: Int) -> Option[Int]
+= match std.db.val(row, i) { Some(SqlInt(n)) => Some(n), _ => None }
+
+fn std.db.is_null(row: List[SqlValue], i: Int) -> Bool
+= match std.db.val(row, i) { Some(SqlNull) => true, _ => false }
+
+test std.db.test_col = std.db.col(DbRows { columns: ["id", "title"], rows: [] }, "title") == Some(1) && std.db.col(DbRows { columns: ["id"], rows: [] }, "ID") == None
+
+test std.db.test_first = std.db.first(DbRows { columns: ["a"], rows: [[SqlInt(1)], [SqlInt(2)]] }) == Some([SqlInt(1)]) && std.db.first(DbRows { columns: ["a"], rows: [] }) == None
+
+fn std.db.text(row: List[SqlValue], i: Int) -> Option[Str]
+= match std.db.val(row, i) { Some(SqlText(s)) => Some(s), _ => None }
+
+fn std.http.header(rq: HttpRequest, name: Str) -> Option[Str]
+= match get(filter(rq.headers, fn(h) => std.str.eq_ignore_case(h.name, name)), 0) { Some(h) => Some(h.value), None => None }
+
+test std.http.test_response_empty = std.http.response(204, "", "").headers == [HttpHeader { name: "content-type", value: "" }]
+
+fn std.http.text(status: Int, body: Str) -> HttpResponse
+= std.http.response(status, "text/plain; charset=utf-8", body)
+
+fn std.http.with_header(resp: HttpResponse, name: Str, value: Str) -> HttpResponse
+= HttpResponse { status: resp.status, headers: concat(filter(resp.headers, fn(h) => !std.str.eq_ignore_case(h.name, name)), [HttpHeader { name: to_lower(name), value: value }]), body: resp.body }
+
+fn std.json.err_at(p: Int, m: Str) -> std.json.Error
+= std.json.Error { pos: p, message: m }
+
+fn std.json.esc_char(c: Str) -> Str
+= if c == "\"" then "\\\"" else if c == "\\" then "\\\\" else let k = char_code(c) in if k >= 32 then c else if k == 10 then "\\n" else if k == 13 then "\\r" else if k == 9 then "\\t" else if k == 8 then "\\b" else if k == 12 then "\\f" else "\\u00" ++ std.json.hexd(k / 16) ++ std.json.hexd(k % 16)
+
+fn std.json.hex4(cs: List[Str], j: Int) -> Result[Int, Int]
+= let a = std.json.hexv(std.json.ch(cs, j)) in let b = std.json.hexv(std.json.ch(cs, j + 1)) in let c = std.json.hexv(std.json.ch(cs, j + 2)) in let d = std.json.hexv(std.json.ch(cs, j + 3)) in if a < 0 then Err(j) else if b < 0 then Err(j + 1) else if c < 0 then Err(j + 2) else if d < 0 then Err(j + 3) else Ok(a * 4096 + b * 256 + c * 16 + d)
+
+fn std.json.print_float(x: Float) -> Str
+= let t = from_float(x) in if contains(t, "inf") || contains(t, "NaN") then "null" else if len(filter(chars(t), fn(c) => !(std.json.dig(c) || c == "-"))) == 0 then t ++ ".0" else t
+
+fn std.json.scan_digits(cs: List[Str], j: Int) -> Int
+= if std.json.dig(std.json.ch(cs, j)) then std.json.scan_digits(cs, j + 1) else j
+
+fn std.json.skip_ws(cs: List[Str], i: Int) -> Int
+= let c = std.json.ch(cs, i) in if c == " " || c == "\t" || c == "\n" || c == "\r" then std.json.skip_ws(cs, i + 1) else i
+
+fn std.json.sub(cs: List[Str], a: Int, b: Int) -> Str
+= join(map(range(a, b), fn(k) => std.json.ch(cs, k)), "")
+
+type std.route.Result[A] = std.route.Matched(A, List[std.url.Param]) | std.route.NotFound | std.route.MethodNotAllowed(List[Str])
+
+fn std.route.all_ok(ps: List[Str], ds: List[Str], i: Int, n: Int) -> Bool
+= if i >= n then true else let p = std.route.seg(ps, i) in if starts_with(p, ":") || p == std.route.seg(ds, i) then std.route.all_ok(ps, ds, i + 1, n) else false
+
+fn std.route.big_routes() -> List[std.route.Route[Int]]
+= concat(map(range(0, 9000), fn(i) => std.route.Route { method: "GET", pattern: "/r" ++ from_int(i) ++ "/:id", tag: i }), [std.route.Route { method: "GET", pattern: "/big/*rest", tag: -1 }])
+
+fn std.route.dedupe(xs: List[Str]) -> List[Str]
+= map(filter(range(0, len(xs)), fn(i) => i == 0 || get(xs, i) != get(xs, i - 1)), fn(i) => std.route.seg(xs, i))
+
+fn std.route.is_rest(ps: List[Str]) -> Bool
+= let n = len(ps) in if n == 0 then false else starts_with(std.route.seg(ps, n - 1), "*")
+
+fn std.str.end_ns(xs: List[Str], i: Int) -> Int
+= if i <= 0 then 0 else match get(xs, i - 1) { Some(c) => if std.str.is_space(c) then std.str.end_ns(xs, i - 1) else i, None => 0 }
+
+fn std.str.first_ns(xs: List[Str], i: Int, n: Int) -> Int
+= if i >= n then n else match get(xs, i) { Some(c) => if std.str.is_space(c) then std.str.first_ns(xs, i + 1, n) else i, None => n }
+
+fn std.str.lines(s: Str) -> List[Str]
+= if s == "" then [] else let parts = split(s, "\n") in let n = len(parts) in let term = std.str.char_at(parts, n - 1) == "" in let cnt = if term then n - 1 else n in map(range(0, cnt), fn(i) => if i < n - 1 then std.str.strip_cr(std.str.char_at(parts, i)) else std.str.char_at(parts, i))
+
+fn std.str.padding(width: Int, fill: Str, have: Int) -> Str
+= let fc = chars(fill) in let k = len(fc) in if have >= width || k == 0 then "" else join(map(range(0, width - have), fn(i) => std.str.char_at(fc, i % k)), "")
+
+fn std.str.split_once(s: Str, sep: Str) -> Option[std.str.Pair]
+= match index_of(s, sep) { Some(i) => Some(std.str.Pair { left: slice(s, 0, i), right: slice(s, i + len(sep), len(s)) }), None => None }
+
+test std.str.test_big_repeat = len(std.str.repeat("ab", 50000)) == 100000
+
+test std.str.test_class_edge = !std.str.is_digit("") && !std.str.is_digit("12") && !std.str.is_digit("٣") && !std.str.is_alpha("ab") && !std.str.is_alpha("") && std.str.is_alpha("z") && !std.str.is_space(" ") && !std.str.is_space("  ") && !std.str.eq_ignore_case("É", "é")
+
+test std.str.test_classes = std.str.is_digit("7") && !std.str.is_digit("x") && std.str.is_alpha("Q") && !std.str.is_alpha("é") && std.str.is_space("\t") && !std.str.is_space("")
+
+test std.str.test_ends_edge = std.str.ends_with("", "") && std.str.ends_with("héllo", "llo") && !std.str.ends_with("a", "😀")
+
+test std.str.test_ends_with = std.str.ends_with("abc", "bc") && std.str.ends_with("abc", "") && !std.str.ends_with("bc", "abc")
+
+test std.str.test_eq_ignore_case = std.str.eq_ignore_case("Content-Type", "content-TYPE") && !std.str.eq_ignore_case("a", "b")
+
+test std.str.test_repeat = std.str.repeat("ab", 3) == "ababab" && std.str.repeat("x", 0) == ""
+
+fn std.url.bad_at(bs: List[Int], i: Int) -> Bool
+= std.url.at(bs, i) == 37 && (std.url.hex_value(std.url.at(bs, i + 1)) < 0 || std.url.hex_value(std.url.at(bs, i + 2)) < 0)
+
+fn std.url.consumed(bs: List[Int], i: Int) -> Bool
+= std.url.at(bs, i - 1) == 37 || std.url.at(bs, i - 2) == 37
+
+fn std.url.encode(s: Str) -> Str
+= join(map(bytes_to_list(to_bytes(s)), fn(b) => if std.url.unreserved(b) then from_char_code(b) else "%" ++ std.url.hex_digit(b / 16) ++ std.url.hex_digit(b % 16)), "")
+
+fn std.url.is_some(o: Option[std.url.Param]) -> Bool
+= match o { Some(_) => true, None => false }
+
+fn std.url.param(ps: List[std.url.Param], name: Str) -> Option[Str]
+= match filter(ps, fn(p) => p.name == name) { xs => match get(xs, 0) { Some(p) => Some(p.value), None => None } }
+
+test std.db.test_bool = std.db.bool([SqlInt(0), SqlInt(1), SqlInt(2)], 0) == Some(false) && std.db.bool([SqlInt(0), SqlInt(1), SqlInt(2)], 1) == Some(true) && std.db.bool([SqlInt(0), SqlInt(1), SqlInt(2)], 2) == None
+
+test std.db.test_edges = std.db.int([SqlInt(5)], -1) == None && !std.db.is_null([SqlNull], -1) && std.db.bool([SqlText("1"), SqlFloat(1.0), SqlNull], 0) == None && std.db.bool([SqlText("1"), SqlFloat(1.0), SqlNull], 1) == None && std.db.bool([SqlNull], 0) == None && std.db.int([SqlFloat(1.0), SqlText("1")], 0) == None && std.db.int([SqlFloat(1.0), SqlText("1")], 1) == None && std.db.col(DbRows { columns: ["a", "a"], rows: [] }, "a") == Some(0)
+
+test std.db.test_float = std.db.float([SqlFloat(1.5), SqlInt(2), SqlNull], 0) == Some(1.5) && std.db.float([SqlFloat(1.5), SqlInt(2), SqlNull], 1) == Some(2.0) && std.db.float([SqlFloat(1.5), SqlInt(2), SqlNull], 2) == None
+
+test std.db.test_int_text = std.db.int([SqlInt(5), SqlText("a")], 0) == Some(5) && std.db.int([SqlInt(5), SqlText("a")], 1) == None && std.db.text([SqlInt(5), SqlText("a")], 1) == Some("a") && std.db.text([SqlInt(5)], 3) == None
+
+test std.db.test_null = std.db.is_null([SqlNull, SqlInt(0)], 0) && !std.db.is_null([SqlNull, SqlInt(0)], 1) && !std.db.is_null([SqlNull], 5)
+
+test std.http.test_header = std.http.header(HttpRequest { method: "GET", path: "/", query: "", headers: [HttpHeader { name: "X-Id", value: "1" }, HttpHeader { name: "x-id", value: "2" }], body: "" }, "x-ID") == Some("1")
+
+test std.http.test_header_none = std.http.header(HttpRequest { method: "GET", path: "/", query: "", headers: [], body: "" }, "a") == None
+
+test std.http.test_text = std.http.text(200, "hi") == HttpResponse { status: 200, headers: [HttpHeader { name: "content-type", value: "text/plain; charset=utf-8" }], body: "hi" }
+
+test std.http.test_with_header = std.http.with_header(std.http.text(200, "x"), "X-A", "1").headers == [HttpHeader { name: "content-type", value: "text/plain; charset=utf-8" }, HttpHeader { name: "x-a", value: "1" }]
+
+test std.http.test_with_header_replace = std.http.with_header(std.http.text(200, "x"), "Content-Type", "text/html").headers == [HttpHeader { name: "content-type", value: "text/html" }]
+
+fn std.json.exp_end(cs: List[Str], j: Int) -> Result[Int, std.json.Error]
+= let c = std.json.ch(cs, j) in if c == "e" || c == "E" then let s = std.json.ch(cs, j + 1) in let k = if s == "+" || s == "-" then j + 2 else j + 1 in if std.json.dig(std.json.ch(cs, k)) then Ok(std.json.scan_digits(cs, k)) else Err(std.json.err_at(k, "expected exponent digit")) else Ok(j)
+
+fn std.json.frac_end(cs: List[Str], j: Int) -> Result[Int, std.json.Error]
+= if std.json.ch(cs, j) == "." then if std.json.dig(std.json.ch(cs, j + 1)) then Ok(std.json.scan_digits(cs, j + 1)) else Err(std.json.err_at(j + 1, "expected digit after '.'")) else Ok(j)
+
+fn std.json.print_str(s: Str) -> Str
+= "\"" ++ join(map(chars(s), fn(c) => std.json.esc_char(c)), "") ++ "\""
+
+fn std.route.matches(pattern: Str, ds: List[Str]) -> Bool
+= let ps = split(pattern, "/") in let np = len(ps) in let nd = len(ds) in if std.route.is_rest(ps) then if nd >= np then std.route.all_ok(ps, ds, 0, np - 1) else false else if nd == np then std.route.all_ok(ps, ds, 0, np) else false
+
+fn std.route.param(ps: List[std.url.Param], name: Str) -> Option[Str]
+= std.url.param(ps, name)
+
+fn std.route.params(pattern: Str, ds: List[Str]) -> List[std.url.Param]
+= let ps = split(pattern, "/") in let np = len(ps) in let rest = std.route.is_rest(ps) in let one = fn(i: Int) => let p = std.route.seg(ps, i) in if rest && i == np - 1 then Some(std.url.Param { name: slice(p, 1, len(p)), value: join(map(range(np - 1, len(ds)), fn(j) => std.route.seg(ds, j)), "/") }) else if starts_with(p, ":") then Some(std.url.Param { name: slice(p, 1, len(p)), value: std.route.seg(ds, i) }) else None in map(filter(map(range(0, np), one), fn(o) => match o { Some(_) => true, None => false }), fn(o) => match o { Some(p) => p, None => std.url.Param { name: "", value: "" } })
+
+fn std.str.pad_left(s: Str, width: Int, fill: Str) -> Str
+= std.str.padding(width, fill, len(s)) ++ s
+
+fn std.str.pad_right(s: Str, width: Int, fill: Str) -> Str
+= s ++ std.str.padding(width, fill, len(s))
+
+test std.str.test_lines = std.str.lines("a\r\nb\nc\n") == ["a", "b", "c"] && std.str.lines("") == []
+
+test std.str.test_lines_bare_cr = std.str.lines("a\rb\n\n") == ["a\rb", ""]
+
+test std.str.test_lines_edge = std.str.lines("\n") == [""] && std.str.lines("\n\n") == ["", ""] && std.str.lines("\r\n") == [""] && std.str.lines("a\r\r\nb") == ["a\r", "b"] && std.str.lines("a\rb") == ["a\rb"] && std.str.lines("a\r") == ["a\r"] && std.str.lines("a\n\nb") == ["a", "", "b"]
+
+test std.str.test_split_edge = std.str.split_once("abc", "") == Some(std.str.Pair { left: "", right: "abc" }) && std.str.split_once("", "=") == None && std.str.split_once("a--b", "--") == Some(std.str.Pair { left: "a", right: "b" })
+
+test std.str.test_split_once = std.str.split_once("a=b=c", "=") == Some(std.str.Pair { left: "a", right: "b=c" }) && std.str.split_once("abc", "=") == None
+
+fn std.str.trim_end(s: Str) -> Str
+= let xs = chars(s) in slice(s, 0, std.str.end_ns(xs, len(xs)))
+
+fn std.str.trim_start(s: Str) -> Str
+= let xs = chars(s) in slice(s, std.str.first_ns(xs, 0, len(xs)), len(xs))
+
+fn std.url.decode_impl(s: Str, plus: Bool) -> Option[Str]
+= let bs = bytes_to_list(to_bytes(s)) in let n = len(bs) in if len(filter(range(0, n), fn(i) => std.url.bad_at(bs, i))) > 0 then None else let keep = filter(range(0, n), fn(i) => !std.url.consumed(bs, i)) in let out = map(keep, fn(i) => let c = std.url.at(bs, i) in if c == 37 then std.url.hex_value(std.url.at(bs, i + 1)) * 16 + std.url.hex_value(std.url.at(bs, i + 2)) else if plus && c == 43 then 32 else c) in bytes_to_str(bytes_from(out))
+
+test std.url.test_encode = std.url.encode("a b/é~") == "a%20b%2F%C3%A9~" && std.url.encode("AZaz09-._~") == "AZaz09-._~"
+
+fn std.route.find[A](routes: List[std.route.Route[A]], i: Int, method: Str, ds: List[Str]) -> std.route.Result[A]
+= match get(routes, i) { None => std.route.NotFound, Some(r) => if std.route.fits(r.method, method) && std.route.matches(r.pattern, ds) then std.route.Matched(r.tag, std.route.params(r.pattern, ds)) else std.route.find(routes, i + 1, method, ds) }
+
+test std.route.test_param_lookup = std.route.param([std.url.Param { name: "id", value: "5" }], "id") == Some("5") && std.route.param([], "id") == None
+
+test std.str.test_big = len(std.str.lines(std.str.repeat("ab\r\n", 30000))) == 30000 && len(std.str.trim_start(std.str.repeat(" ", 50000) ++ "x")) == 1 && len(std.str.trim_end("x" ++ std.str.repeat(" ", 50000))) == 1 && len(std.str.pad_left("", 100000, "ab")) == 100000
+
+test std.str.test_pad = std.str.pad_left("7", 3, "0") == "007" && std.str.pad_right("ab", 5, "xy") == "abxyx" && std.str.pad_left("abc", 2, "0") == "abc"
+
+test std.str.test_pad_edge = std.str.pad_left("7", 4, "ab") == "aba7" && std.str.pad_right("7", 4, "ab") == "7aba" && std.str.pad_left("é", 3, "·") == "··é" && std.str.pad_left("a", 5, "") == "a" && std.str.pad_left("a", -1, "x") == "a"
+
+test std.str.test_trim_edge = std.str.trim_start("  \n") == "" && std.str.trim_end("  \n") == "" && std.str.trim_start(" a") == " a" && std.str.trim_end("a ") == "a " && std.str.trim_start("") == "" && trim("   x ") == std.str.trim_start(std.str.trim_end("   x "))
+
+test std.str.test_trim_sides = std.str.trim_start(" \t a b \n") == "a b \n" && std.str.trim_end(" \t a b \n") == " \t a b"
+
+fn std.url.decode(s: Str) -> Option[Str]
+= std.url.decode_impl(s, false)
+
+fn std.url.decode_form(s: Str) -> Option[Str]
+= std.url.decode_impl(s, true)
+
+fn std.route.route[A](routes: List[std.route.Route[A]], method: Str, path: Str) -> std.route.Result[A]
+= let decoded = map(split(path, "/"), fn(s) => std.url.decode(s)) in if len(filter(decoded, fn(o) => !std.route.is_some_str(o))) > 0 then std.route.NotFound else let ds = map(decoded, fn(o) => std.route.opt_str(o)) in match std.route.find(routes, 0, method, ds) { std.route.NotFound => let ms = map(filter(routes, fn(r) => std.route.matches(r.pattern, ds)), fn(r) => r.method) in if len(ms) == 0 then std.route.NotFound else let ms2 = if len(filter(ms, fn(m) => m == "GET")) > 0 then concat(ms, ["HEAD"]) else ms in std.route.MethodNotAllowed(std.route.dedupe(sort_str(ms2))), other => other }
+
+fn std.url.parse_piece(p: Str) -> Option[std.url.Param]
+= let kv = match index_of(p, "=") { Some(i) => [slice(p, 0, i), slice(p, i + 1, len(p))], None => [p, ""] } in match std.url.decode_form(match get(kv, 0) { Some(a) => a, None => "" }) { Some(nm) => match std.url.decode_form(match get(kv, 1) { Some(a) => a, None => "" }) { Some(v) => Some(std.url.Param { name: nm, value: v }), None => None }, None => None }
+
+test std.url.test_decode = std.url.decode("a%20b+c") == Some("a b+c") && std.url.decode("%c3%A9") == Some("é")
+
+test std.url.test_decode_form = std.url.decode_form("a+b%2Bc") == Some("a b+c")
+
+test std.url.test_decode_invalid = std.url.decode("%zz") == None && std.url.decode("%4") == None && std.url.decode("%C3") == None
+
+test std.url.test_edges = std.url.decode("") == Some("") && std.url.decode("%") == None && std.url.decode("a%2") == None && std.url.decode("%G1") == None && std.url.decode("%FF") == None && std.url.decode("%C3%28") == None && std.url.decode("%C0%AF") == None && std.url.decode("%ED%A0%80") == None
+
+test std.url.test_edges2 = std.url.decode("%2525") == Some("%25") && std.url.decode("%00") == Some("\0") && std.url.decode("%F0%9F%98%80") == Some("😀") && std.url.decode("é") == Some("é") && std.url.decode("%%41") == None
+
+test std.url.test_edges3 = std.url.decode_form("a+%2B+b") == Some("a + b") && std.url.encode("+/?") == "%2B%2F%3F" && std.url.encode("") == ""
+
+test std.url.test_roundtrip = std.url.decode(std.url.encode("x=1&y=😀 z")) == Some("x=1&y=😀 z")
+
+test std.route.test_405 = std.route.route([std.route.Route { method: "POST", pattern: "/t", tag: 1 }, std.route.Route { method: "GET", pattern: "/t", tag: 2 }, std.route.Route { method: "GET", pattern: "/t", tag: 3 }], "PUT", "/t") == std.route.MethodNotAllowed(["GET", "HEAD", "POST"])
+
+test std.route.test_big_405 = std.route.route(std.route.big_routes(), "POST", std.route.big_path()) == std.route.MethodNotAllowed(["GET", "HEAD"])
+
+test std.route.test_big_get = match std.route.route(std.route.big_routes(), "GET", std.route.big_path()) { std.route.Matched(t, ps) => t == -1 && len(ps) == 1, _ => false }
+
+test std.route.test_big_last = std.route.route(std.route.big_routes(), "GET", "/r8999/x") == std.route.Matched(8999, [std.url.Param { name: "id", value: "x" }])
+
+test std.route.test_big_nf = std.route.route(std.route.big_routes(), "GET", "/zzz") == std.route.NotFound
+
+test std.route.test_case = std.route.route([std.route.Route { method: "get", pattern: "/t", tag: 1 }], "GET", "/t") == std.route.MethodNotAllowed(["get"])
+
+test std.route.test_empty_param = std.route.route([std.route.Route { method: "GET", pattern: "/todos/:id", tag: 1 }], "GET", "/todos/") == std.route.Matched(1, [std.url.Param { name: "id", value: "" }])
+
+test std.route.test_first_wins = std.route.route([std.route.Route { method: "GET", pattern: "/a/:x", tag: "p" }, std.route.Route { method: "GET", pattern: "/a/b", tag: "lit" }], "GET", "/a/b") == std.route.Matched("p", [std.url.Param { name: "x", value: "b" }])
+
+test std.route.test_head = std.route.route([std.route.Route { method: "GET", pattern: "/t", tag: 7 }], "HEAD", "/t") == std.route.Matched(7, [])
+
+test std.route.test_head_405 = std.route.route([std.route.Route { method: "GET", pattern: "/t", tag: 1 }], "POST", "/t") == std.route.MethodNotAllowed(["GET", "HEAD"])
+
+test std.route.test_literal = std.route.route([std.route.Route { method: "GET", pattern: "/todos", tag: 1 }], "GET", "/todos") == std.route.Matched(1, [])
+
+test std.route.test_mix = std.route.route([std.route.Route { method: "GET", pattern: "/u/:id/p/*r", tag: 1 }], "GET", "/u/5/p/x/y") == std.route.Matched(1, [std.url.Param { name: "id", value: "5" }, std.url.Param { name: "r", value: "x/y" }])
+
+test std.route.test_not_found = std.route.route([std.route.Route { method: "GET", pattern: "/todos", tag: 1 }], "GET", "/todos/") == std.route.NotFound
+
+test std.route.test_param = std.route.route([std.route.Route { method: "GET", pattern: "/todos/:id", tag: "get" }], "GET", "/todos/a%20b") == std.route.Matched("get", [std.url.Param { name: "id", value: "a b" }])
+
+test std.route.test_rest = std.route.route([std.route.Route { method: "GET", pattern: "/files/*rest", tag: 0 }], "GET", "/files/a/b.txt") == std.route.Matched(0, [std.url.Param { name: "rest", value: "a/b.txt" }])
+
+test std.route.test_rest_empty = std.route.route([std.route.Route { method: "GET", pattern: "/files/*rest", tag: 1 }], "GET", "/files/") == std.route.Matched(1, [std.url.Param { name: "rest", value: "" }])
+
+test std.route.test_rest_enc = std.route.route([std.route.Route { method: "GET", pattern: "/files/*rest", tag: 1 }], "GET", "/files/a%2Fb") == std.route.Matched(1, [std.url.Param { name: "rest", value: "a/b" }])
+
+test std.route.test_rest_none = std.route.route([std.route.Route { method: "GET", pattern: "/files/*rest", tag: 1 }], "GET", "/files") == std.route.NotFound
+
+test std.route.test_rest_notlast = std.route.route([std.route.Route { method: "GET", pattern: "/*x/b", tag: 1 }], "GET", "/*x/b") == std.route.Matched(1, [])
+
+test std.route.test_undecodable = std.route.route([std.route.Route { method: "GET", pattern: "/t/:id", tag: 1 }], "GET", "/t/%zz") == std.route.NotFound
+
+test std.route.test_utf8 = std.route.route([std.route.Route { method: "GET", pattern: "/café", tag: 1 }], "GET", "/caf%C3%A9") == std.route.Matched(1, [])
+
+fn std.url.parse_query(q: Str) -> List[std.url.Param]
+= map(filter(map(filter(split(q, "&"), fn(p) => p != ""), fn(p) => std.url.parse_piece(p)), fn(o) => std.url.is_some(o)), fn(o) => match o { Some(p) => p, None => std.url.Param { name: "", value: "" } })
+
+fn std.http.query(rq: HttpRequest) -> List[std.url.Param]
+= std.url.parse_query(rq.query)
+
+test std.url.test_edges4 = std.url.parse_query("a%3Db=c&a=%26&k=v=w;x") == [std.url.Param { name: "a=b", value: "c" }, std.url.Param { name: "a", value: "&" }, std.url.Param { name: "k", value: "v=w;x" }] && std.url.parse_query("") == [] && std.url.parse_query("&&") == []
+
+test std.url.test_param = std.url.param(std.url.parse_query("a=1&a=2"), "a") == Some("1") && std.url.param([], "a") == None
+
+test std.url.test_parse_query = std.url.parse_query("a=1&b=hello+world&a=2") == [std.url.Param { name: "a", value: "1" }, std.url.Param { name: "b", value: "hello world" }, std.url.Param { name: "a", value: "2" }]
+
+test std.url.test_parse_query_edges = std.url.parse_query("&x&=y&bad=%zz&") == [std.url.Param { name: "x", value: "" }, std.url.Param { name: "", value: "y" }]
+
+test std.http.test_query = std.http.query(HttpRequest { method: "GET", path: "/", query: "a=1&b=x+y", headers: [], body: "" }) == [std.url.Param { name: "a", value: "1" }, std.url.Param { name: "b", value: "x y" }]
+
+fn std.db.cell(v: SqlValue) -> std.json.Json
+= match v { SqlNull => std.json.Null, SqlInt(n) => std.json.Int(n), SqlFloat(x) => std.json.Float(x), SqlText(s) => std.json.Str(s) }
+
+fn std.db.field(cols: List[Str], row: List[SqlValue], i: Int) -> std.json.Field
+= match get(cols, i) { Some(k) => match get(row, i) { Some(v) => std.json.Field { key: k, value: std.db.cell(v) }, None => std.json.Field { key: k, value: std.json.Null } }, None => std.json.Field { key: "", value: std.json.Null } }
+
+fn std.db.obj(cols: List[Str], row: List[SqlValue]) -> std.json.Json
+= let n = if len(cols) < len(row) then len(cols) else len(row) in std.json.Obj(map(range(0, n), fn(i: Int) => std.db.field(cols, row, i)))
+
+test std.db.test_to_json = std.json.print(std.db.to_json(DbRows { columns: ["id", "t", "x"], rows: [[SqlInt(1), SqlText("a"), SqlNull], [SqlInt(2), SqlText("b"), SqlFloat(0.5)]] })) == "[{\"id\":1,\"t\":\"a\",\"x\":null},{\"id\":2,\"t\":\"b\",\"x\":0.5}]"
+
+test std.db.test_to_json_empty = std.db.to_json(DbRows { columns: ["id"], rows: [] }) == std.json.Arr([])
+
+test std.db.test_to_json_len = std.json.print(std.db.to_json(DbRows { columns: ["a", "b", "a"], rows: [[SqlInt(1)], [SqlInt(1), SqlInt(2), SqlInt(3), SqlInt(4)]] })) == "[{\"a\":1},{\"a\":1,\"b\":2,\"a\":3}]"
+
+fn std.db.to_json(rows: DbRows) -> std.json.Json
+= std.json.Arr(map(rows.rows, fn(r: List[SqlValue]) => std.db.obj(rows.columns, r)))
+
+fn std.http.bad_request(message: Str) -> HttpResponse
+= std.http.error(400, "bad_request", message)
+
+test std.http.test_bad_request = std.http.bad_request("a\"b").body == "{\"error\":{\"code\":\"bad_request\",\"message\":\"a\\\"b\"}}"
+
+fn std.http.error(status: Int, code: Str, message: Str) -> HttpResponse
+= std.http.json(status, std.json.Obj([std.json.Field { key: "error", value: std.json.Obj([std.json.Field { key: "code", value: std.json.Str(code) }, std.json.Field { key: "message", value: std.json.Str(message) }]) }]))
+
+fn std.http.method_not_allowed(allowed: List[Str]) -> HttpResponse
+= std.http.with_header(std.http.error(405, "method_not_allowed", "method not allowed"), "allow", join(allowed, ", "))
+
+fn std.http.not_found() -> HttpResponse
+= std.http.error(404, "not_found", "not found")
+
+test std.http.test_error = std.http.not_found().body == "{\"error\":{\"code\":\"not_found\",\"message\":\"not found\"}}" && std.http.not_found().status == 404
+
+test std.http.test_method_not_allowed = std.http.method_not_allowed(["GET", "POST"]).headers == [HttpHeader { name: "content-type", value: "application/json" }, HttpHeader { name: "allow", value: "GET, POST" }]
+
+test std.http.test_mna_empty = std.http.method_not_allowed([]).headers == [HttpHeader { name: "content-type", value: "application/json" }, HttpHeader { name: "allow", value: "" }]
+
+fn std.http.json(status: Int, j: std.json.Json) -> HttpResponse
+= std.http.response(status, "application/json", std.json.print(j))
+
+fn std.http.json_body(rq: HttpRequest) -> Result[std.json.Json, HttpResponse]
+= match std.http.header(rq, "content-type") { None => Err(std.http.error(415, "unsupported_media_type", "content-type must be application/json")), Some(v) => if starts_with(to_lower(v), "application/json") then match std.json.parse(rq.body) { Ok(j) => Ok(j), Err(e) => Err(std.http.error(400, "invalid_json", "invalid JSON at position " ++ from_int(e.pos) ++ ": " ++ e.message)) } else Err(std.http.error(415, "unsupported_media_type", "content-type must be application/json")) }
+
+test std.http.test_json_body_400 = match std.http.json_body(HttpRequest { method: "POST", path: "/", query: "", headers: [HttpHeader { name: "content-type", value: "application/json" }], body: "[1,]" }) { Err(r) => r.status == 400 && contains(r.body, "invalid JSON at position 3: "), Ok(_) => false }
+
+test std.http.test_json_body_415 = match std.http.json_body(HttpRequest { method: "POST", path: "/", query: "", headers: [], body: "[1]" }) { Err(r) => r.status == 415, Ok(_) => false }
+
+test std.http.test_json_body_empty = match std.http.json_body(HttpRequest { method: "POST", path: "/", query: "", headers: [HttpHeader { name: "Content-Type", value: "Application/JSON" }], body: "" }) { Err(r) => r.status == 400 && contains(r.body, "invalid JSON at position 0: "), Ok(_) => false }
+
+test std.http.test_json_body_wrongtype = std.http.json_body(HttpRequest { method: "POST", path: "/", query: "", headers: [HttpHeader { name: "content-type", value: "text/plain" }], body: "[1]" }) == Err(std.http.error(415, "unsupported_media_type", "content-type must be application/json"))
+
+test std.http.test_json = std.http.json(201, std.json.obj([std.json.field("ok", std.json.bool(true))])) == HttpResponse { status: 201, headers: [HttpHeader { name: "content-type", value: "application/json" }], body: "{\"ok\":true}" }
+
+test std.http.test_json_body_ok = std.http.json_body(HttpRequest { method: "POST", path: "/", query: "", headers: [HttpHeader { name: "content-type", value: "application/json; charset=utf-8" }], body: "[1]" }) == Ok(std.json.arr([std.json.int(1)]))
+
+type std.json.Field = { key: Str, value: std.json.Json }
+
+type std.json.Json = std.json.Null | std.json.Bool(Bool) | std.json.Int(Int) | std.json.Float(Float) | std.json.Str(Str) | std.json.Arr(List[std.json.Json]) | std.json.Obj(List[std.json.Field])
+
+type std.json.Parsed = { value: std.json.Json, next: Int }
+
+fn std.json.arr(xs: List[std.json.Json]) -> std.json.Json
+= std.json.Arr(xs)
+
+fn std.json.as_arr(j: std.json.Json) -> Option[List[std.json.Json]]
+= match j { std.json.Arr(xs) => Some(xs), _ => None }
+
+fn std.json.as_bool(j: std.json.Json) -> Option[Bool]
+= match j { std.json.Bool(b) => Some(b), _ => None }
+
+fn std.json.as_float(j: std.json.Json) -> Option[Float]
+= match j { std.json.Float(x) => Some(x), std.json.Int(n) => Some(int_to_float(n)), _ => None }
+
+fn std.json.as_int(j: std.json.Json) -> Option[Int]
+= match j { std.json.Int(n) => Some(n), _ => None }
+
+fn std.json.as_obj(j: std.json.Json) -> Option[List[std.json.Field]]
+= match j { std.json.Obj(fs) => Some(fs), _ => None }
+
+fn std.json.as_str(j: std.json.Json) -> Option[Str]
+= match j { std.json.Str(s) => Some(s), _ => None }
+
+fn std.json.at(j: std.json.Json, i: Int) -> Option[std.json.Json]
+= match j { std.json.Arr(xs) => if i < 0 then None else get(xs, i), _ => None }
+
+fn std.json.bool(b: Bool) -> std.json.Json
+= std.json.Bool(b)
+
+fn std.json.field(k: Str, v: std.json.Json) -> std.json.Field
+= std.json.Field { key: k, value: v }
+
+fn std.json.first_field(fs: List[std.json.Field], key: Str, i: Int) -> Option[std.json.Json]
+= match get(fs, i) { None => None, Some(f) => if f.key == key then Some(f.value) else std.json.first_field(fs, key, i + 1) }
+
+fn std.json.int(n: Int) -> std.json.Json
+= std.json.Int(n)
+
+fn std.json.obj(fs: List[std.json.Field]) -> std.json.Json
+= std.json.Obj(fs)
+
+fn std.json.print(j: std.json.Json) -> Str
+= match j { std.json.Null => "null", std.json.Bool(b) => if b then "true" else "false", std.json.Int(n) => from_int(n), std.json.Float(x) => std.json.print_float(x), std.json.Str(s) => std.json.print_str(s), std.json.Arr(xs) => "[" ++ join(map(xs, fn(x) => std.json.print(x)), ",") ++ "]", std.json.Obj(fs) => "{" ++ join(map(fs, fn(f) => std.json.print_str(f.key) ++ ":" ++ std.json.print(f.value)), ",") ++ "}" }
+
+fn std.json.str(s: Str) -> std.json.Json
+= std.json.Str(s)
+
+fn std.json.get(j: std.json.Json, key: Str) -> Option[std.json.Json]
+= match j { std.json.Obj(fs) => std.json.first_field(fs, key, 0), _ => None }
+
+fn std.json.lit_loop(cs: List[Str], i: Int, wc: List[Str], k: Int, v: std.json.Json) -> Result[std.json.Parsed, std.json.Error]
+= if k >= len(wc) then Ok(std.json.Parsed { value: v, next: i + k }) else if std.json.ch(cs, i + k) == std.json.ch(wc, k) then std.json.lit_loop(cs, i, wc, k + 1, v) else Err(std.json.err_at(i + k, "invalid literal"))
+
+fn std.json.num_value(text: Str, isint: Bool, i: Int, e: Int) -> Result[std.json.Parsed, std.json.Error]
+= let asf = match to_float(text) { Some(x) => if contains(from_float(x), "inf") then Err(std.json.err_at(i, "number out of range")) else Ok(std.json.Parsed { value: std.json.Float(x), next: e }), None => Err(std.json.err_at(i, "invalid number")) } in if isint then match to_int(text) { Some(n) => Ok(std.json.Parsed { value: std.json.Int(n), next: e }), None => asf } else asf
+
+test std.json.test_print = std.json.print(std.json.obj([std.json.field("a", std.json.arr([std.json.Float(2.0), std.json.bool(false)])), std.json.field("q\"", std.json.str("\u{1}/é"))])) == "{\"a\":[2.0,false],\"q\\\"\":\"\\u0001/é\"}"
+
+test std.json.test_print_float = std.json.print(std.json.Float(1e20)) == "1e20" && std.json.print(std.json.Float(-0.0)) == "-0.0" && std.json.print(std.json.Float(0.1)) == "0.1" && std.json.print(std.json.Float(1e-7)) == "1e-7" && std.json.print(std.json.Float(3.0)) == "3.0" && std.json.print(std.json.Float(-3.0)) == "-3.0" && std.json.print(std.json.Int(-5)) == "-5" && std.json.print(std.json.Null) == "null" && std.json.print(std.json.arr([])) == "[]" && std.json.print(std.json.obj([])) == "{}"
+
+test std.json.test_print_inf = (match to_float("1e999") { Some(x) => std.json.print(std.json.Float(x)) == "null", None => true }) && (match to_float("-inf") { Some(x) => std.json.print(std.json.Float(x)) == "null", None => true })
+
+test std.json.test_print_nan = match to_float("NaN") { Some(x) => std.json.print(std.json.Float(x)) == "null", None => false }
+
+test std.json.test_print_str = std.json.print(std.json.Str("\0\u{8}\t\n\u{b}\u{c}\r\u{1f}\u{7f}/ \\\"")) == "\"\\u0000\\b\\t\\n\\u000b\\f\\r\\u001f\u{7f}/ \\\\\\\"\""
+
+fn std.json.parse_number(cs: List[Str], i: Int) -> Result[std.json.Parsed, std.json.Error]
+= let j0 = if std.json.ch(cs, i) == "-" then i + 1 else i in let c0 = std.json.ch(cs, j0) in if !std.json.dig(c0) then Err(std.json.err_at(j0, "expected digit")) else let j1 = if c0 == "0" then j0 + 1 else std.json.scan_digits(cs, j0) in match std.json.frac_end(cs, j1) { Err(e) => Err(e), Ok(j2) => match std.json.exp_end(cs, j2) { Err(e) => Err(e), Ok(j3) => std.json.num_value(std.json.sub(cs, i, j3), j3 == j1, i, j3) } }
+
+test std.json.test_access = let j = std.json.obj([std.json.field("n", std.json.int(3))]) in std.json.get(j, "n") == Some(std.json.Int(3)) && std.json.as_float(std.json.Int(3)) == Some(3.0) && std.json.as_int(std.json.Float(3.0)) == None && std.json.at(std.json.arr([j]), 1) == None
+
+test std.json.test_accessors = let j = std.json.arr([std.json.int(1), std.json.str("s")]) in std.json.at(j, 1) == Some(std.json.Str("s")) && std.json.at(j, -1) == None && std.json.at(j, 2) == None && std.json.at(std.json.Null, 0) == None && std.json.get(j, "a") == None && std.json.as_str(std.json.str("s")) == Some("s") && std.json.as_str(std.json.int(1)) == None && std.json.as_bool(std.json.bool(true)) == Some(true) && std.json.as_arr(j) == Some([std.json.int(1), std.json.str("s")]) && std.json.as_obj(j) == None && std.json.as_obj(std.json.obj([])) == Some([]) && std.json.as_float(std.json.Float(1.5)) == Some(1.5) && std.json.as_float(std.json.str("")) == None && std.json.get(std.json.obj([std.json.field("k", std.json.int(1)), std.json.field("k", std.json.int(2))]), "k") == Some(std.json.Int(1)) && std.json.obj([]) == std.json.Obj([]) && std.json.field("k", std.json.Null) == std.json.Field { key: "k", value: std.json.Null }
+
+fn std.json.arr_loop(cs: List[Str], j: Int, d: Int, m: Map[Int, std.json.Json], k: Int) -> Result[std.json.Parsed, std.json.Error]
+= match std.json.parse_value(cs, j, d) { Err(e) => Err(e), Ok(p) => let m2 = map_put(m, k, p.value) in let q = std.json.skip_ws(cs, p.next) in let c = std.json.ch(cs, q) in if c == "," then std.json.arr_loop(cs, std.json.skip_ws(cs, q + 1), d, m2, k + 1) else if c == "]" then Ok(std.json.Parsed { value: std.json.Arr(map_values(m2)), next: q + 1 }) else Err(std.json.err_at(q, "expected ',' or ']'")) }
+
+fn std.json.parse_arr(cs: List[Str], i: Int, depth: Int) -> Result[std.json.Parsed, std.json.Error]
+= if depth >= 128 then Err(std.json.err_at(i, "nesting too deep")) else let j = std.json.skip_ws(cs, i + 1) in if std.json.ch(cs, j) == "]" then Ok(std.json.Parsed { value: std.json.Arr([]), next: j + 1 }) else std.json.arr_loop(cs, j, depth + 1, map_new(), 0)
+
+fn std.json.epos(s: Str) -> Int
+= match std.json.parse(s) { Err(e) => e.pos, Ok(_) => -1 }
+
+test std.json.test_depth = std.json.epos(std.json.nest(128, "[", "]")) == -1 && std.json.epos(std.json.nest(129, "[", "]")) == 128 && std.json.epos(std.json.nest(1, "[", "]")) == -1 && std.json.epos(join(map(range(0, 64), fn(i) => "{\"a\":["), "") ++ "1" ++ join(map(range(0, 64), fn(i) => "]}"), "")) == -1 && std.json.epos(join(map(range(0, 65), fn(i) => "{\"a\":["), "") ++ "1" ++ join(map(range(0, 65), fn(i) => "]}"), "")) == 384
+
+test std.json.test_pos_basic = std.json.epos("") == 0 && std.json.epos("   ") == 3 && std.json.epos("[1,]") == 3 && std.json.epos("[1 2]") == 3 && std.json.epos("{\"a\" 1}") == 5 && std.json.epos("{a:1}") == 1 && std.json.epos("nul") == 3 && std.json.epos("nulls") == 4 && std.json.epos("True") == 0
+
+test std.json.test_pos_numbers = std.json.epos("01") == 1 && std.json.epos("-01") == 2 && std.json.epos("1.") == 2 && std.json.epos(".5") == 0 && std.json.epos("-") == 1 && std.json.epos("1e5.5") == 3 && std.json.epos("1 x") == 2 && std.json.epos("[1]x") == 3 && std.json.epos("+1") == 0 && std.json.epos("1e") == 2 && std.json.epos("1e+") == 3 && std.json.epos("1.e5") == 2 && std.json.epos("0x10") == 1 && std.json.epos("NaN") == 0 && std.json.epos("Infinity") == 0
+
+test std.json.test_pos_strings = std.json.epos("\"abc") == 4 && std.json.epos("\"a\tb\"") == 2 && std.json.epos("\"é\\x\"") == 3 && std.json.epos("\"\\u12\"") == 5 && std.json.epos("\"a\\ud800\\u0041\"") == 2 && std.json.epos("\"\\udc00\"") == 1 && std.json.epos("[1e400]") == 1 && std.json.epos("\"\\ud800x\"") == 1 && std.json.epos("[\"\\ud800\"]") == 2
+
+fn std.json.obj_loop(cs: List[Str], j: Int, d: Int, m: Map[Int, std.json.Field], seen: Map[Str, Bool], k: Int) -> Result[std.json.Parsed, std.json.Error]
+= if std.json.ch(cs, j) != "\"" then Err(std.json.err_at(j, "expected string key")) else match std.json.str_loop(cs, j + 1, map_new(), 0) { Err(e) => Err(e), Ok(r) => if map_has(seen, r.text) then Err(std.json.err_at(j, "duplicate key")) else let q = std.json.skip_ws(cs, r.next) in if std.json.ch(cs, q) != ":" then Err(std.json.err_at(q, "expected ':'")) else match std.json.parse_value(cs, std.json.skip_ws(cs, q + 1), d) { Err(e) => Err(e), Ok(p) => let m2 = map_put(m, k, std.json.Field { key: r.text, value: p.value }) in let s2 = map_put(seen, r.text, true) in let q2 = std.json.skip_ws(cs, p.next) in let c = std.json.ch(cs, q2) in if c == "," then std.json.obj_loop(cs, std.json.skip_ws(cs, q2 + 1), d, m2, s2, k + 1) else if c == "}" then Ok(std.json.Parsed { value: std.json.Obj(map_values(m2)), next: q2 + 1 }) else Err(std.json.err_at(q2, "expected ',' or '}'")) } }
+
+fn std.json.parse_obj(cs: List[Str], i: Int, depth: Int) -> Result[std.json.Parsed, std.json.Error]
+= if depth >= 128 then Err(std.json.err_at(i, "nesting too deep")) else let j = std.json.skip_ws(cs, i + 1) in if std.json.ch(cs, j) == "}" then Ok(std.json.Parsed { value: std.json.Obj([]), next: j + 1 }) else std.json.obj_loop(cs, j, depth + 1, map_new(), map_new(), 0)
+
+fn std.json.parse(s: Str) -> Result[std.json.Json, std.json.Error]
+= let cs = chars(s) in match std.json.parse_value(cs, std.json.skip_ws(cs, 0), 0) { Err(e) => Err(e), Ok(p) => let j = std.json.skip_ws(cs, p.next) in if std.json.ch(cs, j) == "" then Ok(p.value) else Err(std.json.err_at(j, "unexpected trailing characters")) }
+
+test std.json.test_big_array = match std.json.parse("[" ++ join(map(range(0, 20000), fn(i) => from_int(i)), ",") ++ "]") { Ok(j) => std.json.at(j, 19999) == Some(std.json.Int(19999)), Err(_) => false }
+
+test std.json.test_big_obj = match std.json.parse("{" ++ join(map(range(0, 10000), fn(i) => "\"k" ++ from_int(i) ++ "\":" ++ from_int(i)), ",") ++ "}") { Ok(j) => std.json.get(j, "k9999") == Some(std.json.Int(9999)), Err(_) => false }
+
+test std.json.test_big_string = match std.json.parse("\"" ++ join(map(range(0, 100000), fn(i) => "a"), "") ++ "\"") { Ok(std.json.Str(s)) => len(s) == 100000, _ => false }
+
+test std.json.test_dup_scopes = std.json.epos("{\"a\":1,\"\\u0061\":2}") == 7 && std.json.parse("{\"a\":{\"a\":1}}") == Ok(std.json.obj([std.json.field("a", std.json.obj([std.json.field("a", std.json.int(1))]))]))
+
+test std.json.test_overflow = std.json.epos("1e400") == 0 && std.json.epos("-1e400") == 0 && std.json.parse("1e-400") == Ok(std.json.Float(0.0)) && std.json.parse("-0") == Ok(std.json.Int(0)) && std.json.parse("-9223372036854775808") == Ok(std.json.Int(-9223372036854775807 - 1)) && std.json.parse("1.0") == Ok(std.json.Float(1.0)) && std.json.parse("1E2") == Ok(std.json.Float(100.0))
+
+test std.json.test_parse_duplicate_key = match std.json.parse("{\"a\":1,\"a\":2}") { Err(e) => e.pos == 7, Ok(_) => false }
+
+test std.json.test_parse_errors = match std.json.parse("[1,]") { Err(e) => e.pos == 3 && e.message != "", Ok(_) => false }
+
+test std.json.test_parse_escapes = std.json.parse("\"\\u00e9\\n\\ud83d\\ude00\"") == Ok(std.json.Str("é\n😀"))
+
+test std.json.test_parse_int_vs_float = std.json.parse("1e2") == Ok(std.json.Float(100.0)) && std.json.parse("9223372036854775807") == Ok(std.json.Int(9223372036854775807)) && std.json.parse("9223372036854775808") == Ok(std.json.Float(9.223372036854776e18))
+
+test std.json.test_parse_lone_surrogate = match std.json.parse("\"\\ud800\"") { Err(e) => e.pos == 1, Ok(_) => false }
+
+test std.json.test_parse_obj = std.json.parse("{\"b\":[1,null],\"a\":\"x\"}") == Ok(std.json.obj([std.json.field("b", std.json.arr([std.json.int(1), std.json.Null])), std.json.field("a", std.json.str("x"))]))
+
+test std.json.test_parse_scalars = std.json.parse("null") == Ok(std.json.Null) && std.json.parse(" true ") == Ok(std.json.Bool(true)) && std.json.parse("-12") == Ok(std.json.Int(-12)) && std.json.parse("2.5") == Ok(std.json.Float(2.5))
+
+test std.json.test_roundtrip = let j = std.json.arr([std.json.Float(0.1), std.json.str("\t\"\\"), std.json.obj([])]) in std.json.parse(std.json.print(j)) == Ok(j)
+
+test std.json.test_roundtrip2 = let j = std.json.obj([std.json.field("a", std.json.Float(1e20)), std.json.field("b", std.json.arr([std.json.Float(-0.0), std.json.Float(2.0), std.json.int(-9223372036854775807 - 1), std.json.str("é😀\0\u{1f}\u{7f}"), std.json.Null, std.json.bool(true)])), std.json.field("", std.json.obj([std.json.field("x", std.json.Float(1e-7))]))]) in std.json.parse(std.json.print(j)) == Ok(j)
+
+test std.json.test_strings = std.json.parse("\"\\\"\\\\\\/\\b\\f\\n\\r\\t\\u0000\\u00E9\\uD83D\\uDE00\\u007f\"") == Ok(std.json.Str("\"\\/\u{8}\u{c}\n\r\t\0é😀\u{7f}")) && std.json.parse("\"😀é\"") == Ok(std.json.Str("😀é")) && std.json.epos("\"😀\\x\"") == 3 && std.json.parse("\"\"") == Ok(std.json.Str("")) && std.json.epos("\"\\ud83d\\u0041\"") == 1 && std.json.epos("\"\\ud83d\\ude0\"") == 12 && std.json.epos("\"\\ud83d") == 7
+
+test std.json.test_ws = std.json.parse(" \t\n\r[ 1 , 2 ] \n") == Ok(std.json.arr([std.json.int(1), std.json.int(2)])) && std.json.epos(" 1") == 0 && std.json.epos("\u{c}1") == 0 && std.json.epos("1\u{b}") == 1 && std.json.epos("// c\n1") == 0 && std.json.epos("[1,/*x*/2]") == 3 && std.json.epos("'a'") == 0 && std.json.epos("{\"a\":1,}") == 7
+
+fn std.json.parse_value(cs: List[Str], i: Int, depth: Int) -> Result[std.json.Parsed, std.json.Error]
+= let c = std.json.ch(cs, i) in if c == "{" then std.json.parse_obj(cs, i, depth) else if c == "[" then std.json.parse_arr(cs, i, depth) else if c == "\"" then match std.json.str_loop(cs, i + 1, map_new(), 0) { Ok(r) => Ok(std.json.Parsed { value: std.json.Str(r.text), next: r.next }), Err(e) => Err(e) } else if c == "t" then std.json.lit_loop(cs, i, chars("true"), 0, std.json.Bool(true)) else if c == "f" then std.json.lit_loop(cs, i, chars("false"), 0, std.json.Bool(false)) else if c == "n" then std.json.lit_loop(cs, i, chars("null"), 0, std.json.Null) else if c == "-" || std.json.dig(c) then std.json.parse_number(cs, i) else Err(std.json.err_at(i, if c == "" then "unexpected end of input" else "unexpected character"))
+
+fn std.json.str_esc(cs: List[Str], j: Int, m: Map[Int, Str], k: Int) -> Result[std.json.StrEnd, std.json.Error]
+= let e = std.json.ch(cs, j + 1) in let s = std.json.simple_esc(e) in if s != "" then std.json.str_loop(cs, j + 2, map_put(m, k, s), k + 1) else if e == "u" then match std.json.hex4(cs, j + 2) { Err(p) => Err(std.json.err_at(p, "invalid \\u escape")), Ok(cp) => std.json.str_uni(cs, j, cp, m, k) } else Err(std.json.err_at(j + 1, if e == "" then "unterminated string" else "invalid escape"))
+
+fn std.json.str_loop(cs: List[Str], j: Int, m: Map[Int, Str], k: Int) -> Result[std.json.StrEnd, std.json.Error]
+= let c = std.json.ch(cs, j) in if c == "" then Err(std.json.err_at(j, "unterminated string")) else if c == "\"" then Ok(std.json.StrEnd { text: join(map_values(m), ""), next: j + 1 }) else if c == "\\" then std.json.str_esc(cs, j, m, k) else if char_code(c) < 32 then Err(std.json.err_at(j, "control character in string")) else std.json.str_loop(cs, j + 1, map_put(m, k, c), k + 1)
+
+fn std.json.str_uni(cs: List[Str], j: Int, cp: Int, m: Map[Int, Str], k: Int) -> Result[std.json.StrEnd, std.json.Error]
+= if cp >= 55296 && cp <= 56319 then let c6 = std.json.ch(cs, j + 6) in if c6 == "" then Err(std.json.err_at(j + 6, "unterminated string")) else if c6 != "\\" then Err(std.json.err_at(j, "unpaired high surrogate")) else let c7 = std.json.ch(cs, j + 7) in if c7 == "" then Err(std.json.err_at(j + 7, "unterminated string")) else if c7 != "u" then Err(std.json.err_at(j, "unpaired high surrogate")) else match std.json.hex4(cs, j + 8) { Err(p) => Err(std.json.err_at(p, "invalid \\u escape")), Ok(lo) => if lo >= 56320 && lo <= 57343 then std.json.str_loop(cs, j + 12, map_put(m, k, from_char_code(65536 + (cp - 55296) * 1024 + (lo - 56320))), k + 1) else Err(std.json.err_at(j, "unpaired high surrogate")) } else if cp >= 56320 && cp <= 57343 then Err(std.json.err_at(j, "lone low surrogate")) else std.json.str_loop(cs, j + 6, map_put(m, k, from_char_code(cp)), k + 1)

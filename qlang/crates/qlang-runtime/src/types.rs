@@ -50,10 +50,7 @@ pub struct StructValue {
 
 impl StructValue {
     /// Create a new struct value, validating fields against the definition.
-    pub fn new(
-        def: &TypeDef,
-        field_values: HashMap<String, Value>,
-    ) -> Result<Self, VmError> {
+    pub fn new(def: &TypeDef, field_values: HashMap<String, Value>) -> Result<Self, VmError> {
         match def {
             TypeDef::Struct { name, fields } => {
                 // Check for unknown fields.
@@ -125,17 +122,11 @@ pub struct EnumValue {
 
 impl EnumValue {
     /// Create a new enum value, validating against the definition.
-    pub fn new(
-        def: &TypeDef,
-        variant: &str,
-        data: Option<Value>,
-    ) -> Result<Self, VmError> {
+    pub fn new(def: &TypeDef, variant: &str, data: Option<Value>) -> Result<Self, VmError> {
         match def {
             TypeDef::Enum { name, variants } => {
                 let vdef = variants.iter().find(|v| v.name == variant).ok_or_else(|| {
-                    VmError::TypeError(format!(
-                        "unknown variant `{variant}` on enum `{name}`"
-                    ))
+                    VmError::TypeError(format!("unknown variant `{variant}` on enum `{name}`"))
                 })?;
                 if vdef.has_data && data.is_none() {
                     return Err(VmError::TypeError(format!(
@@ -209,6 +200,7 @@ impl ExtValue {
                 Value::String(_) => "string".to_string(),
                 Value::Array(_) => "array".to_string(),
                 Value::Tensor(_, _) => "tensor".to_string(),
+                Value::Dict(_) => "dict".to_string(),
                 Value::Null => "null".to_string(),
             },
             ExtValue::Struct(s) => s.type_name.clone(),
@@ -369,9 +361,10 @@ impl TypeRegistry {
         type_name: &str,
         field_values: HashMap<String, Value>,
     ) -> Result<StructValue, VmError> {
-        let def = self.types.get(type_name).ok_or_else(|| {
-            VmError::TypeError(format!("unknown type `{type_name}`"))
-        })?;
+        let def = self
+            .types
+            .get(type_name)
+            .ok_or_else(|| VmError::TypeError(format!("unknown type `{type_name}`")))?;
         StructValue::new(def, field_values)
     }
 
@@ -382,9 +375,10 @@ impl TypeRegistry {
         variant: &str,
         data: Option<Value>,
     ) -> Result<EnumValue, VmError> {
-        let def = self.types.get(type_name).ok_or_else(|| {
-            VmError::TypeError(format!("unknown type `{type_name}`"))
-        })?;
+        let def = self
+            .types
+            .get(type_name)
+            .ok_or_else(|| VmError::TypeError(format!("unknown type `{type_name}`")))?;
         EnumValue::new(def, variant, data)
     }
 
@@ -397,6 +391,7 @@ impl TypeRegistry {
                 Value::String(_) => type_name == "string",
                 Value::Array(_) => type_name == "array",
                 Value::Tensor(_, _) => type_name == "tensor",
+                Value::Dict(_) => type_name == "dict",
                 Value::Null => type_name == "null",
             },
             ExtValue::Struct(s) => s.type_name == type_name,
@@ -431,9 +426,18 @@ mod tests {
         reg.register_enum(
             "Color",
             vec![
-                EnumVariantDef { name: "Red".into(), has_data: false },
-                EnumVariantDef { name: "Green".into(), has_data: false },
-                EnumVariantDef { name: "Blue".into(), has_data: false },
+                EnumVariantDef {
+                    name: "Red".into(),
+                    has_data: false,
+                },
+                EnumVariantDef {
+                    name: "Green".into(),
+                    has_data: false,
+                },
+                EnumVariantDef {
+                    name: "Blue".into(),
+                    has_data: false,
+                },
             ],
         )
         .unwrap();
@@ -445,8 +449,14 @@ mod tests {
         reg.register_enum(
             "Option",
             vec![
-                EnumVariantDef { name: "Some".into(), has_data: true },
-                EnumVariantDef { name: "None".into(), has_data: false },
+                EnumVariantDef {
+                    name: "Some".into(),
+                    has_data: true,
+                },
+                EnumVariantDef {
+                    name: "None".into(),
+                    has_data: false,
+                },
             ],
         )
         .unwrap();

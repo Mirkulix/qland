@@ -1,0 +1,2 @@
+fn shout(s: Str) -> Str
+= same(bang(s))

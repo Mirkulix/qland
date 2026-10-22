@@ -46,7 +46,9 @@ pub fn type_check(graph: &Graph) -> Vec<TypeError> {
             errors.push(TypeError {
                 node_id: 0,
                 message: "Graph contains a cycle".into(),
-                expected: None, got: None, suggestion: None,
+                expected: None,
+                got: None,
+                suggestion: None,
             });
             return errors;
         }
@@ -63,7 +65,8 @@ pub fn type_check(graph: &Graph) -> Vec<TypeError> {
 
         // Collect input types from incoming edges
         let incoming = graph.incoming_edges(node_id);
-        let input_types: Vec<TensorType> = incoming.iter()
+        let input_types: Vec<TensorType> = incoming
+            .iter()
             .filter_map(|e| node_output_types.get(&e.from_node).cloned())
             .collect();
 
@@ -80,7 +83,8 @@ pub fn type_check(graph: &Graph) -> Vec<TypeError> {
                     errors.push(TypeError {
                         node_id,
                         message: "Output node has no input".into(),
-                        expected: None, got: None,
+                        expected: None,
+                        got: None,
                         suggestion: Some("Connect a node to this output".into()),
                     });
                 }
@@ -90,12 +94,19 @@ pub fn type_check(graph: &Graph) -> Vec<TypeError> {
                 if input_types.len() < 2 {
                     errors.push(TypeError {
                         node_id,
-                        message: format!("{} requires 2 inputs, got {}", node.op, input_types.len()),
+                        message: format!(
+                            "{} requires 2 inputs, got {}",
+                            node.op,
+                            input_types.len()
+                        ),
                         expected: Some("2 inputs".into()),
                         got: Some(format!("{} inputs", input_types.len())),
                         suggestion: None,
                     });
-                } else if !input_types[0].shape.is_compatible_with(&input_types[1].shape) {
+                } else if !input_types[0]
+                    .shape
+                    .is_compatible_with(&input_types[1].shape)
+                {
                     errors.push(TypeError {
                         node_id,
                         message: format!("Shape mismatch in {}", node.op),
@@ -137,17 +148,22 @@ pub fn type_check(graph: &Graph) -> Vec<TypeError> {
                             (Dim::Fixed(ac), Dim::Fixed(br)) if ac != br => {
                                 errors.push(TypeError {
                                     node_id,
-                                    message: format!("MatMul inner dimension mismatch: {} vs {}", ac, br),
+                                    message: format!(
+                                        "MatMul inner dimension mismatch: {} vs {}",
+                                        ac, br
+                                    ),
                                     expected: Some(format!("[?, {}] × [{}, ?]", ac, ac)),
                                     got: Some(format!("{} × {}", a, b)),
                                     suggestion: Some("Inner dimensions must match".into()),
                                 });
                             }
                             _ => {
-                                let m = a.shape.0[0].clone();
-                                let n = b.shape.0[1].clone();
-                                node_output_types.insert(node_id,
-                                    TensorType::new(Dtype::F32, Shape(vec![m, n])));
+                                let m = a.shape.0[0];
+                                let n = b.shape.0[1];
+                                node_output_types.insert(
+                                    node_id,
+                                    TensorType::new(Dtype::F32, Shape(vec![m, n])),
+                                );
                             }
                         }
                     }
@@ -179,8 +195,8 @@ pub fn type_check(graph: &Graph) -> Vec<TypeError> {
                     } else {
                         let mut new_dims = tt.shape.0.clone();
                         new_dims.reverse();
-                        node_output_types.insert(node_id,
-                            TensorType::new(tt.dtype, Shape(new_dims)));
+                        node_output_types
+                            .insert(node_id, TensorType::new(tt.dtype, Shape(new_dims)));
                     }
                 }
             }
@@ -196,8 +212,8 @@ pub fn type_check(graph: &Graph) -> Vec<TypeError> {
                             suggestion: Some("Cast input to f32 first".into()),
                         });
                     }
-                    node_output_types.insert(node_id,
-                        TensorType::new(Dtype::Ternary, tt.shape.clone()));
+                    node_output_types
+                        .insert(node_id, TensorType::new(Dtype::Ternary, tt.shape.clone()));
                 }
             }
 
@@ -232,8 +248,16 @@ mod tests {
     #[test]
     fn valid_graph_no_errors() {
         let mut g = Graph::new("valid");
-        let a = g.add_node(Op::Input { name: "a".into() }, vec![], vec![TensorType::f32_matrix(2, 3)]);
-        let b = g.add_node(Op::Input { name: "b".into() }, vec![], vec![TensorType::f32_matrix(3, 4)]);
+        let a = g.add_node(
+            Op::Input { name: "a".into() },
+            vec![],
+            vec![TensorType::f32_matrix(2, 3)],
+        );
+        let b = g.add_node(
+            Op::Input { name: "b".into() },
+            vec![],
+            vec![TensorType::f32_matrix(3, 4)],
+        );
         let mm = g.add_node(Op::MatMul, vec![], vec![TensorType::f32_matrix(2, 4)]);
         let out = g.add_node(Op::Output { name: "y".into() }, vec![], vec![]);
         g.add_edge(a, 0, mm, 0, TensorType::f32_matrix(2, 3));
@@ -247,8 +271,16 @@ mod tests {
     #[test]
     fn matmul_dimension_mismatch() {
         let mut g = Graph::new("mismatch");
-        let a = g.add_node(Op::Input { name: "a".into() }, vec![], vec![TensorType::f32_matrix(2, 3)]);
-        let b = g.add_node(Op::Input { name: "b".into() }, vec![], vec![TensorType::f32_matrix(5, 4)]); // 5 != 3
+        let a = g.add_node(
+            Op::Input { name: "a".into() },
+            vec![],
+            vec![TensorType::f32_matrix(2, 3)],
+        );
+        let b = g.add_node(
+            Op::Input { name: "b".into() },
+            vec![],
+            vec![TensorType::f32_matrix(5, 4)],
+        ); // 5 != 3
         let mm = g.add_node(Op::MatMul, vec![], vec![]);
         g.add_edge(a, 0, mm, 0, TensorType::f32_matrix(2, 3));
         g.add_edge(b, 0, mm, 1, TensorType::f32_matrix(5, 4));
@@ -261,8 +293,16 @@ mod tests {
     #[test]
     fn add_shape_mismatch() {
         let mut g = Graph::new("add_mismatch");
-        let a = g.add_node(Op::Input { name: "a".into() }, vec![], vec![TensorType::f32_vector(3)]);
-        let b = g.add_node(Op::Input { name: "b".into() }, vec![], vec![TensorType::f32_vector(5)]);
+        let a = g.add_node(
+            Op::Input { name: "a".into() },
+            vec![],
+            vec![TensorType::f32_vector(3)],
+        );
+        let b = g.add_node(
+            Op::Input { name: "b".into() },
+            vec![],
+            vec![TensorType::f32_vector(5)],
+        );
         let add = g.add_node(Op::Add, vec![], vec![]);
         g.add_edge(a, 0, add, 0, TensorType::f32_vector(3));
         g.add_edge(b, 0, add, 1, TensorType::f32_vector(5));
@@ -275,7 +315,11 @@ mod tests {
     #[test]
     fn ternary_requires_float() {
         let mut g = Graph::new("ternary_type");
-        let a = g.add_node(Op::Input { name: "a".into() }, vec![], vec![TensorType::new(Dtype::I32, Shape::vector(4))]);
+        let a = g.add_node(
+            Op::Input { name: "a".into() },
+            vec![],
+            vec![TensorType::new(Dtype::I32, Shape::vector(4))],
+        );
         let t = g.add_node(Op::ToTernary, vec![], vec![]);
         g.add_edge(a, 0, t, 0, TensorType::new(Dtype::I32, Shape::vector(4)));
 

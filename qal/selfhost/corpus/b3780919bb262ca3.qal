@@ -1,0 +1,4 @@
+type std.a.T = std.a.One | std.a.Two(Int)
+fn std.a.f(t: std.a.T) -> Int = match t { std.a.One => 1, std.a.Two(n) => n }
+test std.a.t = std.a.f(std.a.Two(2)) == 2
+fn std.a.inc(x: Int) -> Int = x + 1

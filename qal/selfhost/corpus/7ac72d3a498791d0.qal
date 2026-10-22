@@ -1,0 +1,11 @@
+fn count(words: List[Str]) -> Map[Str, Int] = fold(words, map_new(), fn(m, w) => map_put(m, w, match map_get(m, w) { Some(n) => n + 1, None => 1 }))
+type K = { a: Int, b: Str }
+test counts = let m = count(["b", "a", "b", "c"]) in map_keys(m) == ["a", "b", "c"] && map_values(m) == [1, 2, 1] && map_get(m, "b") == Some(2) && map_get(m, "z") == None
+test persistent = let m1 = map_put(map_new(), 1, "one") in let m2 = map_put(m1, 2, "two") in map_size(m1) == 1 && map_size(m2) == 2 && map_has(m2, 2) && !map_has(m1, 2)
+test delete = let m = map_put(map_put(map_put(map_new(), 3, 0), 1, 0), 2, 0) in map_keys(map_del(m, 2)) == [1, 3] && map_del(m, 9) == m && map_size(map_del(map_del(map_del(m, 1), 2), 3)) == 0
+test replaces = let m = map_put(map_put(map_new(), "k", 1), "k", 2) in map_size(m) == 1 && map_get(m, "k") == Some(2)
+test equality_is_structural = map_put(map_put(map_new(), 1, true), 2, false) == map_put(map_put(map_new(), 2, false), 1, true)
+test negative_and_large_keys = map_keys(map_put(map_put(map_put(map_new(), 5, 0), -9223372036854775807 - 1, 0), -1, 0)) == [-9223372036854775807 - 1, -1, 5]
+test record_and_list_keys = map_keys(map_put(map_put(map_new(), K { a: 1, b: "z" }, 0), K { a: 1, b: "a" }, 0)) == [K { a: 1, b: "a" }, K { a: 1, b: "z" }] && map_keys(map_put(map_put(map_new(), [2], 0), [1, 5], 0)) == [[1, 5], [2]]
+test float_and_option_keys = map_keys(map_put(map_put(map_put(map_new(), 1.5, 0), -0.5, 0), 0.0, 0)) == [-0.5, 0.0, 1.5] && map_keys(map_put(map_put(map_new(), Some(1), 0), None, 0)) == [None, Some(1)]
+test str_order_is_bytewise = map_keys(map_put(map_put(map_put(map_new(), "ab", 0), "a", 0), "B", 0)) == ["B", "a", "ab"]

@@ -1,0 +1,1 @@
+fn big(n: Int) -> Int !db = match db_query("WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c WHERE x < ?) SELECT x, printf('%.1000c', 'a') FROM c", [SqlInt(n)]) { Ok(r) => len(r.rows), Err(DbTooLarge) => 0 - 1, Err(_) => 0 - 2 }

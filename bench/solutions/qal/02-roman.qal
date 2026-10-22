@@ -1,0 +1,58 @@
+# Decimal <-> canonical Roman numerals (1..3999), one conversion per input line.
+
+type Sym = { value: Int, text: Str }
+
+fn symbols() -> List[Sym] = [
+  Sym { value: 1000, text: "M" }, Sym { value: 900, text: "CM" }, Sym { value: 500, text: "D" }, Sym { value: 400, text: "CD" },
+  Sym { value: 100, text: "C" }, Sym { value: 90, text: "XC" }, Sym { value: 50, text: "L" }, Sym { value: 40, text: "XL" },
+  Sym { value: 10, text: "X" }, Sym { value: 9, text: "IX" }, Sym { value: 5, text: "V" }, Sym { value: 4, text: "IV" },
+  Sym { value: 1, text: "I" }
+]
+
+fn roman_from(n: Int, i: Int, acc: Str) -> Str =
+  match get(symbols(), i) {
+    None => acc,
+    Some(s) => if n >= s.value then roman_from(n - s.value, i, acc ++ s.text) else roman_from(n, i + 1, acc),
+  }
+
+fn to_roman(n: Int) -> Str req n >= 1 && n <= 3999 = roman_from(n, 0, "")
+
+fn letter_value(c: Str) -> Int =
+  match c { "I" => 1, "V" => 5, "X" => 10, "L" => 50, "C" => 100, "D" => 500, "M" => 1000, _ => 0 }
+
+# Value read with the subtractive rule; canonical form is checked by converting back.
+fn value_at(cs: List[Str], i: Int, acc: Int) -> Int =
+  match get(cs, i) {
+    None => acc,
+    Some(c) =>
+      let v = letter_value(c) in
+      let next = match get(cs, i + 1) { Some(d) => letter_value(d), None => 0 } in
+      if v == 0 then -1 else if v < next then value_at(cs, i + 1, acc - v) else value_at(cs, i + 1, acc + v),
+  }
+
+fn from_roman(s: Str) -> Option[Int] =
+  let v = value_at(chars(s), 0, 0) in
+  if v >= 1 && v <= 3999 && to_roman(v) == s then Some(v) else None
+
+fn is_digit(c: Str) -> Bool = c >= "0" && c <= "9"
+
+fn all_digits(s: Str) -> Bool = s != "" && len(filter(chars(s), is_digit)) == len(s)
+
+fn convert(line: Str) -> Str =
+  let t = trim(line) in
+  let as_number = if all_digits(t) then to_int(t) else None in
+  match as_number {
+    Some(n) if n >= 1 && n <= 3999 => to_roman(n),
+    _ => match from_roman(t) { Some(v) => from_int(v), None => "error" },
+  }
+
+test roman_1994 = to_roman(1994) == "MCMXCIV" && from_roman("MCMXCIV") == Some(1994)
+test not_canonical = from_roman("IIII") == None && from_roman("IC") == None && convert("4000") == "error"
+
+fn each_line() -> Int !io =
+  match read_line() {
+    None => 0,
+    Some(line) => { print(convert(line)); each_line() },
+  }
+
+fn main(args: List[Str]) -> Int !io = each_line()

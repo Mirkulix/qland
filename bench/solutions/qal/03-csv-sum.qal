@@ -1,0 +1,59 @@
+# Sum of one CSV column (quoted fields may contain commas).
+
+type Fields = { done: List[Str], cur: Str, quoted: Bool }
+
+fn step(st: Fields, c: Str) -> Fields =
+  if c == "\"" then Fields { done: st.done, cur: st.cur, quoted: !st.quoted }
+  else if c == "," && !st.quoted then Fields { done: push(st.done, st.cur), cur: "", quoted: false }
+  else Fields { done: st.done, cur: st.cur ++ c, quoted: st.quoted }
+
+fn lstrip(s: Str) -> Str = if starts_with(s, " ") then lstrip(slice(s, 1, len(s))) else s
+
+fn rstrip(s: Str) -> Str = let n = len(s) in if n > 0 && slice(s, n - 1, n) == " " then rstrip(slice(s, 0, n - 1)) else s
+
+fn strip(s: Str) -> Str = rstrip(lstrip(s))
+
+fn fields(line: Str) -> List[Str] =
+  let st = fold(chars(line), Fields { done: [], cur: "", quoted: false }, step) in
+  map(push(st.done, st.cur), strip)
+
+test quoted = fields("a, \"b, c\" ,d") == ["a", "b, c", "d"]
+
+fn index_of_name(xs: List[Str], name: Str, i: Int) -> Int =
+  match get(xs, i) { None => -1, Some(x) => if x == name then i else index_of_name(xs, name, i + 1) }
+
+fn blank(s: Str) -> Bool = trim(s) == ""
+
+type Acc = { sum: Int, skipped: Int, col: Int, header: Bool }
+
+# The first row is the header: it is passed over.
+fn add_row(a: Acc, row: Str) -> Acc =
+  if a.header then Acc { sum: a.sum, skipped: a.skipped, col: a.col, header: false }
+  else match get(fields(row), a.col) {
+    Some(v) => match to_int(v) {
+      Some(n) => Acc { sum: a.sum + n, skipped: a.skipped, col: a.col, header: false },
+      None => Acc { sum: a.sum, skipped: a.skipped + 1, col: a.col, header: false },
+    },
+    None => Acc { sum: a.sum, skipped: a.skipped + 1, col: a.col, header: false },
+  }
+
+fn read_rows(acc: List[Str]) -> List[Str] !io =
+  match read_line() { None => acc, Some(l) => read_rows(if blank(l) then acc else push(acc, l)) }
+
+fn no_column(name: Str) -> Int !io = { print("error: no column " ++ name); 1 }
+
+fn main(args: List[Str]) -> Int !io =
+  match get(args, 0) {
+    Some(name) if len(args) == 1 =>
+      let rows = read_rows([]) in
+      match get(rows, 0) {
+        None => no_column(name),
+        Some(header) =>
+          let col = index_of_name(fields(header), name, 0) in
+          if col < 0 then no_column(name)
+          else
+            let a = fold(rows, Acc { sum: 0, skipped: 0, col: col, header: true }, add_row) in
+            { print("sum " ++ from_int(a.sum)); print("skipped " ++ from_int(a.skipped)); 0 },
+      },
+    _ => { print("usage: csv_sum <column>"); 2 },
+  }

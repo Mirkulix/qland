@@ -1,0 +1,16 @@
+{
+  "name": "h13_invalid_json",
+  "description": "Malformed JSON payload returns 400 Bad Request",
+  "steps": [
+    {
+      "name": "malformed post product",
+      "request": {
+        "method": "POST",
+        "path": "/products",
+        "headers": [{"name": "content-type", "value": "application/json"}],
+        "body": "{\"sku\": \"BAD\", "
+      },
+      "expect": {"status": 400}
+    }
+  ]
+}

@@ -1,0 +1,28 @@
+# Counts lines, words and characters of a file: `qal run examples/wordcount.qal --allow io,fs:examples examples/age.qal`
+
+type Counts = { lines: Int, words: Int, chars: Int }
+
+fn count(text: Str) -> Counts
+= Counts {
+    lines: len(filter(split(text, "\n"), non_empty)) ,
+    words: fold(split(text, "\n"), 0, add_words),
+    chars: len(text),
+  }
+
+fn non_empty(s: Str) -> Bool = len(trim(s)) > 0
+
+fn add_words(acc: Int, line: Str) -> Int = acc + len(filter(split(line, " "), non_empty))
+
+test counts_words = count("a b\n\nc  d e\n") == Counts { lines: 2, words: 5, chars: 12 }
+
+fn main(args: List[Str]) -> Int !io !fs
+= match get(args, 0) {
+    None => { print("usage: wordcount <file>"); 2 },
+    Some(path) => match read_file(path) {
+      Err(e) => { print("error: " ++ e); 1 },
+      Ok(text) => {
+        let c = count(text) in print(from_int(c.lines) ++ " " ++ from_int(c.words) ++ " " ++ from_int(c.chars));
+        0
+      },
+    },
+  }

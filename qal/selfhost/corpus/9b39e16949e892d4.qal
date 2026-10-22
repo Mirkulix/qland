@@ -1,0 +1,1 @@
+fn len(s: Str) -> Int = 1

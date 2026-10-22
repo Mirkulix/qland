@@ -1,0 +1,6 @@
+fn relu(arg0: I64) -> I64 {
+  v00 = arg0
+  v01 = 0
+  v02 = max(v00, v01)                 # invariant: >= 0
+  return v02
+}

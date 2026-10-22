@@ -1,0 +1,6 @@
+type E = A | B(Int, Str)
+
+type R = { x: Float }
+
+fn f(e: E) -> Str
+= match e { A => "a\n", B(n, s) if n > 0 => s, _ => "" }

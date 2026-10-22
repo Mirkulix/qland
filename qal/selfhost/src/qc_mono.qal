@@ -1,0 +1,802 @@
+# Monomorphisation and concrete type validation (spec §7: qc_mono, matching qal-check/src/mono.rs)
+
+fn qc_type_depth(t: QcType) -> Int =
+  1 + (match t {
+    QcTList(x) => qc_type_depth(x),
+    QcTOption(x) => qc_type_depth(x),
+    QcTResult(a, b) => qc_max_int(qc_type_depth(a), qc_type_depth(b)),
+    QcTMap(a, b) => qc_max_int(qc_type_depth(a), qc_type_depth(b)),
+    QcTApp(_, args) =>
+      let ds = map(args, qc_type_depth) in
+      qc_max_list_int_loop(ds, 0, 0),
+    QcTFn(ps, r, _) =>
+      let ds = map(ps, qc_type_depth) in
+      qc_max_int(qc_max_list_int_loop(ds, 0, 0), qc_type_depth(r)),
+    _ => 0
+  })
+
+fn qc_type_size(t: QcType) -> Int =
+  1 + (match t {
+    QcTList(x) => qc_type_size(x),
+    QcTOption(x) => qc_type_size(x),
+    QcTResult(a, b) => qc_type_size(a) + qc_type_size(b),
+    QcTMap(a, b) => qc_type_size(a) + qc_type_size(b),
+    QcTApp(_, args) => fold(args, 0, fn(acc: Int, a: QcType) => acc + qc_type_size(a)),
+    QcTFn(ps, r, _) => fold(ps, qc_type_size(r), fn(acc: Int, p: QcType) => acc + qc_type_size(p)),
+    _ => 0
+  })
+
+fn qc_show_targs(targs: List[QcType]) -> Str =
+  join(map(targs, qc_print_type), ", ")
+
+# Expression substitution: replace tps by targs
+fn qc_subst_expr(e: QcTExpr, tps: List[Str], targs: List[QcType]) -> QcTExpr =
+  let next_ty = qc_type_instantiate(e.ty, tps, targs) in
+  let next_kind = match e.kind {
+    QcTKCallG(h, ts, xs) =>
+      let next_ts = map(ts, fn(t: QcType) => qc_type_instantiate(t, tps, targs)) in
+      let next_xs = map(xs, fn(x: QcTExpr) => qc_subst_expr(x, tps, targs)) in
+      QcTKCallG(h, next_ts, next_xs),
+    QcTKFnRefG(h, ts) =>
+      let next_ts = map(ts, fn(t: QcType) => qc_type_instantiate(t, tps, targs)) in
+      QcTKFnRefG(h, next_ts),
+    QcTKLambda(l) =>
+      QcTKLambda(QcTLambda {
+        params: l.params,
+        captures: l.captures,
+        body: qc_subst_expr(l.body, tps, targs)
+      }),
+    QcTKUn(op, x, path) => QcTKUn(op, qc_subst_expr(x, tps, targs), path),
+    QcTKField(x, i) => QcTKField(qc_subst_expr(x, tps, targs), i),
+    QcTKBin(op, l, r, path) => QcTKBin(op, qc_subst_expr(l, tps, targs), qc_subst_expr(r, tps, targs), path),
+    QcTKLet(id, l, r) => QcTKLet(id, qc_subst_expr(l, tps, targs), qc_subst_expr(r, tps, targs)),
+    QcTKIf(c, t, f) => QcTKIf(qc_subst_expr(c, tps, targs), qc_subst_expr(t, tps, targs), qc_subst_expr(f, tps, targs)),
+    QcTKCall(i, xs) => QcTKCall(i, map(xs, fn(x: QcTExpr) => qc_subst_expr(x, tps, targs))),
+    QcTKList(xs) => QcTKList(map(xs, fn(x: QcTExpr) => qc_subst_expr(x, tps, targs))),
+    QcTKVariant(tag, xs) => QcTKVariant(tag, map(xs, fn(x: QcTExpr) => qc_subst_expr(x, tps, targs))),
+    QcTKSeq(xs) => QcTKSeq(map(xs, fn(x: QcTExpr) => qc_subst_expr(x, tps, targs))),
+    QcTKBuiltin(b, xs, path) => QcTKBuiltin(b, map(xs, fn(x: QcTExpr) => qc_subst_expr(x, tps, targs)), path),
+    QcTKCallIndirect(f, xs) => QcTKCallIndirect(qc_subst_expr(f, tps, targs), map(xs, fn(x: QcTExpr) => qc_subst_expr(x, tps, targs))),
+    QcTKRecord(fs) => QcTKRecord(map(fs, fn(fld: QcTField) => QcTField { idx: fld.idx, expr: qc_subst_expr(fld.expr, tps, targs) })),
+    QcTKMatch(s, arms) =>
+      let next_s = qc_subst_expr(s, tps, targs) in
+      let next_arms = map(arms, fn(a: QcTArm) =>
+        let next_guard = match a.guard {
+          Some(g) => Some(qc_subst_expr(g, tps, targs)),
+          None => None
+        } in
+        QcTArm { pat: a.pat, guard: next_guard, body: qc_subst_expr(a.body, tps, targs) }
+      ) in
+      QcTKMatch(next_s, next_arms),
+    other => other
+  } in
+  QcTExpr { ty: next_ty, kind: next_kind }
+
+# Monomorphisation state
+type QcMonoState = {
+  generics: List[QcTFn],
+  sizes: List[Int],
+  copied: Int,
+  base: Int,
+  instances: Map[Str, Int],
+  new_fns: List[QcTFn],
+  queue: List[Int],
+  failed: Option[QcDiag],
+  # Rewritten instances by index into new_fns (avoids copying new_fns per instance)
+  done: Map[Str, QcTFn]
+}
+
+type QcMonoRewriteRes = {
+  st: QcMonoState,
+  expr: QcTExpr
+}
+
+type QcMonoInstRes = {
+  st: QcMonoState,
+  idx: Int
+}
+
+fn qc_mono_fn_nodes(f: QcTFn) -> Int =
+  let req_nodes = fold(f.reqs, 0, fn(acc: Int, e: QcTExpr) => acc + qc_mono_expr_nodes(e)) in
+  let ens_nodes = fold(f.enss, 0, fn(acc: Int, e: QcTExpr) => acc + qc_mono_expr_nodes(e)) in
+  req_nodes + ens_nodes + qc_mono_expr_nodes(f.body)
+
+fn qc_mono_expr_nodes(e: QcTExpr) -> Int =
+  1 + (match e.kind {
+    QcTKLambda(l) => qc_mono_expr_nodes(l.body),
+    QcTKUn(_, x, _) => qc_mono_expr_nodes(x),
+    QcTKField(x, _) => qc_mono_expr_nodes(x),
+    QcTKBin(_, l, r, _) => qc_mono_expr_nodes(l) + qc_mono_expr_nodes(r),
+    QcTKLet(_, l, r) => qc_mono_expr_nodes(l) + qc_mono_expr_nodes(r),
+    QcTKIf(c, t, f) => qc_mono_expr_nodes(c) + qc_mono_expr_nodes(t) + qc_mono_expr_nodes(f),
+    QcTKCall(_, xs) => fold(xs, 0, fn(acc: Int, x: QcTExpr) => acc + qc_mono_expr_nodes(x)),
+    QcTKCallG(_, _, xs) => fold(xs, 0, fn(acc: Int, x: QcTExpr) => acc + qc_mono_expr_nodes(x)),
+    QcTKList(xs) => fold(xs, 0, fn(acc: Int, x: QcTExpr) => acc + qc_mono_expr_nodes(x)),
+    QcTKVariant(_, xs) => fold(xs, 0, fn(acc: Int, x: QcTExpr) => acc + qc_mono_expr_nodes(x)),
+    QcTKSeq(xs) => fold(xs, 0, fn(acc: Int, x: QcTExpr) => acc + qc_mono_expr_nodes(x)),
+    QcTKBuiltin(_, xs, _) => fold(xs, 0, fn(acc: Int, x: QcTExpr) => acc + qc_mono_expr_nodes(x)),
+    QcTKCallIndirect(f, xs) => fold(xs, qc_mono_expr_nodes(f), fn(acc: Int, x: QcTExpr) => acc + qc_mono_expr_nodes(x)),
+    QcTKRecord(fs) => fold(fs, 0, fn(acc: Int, f: QcTField) => acc + qc_mono_expr_nodes(f.expr)),
+    QcTKMatch(s, arms) =>
+      let s_nodes = qc_mono_expr_nodes(s) in
+      fold(arms, s_nodes, fn(acc: Int, a: QcTArm) =>
+        let g_nodes = match a.guard { Some(g) => qc_mono_expr_nodes(g), None => 0 } in
+        acc + g_nodes + qc_mono_expr_nodes(a.body)
+      ),
+    _ => 0
+  })
+
+fn qc_mono_inst_params_loop(params: List[QcFieldType], locals: List[QcType], tps: List[Str], targs: List[QcType], idx: Int, acc: Accum[QcFieldType]) -> List[QcFieldType] =
+  if idx >= len(params) then acc_list(acc)
+  else
+    let p = list_at(params, idx) in
+    let loc_ty = if idx < len(locals) then list_at(locals, idx) else p.ty in
+    let next_p = QcFieldType { name: p.name, ty: qc_type_instantiate(loc_ty, tps, targs) } in
+    qc_mono_inst_params_loop(params, locals, tps, targs, idx + 1, AccPush(acc, next_p))
+
+fn qc_mono_instance(st: QcMonoState, caller: Str, g: Int, targs: List[QcType]) -> QcMonoInstRes =
+  let key = from_int(g) ++ ":" ++ join(map(targs, qc_print_type), ",") in
+  match map_get(st.instances, key) {
+    Some(i) => QcMonoInstRes { st: st, idx: i },
+    None =>
+      let gf = list_at(st.generics, g) in
+      let name = gf.def.name ++ "[" ++ qc_show_targs(targs) ++ "]" in
+      let g_size = if g < len(st.sizes) then list_at(st.sizes, g) else 0 in
+      let targs_size = fold(targs, 1, fn(acc: Int, t: QcType) => acc + qc_type_size(t)) in
+      let size = g_size * targs_size in
+      let too_big = fold(targs, false, fn(acc: Bool, t: QcType) => acc || qc_type_size(t) > 4096 || qc_type_depth(t) > 256) in
+      if map_size(st.instances) >= 1000 || too_big || st.copied + size > 500000 then
+        let diag = match st.failed {
+          Some(d) => d,
+          None => qc_diag_instantiation_limit(caller, "", name, 1000)
+        } in
+        QcMonoInstRes {
+          st: QcMonoState {
+            generics: st.generics,
+            sizes: st.sizes,
+            copied: st.copied,
+            base: st.base,
+            instances: st.instances,
+            new_fns: st.new_fns,
+            queue: st.queue,
+            failed: Some(diag),
+            done: st.done
+          },
+          idx: 0
+        }
+      else
+        let tps = gf.def.tparams in
+        let next_params = qc_mono_inst_params_loop(gf.def.params, gf.locals, tps, targs, 0, AccEnd) in
+        let next_def = QcFnDef {
+          name: name,
+          tparams: [],
+          params: next_params,
+          ret: qc_type_instantiate(gf.body.ty, tps, targs),
+          effects: gf.def.effects,
+          reqs: gf.def.reqs,
+          enss: gf.def.enss,
+          body: gf.def.body
+        } in
+        let inst_fn = QcTFn {
+          def: next_def,
+          locals: map(gf.locals, fn(t: QcType) => qc_type_instantiate(t, tps, targs)),
+          reqs: map(gf.reqs, fn(e: QcTExpr) => qc_subst_expr(e, tps, targs)),
+          enss: map(gf.enss, fn(e: QcTExpr) => qc_subst_expr(e, tps, targs)),
+          result_local: gf.result_local,
+          body: qc_subst_expr(gf.body, tps, targs),
+          instance: Some(QcTFnInstance { gen_idx: g, args: targs })
+        } in
+        let k = len(st.new_fns) in
+        let idx = st.base + k in
+        let next_st = QcMonoState {
+          generics: st.generics,
+          sizes: st.sizes,
+          copied: st.copied + size,
+          base: st.base,
+          instances: map_put(st.instances, key, idx),
+          new_fns: push(st.new_fns, inst_fn),
+          queue: push(st.queue, k),
+          failed: st.failed,
+          done: st.done
+        } in
+        QcMonoInstRes { st: next_st, idx: idx }
+  }
+
+fn qc_mono_rewrite(st: QcMonoState, caller: Str, e: QcTExpr) -> QcMonoRewriteRes =
+  match e.kind {
+    QcTKCallG(g, targs, args) =>
+      let args_res = qc_mono_rewrite_list_loop(st, caller, args, 0, AccEnd) in
+      let inst_res = qc_mono_instance(args_res.st, caller, g, targs) in
+      QcMonoRewriteRes {
+        st: inst_res.st,
+        expr: QcTExpr { ty: e.ty, kind: QcTKCall(inst_res.idx, args_res.xs) }
+      },
+    QcTKFnRefG(g, targs) =>
+      let inst_res = qc_mono_instance(st, caller, g, targs) in
+      QcMonoRewriteRes {
+        st: inst_res.st,
+        expr: QcTExpr { ty: e.ty, kind: QcTKFnRef(inst_res.idx) }
+      },
+    QcTKLambda(l) =>
+      let body_res = qc_mono_rewrite(st, caller, l.body) in
+      QcMonoRewriteRes {
+        st: body_res.st,
+        expr: QcTExpr { ty: e.ty, kind: QcTKLambda(QcTLambda { params: l.params, captures: l.captures, body: body_res.expr }) }
+      },
+    QcTKUn(op, x, path) =>
+      let x_res = qc_mono_rewrite(st, caller, x) in
+      QcMonoRewriteRes { st: x_res.st, expr: QcTExpr { ty: e.ty, kind: QcTKUn(op, x_res.expr, path) } },
+    QcTKField(x, i) =>
+      let x_res = qc_mono_rewrite(st, caller, x) in
+      QcMonoRewriteRes { st: x_res.st, expr: QcTExpr { ty: e.ty, kind: QcTKField(x_res.expr, i) } },
+    QcTKBin(op, l, r, path) =>
+      let l_res = qc_mono_rewrite(st, caller, l) in
+      let r_res = qc_mono_rewrite(l_res.st, caller, r) in
+      QcMonoRewriteRes { st: r_res.st, expr: QcTExpr { ty: e.ty, kind: QcTKBin(op, l_res.expr, r_res.expr, path) } },
+    QcTKLet(id, l, r) =>
+      let l_res = qc_mono_rewrite(st, caller, l) in
+      let r_res = qc_mono_rewrite(l_res.st, caller, r) in
+      QcMonoRewriteRes { st: r_res.st, expr: QcTExpr { ty: e.ty, kind: QcTKLet(id, l_res.expr, r_res.expr) } },
+    QcTKIf(c, t, f) =>
+      let c_res = qc_mono_rewrite(st, caller, c) in
+      let t_res = qc_mono_rewrite(c_res.st, caller, t) in
+      let f_res = qc_mono_rewrite(t_res.st, caller, f) in
+      QcMonoRewriteRes { st: f_res.st, expr: QcTExpr { ty: e.ty, kind: QcTKIf(c_res.expr, t_res.expr, f_res.expr) } },
+    QcTKCall(i, xs) =>
+      let xs_res = qc_mono_rewrite_list_loop(st, caller, xs, 0, AccEnd) in
+      QcMonoRewriteRes { st: xs_res.st, expr: QcTExpr { ty: e.ty, kind: QcTKCall(i, xs_res.xs) } },
+    QcTKList(xs) =>
+      let xs_res = qc_mono_rewrite_list_loop(st, caller, xs, 0, AccEnd) in
+      QcMonoRewriteRes { st: xs_res.st, expr: QcTExpr { ty: e.ty, kind: QcTKList(xs_res.xs) } },
+    QcTKVariant(tag, xs) =>
+      let xs_res = qc_mono_rewrite_list_loop(st, caller, xs, 0, AccEnd) in
+      QcMonoRewriteRes { st: xs_res.st, expr: QcTExpr { ty: e.ty, kind: QcTKVariant(tag, xs_res.xs) } },
+    QcTKSeq(xs) =>
+      let xs_res = qc_mono_rewrite_list_loop(st, caller, xs, 0, AccEnd) in
+      QcMonoRewriteRes { st: xs_res.st, expr: QcTExpr { ty: e.ty, kind: QcTKSeq(xs_res.xs) } },
+    QcTKBuiltin(b, xs, path) =>
+      let xs_res = qc_mono_rewrite_list_loop(st, caller, xs, 0, AccEnd) in
+      QcMonoRewriteRes { st: xs_res.st, expr: QcTExpr { ty: e.ty, kind: QcTKBuiltin(b, xs_res.xs, path) } },
+    QcTKCallIndirect(f, xs) =>
+      let f_res = qc_mono_rewrite(st, caller, f) in
+      let xs_res = qc_mono_rewrite_list_loop(f_res.st, caller, xs, 0, AccEnd) in
+      QcMonoRewriteRes { st: xs_res.st, expr: QcTExpr { ty: e.ty, kind: QcTKCallIndirect(f_res.expr, xs_res.xs) } },
+    QcTKRecord(fs) =>
+      let fs_res = qc_mono_rewrite_fields_loop(st, caller, fs, 0, AccEnd) in
+      QcMonoRewriteRes { st: fs_res.st, expr: QcTExpr { ty: e.ty, kind: QcTKRecord(fs_res.fs) } },
+    QcTKMatch(s, arms) =>
+      let s_res = qc_mono_rewrite(st, caller, s) in
+      let arms_res = qc_mono_rewrite_arms_loop(s_res.st, caller, arms, 0, AccEnd) in
+      QcMonoRewriteRes { st: arms_res.st, expr: QcTExpr { ty: e.ty, kind: QcTKMatch(s_res.expr, arms_res.arms) } },
+    _ => QcMonoRewriteRes { st: st, expr: e }
+  }
+
+type QcMonoListRes = {
+  st: QcMonoState,
+  xs: List[QcTExpr]
+}
+
+fn qc_mono_rewrite_list_loop(st: QcMonoState, caller: Str, xs: List[QcTExpr], idx: Int, acc: Accum[QcTExpr]) -> QcMonoListRes =
+  if idx >= len(xs) then QcMonoListRes { st: st, xs: acc_list(acc) }
+  else
+    let res = qc_mono_rewrite(st, caller, list_at(xs, idx)) in
+    qc_mono_rewrite_list_loop(res.st, caller, xs, idx + 1, AccPush(acc, res.expr))
+
+type QcMonoFieldsRes = {
+  st: QcMonoState,
+  fs: List[QcTField]
+}
+
+fn qc_mono_rewrite_fields_loop(st: QcMonoState, caller: Str, fs: List[QcTField], idx: Int, acc: Accum[QcTField]) -> QcMonoFieldsRes =
+  if idx >= len(fs) then QcMonoFieldsRes { st: st, fs: acc_list(acc) }
+  else
+    let fld = list_at(fs, idx) in
+    let res = qc_mono_rewrite(st, caller, fld.expr) in
+    qc_mono_rewrite_fields_loop(res.st, caller, fs, idx + 1, AccPush(acc, QcTField { idx: fld.idx, expr: res.expr }))
+
+type QcMonoArmRes = {
+  st: QcMonoState,
+  arm: QcTArm
+}
+
+type QcMonoArmsRes = {
+  st: QcMonoState,
+  arms: List[QcTArm]
+}
+
+fn qc_mono_rewrite_arms_loop(st: QcMonoState, caller: Str, arms: List[QcTArm], idx: Int, acc: Accum[QcTArm]) -> QcMonoArmsRes =
+  if idx >= len(arms) then QcMonoArmsRes { st: st, arms: acc_list(acc) }
+  else
+    let a = list_at(arms, idx) in
+    let arm_res = match a.guard {
+      Some(g) =>
+        let g_res = qc_mono_rewrite(st, caller, g) in
+        let b_res = qc_mono_rewrite(g_res.st, caller, a.body) in
+        QcMonoArmRes { st: b_res.st, arm: QcTArm { pat: a.pat, guard: Some(g_res.expr), body: b_res.expr } },
+      None =>
+        let b_res = qc_mono_rewrite(st, caller, a.body) in
+        QcMonoArmRes { st: b_res.st, arm: QcTArm { pat: a.pat, guard: None, body: b_res.expr } }
+    } in
+    qc_mono_rewrite_arms_loop(arm_res.st, caller, arms, idx + 1, AccPush(acc, arm_res.arm))
+
+type QcMonoRewriteFnRes = {
+  st: QcMonoState,
+  f: QcTFn
+}
+
+fn qc_mono_rewrite_fn(st: QcMonoState, f: QcTFn) -> QcMonoRewriteFnRes =
+  let name = f.def.name in
+  let req_res = qc_mono_rewrite_list_loop(st, name, f.reqs, 0, AccEnd) in
+  let ens_res = qc_mono_rewrite_list_loop(req_res.st, name, f.enss, 0, AccEnd) in
+  let body_res = qc_mono_rewrite(ens_res.st, name, f.body) in
+  let next_fn = QcTFn {
+    def: f.def,
+    locals: f.locals,
+    reqs: req_res.xs,
+    enss: ens_res.xs,
+    result_local: f.result_local,
+    body: body_res.expr,
+    instance: f.instance
+  } in
+  QcMonoRewriteFnRes { st: body_res.st, f: next_fn }
+
+fn qc_monomorphise_queue_loop(st: QcMonoState) -> QcMonoState =
+  match st.failed {
+    Some(_) => st,
+    None =>
+      match qc_list_pop(st.queue) {
+        None => st,
+        Some(rest_queue) =>
+          let k = list_at(st.queue, len(st.queue) - 1) in
+          let st_popped = QcMonoState {
+            generics: st.generics,
+            sizes: st.sizes,
+            copied: st.copied,
+            base: st.base,
+            instances: st.instances,
+            new_fns: st.new_fns,
+            queue: rest_queue,
+            failed: st.failed,
+            done: st.done
+          } in
+          if k < len(st_popped.new_fns) then
+            let f = list_at(st_popped.new_fns, k) in
+            let fn_res = qc_mono_rewrite_fn(st_popped, f) in
+            let st_next = QcMonoState {
+              generics: fn_res.st.generics,
+              sizes: fn_res.st.sizes,
+              copied: fn_res.st.copied,
+              base: fn_res.st.base,
+              instances: fn_res.st.instances,
+              new_fns: fn_res.st.new_fns,
+              queue: fn_res.st.queue,
+              failed: fn_res.st.failed,
+              done: map_put(fn_res.st.done, from_int(k), fn_res.f)
+            } in
+            qc_monomorphise_queue_loop(st_next)
+          else
+            qc_monomorphise_queue_loop(st_popped)
+      }
+  }
+
+type QcMonoRes = {
+  tp: QcTProgram,
+  diag: Option[QcDiag]
+}
+
+type QcMonoRewriteFnsRes = {
+  st: QcMonoState,
+  fns: List[QcTFn]
+}
+
+type QcMonoRewriteTestsRes = {
+  st: QcMonoState,
+  tests: List[QcTTest]
+}
+
+fn qc_monomorphise(tp: QcTProgram) -> QcMonoRes =
+  let generics = tp.generics in
+  let fns = tp.fns in
+  let sizes = map(generics, qc_mono_fn_nodes) in
+  let init_st = QcMonoState {
+    generics: generics,
+    sizes: sizes,
+    copied: 0,
+    base: len(fns),
+    instances: map_new(),
+    new_fns: [],
+    queue: [],
+    failed: None,
+    done: map_new()
+  } in
+  # Rewrite monomorphic fns
+  let fns_res = qc_mono_rewrite_fns_loop(init_st, fns, 0, AccEnd) in
+  # Rewrite tests
+  let tests_res = qc_mono_rewrite_tests_loop(fns_res.st, tp.tests, 0, AccEnd) in
+  # Process instance queue
+  let st3 = qc_monomorphise_queue_loop(tests_res.st) in
+  match st3.failed {
+    Some(d) => QcMonoRes { tp: tp, diag: Some(d) },
+    None =>
+      let final_tp = QcTProgram {
+        types: tp.types,
+        fns: fns_res.fns ++ qc_mono_done_loop(st3, 0, AccEnd),
+        tests: tests_res.tests,
+        generics: generics
+      } in
+      QcMonoRes { tp: final_tp, diag: None }
+  }
+
+# The instances in index order, each in its rewritten form.
+fn qc_mono_done_loop(st: QcMonoState, k: Int, acc: Accum[QcTFn]) -> List[QcTFn] =
+  if k >= len(st.new_fns) then acc_list(acc)
+  else
+    let f = match map_get(st.done, from_int(k)) {
+      Some(rf) => rf,
+      None => list_at(st.new_fns, k)
+    } in
+    qc_mono_done_loop(st, k + 1, AccPush(acc, f))
+
+fn qc_mono_rewrite_fns_loop(st: QcMonoState, fns: List[QcTFn], idx: Int, acc: Accum[QcTFn]) -> QcMonoRewriteFnsRes =
+  if idx >= len(fns) then QcMonoRewriteFnsRes { st: st, fns: acc_list(acc) }
+  else
+    let fn_res = qc_mono_rewrite_fn(st, list_at(fns, idx)) in
+    qc_mono_rewrite_fns_loop(fn_res.st, fns, idx + 1, AccPush(acc, fn_res.f))
+
+fn qc_mono_rewrite_tests_loop(st: QcMonoState, tests: List[QcTTest], idx: Int, acc: Accum[QcTTest]) -> QcMonoRewriteTestsRes =
+  if idx >= len(tests) then QcMonoRewriteTestsRes { st: st, tests: acc_list(acc) }
+  else
+    let t = list_at(tests, idx) in
+    let res = qc_mono_rewrite(st, t.name, t.body) in
+    let next_test = QcTTest { name: t.name, locals: t.locals, body: res.expr } in
+    qc_mono_rewrite_tests_loop(res.st, tests, idx + 1, AccPush(acc, next_test))
+
+# Polymorphic recursion check
+type QcCallG = {
+  callee: Int,
+  targs: List[QcType]
+}
+
+fn qc_collect_calls_g(e: QcTExpr, acc: Accum[QcCallG]) -> Accum[QcCallG] =
+  let acc1 = match e.kind {
+    QcTKCallG(h, targs, _) => AccPush(acc, QcCallG { callee: h, targs: targs }),
+    QcTKFnRefG(h, targs) => AccPush(acc, QcCallG { callee: h, targs: targs }),
+    _ => acc
+  } in
+  match e.kind {
+    QcTKLambda(l) => qc_collect_calls_g(l.body, acc1),
+    QcTKUn(_, x, _) => qc_collect_calls_g(x, acc1),
+    QcTKField(x, _) => qc_collect_calls_g(x, acc1),
+    QcTKBin(_, l, r, _) => qc_collect_calls_g(r, qc_collect_calls_g(l, acc1)),
+    QcTKLet(_, l, r) => qc_collect_calls_g(r, qc_collect_calls_g(l, acc1)),
+    QcTKIf(c, t, f) => qc_collect_calls_g(f, qc_collect_calls_g(t, qc_collect_calls_g(c, acc1))),
+    QcTKCall(_, xs) => fold(xs, acc1, fn(st: Accum[QcCallG], x: QcTExpr) => qc_collect_calls_g(x, st)),
+    QcTKCallG(_, _, xs) => fold(xs, acc1, fn(st: Accum[QcCallG], x: QcTExpr) => qc_collect_calls_g(x, st)),
+    QcTKList(xs) => fold(xs, acc1, fn(st: Accum[QcCallG], x: QcTExpr) => qc_collect_calls_g(x, st)),
+    QcTKVariant(_, xs) => fold(xs, acc1, fn(st: Accum[QcCallG], x: QcTExpr) => qc_collect_calls_g(x, st)),
+    QcTKSeq(xs) => fold(xs, acc1, fn(st: Accum[QcCallG], x: QcTExpr) => qc_collect_calls_g(x, st)),
+    QcTKBuiltin(_, xs, _) => fold(xs, acc1, fn(st: Accum[QcCallG], x: QcTExpr) => qc_collect_calls_g(x, st)),
+    QcTKCallIndirect(f, xs) => fold(xs, qc_collect_calls_g(f, acc1), fn(st: Accum[QcCallG], x: QcTExpr) => qc_collect_calls_g(x, st)),
+    QcTKRecord(fs) => fold(fs, acc1, fn(st: Accum[QcCallG], f: QcTField) => qc_collect_calls_g(f.expr, st)),
+    QcTKMatch(s, arms) =>
+      let st_s = qc_collect_calls_g(s, acc1) in
+      fold(arms, st_s, fn(st: Accum[QcCallG], a: QcTArm) =>
+        let st_g = match a.guard { Some(g) => qc_collect_calls_g(g, st), None => st } in
+        qc_collect_calls_g(a.body, st_g)
+      ),
+    _ => acc1
+  }
+
+fn qc_fn_calls_g(f: QcTFn) -> List[QcCallG] =
+  let st0 = fold(f.reqs, AccEnd, fn(st: Accum[QcCallG], e: QcTExpr) => qc_collect_calls_g(e, st)) in
+  let st1 = fold(f.enss, st0, fn(st: Accum[QcCallG], e: QcTExpr) => qc_collect_calls_g(e, st)) in
+  acc_list(qc_collect_calls_g(f.body, st1))
+
+fn qc_mono_polymorphic_recursion(tp: QcTProgram) -> Option[QcDiag] =
+  let n = len(tp.generics) in
+  if n == 0 then None
+  else
+    let all_calls = map(tp.generics, qc_fn_calls_g) in
+    let succ = map(all_calls, fn(cs: List[QcCallG]) =>
+      map(filter(cs, fn(c: QcCallG) => c.callee < n), fn(c: QcCallG) => c.callee)
+    ) in
+    let init_tarjan = QcTarjanState {
+      n: n,
+      edges: succ,
+      indices: map_new(),
+      lowlinks: map_new(),
+      on_stack: map_new(),
+      stack: [],
+      next_idx: 0,
+      sccs: AccEnd
+    } in
+    let tarjan_res = qc_tarjan_loop(init_tarjan, 0) in
+    let sccs = acc_list(tarjan_res.sccs) in
+    let comp_map = qc_build_comp_map_loop(sccs, 0, map_new()) in
+    qc_check_poly_rec_loop(tp.generics, all_calls, comp_map, 0)
+
+fn qc_build_comp_map_loop(sccs: List[List[Int]], c_idx: Int, acc: Map[Int, Int]) -> Map[Int, Int] =
+  if c_idx >= len(sccs) then acc
+  else
+    let nodes = list_at(sccs, c_idx) in
+    let next_acc = fold(nodes, acc, fn(st: Map[Int, Int], node: Int) => map_put(st, node, c_idx)) in
+    qc_build_comp_map_loop(sccs, c_idx + 1, next_acc)
+
+fn qc_check_poly_rec_loop(generics: List[QcTFn], all_calls: List[List[QcCallG]], comp_map: Map[Int, Int], g: Int) -> Option[QcDiag] =
+  if g >= len(generics) then None
+  else
+    let gf = list_at(generics, g) in
+    let calls = list_at(all_calls, g) in
+    let g_comp = map_get(comp_map, g) in
+    match qc_check_poly_calls_loop(gf.def.name, generics, calls, g_comp, comp_map, 0) {
+      Some(d) => Some(d),
+      None => qc_check_poly_rec_loop(generics, all_calls, comp_map, g + 1)
+    }
+
+fn qc_check_poly_calls_loop(caller_name: Str, generics: List[QcTFn], calls: List[QcCallG], g_comp: Option[Int], comp_map: Map[Int, Int], idx: Int) -> Option[QcDiag] =
+  if idx >= len(calls) then None
+  else
+    let c = list_at(calls, idx) in
+    let h = c.callee in
+    let h_comp = map_get(comp_map, h) in
+    let same_group = (g_comp != None) && (g_comp == h_comp) in
+    if same_group then
+      let all_plain_params = fold(c.targs, true, fn(acc: Bool, t: QcType) =>
+        acc && (match t { QcTParam(_) => true, _ => false })
+      ) in
+      if !all_plain_params then
+        let callee_name = if h < len(generics) then (list_at(generics, h)).def.name else "" in
+        Some(qc_diag_polymorphic_recursion(caller_name, "", callee_name, qc_show_targs(c.targs)))
+      else
+        qc_check_poly_calls_loop(caller_name, generics, calls, g_comp, comp_map, idx + 1)
+    else
+      qc_check_poly_calls_loop(caller_name, generics, calls, g_comp, comp_map, idx + 1)
+
+# Concrete type validation (bad map keys, compare with functions, == in instances)
+fn qc_contains_fn(tp: QcTProgram, t: QcType, seen: List[Str]) -> Bool =
+  if len(seen) >= 256 then true
+  else
+    match t {
+      QcTFn(_, _, _) => true,
+      QcTList(x) => qc_contains_fn(tp, x, seen),
+      QcTOption(x) => qc_contains_fn(tp, x, seen),
+      QcTResult(a, b) => qc_contains_fn(tp, a, seen) || qc_contains_fn(tp, b, seen),
+      QcTMap(a, b) => qc_contains_fn(tp, a, seen) || qc_contains_fn(tp, b, seen),
+      QcTNamed(_) => qc_contains_fn_named(tp, t, seen),
+      QcTApp(_, _) => qc_contains_fn_named(tp, t, seen),
+      _ => false
+    }
+
+fn qc_contains_fn_named(tp: QcTProgram, t: QcType, seen: List[Str]) -> Bool =
+  let key = qc_print_type(t) in
+  if qc_contains_str_loop(seen, key, 0) then false
+  else
+    let next_seen = push(seen, key) in
+    match qc_tp_decl(tp, t) {
+      Some(QcBodyRecord(fs)) => fold(fs, false, fn(acc: Bool, f: QcFieldType) => acc || qc_contains_fn(tp, f.ty, next_seen)),
+      Some(QcBodyEnum(vs)) => fold(vs, false, fn(acc: Bool, v: QcVariant) =>
+        acc || fold(v.fields, false, fn(acc_f: Bool, f: QcType) => acc_f || qc_contains_fn(tp, f, next_seen))
+      ),
+      None => false
+    }
+
+fn qc_bad_map_key(tp: QcTProgram, t: QcType, seen: List[Str]) -> Option[QcType] =
+  if len(seen) >= 256 then None
+  else
+    match t {
+      QcTMap(k, v) =>
+        if qc_contains_fn(tp, k, []) then Some(k)
+        else
+          match qc_bad_map_key(tp, k, seen) {
+            Some(bad) => Some(bad),
+            None => qc_bad_map_key(tp, v, seen)
+          },
+      QcTList(x) => qc_bad_map_key(tp, x, seen),
+      QcTOption(x) => qc_bad_map_key(tp, x, seen),
+      QcTResult(a, b) =>
+        match qc_bad_map_key(tp, a, seen) {
+          Some(bad) => Some(bad),
+          None => qc_bad_map_key(tp, b, seen)
+        },
+      QcTFn(ps, r, _) =>
+        let bad_p = fold(ps, None, fn(acc: Option[QcType], p: QcType) =>
+          match acc { Some(_) => acc, None => qc_bad_map_key(tp, p, seen) }
+        ) in
+        match bad_p {
+          Some(bad) => Some(bad),
+          None => qc_bad_map_key(tp, r, seen)
+        },
+      QcTNamed(_) => qc_bad_map_key_named(tp, t, seen),
+      QcTApp(_, _) => qc_bad_map_key_named(tp, t, seen),
+      _ => None
+    }
+
+fn qc_bad_map_key_named(tp: QcTProgram, t: QcType, seen: List[Str]) -> Option[QcType] =
+  let key = qc_print_type(t) in
+  if qc_contains_str_loop(seen, key, 0) then None
+  else
+    let next_seen = push(seen, key) in
+    match qc_tp_decl(tp, t) {
+      Some(QcBodyRecord(fs)) =>
+        fold(fs, None, fn(acc: Option[QcType], f: QcFieldType) =>
+          match acc { Some(_) => acc, None => qc_bad_map_key(tp, f.ty, next_seen) }
+        ),
+      Some(QcBodyEnum(vs)) =>
+        fold(vs, None, fn(acc: Option[QcType], v: QcVariant) =>
+          match acc {
+            Some(_) => acc,
+            None => fold(v.fields, None, fn(acc_f: Option[QcType], f: QcType) =>
+              match acc_f { Some(_) => acc_f, None => qc_bad_map_key(tp, f, next_seen) }
+            )
+          }
+        ),
+      None => None
+    }
+
+fn qc_validate_expr(tp: QcTProgram, def_name: Str, e: QcTExpr, is_inst: Bool) -> Option[QcDiag] =
+  match qc_bad_map_key(tp, e.ty, []) {
+    Some(k) =>
+      Some(qc_diag_hint(
+        qc_diag_type_mismatch(def_name, "", "a comparable key type", qc_print_type(k)),
+        "map keys cannot contain functions"
+      )),
+    None =>
+      match e.kind {
+        QcTKBuiltin(QcBCompare, args, path) =>
+          if len(args) > 0 && qc_contains_fn(tp, (list_at(args, 0)).ty, []) then
+            Some(qc_diag_hint(
+              qc_diag_type_mismatch(def_name, path, "a comparable type", qc_print_type((list_at(args, 0)).ty)),
+              "`compare` orders values without functions inside"
+            ))
+          else qc_validate_children(tp, def_name, e, is_inst),
+        QcTKBin(op, l, _, path) if (op == QcOpEq || op == QcOpNe) && is_inst =>
+          if qc_contains_fn(tp, l.ty, []) then
+            Some(qc_diag_hint(
+              qc_diag_type_mismatch(def_name, path, "a comparable type", qc_print_type(l.ty)),
+              "functions cannot be compared; this generic function compares values of a type parameter"
+            ))
+          else qc_validate_children(tp, def_name, e, is_inst),
+        _ => qc_validate_children(tp, def_name, e, is_inst)
+      }
+  }
+
+fn qc_validate_children(tp: QcTProgram, def_name: Str, e: QcTExpr, is_inst: Bool) -> Option[QcDiag] =
+  match e.kind {
+    QcTKLambda(l) => qc_validate_expr(tp, def_name, l.body, is_inst),
+    QcTKUn(_, x, _) => qc_validate_expr(tp, def_name, x, is_inst),
+    QcTKField(x, _) => qc_validate_expr(tp, def_name, x, is_inst),
+    QcTKBin(_, l, r, _) =>
+      match qc_validate_expr(tp, def_name, l, is_inst) {
+        Some(d) => Some(d),
+        None => qc_validate_expr(tp, def_name, r, is_inst)
+      },
+    QcTKLet(_, l, r) =>
+      match qc_validate_expr(tp, def_name, l, is_inst) {
+        Some(d) => Some(d),
+        None => qc_validate_expr(tp, def_name, r, is_inst)
+      },
+    QcTKIf(c, t, f) =>
+      match qc_validate_expr(tp, def_name, c, is_inst) {
+        Some(d) => Some(d),
+        None => match qc_validate_expr(tp, def_name, t, is_inst) {
+          Some(d) => Some(d),
+          None => qc_validate_expr(tp, def_name, f, is_inst)
+        }
+      },
+    QcTKCall(_, xs) => qc_validate_list_loop(tp, def_name, xs, is_inst, 0),
+    QcTKCallG(_, _, xs) => qc_validate_list_loop(tp, def_name, xs, is_inst, 0),
+    QcTKList(xs) => qc_validate_list_loop(tp, def_name, xs, is_inst, 0),
+    QcTKVariant(_, xs) => qc_validate_list_loop(tp, def_name, xs, is_inst, 0),
+    QcTKSeq(xs) => qc_validate_list_loop(tp, def_name, xs, is_inst, 0),
+    QcTKBuiltin(_, xs, _) => qc_validate_list_loop(tp, def_name, xs, is_inst, 0),
+    QcTKCallIndirect(f, xs) =>
+      match qc_validate_expr(tp, def_name, f, is_inst) {
+        Some(d) => Some(d),
+        None => qc_validate_list_loop(tp, def_name, xs, is_inst, 0)
+      },
+    QcTKRecord(fs) => qc_validate_fields_loop(tp, def_name, fs, is_inst, 0),
+    QcTKMatch(s, arms) =>
+      match qc_validate_expr(tp, def_name, s, is_inst) {
+        Some(d) => Some(d),
+        None => qc_validate_arms_loop(tp, def_name, arms, is_inst, 0)
+      },
+    _ => None
+  }
+
+fn qc_validate_list_loop(tp: QcTProgram, def_name: Str, xs: List[QcTExpr], is_inst: Bool, idx: Int) -> Option[QcDiag] =
+  if idx >= len(xs) then None
+  else
+    match qc_validate_expr(tp, def_name, list_at(xs, idx), is_inst) {
+      Some(d) => Some(d),
+      None => qc_validate_list_loop(tp, def_name, xs, is_inst, idx + 1)
+    }
+
+fn qc_validate_fields_loop(tp: QcTProgram, def_name: Str, fs: List[QcTField], is_inst: Bool, idx: Int) -> Option[QcDiag] =
+  if idx >= len(fs) then None
+  else
+    match qc_validate_expr(tp, def_name, (list_at(fs, idx)).expr, is_inst) {
+      Some(d) => Some(d),
+      None => qc_validate_fields_loop(tp, def_name, fs, is_inst, idx + 1)
+    }
+
+fn qc_validate_arms_loop(tp: QcTProgram, def_name: Str, arms: List[QcTArm], is_inst: Bool, idx: Int) -> Option[QcDiag] =
+  if idx >= len(arms) then None
+  else
+    let a = list_at(arms, idx) in
+    let guard_diag = match a.guard {
+      Some(g) => qc_validate_expr(tp, def_name, g, is_inst),
+      None => None
+    } in
+    match guard_diag {
+      Some(d) => Some(d),
+      None =>
+        match qc_validate_expr(tp, def_name, a.body, is_inst) {
+          Some(d) => Some(d),
+          None => qc_validate_arms_loop(tp, def_name, arms, is_inst, idx + 1)
+        }
+    }
+
+fn qc_validate_locals_loop(tp: QcTProgram, def_name: Str, locals: List[QcType], idx: Int) -> Option[QcDiag] =
+  if idx >= len(locals) then None
+  else
+    match qc_bad_map_key(tp, list_at(locals, idx), []) {
+      Some(k) =>
+        Some(qc_diag_hint(
+          qc_diag_type_mismatch(def_name, "", "a comparable key type", qc_print_type(k)),
+          "map keys cannot contain functions"
+        )),
+      None => qc_validate_locals_loop(tp, def_name, locals, idx + 1)
+    }
+
+fn qc_mono_validate(tp: QcTProgram) -> Option[QcDiag] =
+  match qc_validate_fns_loop(tp, tp.fns, 0) {
+    Some(d) => Some(d),
+    None => qc_validate_tests_loop(tp, tp.tests, 0)
+  }
+
+fn qc_validate_fns_loop(tp: QcTProgram, fns: List[QcTFn], idx: Int) -> Option[QcDiag] =
+  if idx >= len(fns) then None
+  else
+    let f = list_at(fns, idx) in
+    let is_inst = f.instance != None in
+    match qc_validate_locals_loop(tp, f.def.name, f.locals, 0) {
+      Some(d) => Some(d),
+      None =>
+        match qc_validate_list_loop(tp, f.def.name, f.reqs, is_inst, 0) {
+          Some(d) => Some(d),
+          None => match qc_validate_list_loop(tp, f.def.name, f.enss, is_inst, 0) {
+            Some(d) => Some(d),
+            None => match qc_validate_expr(tp, f.def.name, f.body, is_inst) {
+              Some(d) => Some(d),
+              None => qc_validate_fns_loop(tp, fns, idx + 1)
+            }
+          }
+        }
+    }
+
+fn qc_validate_tests_loop(tp: QcTProgram, tests: List[QcTTest], idx: Int) -> Option[QcDiag] =
+  if idx >= len(tests) then None
+  else
+    let t = list_at(tests, idx) in
+    match qc_validate_locals_loop(tp, t.name, t.locals, 0) {
+      Some(d) => Some(d),
+      None =>
+        match qc_validate_expr(tp, t.name, t.body, false) {
+          Some(d) => Some(d),
+          None => qc_validate_tests_loop(tp, tests, idx + 1)
+        }
+    }
+
+fn qc_range_loop[T](xs: List[T], idx: Int, hi: Int, acc: Accum[T]) -> List[T] =
+  if idx >= hi || idx >= len(xs) then acc_list(acc)
+  else qc_range_loop(xs, idx + 1, hi, AccPush(acc, list_at(xs, idx)))
+
+# Validation of the functions (kind 0) or tests (kind 1) `lo..hi`: one work item of a split check.
+fn qc_mono_validate_range(tp: QcTProgram, kind: Int, lo: Int, hi: Int) -> Option[QcDiag] =
+  if kind == 0 then qc_validate_fns_loop(tp, qc_range_loop(tp.fns, lo, hi, AccEnd), 0)
+  else qc_validate_tests_loop(tp, qc_range_loop(tp.tests, lo, hi, AccEnd), 0)
+
+test qc_mono_test =
+  let empty_tp = QcTProgram { types: [], fns: [], tests: [], generics: [] } in
+  qc_mono_polymorphic_recursion(empty_tp) == None &&
+  qc_mono_validate(empty_tp) == None

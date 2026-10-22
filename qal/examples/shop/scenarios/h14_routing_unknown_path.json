@@ -1,0 +1,11 @@
+{
+  "name": "h14_routing_unknown_path",
+  "description": "Unknown path returns 404",
+  "steps": [
+    {
+      "name": "not found",
+      "request": {"method": "GET", "path": "/random/unknown/path"},
+      "expect": {"status": 404}
+    }
+  ]
+}

@@ -1,0 +1,1 @@
+test t = map_size(map_put(map_new(), fn() => 1, 2)) == 1

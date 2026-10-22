@@ -1,0 +1,2024 @@
+# Canonical form, content hashing, and decoding for QAL self-hosting compiler (spec §7: qc_canon)
+
+type QcHash = Bytes
+
+fn qc_varint_acc(n: Int, acc: Accum[Int]) -> Accum[Int] =
+  let b = bit_and(n, 127) in
+  let rest = ushr(n, 7) in
+  if rest == 0 then AccPush(acc, b)
+  else qc_varint_acc(rest, AccPush(acc, bit_or(b, 128)))
+
+fn qc_i64_acc(n: Int, acc: Accum[Int]) -> Accum[Int] =
+  let a0 = AccPush(acc, bit_and(n, 255)) in
+  let a1 = AccPush(a0, bit_and(ushr(n, 8), 255)) in
+  let a2 = AccPush(a1, bit_and(ushr(n, 16), 255)) in
+  let a3 = AccPush(a2, bit_and(ushr(n, 24), 255)) in
+  let a4 = AccPush(a3, bit_and(ushr(n, 32), 255)) in
+  let a5 = AccPush(a4, bit_and(ushr(n, 40), 255)) in
+  let a6 = AccPush(a5, bit_and(ushr(n, 48), 255)) in
+  AccPush(a6, bit_and(ushr(n, 56), 255))
+
+fn qc_float_acc(x: Float, acc: Accum[Int]) -> Accum[Int] =
+  qc_i64_acc(float_bits(x), acc)
+
+fn qc_bytes_slice_acc(b: Bytes, pos: Int, count: Int, acc: Accum[Int]) -> Accum[Int] =
+  if count <= 0 then acc
+  else qc_bytes_slice_acc(b, pos + 1, count - 1, AccPush(acc, bytes_at(b, pos)))
+
+fn qc_str_acc(s: Str, acc: Accum[Int]) -> Accum[Int] =
+  let b = to_bytes(s) in
+  let blen = bytes_len(b) in
+  let acc2 = qc_varint_acc(blen, acc) in
+  qc_bytes_slice_acc(b, 0, blen, acc2)
+
+fn qc_raw_bytes_acc(b: Bytes, acc: Accum[Int]) -> Accum[Int] =
+  qc_bytes_slice_acc(b, 0, bytes_len(b), acc)
+
+fn qc_hash_to_hex_loop(h: Bytes, idx: Int, acc: Str) -> Str =
+  if idx >= bytes_len(h) then acc
+  else
+    let b = bytes_at(h, idx) in
+    let hi = qc_hex_digit(ushr(b, 4)) in
+    let lo = qc_hex_digit(bit_and(b, 15)) in
+    qc_hash_to_hex_loop(h, idx + 1, acc ++ hi ++ lo)
+
+fn qc_hash_to_hex(h: Bytes) -> Str =
+  qc_hash_to_hex_loop(h, 0, "")
+
+fn qc_hash_short(h: Bytes) -> Str =
+  slice(qc_hash_to_hex(h), 0, 12)
+
+fn qc_is_prelude_type(name: Str) -> Bool =
+  name == "HttpHeader" || name == "HttpRequest" || name == "HttpResponse" ||
+  name == "HttpCall" || name == "NetError" || name == "SqlValue" ||
+  name == "DbRows" || name == "DbError" || name == "Accum"
+
+fn qc_prelude_variant_owner(name: Str) -> Option[Str] =
+  if name == "NetDenied" || name == "NetInvalid" || name == "NetConnect" || name == "NetTimeout" || name == "NetTooLarge" then Some("NetError")
+  else if name == "SqlNull" || name == "SqlInt" || name == "SqlFloat" || name == "SqlText" then Some("SqlValue")
+  else if name == "DbConstraint" || name == "DbSql" || name == "DbBusy" || name == "DbFull" || name == "DbTooLarge" then Some("DbError")
+  else if name == "AccEnd" || name == "AccPush" then Some("Accum")
+  else None
+
+fn qc_is_builtin_name(name: Str) -> Bool =
+  name == "len" ||
+  name == "slice" || name == "split" || name == "join" || name == "trim" ||
+  name == "contains" || name == "starts_with" || name == "to_int" || name == "to_float" ||
+  name == "from_int" || name == "from_float" || name == "chars" || name == "get" ||
+  name == "push" || name == "concat" || name == "map" || name == "filter" ||
+  name == "fold" || name == "range" || name == "reverse" || name == "sort_int" ||
+  name == "int_to_float" || name == "float_to_int" || name == "print" || name == "read_line" ||
+  name == "read_file" || name == "write_file" || name == "now_ms" || name == "rand_int" ||
+  name == "read_all" || name == "sort_str" || name == "char_code" || name == "from_char_code" ||
+  name == "to_upper" || name == "to_lower" || name == "replace" || name == "index_of" ||
+  name == "map_new" || name == "map_get" || name == "map_put" || name == "map_del" ||
+  name == "map_has" || name == "map_size" || name == "map_keys" || name == "map_values" ||
+  name == "to_bytes" || name == "bytes_len" || name == "bytes_get" || name == "bytes_slice" ||
+  name == "bytes_from" || name == "bytes_to_list" || name == "bytes_to_str" || name == "compare" ||
+  name == "http" || name == "db_exec" || name == "db_query" ||
+  name == "bit_and" || name == "bit_or" || name == "bit_xor" || name == "bit_not" ||
+  name == "shl" || name == "shr" || name == "ushr" || name == "float_bits" ||
+  name == "float_of_bits" || name == "list_at" || name == "bytes_at" || name == "acc_list" ||
+  name == "bytes_join" || name == "sha256" || name == "todo"
+
+type QcCanonEnv = {
+  fns: Map[Str, Bool],
+  types: Map[Str, Bool],
+  variants: Map[Str, Str]
+}
+
+fn qc_canon_env_of(p: QcProgram) -> QcCanonEnv =
+  fold(p.defs, QcCanonEnv { fns: map_new(), types: map_new(), variants: map_new() },
+       fn(env: QcCanonEnv, d: QcDef) =>
+         match d {
+           QcDefFn(f) =>
+             QcCanonEnv { fns: map_put(env.fns, f.name, true), types: env.types, variants: env.variants },
+           QcDefType(t) =>
+             let types2 = map_put(env.types, t.name, true) in
+             let vars2 = match t.body {
+               QcBodyEnum(vs) => fold(vs, env.variants, fn(acc: Map[Str, Str], v: QcVariant) => map_put(acc, v.name, t.name)),
+               _ => env.variants
+             } in
+             QcCanonEnv { fns: env.fns, types: types2, variants: vars2 },
+           QcDefTest(_) => env
+         }
+  )
+
+type QcCanon = {
+  name: Str,
+  kind: Int, # 0 type, 1 fn, 2 test
+  hash: Bytes,
+  canonical: Bytes,
+  signature: Str,
+  effects: List[Str],
+  local_names: List[Str],
+  refs: List[Str],
+  deps: List[Bytes],
+  group: Option[Bytes]
+}
+
+type QcGroup = {
+  hash: Bytes,
+  form: Bytes
+}
+
+type QcHashed = {
+  canons: List[QcCanon],
+  groups: List[QcGroup]
+}
+
+fn qc_str_list_contains(xs: List[Str], target: Str) -> Bool =
+  fold(xs, false, fn(found: Bool, x: Str) => if found then true else x == target)
+
+fn qc_walk_tparams_ty(t: QcType, tps: List[Str], out: List[Str]) -> List[Str] =
+  match t {
+    QcTNamed(n) =>
+      if qc_str_list_contains(tps, n) && !qc_str_list_contains(out, n) then out ++ [n] else out,
+    QcTParam(n) =>
+      if qc_str_list_contains(tps, n) && !qc_str_list_contains(out, n) then out ++ [n] else out,
+    QcTList(x) => qc_walk_tparams_ty(x, tps, out),
+    QcTOption(x) => qc_walk_tparams_ty(x, tps, out),
+    QcTResult(a, b) => qc_walk_tparams_ty(b, tps, qc_walk_tparams_ty(a, tps, out)),
+    QcTMap(a, b) => qc_walk_tparams_ty(b, tps, qc_walk_tparams_ty(a, tps, out)),
+    QcTApp(_, args) => fold(args, out, fn(acc: List[Str], a: QcType) => qc_walk_tparams_ty(a, tps, acc)),
+    QcTFn(ps, r, _) =>
+      let acc1 = fold(ps, out, fn(acc: List[Str], p: QcType) => qc_walk_tparams_ty(p, tps, acc)) in
+      qc_walk_tparams_ty(r, tps, acc1),
+    _ => out
+  }
+
+fn qc_fn_tparams(f: QcFnDef) -> List[Str] =
+  let out1 = fold(f.params, [], fn(acc: List[Str], p: QcFieldType) => qc_walk_tparams_ty(p.ty, f.tparams, acc)) in
+  let out2 = qc_walk_tparams_ty(f.ret, f.tparams, out1) in
+  fold(f.tparams, out2, fn(acc: List[Str], tp: Str) =>
+    if qc_str_list_contains(acc, tp) then acc else acc ++ [tp]
+  )
+
+fn qc_map_type_named(t: QcType, tps: List[Str], refs_map: Map[Str, Bytes]) -> QcType =
+  let map_n = fn(n: Str) =>
+    if qc_str_list_contains(tps, n) then n
+    else
+      match map_get(refs_map, n) {
+        Some(h) => "#" ++ qc_hash_to_hex(h),
+        None => n
+      } in
+  match t {
+    QcTNamed(n) => QcTNamed(map_n(n)),
+    QcTApp(n, args) => QcTApp(map_n(n), map(args, fn(a: QcType) => qc_map_type_named(a, tps, refs_map))),
+    QcTMap(k, v) => QcTMap(qc_map_type_named(k, tps, refs_map), qc_map_type_named(v, tps, refs_map)),
+    QcTList(x) => QcTList(qc_map_type_named(x, tps, refs_map)),
+    QcTOption(x) => QcTOption(qc_map_type_named(x, tps, refs_map)),
+    QcTResult(a, b) => QcTResult(qc_map_type_named(a, tps, refs_map), qc_map_type_named(b, tps, refs_map)),
+    QcTFn(ps, r, effs) => QcTFn(map(ps, fn(p: QcType) => qc_map_type_named(p, tps, refs_map)), qc_map_type_named(r, tps, refs_map), qc_sort_dedup_strs(effs)),
+    _ => t
+  }
+
+fn qc_signature_text_mapped(d: QcDef, refs_map: Map[Str, Bytes]) -> Str =
+  match d {
+    QcDefTest(_) => "Bool",
+    QcDefType(t) =>
+      let head = if len(t.params) == 0 then "" else "[" ++ join(t.params, ", ") ++ "] " in
+      match t.body {
+        QcBodyRecord(fields) =>
+          let fs = map(fields, fn(f: QcFieldType) => f.name ++ ": " ++ qc_print_type(qc_map_type_named(f.ty, t.params, refs_map))) in
+          head ++ "{ " ++ join(fs, ", ") ++ " }",
+        QcBodyEnum(variants) =>
+          if len(variants) == 0 then head ++ "|"
+          else
+            let vs = map(variants, fn(v: QcVariant) =>
+              if len(v.fields) == 0 then v.name
+              else v.name ++ "(" ++ join(map(v.fields, fn(fty: QcType) => qc_print_type(qc_map_type_named(fty, t.params, refs_map))), ", ") ++ ")"
+            ) in
+            head ++ join(vs, " | ")
+      },
+    QcDefFn(f) =>
+      let fn_ty = QcTFn(map(f.params, fn(p: QcFieldType) => p.ty), f.ret, f.effects) in
+      let mapped_ty = qc_map_type_named(fn_ty, f.tparams, refs_map) in
+      let base = qc_print_type(mapped_ty) in
+      if len(f.tparams) == 0 then base
+      else "fn[" ++ join(qc_fn_tparams(f), ", ") ++ "]" ++ slice(base, 2, len(base))
+  }
+
+fn qc_signature_text(d: QcDef) -> Str =
+  qc_signature_text_mapped(d, map_new())
+
+fn qc_is_prelude_type_in_env(env: QcCanonEnv, name: Str) -> Bool =
+  qc_is_prelude_type(name) && !map_has(env.types, name)
+
+fn qc_is_type_in_env(env: QcCanonEnv, name: Str) -> Bool =
+  map_has(env.types, name) || qc_is_prelude_type(name)
+
+# Encoder state
+type QcEncState = {
+  env: QcCanonEnv,
+  scope: List[Str],
+  locals: Accum[Str],
+  tparams: List[Str],
+  refs_map: Map[Str, Bytes],
+  group_map: Map[Str, Int],
+  ref_names: Accum[Str],
+  resolve_refs: Bool,
+  v2: Bool,
+  err: Option[Str],
+  bytes: Accum[Int]
+}
+
+fn qc_enc_fail(s: QcEncState, msg: Str) -> QcEncState =
+  match s.err {
+    Some(_) => s,
+    None =>
+      QcEncState {
+        env: s.env,
+        scope: s.scope,
+        locals: s.locals,
+        tparams: s.tparams,
+        refs_map: s.refs_map,
+        group_map: s.group_map,
+        ref_names: s.ref_names,
+        resolve_refs: s.resolve_refs,
+        v2: s.v2,
+        err: Some(msg),
+        bytes: s.bytes
+      }
+  }
+
+fn qc_enc_set_v2(s: QcEncState) -> QcEncState =
+  QcEncState {
+    env: s.env,
+    scope: s.scope,
+    locals: s.locals,
+    tparams: s.tparams,
+    refs_map: s.refs_map,
+    group_map: s.group_map,
+    ref_names: s.ref_names,
+    resolve_refs: s.resolve_refs,
+    v2: true,
+    err: s.err,
+    bytes: s.bytes
+  }
+
+fn qc_enc_set_scope(s: QcEncState, scope: List[Str]) -> QcEncState =
+  QcEncState {
+    env: s.env,
+    scope: scope,
+    locals: s.locals,
+    tparams: s.tparams,
+    refs_map: s.refs_map,
+    group_map: s.group_map,
+    ref_names: s.ref_names,
+    resolve_refs: s.resolve_refs,
+    v2: s.v2,
+    err: s.err,
+    bytes: s.bytes
+  }
+
+fn qc_enc_set_tparams(s: QcEncState, tps: List[Str]) -> QcEncState =
+  let next_locals = fold(tps, s.locals, fn(acc: Accum[Str], tp: Str) => AccPush(acc, tp)) in
+  QcEncState {
+    env: s.env,
+    scope: s.scope,
+    locals: next_locals,
+    tparams: tps,
+    refs_map: s.refs_map,
+    group_map: s.group_map,
+    ref_names: s.ref_names,
+    resolve_refs: s.resolve_refs,
+    v2: s.v2,
+    err: s.err,
+    bytes: s.bytes
+  }
+
+fn qc_enc_byte(s: QcEncState, b: Int) -> QcEncState =
+  QcEncState {
+    env: s.env,
+    scope: s.scope,
+    locals: s.locals,
+    tparams: s.tparams,
+    refs_map: s.refs_map,
+    group_map: s.group_map,
+    ref_names: s.ref_names,
+    resolve_refs: s.resolve_refs,
+    v2: s.v2,
+    err: s.err,
+    bytes: AccPush(s.bytes, b)
+  }
+
+fn qc_enc_varint(s: QcEncState, n: Int) -> QcEncState =
+  QcEncState {
+    env: s.env,
+    scope: s.scope,
+    locals: s.locals,
+    tparams: s.tparams,
+    refs_map: s.refs_map,
+    group_map: s.group_map,
+    ref_names: s.ref_names,
+    resolve_refs: s.resolve_refs,
+    v2: s.v2,
+    err: s.err,
+    bytes: qc_varint_acc(n, s.bytes)
+  }
+
+fn qc_enc_i64(s: QcEncState, n: Int) -> QcEncState =
+  QcEncState {
+    env: s.env,
+    scope: s.scope,
+    locals: s.locals,
+    tparams: s.tparams,
+    refs_map: s.refs_map,
+    group_map: s.group_map,
+    ref_names: s.ref_names,
+    resolve_refs: s.resolve_refs,
+    v2: s.v2,
+    err: s.err,
+    bytes: qc_i64_acc(n, s.bytes)
+  }
+
+fn qc_enc_float(s: QcEncState, x: Float) -> QcEncState =
+  QcEncState {
+    env: s.env,
+    scope: s.scope,
+    locals: s.locals,
+    tparams: s.tparams,
+    refs_map: s.refs_map,
+    group_map: s.group_map,
+    ref_names: s.ref_names,
+    resolve_refs: s.resolve_refs,
+    v2: s.v2,
+    err: s.err,
+    bytes: qc_float_acc(x, s.bytes)
+  }
+
+fn qc_enc_str(s: QcEncState, str_val: Str) -> QcEncState =
+  QcEncState {
+    env: s.env,
+    scope: s.scope,
+    locals: s.locals,
+    tparams: s.tparams,
+    refs_map: s.refs_map,
+    group_map: s.group_map,
+    ref_names: s.ref_names,
+    resolve_refs: s.resolve_refs,
+    v2: s.v2,
+    err: s.err,
+    bytes: qc_str_acc(str_val, s.bytes)
+  }
+
+fn qc_enc_bind(s: QcEncState, name: Str) -> QcEncState =
+  QcEncState {
+    env: s.env,
+    scope: [name] ++ s.scope,
+    locals: AccPush(s.locals, name),
+    tparams: s.tparams,
+    refs_map: s.refs_map,
+    group_map: s.group_map,
+    ref_names: s.ref_names,
+    resolve_refs: s.resolve_refs,
+    v2: s.v2,
+    err: s.err,
+    bytes: s.bytes
+  }
+
+fn qc_lookup_scope_loop(scope: List[Str], name: Str, idx: Int) -> Option[Int] =
+  if idx >= len(scope) then None
+  else if list_at(scope, idx) == name then Some(idx)
+  else qc_lookup_scope_loop(scope, name, idx + 1)
+
+fn qc_lookup_scope(s: QcEncState, name: Str) -> Option[Int] =
+  qc_lookup_scope_loop(s.scope, name, 0)
+
+fn qc_enc_ref(s: QcEncState, name: Str) -> QcEncState =
+  if qc_is_prelude_type_in_env(s.env, name) then
+    qc_enc_str(qc_enc_byte(s, 2), name) # R_PRELUDE = 2
+  else
+    let s_rec = QcEncState {
+      env: s.env,
+      scope: s.scope,
+      locals: s.locals,
+      tparams: s.tparams,
+      refs_map: s.refs_map,
+      group_map: s.group_map,
+      ref_names: AccPush(s.ref_names, name),
+      resolve_refs: s.resolve_refs,
+      v2: s.v2,
+      err: s.err,
+      bytes: s.bytes
+    } in
+    if !s_rec.resolve_refs then
+      qc_enc_varint(qc_enc_byte(s_rec, 1), 0)
+    else
+      match map_get(s_rec.group_map, name) {
+        Some(pos) =>
+          qc_enc_varint(qc_enc_byte(s_rec, 1), pos), # R_GROUP = 1
+        None =>
+          match map_get(s_rec.refs_map, name) {
+            Some(h) =>
+              let s1 = qc_enc_byte(s_rec, 0) in # R_HASH = 0
+              QcEncState {
+                env: s1.env,
+                scope: s1.scope,
+                locals: s1.locals,
+                tparams: s1.tparams,
+                refs_map: s1.refs_map,
+                group_map: s1.group_map,
+                ref_names: s1.ref_names,
+                resolve_refs: s1.resolve_refs,
+                v2: s1.v2,
+                err: s1.err,
+                bytes: qc_raw_bytes_acc(h, s1.bytes)
+              },
+            None =>
+              qc_enc_fail(s_rec, "the reference to `" ++ name ++ "` cannot be resolved")
+          }
+      }
+
+fn qc_enc_type(s: QcEncState, t: QcType) -> QcEncState =
+  match t {
+    QcTInt => qc_enc_byte(s, 0),
+    QcTFloat => qc_enc_byte(s, 1),
+    QcTBool => qc_enc_byte(s, 2),
+    QcTUnit => qc_enc_byte(s, 3),
+    QcTStr => qc_enc_byte(s, 4),
+    QcTList(elem) => qc_enc_type(qc_enc_byte(s, 5), elem),
+    QcTOption(elem) => qc_enc_type(qc_enc_byte(s, 6), elem),
+    QcTResult(ok, err) => qc_enc_type(qc_enc_type(qc_enc_byte(s, 7), ok), err),
+    QcTNamed(n) =>
+      let tidx = qc_lookup_scope_loop(s.tparams, n, 0) in
+      match tidx {
+        Some(i) =>
+          let s1 = qc_enc_set_v2(s) in
+          qc_enc_varint(qc_enc_byte(s1, 11), i), # T_PARAM = 11
+        None =>
+          let s1 = if !qc_is_type_in_env(s.env, n) then qc_enc_fail(s, "unknown type `" ++ n ++ "`") else s in
+          qc_enc_ref(qc_enc_byte(s1, 8), n) # T_NAMED = 8
+      },
+    QcTParam(n) =>
+      let tidx = qc_lookup_scope_loop(s.tparams, n, 0) in
+      match tidx {
+        Some(i) =>
+          let s1 = qc_enc_set_v2(s) in
+          qc_enc_varint(qc_enc_byte(s1, 11), i),
+        None =>
+          qc_enc_fail(s, "unknown type parameter `" ++ n ++ "`")
+      },
+    QcTFn(ps, ret, effs) =>
+      let sorted_effs = qc_sort_dedup_strs(effs) in
+      let s1 = qc_enc_varint(qc_enc_byte(s, 9), len(ps)) in
+      let s2 = fold(ps, s1, fn(st: QcEncState, param_ty: QcType) => qc_enc_type(st, param_ty)) in
+      let s3 = qc_enc_type(s2, ret) in
+      let s4 = qc_enc_varint(s3, len(sorted_effs)) in
+      fold(sorted_effs, s4, fn(st: QcEncState, e: Str) => qc_enc_str(st, e)),
+    QcTApp(n, args) =>
+      let s1 = qc_enc_set_v2(s) in
+      let valid_app = map_has(s1.env.types, n) || (qc_is_prelude_type_in_env(s1.env, n) && n == "Accum") in
+      let s2 = if !valid_app then qc_enc_fail(s1, "unknown type `" ++ n ++ "`") else s1 in
+      let s3 = qc_enc_ref(qc_enc_byte(s2, 10), n) in
+      let s4 = qc_enc_varint(s3, len(args)) in
+      fold(args, s4, fn(st: QcEncState, a: QcType) => qc_enc_type(st, a)),
+    QcTMap(k, v) =>
+      let s1 = qc_enc_set_v2(s) in
+      qc_enc_type(qc_enc_type(qc_enc_byte(s1, 12), k), v),
+    QcTBytes =>
+      let s1 = qc_enc_set_v2(s) in
+      qc_enc_byte(s1, 13),
+    QcTVar(_) => qc_enc_fail(s, "inference variable in a written type")
+  }
+
+
+fn qc_enc_variant_owner(s: QcEncState, name: Str) -> QcEncState =
+  if name == "None" || name == "Some" then qc_enc_byte(s, 0)
+  else if name == "Ok" || name == "Err" then qc_enc_byte(s, 1)
+  else
+    let owner_opt = match map_get(s.env.variants, name) {
+      Some(o) => Some(o),
+      None => qc_prelude_variant_owner(name)
+    } in
+    match owner_opt {
+      Some(owner) => qc_enc_ref(qc_enc_byte(s, 2), owner),
+      None => qc_enc_fail(s, "unknown variant `" ++ name ++ "`")
+    }
+
+fn qc_is_variant_name(s: QcEncState, name: Str) -> Bool =
+  if name == "None" || name == "Some" || name == "Ok" || name == "Err" then true
+  else if map_has(s.env.variants, name) then true
+  else
+    match qc_prelude_variant_owner(name) {
+      Some(_) => true,
+      None => false
+    }
+
+fn qc_enc_pat(s: QcEncState, p: QcPat) -> QcEncState =
+  match p {
+    QcPWild => qc_enc_byte(s, 0),
+    QcPBind(n) => qc_enc_bind(qc_enc_byte(s, 1), n),
+    QcPInt(n) => qc_enc_i64(qc_enc_byte(s, 2), n),
+    QcPStr(str_val) => qc_enc_str(qc_enc_byte(s, 3), str_val),
+    QcPBool(b) => qc_enc_byte(qc_enc_byte(s, 4), if b then 1 else 0),
+    QcPUnit => qc_enc_byte(s, 5),
+    QcPVariant(n, ps) =>
+      let s1 = qc_enc_str(qc_enc_variant_owner(qc_enc_byte(s, 6), n), n) in
+      let s2 = qc_enc_varint(s1, len(ps)) in
+      fold(ps, s2, fn(st: QcEncState, subp: QcPat) => qc_enc_pat(st, subp)),
+    QcPRecord(n, fs) =>
+      let s0 = qc_enc_byte(s, 7) in
+      let s0_chk = if !qc_is_type_in_env(s0.env, n) then qc_enc_fail(s0, "unknown type `" ++ n ++ "`") else s0 in
+      let s1 = qc_enc_varint(qc_enc_ref(s0_chk, n), len(fs)) in
+      fold(fs, s1, fn(st: QcEncState, f: QcFieldPat) => qc_enc_pat(qc_enc_str(st, f.name), f.pat))
+  }
+
+fn qc_binop_tag(op: QcBinOp) -> Int =
+  match op {
+    QcOpAdd => 0,
+    QcOpSub => 1,
+    QcOpMul => 2,
+    QcOpDiv => 3,
+    QcOpRem => 4,
+    QcOpConcat => 5,
+    QcOpEq => 6,
+    QcOpNe => 7,
+    QcOpLt => 8,
+    QcOpLe => 9,
+    QcOpGt => 10,
+    QcOpGe => 11,
+    QcOpAnd => 12,
+    QcOpOr => 13
+  }
+
+fn qc_enc_expr(s: QcEncState, e: QcExpr) -> QcEncState =
+  match e {
+    QcEInt(n) => qc_enc_i64(qc_enc_byte(s, 0), n),
+    QcEFloat(x) => qc_enc_float(qc_enc_byte(s, 1), x),
+    QcEBool(b) => qc_enc_byte(qc_enc_byte(s, 2), if b then 1 else 0),
+    QcEStr(str_val) => qc_enc_str(qc_enc_byte(s, 3), str_val),
+    QcEUnit => qc_enc_byte(s, 4),
+    QcEVar(v) =>
+      match qc_lookup_scope(s, v) {
+        Some(i) => qc_enc_varint(qc_enc_byte(s, 5), i), # E_LOCAL = 5
+        None =>
+          if map_has(s.env.fns, v) then qc_enc_ref(qc_enc_byte(s, 6), v) # E_FN_REF = 6
+          else if qc_is_variant_name(s, v) then
+            let s1 = qc_enc_str(qc_enc_variant_owner(qc_enc_byte(s, 7), v), v) in # E_VARIANT = 7
+            qc_enc_varint(s1, 0)
+          else qc_enc_fail(s, "unknown name `" ++ v ++ "`")
+      },
+    QcECall(f, args) =>
+      match qc_lookup_scope(s, f) {
+        Some(i) =>
+          let s1 = qc_enc_varint(qc_enc_byte(s, 8), i) in # E_CALL_LOCAL = 8
+          let s2 = qc_enc_varint(s1, len(args)) in
+          fold(args, s2, fn(st: QcEncState, a: QcExpr) => qc_enc_expr(st, a)),
+        None =>
+          if map_has(s.env.fns, f) then
+            let s1 = qc_enc_ref(qc_enc_byte(s, 9), f) in # E_CALL_FN = 9
+            let s2 = qc_enc_varint(s1, len(args)) in
+            fold(args, s2, fn(st: QcEncState, a: QcExpr) => qc_enc_expr(st, a))
+          else if qc_is_variant_name(s, f) then
+            let s1 = qc_enc_str(qc_enc_variant_owner(qc_enc_byte(s, 7), f), f) in # E_VARIANT = 7
+            let s2 = qc_enc_varint(s1, len(args)) in
+            fold(args, s2, fn(st: QcEncState, a: QcExpr) => qc_enc_expr(st, a))
+          else if qc_is_builtin_name(f) then
+            let s1 = qc_enc_str(qc_enc_byte(s, 10), f) in # E_BUILTIN = 10
+            let s2 = qc_enc_varint(s1, len(args)) in
+            fold(args, s2, fn(st: QcEncState, a: QcExpr) => qc_enc_expr(st, a))
+          else
+            qc_enc_fail(s, "unknown name `" ++ f ++ "`")
+      },
+    QcEBin(op, l, r) =>
+      let s1 = qc_enc_byte(qc_enc_byte(s, 11), qc_binop_tag(op)) in
+      qc_enc_expr(qc_enc_expr(s1, l), r),
+    QcEUn(op, x) =>
+      let tag = match op { QcUnNeg => 0, QcUnNot => 1 } in
+      qc_enc_expr(qc_enc_byte(qc_enc_byte(s, 12), tag), x),
+    QcEIf(c, t, f) =>
+      qc_enc_expr(qc_enc_expr(qc_enc_expr(qc_enc_byte(s, 13), c), t), f),
+    QcELet(n, ann, val, body) =>
+      let s1 = qc_enc_byte(s, 14) in
+      let s2 = match ann {
+        Some(ty) => qc_enc_type(qc_enc_byte(s1, 1), ty),
+        None => qc_enc_byte(s1, 0)
+      } in
+      let s3 = qc_enc_expr(s2, val) in
+      let s4 = qc_enc_bind(s3, n) in
+      let s5 = qc_enc_expr(s4, body) in
+      qc_enc_set_scope(s5, s.scope),
+    QcEList(items) =>
+      let s1 = qc_enc_varint(qc_enc_byte(s, 15), len(items)) in
+      fold(items, s1, fn(st: QcEncState, x: QcExpr) => qc_enc_expr(st, x)),
+    QcERecord(n, fs) =>
+      let s0 = qc_enc_byte(s, 16) in
+      let s0_chk = if !qc_is_type_in_env(s0.env, n) then qc_enc_fail(s0, "unknown type `" ++ n ++ "`") else s0 in
+      let s1 = qc_enc_varint(qc_enc_ref(s0_chk, n), len(fs)) in
+      fold(fs, s1, fn(st: QcEncState, f: QcFieldExpr) => qc_enc_expr(qc_enc_str(st, f.name), f.expr)),
+    QcEField(target, field) =>
+      qc_enc_str(qc_enc_expr(qc_enc_byte(s, 17), target), field),
+    QcEMatch(scrut, arms) =>
+      let s1 = qc_enc_varint(qc_enc_expr(qc_enc_byte(s, 18), scrut), len(arms)) in
+      fold(arms, s1, fn(st: QcEncState, a: QcArm) =>
+        let orig_scope = st.scope in
+        let s_pat = qc_enc_pat(st, a.pat) in
+        let s_guard = match a.guard {
+          Some(g) => qc_enc_expr(qc_enc_byte(s_pat, 1), g),
+          None => qc_enc_byte(s_pat, 0)
+        } in
+        let s_body = qc_enc_expr(s_guard, a.body) in
+        qc_enc_set_scope(s_body, orig_scope)
+      ),
+    QcESeq(items) =>
+      let s1 = qc_enc_varint(qc_enc_byte(s, 19), len(items)) in
+      fold(items, s1, fn(st: QcEncState, x: QcExpr) => qc_enc_expr(st, x)),
+    QcELambda(params, body) =>
+      let s1 = qc_enc_set_v2(s) in
+      let s2 = qc_enc_varint(qc_enc_byte(s1, 20), len(params)) in
+      let s3 = fold(params, s2, fn(st: QcEncState, p: QcLambdaParam) =>
+        match p.ty {
+          Some(ty) => qc_enc_type(qc_enc_byte(st, 1), ty),
+          None => qc_enc_byte(st, 0)
+        }
+      ) in
+      let s4 = fold(params, s3, fn(st: QcEncState, p: QcLambdaParam) => qc_enc_bind(st, p.name)) in
+      let s5 = qc_enc_expr(s4, body) in
+      qc_enc_set_scope(s5, s.scope)
+  }
+
+type QcEncodedMember = {
+  bytes: Bytes,
+  locals: List[Str],
+  refs: List[Str],
+  v2: Bool,
+  err: Option[Str]
+}
+
+
+fn qc_def_kind(d: QcDef) -> Int =
+  match d {
+    QcDefType(_) => 0,
+    QcDefFn(_) => 1,
+    QcDefTest(_) => 2
+  }
+
+fn qc_def_effects(d: QcDef) -> List[Str] =
+  match d {
+    QcDefFn(f) => qc_sort_dedup_strs(f.effects),
+    _ => []
+  }
+
+fn qc_encode_member_ext(d: QcDef, env: QcCanonEnv, refs_map: Map[Str, Bytes], group_map: Map[Str, Int], resolve_refs: Bool) -> QcEncodedMember =
+  let init_st = QcEncState { env: env, scope: [], locals: AccEnd, tparams: [], refs_map: refs_map, group_map: group_map, ref_names: AccEnd, resolve_refs: resolve_refs, v2: false, err: None, bytes: AccEnd } in
+  let final_st = match d {
+    QcDefType(t) =>
+      let is_gen = len(t.params) > 0 in
+      let s0 = if is_gen then
+        qc_enc_varint(qc_enc_byte(qc_enc_set_tparams(qc_enc_set_v2(init_st), t.params), 3), len(t.params))
+      else qc_enc_byte(init_st, 0) in
+      match t.body {
+        QcBodyRecord(fields) =>
+          let s1 = qc_enc_varint(qc_enc_byte(s0, 0), len(fields)) in
+          fold(fields, s1, fn(st: QcEncState, f: QcFieldType) => qc_enc_type(qc_enc_str(st, f.name), f.ty)),
+        QcBodyEnum(variants) =>
+          let s1 = qc_enc_varint(qc_enc_byte(s0, 1), len(variants)) in
+          fold(variants, s1, fn(st: QcEncState, v: QcVariant) =>
+            let sv = qc_enc_varint(qc_enc_str(st, v.name), len(v.fields)) in
+            fold(v.fields, sv, fn(st2: QcEncState, fty: QcType) => qc_enc_type(st2, fty))
+          )
+      },
+    QcDefFn(f) =>
+      let is_gen = len(f.tparams) > 0 in
+      let tps = qc_fn_tparams(f) in
+      let s0 = if is_gen then
+        qc_enc_varint(qc_enc_byte(qc_enc_set_tparams(qc_enc_set_v2(init_st), tps), 4), len(tps))
+      else qc_enc_byte(init_st, 1) in
+      let s1 = qc_enc_varint(s0, len(f.params)) in
+      let s2 = fold(f.params, s1, fn(st: QcEncState, p: QcFieldType) => qc_enc_type(st, p.ty)) in
+      let s3 = qc_enc_type(s2, f.ret) in
+      let sorted_effs = qc_sort_dedup_strs(f.effects) in
+      let s4 = qc_enc_varint(s3, len(sorted_effs)) in
+      let s5 = fold(sorted_effs, s4, fn(st: QcEncState, e: Str) => qc_enc_str(st, e)) in
+      # Bind parameters in order
+      let s_bound = fold(f.params, s5, fn(st: QcEncState, p: QcFieldType) => qc_enc_bind(st, p.name)) in
+      # req
+      let s6 = qc_enc_varint(s_bound, len(f.reqs)) in
+      let s7 = fold(f.reqs, s6, fn(st: QcEncState, c: QcExpr) => qc_enc_expr(st, c)) in
+      # ens (with `r` bound in scope only, not stored in local_names)
+      let s8 = qc_enc_varint(s7, len(f.enss)) in
+      let s9 = if len(f.enss) == 0 then s8
+      else
+        let s_ens_scope = qc_enc_set_scope(s8, ["r"] ++ s_bound.scope) in
+        let s_ens_done = fold(f.enss, s_ens_scope, fn(st: QcEncState, c: QcExpr) => qc_enc_expr(st, c)) in
+        qc_enc_set_scope(s_ens_done, s_bound.scope) in
+      # body
+      qc_enc_expr(s9, f.body),
+    QcDefTest(t) =>
+      let s0 = qc_enc_byte(init_st, 2) in
+      qc_enc_expr(s0, t.body)
+  } in
+  QcEncodedMember {
+    bytes: bytes_from(acc_list(final_st.bytes)),
+    locals: acc_list(final_st.locals),
+    refs: qc_sort_dedup_strs(acc_list(final_st.ref_names)),
+    v2: final_st.v2,
+    err: final_st.err
+  }
+
+fn qc_encode_member(d: QcDef, env: QcCanonEnv, refs_map: Map[Str, Bytes], group_map: Map[Str, Int]) -> QcEncodedMember =
+  qc_encode_member_ext(d, env, refs_map, group_map, true)
+
+fn qc_varint_bytes(n: Int) -> Bytes =
+  bytes_from(acc_list(qc_varint_acc(n, AccEnd)))
+
+fn qc_group_prefix(size: Int, ver: Int) -> Bytes =
+  bytes_from([81, 65, 76, 0, ver]) ++ qc_varint_bytes(size)
+
+fn qc_canon_form_single(member_bytes: Bytes, v2: Bool) -> Bytes =
+  let ver = if v2 then 2 else 1 in
+  qc_group_prefix(1, ver) ++ bytes_from([0]) ++ member_bytes
+
+fn qc_int_list_contains(xs: List[Int], target: Int) -> Bool =
+  fold(xs, false, fn(found: Bool, x: Int) => if found then true else x == target)
+
+fn qc_edges_for_def(refs: List[Str], by_name: Map[Str, Int]) -> List[Int] =
+  fold(refs, [], fn(acc: List[Int], r: Str) =>
+    match map_get(by_name, r) {
+      Some(w) => if qc_int_list_contains(acc, w) then acc else acc ++ [w],
+      None => acc
+    }
+  )
+
+fn qc_filter_refs_for_def(refs: List[Str], dname: Str, by_name: Map[Str, Int]) -> List[Str] =
+  fold(refs, [], fn(acc: List[Str], r: Str) =>
+    if r != dname && map_has(by_name, r) then acc ++ [r] else acc
+  )
+
+fn qc_build_by_name_loop(defs: List[QcDef], idx: Int, acc: Map[Str, Int]) -> Result[Map[Str, Int], Str] =
+  if idx >= len(defs) then Ok(acc)
+  else
+    let d = list_at(defs, idx) in
+    let dname = qc_def_name(d) in
+    if map_has(acc, dname) then Err("`" ++ dname ++ "` is defined more than once")
+    else qc_build_by_name_loop(defs, idx + 1, map_put(acc, dname, idx))
+
+fn qc_build_edges_loop(defs: List[QcDef], idx: Int, env: QcCanonEnv, by_name: Map[Str, Int], acc: Accum[List[Int]]) -> Result[List[List[Int]], Str] =
+  if idx >= len(defs) then Ok(acc_list(acc))
+  else
+    let d = list_at(defs, idx) in
+    let dname = qc_def_name(d) in
+    let enc = qc_encode_member_ext(d, env, map_new(), map_new(), false) in
+    match enc.err {
+      Some(e) => Err("`" ++ dname ++ "`: " ++ e),
+      None =>
+        let cur_edges = qc_edges_for_def(enc.refs, by_name) in
+        qc_build_edges_loop(defs, idx + 1, env, by_name, AccPush(acc, cur_edges))
+    }
+
+type QcLabelKey = {
+  label: Int,
+  bytes: Bytes
+}
+
+fn qc_cmp_label_key(a: QcLabelKey, b: QcLabelKey) -> Int =
+  if a.label < b.label then -1
+  else if a.label > b.label then 1
+  else compare(a.bytes, b.bytes)
+
+fn qc_append_rest_lkey(xs: List[QcLabelKey], idx: Int, acc: Accum[QcLabelKey]) -> List[QcLabelKey] =
+  if idx >= len(xs) then acc_list(acc)
+  else qc_append_rest_lkey(xs, idx + 1, AccPush(acc, list_at(xs, idx)))
+
+fn qc_insert_distinct_lkey_rec(xs: List[QcLabelKey], x: QcLabelKey, idx: Int, acc: Accum[QcLabelKey]) -> List[QcLabelKey] =
+  if idx >= len(xs) then acc_list(AccPush(acc, x))
+  else
+    let cur = list_at(xs, idx) in
+    let c = qc_cmp_label_key(x, cur) in
+    if c == 0 then
+      qc_append_rest_lkey(xs, idx, acc)
+    else if c < 0 then
+      qc_append_rest_lkey(xs, idx, AccPush(acc, x))
+    else
+      qc_insert_distinct_lkey_rec(xs, x, idx + 1, AccPush(acc, cur))
+
+fn qc_sort_dedup_lkeys(xs: List[QcLabelKey]) -> List[QcLabelKey] =
+  fold(xs, [], fn(acc: List[QcLabelKey], x: QcLabelKey) => qc_insert_distinct_lkey_rec(acc, x, 0, AccEnd))
+
+fn qc_find_lkey_idx(distinct: List[QcLabelKey], target: QcLabelKey, idx: Int) -> Int =
+  if idx >= len(distinct) then 0
+  else if qc_cmp_label_key(list_at(distinct, idx), target) == 0 then idx
+  else qc_find_lkey_idx(distinct, target, idx + 1)
+
+fn qc_count_distinct_ints_loop(xs: List[Int], idx: Int, seen: Map[Int, Bool], count: Int) -> Int =
+  if idx >= len(xs) then count
+  else
+    let v = list_at(xs, idx) in
+    if map_has(seen, v) then qc_count_distinct_ints_loop(xs, idx + 1, seen, count)
+    else qc_count_distinct_ints_loop(xs, idx + 1, map_put(seen, v, true), count + 1)
+
+fn qc_build_lab_map_loop(defs: List[QcDef], labels: List[Int], idx: Int, acc: Map[Str, Int]) -> Map[Str, Int] =
+  if idx >= len(defs) then acc
+  else
+    let d = list_at(defs, idx) in
+    let l = list_at(labels, idx) in
+    qc_build_lab_map_loop(defs, labels, idx + 1, map_put(acc, qc_def_name(d), l))
+
+fn qc_build_lkeys_loop(defs: List[QcDef], labels: List[Int], idx: Int, env: QcCanonEnv, refs_map: Map[Str, Bytes], lab_map: Map[Str, Int], acc: Accum[QcLabelKey]) -> List[QcLabelKey] =
+  if idx >= len(defs) then acc_list(acc)
+  else
+    let d = list_at(defs, idx) in
+    let l = list_at(labels, idx) in
+    let enc = qc_encode_member(d, env, refs_map, lab_map) in
+    qc_build_lkeys_loop(defs, labels, idx + 1, env, refs_map, lab_map, AccPush(acc, QcLabelKey { label: l, bytes: enc.bytes }))
+
+fn qc_refine_labels(defs: List[QcDef], labels: List[Int], env: QcCanonEnv, refs_map: Map[Str, Bytes]) -> List[Int] =
+  let before = qc_count_distinct_ints_loop(labels, 0, map_new(), 0) in
+  let lab_map = qc_build_lab_map_loop(defs, labels, 0, map_new()) in
+  let keys = qc_build_lkeys_loop(defs, labels, 0, env, refs_map, lab_map, AccEnd) in
+  let distinct = qc_sort_dedup_lkeys(keys) in
+  let new_labels = map(keys, fn(k: QcLabelKey) => qc_find_lkey_idx(distinct, k, 0)) in
+  if len(distinct) == before then new_labels
+  else qc_refine_labels(defs, new_labels, env, refs_map)
+
+fn qc_count_label_occurrences_loop(labels: List[Int], idx: Int, acc: Map[Int, Int]) -> Map[Int, Int] =
+  if idx >= len(labels) then acc
+  else
+    let l = list_at(labels, idx) in
+    let c = match map_get(acc, l) { Some(n) => n + 1, None => 1 } in
+    qc_count_label_occurrences_loop(labels, idx + 1, map_put(acc, l, c))
+
+fn qc_find_min_dup_label_loop(labels: List[Int], counts: Map[Int, Int], idx: Int, best: Option[Int]) -> Option[Int] =
+  if idx >= len(labels) then best
+  else
+    let l = list_at(labels, idx) in
+    let c = match map_get(counts, l) { Some(n) => n, None => 0 } in
+    let next_best = if c > 1 then
+      match best {
+        None => Some(l),
+        Some(b) => if l < b then Some(l) else Some(b)
+      }
+    else best in
+    qc_find_min_dup_label_loop(labels, counts, idx + 1, next_best)
+
+fn qc_find_def_with_label(defs: List[QcDef], labels: List[Int], target_label: Int, idx: Int) -> QcDef =
+  if idx >= len(defs) then list_at(defs, 0)
+  else if list_at(labels, idx) == target_label then list_at(defs, idx)
+  else qc_find_def_with_label(defs, labels, target_label, idx + 1)
+
+fn qc_order_from_labels_loop(defs: List[QcDef], labels: List[Int], pos: Int, k: Int, acc: Accum[QcDef]) -> List[QcDef] =
+  if pos >= k then acc_list(acc)
+  else
+    let d = qc_find_def_with_label(defs, labels, pos, 0) in
+    qc_order_from_labels_loop(defs, labels, pos + 1, k, AccPush(acc, d))
+
+fn qc_order_pos_loop(order: List[QcDef], idx: Int, acc: Map[Str, Int]) -> Map[Str, Int] =
+  if idx >= len(order) then acc
+  else
+    let d = list_at(order, idx) in
+    qc_order_pos_loop(order, idx + 1, map_put(acc, qc_def_name(d), idx))
+
+type QcGroupEval = {
+  form: Bytes,
+  v2: Bool,
+  encs: List[QcEncodedMember]
+}
+
+fn qc_eval_order_loop(order: List[QcDef], idx: Int, env: QcCanonEnv, refs_map: Map[Str, Bytes], pos_map: Map[Str, Int], any_v2: Bool, bytes_acc: Accum[Int], encs_acc: Accum[QcEncodedMember]) -> QcGroupEval =
+  if idx >= len(order) then
+    let ver = if any_v2 then 2 else 1 in
+    let full_form = qc_group_prefix(len(order), ver) ++ bytes_from(acc_list(bytes_acc)) in
+    QcGroupEval { form: full_form, v2: any_v2, encs: acc_list(encs_acc) }
+  else
+    let d = list_at(order, idx) in
+    let enc = qc_encode_member(d, env, refs_map, pos_map) in
+    let next_acc = fold(bytes_to_list(enc.bytes), bytes_acc, fn(a: Accum[Int], b: Int) => AccPush(a, b)) in
+    qc_eval_order_loop(order, idx + 1, env, refs_map, pos_map, any_v2 || enc.v2, next_acc, AccPush(encs_acc, enc))
+
+type QcBestOrder = {
+  order: List[QcDef],
+  form: Bytes,
+  v2: Bool,
+  encs: List[QcEncodedMember],
+  symmetric: Bool
+}
+
+fn qc_same_def_order_loop(a: List[QcDef], b: List[QcDef], idx: Int) -> Bool =
+  if idx >= len(a) then true
+  else if qc_def_name(list_at(a, idx)) != qc_def_name(list_at(b, idx)) then false
+  else qc_same_def_order_loop(a, b, idx + 1)
+
+fn qc_split_labels_loop(labels: List[Int], target: Int, chosen_idx: Int, idx: Int, acc: Accum[Int]) -> List[Int] =
+  if idx >= len(labels) then acc_list(acc)
+  else
+    let l = list_at(labels, idx) in
+    let nl =
+      if l < target then 2 * l
+      else if l == target && idx == chosen_idx then 2 * l
+      else 2 * l + 1 in
+    qc_split_labels_loop(labels, target, chosen_idx, idx + 1, AccPush(acc, nl))
+
+fn qc_search_labels(defs: List[QcDef], labels: List[Int], env: QcCanonEnv, refs_map: Map[Str, Bytes], best: Option[QcBestOrder]) -> Option[QcBestOrder] =
+  let ref_labels = qc_refine_labels(defs, labels, env, refs_map) in
+  let counts = qc_count_label_occurrences_loop(ref_labels, 0, map_new()) in
+  let dup_opt = qc_find_min_dup_label_loop(ref_labels, counts, 0, None) in
+  match dup_opt {
+    None =>
+      let order = qc_order_from_labels_loop(defs, ref_labels, 0, len(defs), AccEnd) in
+      let pos_map = qc_order_pos_loop(order, 0, map_new()) in
+      let ev = qc_eval_order_loop(order, 0, env, refs_map, pos_map, false, AccEnd, AccEnd) in
+      match best {
+        None =>
+          Some(QcBestOrder { order: order, form: ev.form, v2: ev.v2, encs: ev.encs, symmetric: false }),
+        Some(b) =>
+          let c = compare(ev.form, b.form) in
+          if c < 0 then
+            Some(QcBestOrder { order: order, form: ev.form, v2: ev.v2, encs: ev.encs, symmetric: false })
+          else if c == 0 then
+            let is_sym = b.symmetric || !qc_same_def_order_loop(order, b.order, 0) in
+            Some(QcBestOrder { order: b.order, form: b.form, v2: b.v2, encs: b.encs, symmetric: is_sym })
+          else
+            best
+      },
+    Some(target) =>
+      qc_search_branch_loop(defs, ref_labels, target, 0, env, refs_map, best)
+  }
+
+fn qc_search_branch_loop(defs: List[QcDef], labels: List[Int], target: Int, idx: Int, env: QcCanonEnv, refs_map: Map[Str, Bytes], best: Option[QcBestOrder]) -> Option[QcBestOrder] =
+  if idx >= len(labels) then best
+  else if list_at(labels, idx) != target then
+    qc_search_branch_loop(defs, labels, target, idx + 1, env, refs_map, best)
+  else
+    let next_labels = qc_split_labels_loop(labels, target, idx, 0, AccEnd) in
+    let next_best = qc_search_labels(defs, next_labels, env, refs_map, best) in
+    qc_search_branch_loop(defs, labels, target, idx + 1, env, refs_map, next_best)
+
+fn qc_zeros_loop(count: Int, acc: Accum[Int]) -> List[Int] =
+  if count <= 0 then acc_list(acc)
+  else qc_zeros_loop(count - 1, AccPush(acc, 0))
+
+fn qc_find_best_order(defs: List[QcDef], env: QcCanonEnv, refs_map: Map[Str, Bytes]) -> QcBestOrder =
+  let init_labels = qc_zeros_loop(len(defs), AccEnd) in
+  match qc_search_labels(defs, init_labels, env, refs_map, None) {
+    Some(b) => b,
+    None => QcBestOrder { order: [], form: bytes_from([]), v2: false, encs: [], symmetric: false }
+  }
+
+fn qc_append_rest_bytes(xs: List[Bytes], idx: Int, acc: Accum[Bytes]) -> List[Bytes] =
+  if idx >= len(xs) then acc_list(acc)
+  else qc_append_rest_bytes(xs, idx + 1, AccPush(acc, list_at(xs, idx)))
+
+fn qc_insert_distinct_bytes_rec(xs: List[Bytes], x: Bytes, idx: Int, acc: Accum[Bytes]) -> List[Bytes] =
+  if idx >= len(xs) then acc_list(AccPush(acc, x))
+  else
+    let cur = list_at(xs, idx) in
+    let c = compare(x, cur) in
+    if c == 0 then qc_append_rest_bytes(xs, idx, acc)
+    else if c < 0 then qc_append_rest_bytes(xs, idx, AccPush(acc, x))
+    else qc_insert_distinct_bytes_rec(xs, x, idx + 1, AccPush(acc, cur))
+
+fn qc_sort_dedup_bytes(xs: List[Bytes]) -> List[Bytes] =
+  fold(xs, [], fn(acc: List[Bytes], x: Bytes) => qc_insert_distinct_bytes_rec(acc, x, 0, AccEnd))
+
+fn qc_deps_for_refs(refs: List[Str], self_hash: Bytes, refs_map: Map[Str, Bytes]) -> List[Bytes] =
+  let raw = fold(refs, [], fn(acc: List[Bytes], r: Str) =>
+    match map_get(refs_map, r) {
+      Some(h) => if compare(h, self_hash) == 0 then acc else acc ++ [h],
+      None => acc
+    }
+  ) in
+  qc_sort_dedup_bytes(raw)
+
+fn qc_add_group_hashes_loop(order: List[QcDef], idx: Int, size: Int, ver: Int, gh: Bytes, refs_map: Map[Str, Bytes]) -> Map[Str, Bytes] =
+  if idx >= len(order) then refs_map
+  else
+    let d = list_at(order, idx) in
+    let dname = qc_def_name(d) in
+    let member_canon = qc_group_prefix(size, ver) ++ qc_varint_bytes(idx) ++ gh in
+    let h = sha256(member_canon) in
+    qc_add_group_hashes_loop(order, idx + 1, size, ver, gh, map_put(refs_map, dname, h))
+
+fn qc_add_group_canons_loop(order: List[QcDef], encs: List[QcEncodedMember], idx: Int, size: Int, ver: Int, gh: Bytes, by_name: Map[Str, Int], refs_map: Map[Str, Bytes], canons_map: Map[Str, QcCanon]) -> Map[Str, QcCanon] =
+  if idx >= len(order) then canons_map
+  else
+    let d = list_at(order, idx) in
+    let enc = list_at(encs, idx) in
+    let dname = qc_def_name(d) in
+    let member_canon = qc_group_prefix(size, ver) ++ qc_varint_bytes(idx) ++ gh in
+    let h = sha256(member_canon) in
+    let clean_refs = qc_filter_refs_for_def(enc.refs, dname, by_name) in
+    let c = QcCanon {
+      name: dname,
+      kind: qc_def_kind(d),
+      hash: h,
+      canonical: member_canon,
+      signature: qc_signature_text_mapped(d, refs_map),
+      effects: qc_def_effects(d),
+      local_names: enc.locals,
+      refs: clean_refs,
+      deps: qc_deps_for_refs(clean_refs, h, refs_map),
+      group: Some(gh)
+    } in
+    qc_add_group_canons_loop(order, encs, idx + 1, size, ver, gh, by_name, refs_map, map_put(canons_map, dname, c))
+
+type QcTarjanState = {
+  n: Int,
+  edges: List[List[Int]],
+  indices: Map[Int, Int],
+  lowlinks: Map[Int, Int],
+  on_stack: Map[Int, Bool],
+  stack: List[Int],
+  next_idx: Int,
+  sccs: Accum[List[Int]]
+}
+
+type QcTarjanPopRes = {
+  comp_acc: Accum[Int],
+  on_stack: Map[Int, Bool],
+  rest_stack: List[Int]
+}
+
+fn qc_tail_int_loop(xs: List[Int], idx: Int, acc: Accum[Int]) -> List[Int] =
+  if idx >= len(xs) then acc_list(acc)
+  else qc_tail_int_loop(xs, idx + 1, AccPush(acc, list_at(xs, idx)))
+
+fn qc_tail_int_list(xs: List[Int]) -> List[Int] =
+  qc_tail_int_loop(xs, 1, AccEnd)
+
+fn qc_tarjan_pop_loop(stack: List[Int], on_stack: Map[Int, Bool], target: Int, acc: Accum[Int]) -> QcTarjanPopRes =
+  if len(stack) == 0 then QcTarjanPopRes { comp_acc: acc, on_stack: on_stack, rest_stack: [] }
+  else
+    let w = list_at(stack, 0) in
+    let rest = qc_tail_int_list(stack) in
+    let next_on_stack = map_put(on_stack, w, false) in
+    let next_acc = AccPush(acc, w) in
+    if w == target then
+      QcTarjanPopRes { comp_acc: next_acc, on_stack: next_on_stack, rest_stack: rest }
+    else
+      qc_tarjan_pop_loop(rest, next_on_stack, target, next_acc)
+
+fn qc_append_rest_int(xs: List[Int], idx: Int, acc: Accum[Int]) -> List[Int] =
+  if idx >= len(xs) then acc_list(acc)
+  else qc_append_rest_int(xs, idx + 1, AccPush(acc, list_at(xs, idx)))
+
+fn qc_insert_sorted_int_rec(xs: List[Int], x: Int, idx: Int, acc: Accum[Int]) -> List[Int] =
+  if idx >= len(xs) then acc_list(AccPush(acc, x))
+  else
+    let cur = list_at(xs, idx) in
+    if x <= cur then
+      qc_append_rest_int(xs, idx, AccPush(acc, x))
+    else
+      qc_insert_sorted_int_rec(xs, x, idx + 1, AccPush(acc, cur))
+
+fn qc_insert_sorted_int(xs: List[Int], x: Int) -> List[Int] =
+  qc_insert_sorted_int_rec(xs, x, 0, AccEnd)
+
+fn qc_sort_int_list(xs: List[Int]) -> List[Int] =
+  fold(xs, [], qc_insert_sorted_int)
+
+fn qc_tarjan_dfs(st: QcTarjanState, u: Int) -> QcTarjanState =
+  let cur_idx = st.next_idx in
+  let st1 = QcTarjanState {
+    n: st.n,
+    edges: st.edges,
+    indices: map_put(st.indices, u, cur_idx),
+    lowlinks: map_put(st.lowlinks, u, cur_idx),
+    on_stack: map_put(st.on_stack, u, true),
+    stack: [u] ++ st.stack,
+    next_idx: cur_idx + 1,
+    sccs: st.sccs
+  } in
+  let u_edges = list_at(st1.edges, u) in
+  let st2 = qc_tarjan_edges_loop(st1, u, u_edges, 0) in
+  let u_low = match map_get(st2.lowlinks, u) { Some(x) => x, None => 0 } in
+  let u_ind = match map_get(st2.indices, u) { Some(x) => x, None => 0 } in
+  if u_low == u_ind then
+    let pop_res = qc_tarjan_pop_loop(st2.stack, st2.on_stack, u, AccEnd) in
+    let comp = qc_sort_int_list(acc_list(pop_res.comp_acc)) in
+    QcTarjanState {
+      n: st2.n,
+      edges: st2.edges,
+      indices: st2.indices,
+      lowlinks: st2.lowlinks,
+      on_stack: pop_res.on_stack,
+      stack: pop_res.rest_stack,
+      next_idx: st2.next_idx,
+      sccs: AccPush(st2.sccs, comp)
+    }
+  else
+    st2
+
+fn qc_tarjan_edges_loop(st: QcTarjanState, u: Int, edges: List[Int], idx: Int) -> QcTarjanState =
+  if idx >= len(edges) then st
+  else
+    let w = list_at(edges, idx) in
+    if !map_has(st.indices, w) then
+      let st_after = qc_tarjan_dfs(st, w) in
+      let w_low = match map_get(st_after.lowlinks, w) { Some(x) => x, None => 0 } in
+      let u_low = match map_get(st_after.lowlinks, u) { Some(x) => x, None => 0 } in
+      let new_u_low = if w_low < u_low then w_low else u_low in
+      let st_next = QcTarjanState {
+        n: st_after.n,
+        edges: st_after.edges,
+        indices: st_after.indices,
+        lowlinks: map_put(st_after.lowlinks, u, new_u_low),
+        on_stack: st_after.on_stack,
+        stack: st_after.stack,
+        next_idx: st_after.next_idx,
+        sccs: st_after.sccs
+      } in
+      qc_tarjan_edges_loop(st_next, u, edges, idx + 1)
+    else if match map_get(st.on_stack, w) { Some(b) => b, None => false } then
+      let w_idx = match map_get(st.indices, w) { Some(x) => x, None => 0 } in
+      let u_low = match map_get(st.lowlinks, u) { Some(x) => x, None => 0 } in
+      let new_u_low = if w_idx < u_low then w_idx else u_low in
+      let st_next = QcTarjanState {
+        n: st.n,
+        edges: st.edges,
+        indices: st.indices,
+        lowlinks: map_put(st.lowlinks, u, new_u_low),
+        on_stack: st.on_stack,
+        stack: st.stack,
+        next_idx: st.next_idx,
+        sccs: st.sccs
+      } in
+      qc_tarjan_edges_loop(st_next, u, edges, idx + 1)
+    else
+      qc_tarjan_edges_loop(st, u, edges, idx + 1)
+
+fn qc_tarjan_loop(st: QcTarjanState, root: Int) -> QcTarjanState =
+  if root >= st.n then st
+  else if map_has(st.indices, root) then
+    qc_tarjan_loop(st, root + 1)
+  else
+    let next_st = qc_tarjan_dfs(st, root) in
+    qc_tarjan_loop(next_st, root + 1)
+
+type QcHashMaps = {
+  refs_map: Map[Str, Bytes],
+  canons_map: Map[Str, QcCanon],
+  groups: List[QcGroup]
+}
+
+fn qc_append_rest_group(xs: List[QcGroup], idx: Int, acc: Accum[QcGroup]) -> List[QcGroup] =
+  if idx >= len(xs) then acc_list(acc)
+  else qc_append_rest_group(xs, idx + 1, AccPush(acc, list_at(xs, idx)))
+
+fn qc_insert_distinct_group_rec(xs: List[QcGroup], x: QcGroup, idx: Int, acc: Accum[QcGroup]) -> List[QcGroup] =
+  if idx >= len(xs) then acc_list(AccPush(acc, x))
+  else
+    let cur = list_at(xs, idx) in
+    let c = compare(x.hash, cur.hash) in
+    if c == 0 then qc_append_rest_group(xs, idx, acc)
+    else if c < 0 then qc_append_rest_group(xs, idx, AccPush(acc, x))
+    else qc_insert_distinct_group_rec(xs, x, idx + 1, AccPush(acc, cur))
+
+fn qc_defs_for_comp_loop(defs: List[QcDef], comp: List[Int], idx: Int, acc: Accum[QcDef]) -> List[QcDef] =
+  if idx >= len(comp) then acc_list(acc)
+  else
+    let d_idx = list_at(comp, idx) in
+    qc_defs_for_comp_loop(defs, comp, idx + 1, AccPush(acc, list_at(defs, d_idx)))
+
+fn qc_first_member_err_loop(order: List[QcDef], encs: List[QcEncodedMember], idx: Int) -> Option[Str] =
+  if idx >= len(encs) then None
+  else
+    let enc = list_at(encs, idx) in
+    match enc.err {
+      Some(e) => Some("`" ++ qc_def_name(list_at(order, idx)) ++ "`: " ++ e),
+      None => qc_first_member_err_loop(order, encs, idx + 1)
+    }
+
+fn qc_process_sccs_loop(sccs: List[List[Int]], scc_idx: Int, p: QcProgram, env: QcCanonEnv, by_name: Map[Str, Int], refs_map: Map[Str, Bytes], canons_map: Map[Str, QcCanon], groups: List[QcGroup]) -> Result[QcHashMaps, Str] =
+  if scc_idx >= len(sccs) then
+    Ok(QcHashMaps { refs_map: refs_map, canons_map: canons_map, groups: groups })
+  else
+    let comp = list_at(sccs, scc_idx) in
+    if len(comp) == 1 then
+      let d_idx = list_at(comp, 0) in
+      let d = list_at(p.defs, d_idx) in
+      let dname = qc_def_name(d) in
+      let group_map = map_put(map_new(), dname, 0) in
+      let enc = qc_encode_member(d, env, refs_map, group_map) in
+      match enc.err {
+        Some(e) => Err("`" ++ dname ++ "`: " ++ e),
+        None =>
+          let canon_bytes = qc_canon_form_single(enc.bytes, enc.v2) in
+          let h = sha256(canon_bytes) in
+          let next_refs_map = map_put(refs_map, dname, h) in
+          let clean_refs = qc_filter_refs_for_def(enc.refs, dname, by_name) in
+          let c = QcCanon {
+            name: dname,
+            kind: qc_def_kind(d),
+            hash: h,
+            canonical: canon_bytes,
+            signature: qc_signature_text_mapped(d, next_refs_map),
+            effects: qc_def_effects(d),
+            local_names: enc.locals,
+            refs: clean_refs,
+            deps: qc_deps_for_refs(clean_refs, h, next_refs_map),
+            group: None
+          } in
+          qc_process_sccs_loop(sccs, scc_idx + 1, p, env, by_name, next_refs_map, map_put(canons_map, dname, c), groups)
+      }
+    else
+      let comp_defs = qc_defs_for_comp_loop(p.defs, comp, 0, AccEnd) in
+      let best = qc_find_best_order(comp_defs, env, refs_map) in
+      match qc_first_member_err_loop(best.order, best.encs, 0) {
+        Some(e) => Err(e),
+        None =>
+          if best.symmetric then
+            let names = map(comp_defs, fn(d: QcDef) => qc_def_name(d)) in
+            Err("the recursive group " ++ join(names, ", ") ++ " has interchangeable members")
+          else
+            let gh = sha256(best.form) in
+            let g_obj = QcGroup { hash: gh, form: best.form } in
+            let ver = if best.v2 then 2 else 1 in
+            let size = len(best.order) in
+            let next_refs_map = qc_add_group_hashes_loop(best.order, 0, size, ver, gh, refs_map) in
+            let next_canons_map = qc_add_group_canons_loop(best.order, best.encs, 0, size, ver, gh, by_name, next_refs_map, canons_map) in
+            let next_groups = qc_insert_distinct_group_rec(groups, g_obj, 0, AccEnd) in
+            qc_process_sccs_loop(sccs, scc_idx + 1, p, env, by_name, next_refs_map, next_canons_map, next_groups)
+      }
+
+fn qc_hash_program_res(p: QcProgram) -> Result[QcHashed, Str] =
+  let env = qc_canon_env_of(p) in
+  let n = len(p.defs) in
+  match qc_build_by_name_loop(p.defs, 0, map_new()) {
+    Err(e) => Err(e),
+    Ok(by_name) =>
+      match qc_build_edges_loop(p.defs, 0, env, by_name, AccEnd) {
+        Err(e) => Err(e),
+        Ok(edges) =>
+          let init_tarjan = QcTarjanState {
+            n: n,
+            edges: edges,
+            indices: map_new(),
+            lowlinks: map_new(),
+            on_stack: map_new(),
+            stack: [],
+            next_idx: 0,
+            sccs: AccEnd
+          } in
+          let tarjan_res = qc_tarjan_loop(init_tarjan, 0) in
+          let sccs = acc_list(tarjan_res.sccs) in
+          match qc_process_sccs_loop(sccs, 0, p, env, by_name, map_new(), map_new(), []) {
+            Err(e) => Err(e),
+            Ok(final_st) =>
+              let canons = fold(p.defs, AccEnd, fn(a: Accum[QcCanon], d: QcDef) =>
+                match map_get(final_st.canons_map, qc_def_name(d)) {
+                  Some(c) => AccPush(a, c),
+                  None => a
+                }
+              ) in
+              Ok(QcHashed { canons: acc_list(canons), groups: final_st.groups })
+          }
+      }
+  }
+
+fn qc_hash_program(p: QcProgram) -> QcHashed =
+  match qc_hash_program_res(p) {
+    Ok(h) => h,
+    Err(_) => QcHashed { canons: [], groups: [] }
+  }
+
+# Canonical Decoder (qc_decode_canonical)
+type QcDecState = {
+  bytes: Bytes,
+  pos: Int,
+  scope: List[Str],
+  local_names: List[Str],
+  next_name: Int,
+  tparams: List[Str],
+  def_name: Str,
+  hash_to_name: Map[Str, Str],
+  group_names: List[Str],
+  self_index: Int
+}
+
+type QcDecRes[T] = {
+  val: T,
+  s: QcDecState
+}
+
+
+fn qc_dec_byte(s: QcDecState) -> QcDecRes[Int] =
+  let b = bytes_at(s.bytes, s.pos) in
+  QcDecRes {
+    val: b,
+    s: QcDecState {
+      bytes: s.bytes,
+      pos: s.pos + 1,
+      scope: s.scope,
+      local_names: s.local_names,
+      next_name: s.next_name,
+      tparams: s.tparams,
+      def_name: s.def_name,
+      hash_to_name: s.hash_to_name,
+      group_names: s.group_names,
+      self_index: s.self_index
+    }
+  }
+
+fn qc_dec_varint_loop(s: QcDecState, shift: Int, acc: Int) -> QcDecRes[Int] =
+  let b = bytes_at(s.bytes, s.pos) in
+  let val = bit_or(acc, shl(bit_and(b, 127), shift)) in
+  let next_s = QcDecState {
+    bytes: s.bytes,
+    pos: s.pos + 1,
+    scope: s.scope,
+    local_names: s.local_names,
+    next_name: s.next_name,
+    tparams: s.tparams,
+    def_name: s.def_name,
+    hash_to_name: s.hash_to_name,
+    group_names: s.group_names,
+    self_index: s.self_index
+  } in
+  if bit_and(b, 128) == 0 then QcDecRes { val: val, s: next_s }
+  else qc_dec_varint_loop(next_s, shift + 7, val)
+
+fn qc_dec_varint(s: QcDecState) -> QcDecRes[Int] =
+  qc_dec_varint_loop(s, 0, 0)
+
+fn qc_dec_i64(s: QcDecState) -> QcDecRes[Int] =
+  let b0 = bytes_at(s.bytes, s.pos) in
+  let b1 = bytes_at(s.bytes, s.pos + 1) in
+  let b2 = bytes_at(s.bytes, s.pos + 2) in
+  let b3 = bytes_at(s.bytes, s.pos + 3) in
+  let b4 = bytes_at(s.bytes, s.pos + 4) in
+  let b5 = bytes_at(s.bytes, s.pos + 5) in
+  let b6 = bytes_at(s.bytes, s.pos + 6) in
+  let b7 = bytes_at(s.bytes, s.pos + 7) in
+  let low = bit_or(b0, bit_or(shl(b1, 8), bit_or(shl(b2, 16), shl(b3, 24)))) in
+  let high = bit_or(b4, bit_or(shl(b5, 8), bit_or(shl(b6, 16), shl(b7, 24)))) in
+  let n = bit_or(bit_and(low, 4294967295), shl(high, 32)) in
+  QcDecRes {
+    val: n,
+    s: QcDecState {
+      bytes: s.bytes,
+      pos: s.pos + 8,
+      scope: s.scope,
+      local_names: s.local_names,
+      next_name: s.next_name,
+      tparams: s.tparams,
+      def_name: s.def_name,
+      hash_to_name: s.hash_to_name,
+      group_names: s.group_names,
+      self_index: s.self_index
+    }
+  }
+
+fn qc_dec_float(s: QcDecState) -> QcDecRes[Float] =
+  let i_res = qc_dec_i64(s) in
+  QcDecRes { val: float_of_bits(i_res.val), s: i_res.s }
+
+fn qc_dec_str(s: QcDecState) -> QcDecRes[Str] =
+  let len_res = qc_dec_varint(s) in
+  let str_bytes = bytes_slice(len_res.s.bytes, len_res.s.pos, len_res.s.pos + len_res.val) in
+  let str_val = match bytes_to_str(str_bytes) {
+    Some(v) => v,
+    None => ""
+  } in
+  QcDecRes {
+    val: str_val,
+    s: QcDecState {
+      bytes: len_res.s.bytes,
+      pos: len_res.s.pos + len_res.val,
+      scope: len_res.s.scope,
+      local_names: len_res.s.local_names,
+      next_name: len_res.s.next_name,
+      tparams: len_res.s.tparams,
+      def_name: len_res.s.def_name,
+      hash_to_name: len_res.s.hash_to_name,
+      group_names: len_res.s.group_names,
+      self_index: len_res.s.self_index
+    }
+  }
+
+fn qc_dec_bind(s: QcDecState) -> QcDecRes[Str] =
+  let name = if s.next_name < len(s.local_names) then list_at(s.local_names, s.next_name) else "x" ++ from_int(s.next_name) in
+  QcDecRes {
+    val: name,
+    s: QcDecState {
+      bytes: s.bytes,
+      pos: s.pos,
+      scope: [name] ++ s.scope,
+      local_names: s.local_names,
+      next_name: s.next_name + 1,
+      tparams: s.tparams,
+      def_name: s.def_name,
+      hash_to_name: s.hash_to_name,
+      group_names: s.group_names,
+      self_index: s.self_index
+    }
+  }
+
+fn qc_dec_local(s: QcDecState) -> QcDecRes[Str] =
+  let idx_res = qc_dec_varint(s) in
+  let name = if idx_res.val < len(idx_res.s.scope) then list_at(idx_res.s.scope, idx_res.val) else "unknown" in
+  QcDecRes { val: name, s: idx_res.s }
+
+fn qc_dec_ref(s: QcDecState) -> QcDecRes[Str] =
+  let tag_res = qc_dec_byte(s) in
+  if tag_res.val == 0 then
+    # R_HASH = 0 (32 bytes)
+    let hash_bytes = bytes_slice(tag_res.s.bytes, tag_res.s.pos, tag_res.s.pos + 32) in
+    let next_s = QcDecState {
+      bytes: tag_res.s.bytes,
+      pos: tag_res.s.pos + 32,
+      scope: tag_res.s.scope,
+      local_names: tag_res.s.local_names,
+      next_name: tag_res.s.next_name,
+      tparams: tag_res.s.tparams,
+      def_name: tag_res.s.def_name,
+      hash_to_name: tag_res.s.hash_to_name,
+      group_names: tag_res.s.group_names,
+      self_index: tag_res.s.self_index
+    } in
+    let hex = qc_hash_to_hex(hash_bytes) in
+    let name = match map_get(next_s.hash_to_name, hex) {
+      Some(n) => n,
+      None => slice(hex, 0, 12)
+    } in
+    QcDecRes { val: name, s: next_s }
+  else if tag_res.val == 1 then
+    # R_GROUP = 1
+    let j_res = qc_dec_varint(tag_res.s) in
+    let name =
+      if j_res.val == j_res.s.self_index then j_res.s.def_name
+      else if j_res.val < len(j_res.s.group_names) then list_at(j_res.s.group_names, j_res.val)
+      else j_res.s.def_name in
+    QcDecRes { val: name, s: j_res.s }
+  else
+    # R_PRELUDE = 2
+    qc_dec_str(tag_res.s)
+
+fn qc_dec_effects_loop(s: QcDecState, count: Int, acc: Accum[Str]) -> QcDecRes[List[Str]] =
+  if count <= 0 then QcDecRes { val: acc_list(acc), s: s }
+  else
+    let str_res = qc_dec_str(s) in
+    qc_dec_effects_loop(str_res.s, count - 1, AccPush(acc, str_res.val))
+
+fn qc_dec_effects(s: QcDecState) -> QcDecRes[List[Str]] =
+  let n_res = qc_dec_varint(s) in
+  qc_dec_effects_loop(n_res.s, n_res.val, AccEnd)
+
+fn qc_dec_types_loop(s: QcDecState, count: Int, acc: Accum[QcType]) -> QcDecRes[List[QcType]] =
+  if count <= 0 then QcDecRes { val: acc_list(acc), s: s }
+  else
+    let t_res = qc_dec_type(s) in
+    qc_dec_types_loop(t_res.s, count - 1, AccPush(acc, t_res.val))
+
+fn qc_dec_type(s: QcDecState) -> QcDecRes[QcType] =
+  let tag_res = qc_dec_byte(s) in
+  let tag = tag_res.val in
+  let s1 = tag_res.s in
+  if tag == 0 then QcDecRes { val: QcTInt, s: s1 }
+  else if tag == 1 then QcDecRes { val: QcTFloat, s: s1 }
+  else if tag == 2 then QcDecRes { val: QcTBool, s: s1 }
+  else if tag == 3 then QcDecRes { val: QcTUnit, s: s1 }
+  else if tag == 4 then QcDecRes { val: QcTStr, s: s1 }
+  else if tag == 5 then
+    let elem_res = qc_dec_type(s1) in
+    QcDecRes { val: QcTList(elem_res.val), s: elem_res.s }
+  else if tag == 6 then
+    let elem_res = qc_dec_type(s1) in
+    QcDecRes { val: QcTOption(elem_res.val), s: elem_res.s }
+  else if tag == 7 then
+    let ok_res = qc_dec_type(s1) in
+    let err_res = qc_dec_type(ok_res.s) in
+    QcDecRes { val: QcTResult(ok_res.val, err_res.val), s: err_res.s }
+  else if tag == 8 then
+    let ref_res = qc_dec_ref(s1) in
+    QcDecRes { val: QcTNamed(ref_res.val), s: ref_res.s }
+  else if tag == 9 then
+    let n_res = qc_dec_varint(s1) in
+    let params_res = qc_dec_types_loop(n_res.s, n_res.val, AccEnd) in
+    let ret_res = qc_dec_type(params_res.s) in
+    let effs_res = qc_dec_effects(ret_res.s) in
+    QcDecRes { val: QcTFn(params_res.val, ret_res.val, effs_res.val), s: effs_res.s }
+  else if tag == 10 then
+    let ref_res = qc_dec_ref(s1) in
+    let n_res = qc_dec_varint(ref_res.s) in
+    let args_res = qc_dec_types_loop(n_res.s, n_res.val, AccEnd) in
+    QcDecRes { val: QcTApp(ref_res.val, args_res.val), s: args_res.s }
+  else if tag == 11 then
+    let i_res = qc_dec_varint(s1) in
+    let name = if i_res.val < len(s1.tparams) then list_at(s1.tparams, i_res.val) else "T" ++ from_int(i_res.val) in
+    QcDecRes { val: QcTNamed(name), s: i_res.s }
+  else if tag == 12 then
+    let k_res = qc_dec_type(s1) in
+    let v_res = qc_dec_type(k_res.s) in
+    QcDecRes { val: QcTMap(k_res.val, v_res.val), s: v_res.s }
+  else if tag == 13 then
+    QcDecRes { val: QcTBytes, s: s1 }
+  else
+    QcDecRes { val: QcTUnit, s: s1 }
+
+fn qc_dec_variant_name(s: QcDecState) -> QcDecRes[Str] =
+  let owner_res = qc_dec_byte(s) in
+  let s_after_owner = if owner_res.val == 2 then
+    let ref_res = qc_dec_ref(owner_res.s) in
+    ref_res.s
+  else owner_res.s in
+  qc_dec_str(s_after_owner)
+
+fn qc_binop_from_tag(tag: Int) -> QcBinOp =
+  if tag == 0 then QcOpAdd
+  else if tag == 1 then QcOpSub
+  else if tag == 2 then QcOpMul
+  else if tag == 3 then QcOpDiv
+  else if tag == 4 then QcOpRem
+  else if tag == 5 then QcOpConcat
+  else if tag == 6 then QcOpEq
+  else if tag == 7 then QcOpNe
+  else if tag == 8 then QcOpLt
+  else if tag == 9 then QcOpLe
+  else if tag == 10 then QcOpGt
+  else if tag == 11 then QcOpGe
+  else if tag == 12 then QcOpAnd
+  else QcOpOr
+
+fn qc_dec_pats_loop(s: QcDecState, count: Int, acc: Accum[QcPat]) -> QcDecRes[List[QcPat]] =
+  if count <= 0 then QcDecRes { val: acc_list(acc), s: s }
+  else
+    let p_res = qc_dec_pat(s) in
+    qc_dec_pats_loop(p_res.s, count - 1, AccPush(acc, p_res.val))
+
+fn qc_dec_field_pats_loop(s: QcDecState, count: Int, acc: Accum[QcFieldPat]) -> QcDecRes[List[QcFieldPat]] =
+  if count <= 0 then QcDecRes { val: acc_list(acc), s: s }
+  else
+    let f_name = qc_dec_str(s) in
+    let f_pat = qc_dec_pat(f_name.s) in
+    let fp = QcFieldPat { name: f_name.val, pat: f_pat.val } in
+    qc_dec_field_pats_loop(f_pat.s, count - 1, AccPush(acc, fp))
+
+fn qc_dec_pat(s: QcDecState) -> QcDecRes[QcPat] =
+  let tag_res = qc_dec_byte(s) in
+  let tag = tag_res.val in
+  let s1 = tag_res.s in
+  if tag == 0 then QcDecRes { val: QcPWild, s: s1 }
+  else if tag == 1 then
+    let b_res = qc_dec_bind(s1) in
+    QcDecRes { val: QcPBind(b_res.val), s: b_res.s }
+  else if tag == 2 then
+    let i_res = qc_dec_i64(s1) in
+    QcDecRes { val: QcPInt(i_res.val), s: i_res.s }
+  else if tag == 3 then
+    let s_res = qc_dec_str(s1) in
+    QcDecRes { val: QcPStr(s_res.val), s: s_res.s }
+  else if tag == 4 then
+    let b_res = qc_dec_byte(s1) in
+    QcDecRes { val: QcPBool(b_res.val == 1), s: b_res.s }
+  else if tag == 5 then
+    QcDecRes { val: QcPUnit, s: s1 }
+  else if tag == 6 then
+    let vn_res = qc_dec_variant_name(s1) in
+    let n_res = qc_dec_varint(vn_res.s) in
+    let pats_res = qc_dec_pats_loop(n_res.s, n_res.val, AccEnd) in
+    QcDecRes { val: QcPVariant(vn_res.val, pats_res.val), s: pats_res.s }
+  else if tag == 7 then
+    let ref_res = qc_dec_ref(s1) in
+    let n_res = qc_dec_varint(ref_res.s) in
+    let fields_res = qc_dec_field_pats_loop(n_res.s, n_res.val, AccEnd) in
+    QcDecRes { val: QcPRecord(ref_res.val, fields_res.val), s: fields_res.s }
+  else
+    QcDecRes { val: QcPWild, s: s1 }
+
+fn qc_dec_exprs_loop(s: QcDecState, count: Int, acc: Accum[QcExpr]) -> QcDecRes[List[QcExpr]] =
+  if count <= 0 then QcDecRes { val: acc_list(acc), s: s }
+  else
+    let e_res = qc_dec_expr(s) in
+    qc_dec_exprs_loop(e_res.s, count - 1, AccPush(acc, e_res.val))
+
+fn qc_dec_exprs(s: QcDecState) -> QcDecRes[List[QcExpr]] =
+  let n_res = qc_dec_varint(s) in
+  qc_dec_exprs_loop(n_res.s, n_res.val, AccEnd)
+
+fn qc_dec_record_fields_loop(s: QcDecState, count: Int, acc: Accum[QcFieldExpr]) -> QcDecRes[List[QcFieldExpr]] =
+  if count <= 0 then QcDecRes { val: acc_list(acc), s: s }
+  else
+    let fn_res = qc_dec_str(s) in
+    let fv_res = qc_dec_expr(fn_res.s) in
+    let rf = QcFieldExpr { name: fn_res.val, expr: fv_res.val } in
+    qc_dec_record_fields_loop(fv_res.s, count - 1, AccPush(acc, rf))
+
+fn qc_dec_arms_loop(s: QcDecState, count: Int, acc: Accum[QcArm]) -> QcDecRes[List[QcArm]] =
+  if count <= 0 then QcDecRes { val: acc_list(acc), s: s }
+  else
+    let orig_scope = s.scope in
+    let pat_res = qc_dec_pat(s) in
+    let g_flag = qc_dec_byte(pat_res.s) in
+    let guard_res = if g_flag.val == 1 then
+      let ge = qc_dec_expr(g_flag.s) in
+      QcDecRes { val: Some(ge.val), s: ge.s }
+    else
+      QcDecRes { val: None, s: g_flag.s } in
+    let body_res = qc_dec_expr(guard_res.s) in
+    let arm = QcArm { pat: pat_res.val, guard: guard_res.val, body: body_res.val } in
+    let next_s = QcDecState {
+      bytes: body_res.s.bytes,
+      pos: body_res.s.pos,
+      scope: orig_scope,
+      local_names: body_res.s.local_names,
+      next_name: body_res.s.next_name,
+      tparams: body_res.s.tparams,
+      def_name: body_res.s.def_name,
+      hash_to_name: body_res.s.hash_to_name,
+      group_names: body_res.s.group_names,
+      self_index: body_res.s.self_index
+    } in
+    qc_dec_arms_loop(next_s, count - 1, AccPush(acc, arm))
+
+fn qc_dec_lambda_types_loop(s: QcDecState, count: Int, acc: Accum[Option[QcType]]) -> QcDecRes[List[Option[QcType]]] =
+  if count <= 0 then QcDecRes { val: acc_list(acc), s: s }
+  else
+    let flag_res = qc_dec_byte(s) in
+    if flag_res.val == 1 then
+      let ty_res = qc_dec_type(flag_res.s) in
+      qc_dec_lambda_types_loop(ty_res.s, count - 1, AccPush(acc, Some(ty_res.val)))
+    else
+      qc_dec_lambda_types_loop(flag_res.s, count - 1, AccPush(acc, None))
+
+fn qc_dec_lambda_binds_loop(s: QcDecState, tys: List[Option[QcType]], idx: Int, acc: Accum[QcLambdaParam]) -> QcDecRes[List[QcLambdaParam]] =
+  if idx >= len(tys) then QcDecRes { val: acc_list(acc), s: s }
+  else
+    let opt_ty = list_at(tys, idx) in
+    let b_res = qc_dec_bind(s) in
+    let param = QcLambdaParam { name: b_res.val, ty: opt_ty } in
+    qc_dec_lambda_binds_loop(b_res.s, tys, idx + 1, AccPush(acc, param))
+
+fn qc_dec_expr(s: QcDecState) -> QcDecRes[QcExpr] =
+  let tag_res = qc_dec_byte(s) in
+  let tag = tag_res.val in
+  let s1 = tag_res.s in
+  if tag == 0 then
+    let i_res = qc_dec_i64(s1) in
+    QcDecRes { val: QcEInt(i_res.val), s: i_res.s }
+  else if tag == 1 then
+    let f_res = qc_dec_float(s1) in
+    QcDecRes { val: QcEFloat(f_res.val), s: f_res.s }
+  else if tag == 2 then
+    let b_res = qc_dec_byte(s1) in
+    QcDecRes { val: QcEBool(b_res.val == 1), s: b_res.s }
+  else if tag == 3 then
+    let s_res = qc_dec_str(s1) in
+    QcDecRes { val: QcEStr(s_res.val), s: s_res.s }
+  else if tag == 4 then
+    QcDecRes { val: QcEUnit, s: s1 }
+  else if tag == 5 then
+    let v_res = qc_dec_local(s1) in
+    QcDecRes { val: QcEVar(v_res.val), s: v_res.s }
+  else if tag == 6 then
+    let r_res = qc_dec_ref(s1) in
+    QcDecRes { val: QcEVar(r_res.val), s: r_res.s }
+  else if tag == 7 then
+    let vn_res = qc_dec_variant_name(s1) in
+    let n_res = qc_dec_varint(vn_res.s) in
+    let args_res = qc_dec_exprs_loop(n_res.s, n_res.val, AccEnd) in
+    if n_res.val == 0 then QcDecRes { val: QcEVar(vn_res.val), s: args_res.s }
+    else QcDecRes { val: QcECall(vn_res.val, args_res.val), s: args_res.s }
+  else if tag == 8 || tag == 9 || tag == 10 then
+    let fn_res =
+      if tag == 8 then qc_dec_local(s1)
+      else if tag == 9 then qc_dec_ref(s1)
+      else qc_dec_str(s1) in
+    let n_res = qc_dec_varint(fn_res.s) in
+    let args_res = qc_dec_exprs_loop(n_res.s, n_res.val, AccEnd) in
+    QcDecRes { val: QcECall(fn_res.val, args_res.val), s: args_res.s }
+  else if tag == 11 then
+    let op_res = qc_dec_byte(s1) in
+    let l_res = qc_dec_expr(op_res.s) in
+    let r_res = qc_dec_expr(l_res.s) in
+    QcDecRes { val: QcEBin(qc_binop_from_tag(op_res.val), l_res.val, r_res.val), s: r_res.s }
+  else if tag == 12 then
+    let op_res = qc_dec_byte(s1) in
+    let x_res = qc_dec_expr(op_res.s) in
+    let op = if op_res.val == 0 then QcUnNeg else QcUnNot in
+    QcDecRes { val: QcEUn(op, x_res.val), s: x_res.s }
+  else if tag == 13 then
+    let c_res = qc_dec_expr(s1) in
+    let t_res = qc_dec_expr(c_res.s) in
+    let e_res = qc_dec_expr(t_res.s) in
+    QcDecRes { val: QcEIf(c_res.val, t_res.val, e_res.val), s: e_res.s }
+  else if tag == 14 then
+    let flag_res = qc_dec_byte(s1) in
+    let ann_res = if flag_res.val == 1 then
+      let ty_res = qc_dec_type(flag_res.s) in
+      QcDecRes { val: Some(ty_res.val), s: ty_res.s }
+    else
+      QcDecRes { val: None, s: flag_res.s } in
+    let val_res = qc_dec_expr(ann_res.s) in
+    let orig_scope = val_res.s.scope in
+    let bind_res = qc_dec_bind(val_res.s) in
+    let body_res = qc_dec_expr(bind_res.s) in
+    let popped_s = QcDecState {
+      bytes: body_res.s.bytes,
+      pos: body_res.s.pos,
+      scope: orig_scope,
+      local_names: body_res.s.local_names,
+      next_name: body_res.s.next_name,
+      tparams: body_res.s.tparams,
+      def_name: body_res.s.def_name,
+      hash_to_name: body_res.s.hash_to_name,
+      group_names: body_res.s.group_names,
+      self_index: body_res.s.self_index
+    } in
+    QcDecRes { val: QcELet(bind_res.val, ann_res.val, val_res.val, body_res.val), s: popped_s }
+  else if tag == 15 then
+    let n_res = qc_dec_varint(s1) in
+    let items_res = qc_dec_exprs_loop(n_res.s, n_res.val, AccEnd) in
+    QcDecRes { val: QcEList(items_res.val), s: items_res.s }
+  else if tag == 16 then
+    let ref_res = qc_dec_ref(s1) in
+    let n_res = qc_dec_varint(ref_res.s) in
+    let fields_res = qc_dec_record_fields_loop(n_res.s, n_res.val, AccEnd) in
+    QcDecRes { val: QcERecord(ref_res.val, fields_res.val), s: fields_res.s }
+  else if tag == 17 then
+    let target_res = qc_dec_expr(s1) in
+    let fname_res = qc_dec_str(target_res.s) in
+    QcDecRes { val: QcEField(target_res.val, fname_res.val), s: fname_res.s }
+  else if tag == 18 then
+    let scrut_res = qc_dec_expr(s1) in
+    let n_res = qc_dec_varint(scrut_res.s) in
+    let arms_res = qc_dec_arms_loop(n_res.s, n_res.val, AccEnd) in
+    QcDecRes { val: QcEMatch(scrut_res.val, arms_res.val), s: arms_res.s }
+  else if tag == 19 then
+    let n_res = qc_dec_varint(s1) in
+    let items_res = qc_dec_exprs_loop(n_res.s, n_res.val, AccEnd) in
+    QcDecRes { val: QcESeq(items_res.val), s: items_res.s }
+  else if tag == 20 then
+    let n_res = qc_dec_varint(s1) in
+    let types_res = qc_dec_lambda_types_loop(n_res.s, n_res.val, AccEnd) in
+    let orig_scope = types_res.s.scope in
+    let binds_res = qc_dec_lambda_binds_loop(types_res.s, types_res.val, 0, AccEnd) in
+    let body_res = qc_dec_expr(binds_res.s) in
+    let popped_s = QcDecState {
+      bytes: body_res.s.bytes,
+      pos: body_res.s.pos,
+      scope: orig_scope,
+      local_names: body_res.s.local_names,
+      next_name: body_res.s.next_name,
+      tparams: body_res.s.tparams,
+      def_name: body_res.s.def_name,
+      hash_to_name: body_res.s.hash_to_name,
+      group_names: body_res.s.group_names,
+      self_index: body_res.s.self_index
+    } in
+    QcDecRes { val: QcELambda(binds_res.val, body_res.val), s: popped_s }
+  else
+    QcDecRes { val: QcEUnit, s: s1 }
+
+fn qc_dec_tparams_loop(s: QcDecState, count: Int, acc: Accum[Str]) -> QcDecRes[List[Str]] =
+  if count <= 0 then QcDecRes { val: acc_list(acc), s: s }
+  else
+    let b_res = qc_dec_bind(s) in
+    let popped_s = QcDecState {
+      bytes: b_res.s.bytes,
+      pos: b_res.s.pos,
+      scope: s.scope,
+      local_names: b_res.s.local_names,
+      next_name: b_res.s.next_name,
+      tparams: b_res.s.tparams,
+      def_name: b_res.s.def_name,
+      hash_to_name: b_res.s.hash_to_name,
+      group_names: b_res.s.group_names,
+      self_index: b_res.s.self_index
+    } in
+    qc_dec_tparams_loop(popped_s, count - 1, AccPush(acc, b_res.val))
+
+fn qc_dec_type_fields_loop(s: QcDecState, count: Int, acc: Accum[QcFieldType]) -> QcDecRes[List[QcFieldType]] =
+  if count <= 0 then QcDecRes { val: acc_list(acc), s: s }
+  else
+    let fname_res = qc_dec_str(s) in
+    let fty_res = qc_dec_type(fname_res.s) in
+    let ft = QcFieldType { name: fname_res.val, ty: fty_res.val } in
+    qc_dec_type_fields_loop(fty_res.s, count - 1, AccPush(acc, ft))
+
+fn qc_dec_variants_loop(s: QcDecState, count: Int, acc: Accum[QcVariant]) -> QcDecRes[List[QcVariant]] =
+  if count <= 0 then QcDecRes { val: acc_list(acc), s: s }
+  else
+    let vname_res = qc_dec_str(s) in
+    let k_res = qc_dec_varint(vname_res.s) in
+    let fields_res = qc_dec_types_loop(k_res.s, k_res.val, AccEnd) in
+    let v = QcVariant { name: vname_res.val, fields: fields_res.val } in
+    qc_dec_variants_loop(fields_res.s, count - 1, AccPush(acc, v))
+
+fn qc_dec_bind_params_loop(s: QcDecState, tys: List[QcType], idx: Int, acc: Accum[QcFieldType]) -> QcDecRes[List[QcFieldType]] =
+  if idx >= len(tys) then QcDecRes { val: acc_list(acc), s: s }
+  else
+    let ty = list_at(tys, idx) in
+    let b_res = qc_dec_bind(s) in
+    let param = QcFieldType { name: b_res.val, ty: ty } in
+    qc_dec_bind_params_loop(b_res.s, tys, idx + 1, AccPush(acc, param))
+
+fn qc_dec_member(s: QcDecState) -> QcDecRes[QcDef] =
+  let kind_res = qc_dec_byte(s) in
+  let raw_kind = kind_res.val in
+  let tparams_res = if raw_kind == 3 || raw_kind == 4 then
+    let n_res = qc_dec_varint(kind_res.s) in
+    qc_dec_tparams_loop(n_res.s, n_res.val, AccEnd)
+  else
+    QcDecRes { val: [], s: kind_res.s } in
+  let kind = if raw_kind >= 3 then raw_kind - 3 else raw_kind in
+  let s_with_tparams = QcDecState {
+    bytes: tparams_res.s.bytes,
+    pos: tparams_res.s.pos,
+    scope: tparams_res.s.scope,
+    local_names: tparams_res.s.local_names,
+    next_name: tparams_res.s.next_name,
+    tparams: tparams_res.val,
+    def_name: tparams_res.s.def_name,
+    hash_to_name: tparams_res.s.hash_to_name,
+    group_names: tparams_res.s.group_names,
+    self_index: tparams_res.s.self_index
+  } in
+  if kind == 0 then
+    let tag_res = qc_dec_byte(s_with_tparams) in
+    if tag_res.val == 0 then
+      let n_res = qc_dec_varint(tag_res.s) in
+      let fields_res = qc_dec_type_fields_loop(n_res.s, n_res.val, AccEnd) in
+      QcDecRes {
+        val: QcDefType(QcTypeDef { name: s.def_name, params: tparams_res.val, body: QcBodyRecord(fields_res.val) }),
+        s: fields_res.s
+      }
+    else
+      let n_res = qc_dec_varint(tag_res.s) in
+      let variants_res = qc_dec_variants_loop(n_res.s, n_res.val, AccEnd) in
+      QcDecRes {
+        val: QcDefType(QcTypeDef { name: s.def_name, params: tparams_res.val, body: QcBodyEnum(variants_res.val) }),
+        s: variants_res.s
+      }
+  else if kind == 1 then
+    let n_res = qc_dec_varint(s_with_tparams) in
+    let param_tys_res = qc_dec_types_loop(n_res.s, n_res.val, AccEnd) in
+    let ret_res = qc_dec_type(param_tys_res.s) in
+    let effs_res = qc_dec_effects(ret_res.s) in
+    let params_res = qc_dec_bind_params_loop(effs_res.s, param_tys_res.val, 0, AccEnd) in
+    let params_scope = params_res.s.scope in
+    let reqs_res = qc_dec_exprs(params_res.s) in
+    let s_with_r = QcDecState {
+      bytes: reqs_res.s.bytes,
+      pos: reqs_res.s.pos,
+      scope: ["r"] ++ params_scope,
+      local_names: reqs_res.s.local_names,
+      next_name: reqs_res.s.next_name,
+      tparams: reqs_res.s.tparams,
+      def_name: reqs_res.s.def_name,
+      hash_to_name: reqs_res.s.hash_to_name,
+      group_names: reqs_res.s.group_names,
+      self_index: reqs_res.s.self_index
+    } in
+    let enss_res = qc_dec_exprs(s_with_r) in
+    let s_for_body = QcDecState {
+      bytes: enss_res.s.bytes,
+      pos: enss_res.s.pos,
+      scope: params_scope,
+      local_names: enss_res.s.local_names,
+      next_name: enss_res.s.next_name,
+      tparams: enss_res.s.tparams,
+      def_name: enss_res.s.def_name,
+      hash_to_name: enss_res.s.hash_to_name,
+      group_names: enss_res.s.group_names,
+      self_index: enss_res.s.self_index
+    } in
+    let body_res = qc_dec_expr(s_for_body) in
+    QcDecRes {
+      val: QcDefFn(QcFnDef {
+        name: s.def_name,
+        tparams: tparams_res.val,
+        params: params_res.val,
+        ret: ret_res.val,
+        effects: effs_res.val,
+        reqs: reqs_res.val,
+        enss: enss_res.val,
+        body: body_res.val
+      }),
+      s: body_res.s
+    }
+  else
+    let body_res = qc_dec_expr(s_with_tparams) in
+    QcDecRes {
+      val: QcDefTest(QcTestDef { name: s.def_name, body: body_res.val }),
+      s: body_res.s
+    }
+
+fn qc_skip_members_loop(s: QcDecState, count: Int) -> QcDecState =
+  if count <= 0 then s
+  else
+    let dec = qc_dec_member(s) in
+    qc_skip_members_loop(dec.s, count - 1)
+
+fn qc_decode_canonical(canonical: Bytes, local_names: List[Str], def_name: Str, group_form: Option[Bytes], hash_to_name: Map[Str, Str], group_names: List[Str]) -> Option[QcDef] =
+  if bytes_len(canonical) < 6 then None
+  else
+    let s0 = QcDecState {
+      bytes: canonical,
+      pos: 5,
+      scope: [],
+      local_names: local_names,
+      next_name: 0,
+      tparams: [],
+      def_name: def_name,
+      hash_to_name: hash_to_name,
+      group_names: group_names,
+      self_index: 0
+    } in
+    let size_res = qc_dec_varint(s0) in
+    let index_res = qc_dec_varint(size_res.s) in
+    if size_res.val == 1 then
+      let s_member = QcDecState {
+        bytes: canonical,
+        pos: index_res.s.pos,
+        scope: [],
+        local_names: local_names,
+        next_name: 0,
+        tparams: [],
+        def_name: def_name,
+        hash_to_name: hash_to_name,
+        group_names: group_names,
+        self_index: 0
+      } in
+      let res = qc_dec_member(s_member) in
+      Some(res.val)
+    else
+      match group_form {
+        Some(g_bytes) =>
+          let g_s0 = QcDecState {
+            bytes: g_bytes,
+            pos: 5,
+            scope: [],
+            local_names: local_names,
+            next_name: 0,
+            tparams: [],
+            def_name: def_name,
+            hash_to_name: hash_to_name,
+            group_names: group_names,
+            self_index: index_res.val
+          } in
+          let g_size_res = qc_dec_varint(g_s0) in
+          let target_idx = index_res.val in
+          let s_target = qc_skip_members_loop(g_size_res.s, target_idx) in
+          let s_member = QcDecState {
+            bytes: g_bytes,
+            pos: s_target.pos,
+            scope: [],
+            local_names: local_names,
+            next_name: 0,
+            tparams: [],
+            def_name: def_name,
+            hash_to_name: hash_to_name,
+            group_names: group_names,
+            self_index: target_idx
+          } in
+          let res = qc_dec_member(s_member) in
+          Some(res.val),
+        None => None
+      }
+
+fn qc_find_group_form_loop(target_hash: Bytes, groups: List[QcGroup], idx: Int) -> Option[Bytes] =
+  if idx >= len(groups) then None
+  else
+    let g = list_at(groups, idx) in
+    if g.hash == target_hash then Some(g.form)
+    else qc_find_group_form_loop(target_hash, groups, idx + 1)
+
+fn qc_find_group_form(canonical: Bytes, groups: List[QcGroup]) -> Option[Bytes] =
+  if bytes_len(canonical) < 37 then None
+  else
+    let hash_start = bytes_len(canonical) - 32 in
+    let gh = bytes_slice(canonical, hash_start, bytes_len(canonical)) in
+    qc_find_group_form_loop(gh, groups, 0)
+
+fn qc_find_member_name_at_idx(entries: List[QcStateEntry], target_gh: Bytes, target_idx: Int, idx: Int) -> Str =
+  if idx >= len(entries) then ""
+  else
+    let e = list_at(entries, idx) in
+    if bytes_len(e.canonical) < 37 then qc_find_member_name_at_idx(entries, target_gh, target_idx, idx + 1)
+    else
+      let gh = bytes_slice(e.canonical, bytes_len(e.canonical) - 32, bytes_len(e.canonical)) in
+      if gh != target_gh then qc_find_member_name_at_idx(entries, target_gh, target_idx, idx + 1)
+      else
+        let dummy_s = QcDecState { bytes: e.canonical, pos: 5, scope: [], local_names: [], next_name: 0, tparams: [], def_name: "", hash_to_name: map_new(), group_names: [], self_index: 0 } in
+        let size_res = qc_dec_varint(dummy_s) in
+        let idx_res = qc_dec_varint(size_res.s) in
+        if idx_res.val == target_idx then e.name
+        else qc_find_member_name_at_idx(entries, target_gh, target_idx, idx + 1)
+
+fn qc_build_group_names_loop(entries: List[QcStateEntry], target_gh: Bytes, cur_idx: Int, size: Int, acc: Accum[Str]) -> List[Str] =
+  if cur_idx >= size then acc_list(acc)
+  else
+    let name = qc_find_member_name_at_idx(entries, target_gh, cur_idx, 0) in
+    qc_build_group_names_loop(entries, target_gh, cur_idx + 1, size, AccPush(acc, name))
+
+fn qc_find_group_names(canonical: Bytes, entries: List[QcStateEntry]) -> List[Str] =
+  if bytes_len(canonical) < 37 then []
+  else
+    let dummy_s = QcDecState { bytes: canonical, pos: 5, scope: [], local_names: [], next_name: 0, tparams: [], def_name: "", hash_to_name: map_new(), group_names: [], self_index: 0 } in
+    let size_res = qc_dec_varint(dummy_s) in
+    if size_res.val <= 1 then []
+    else
+      let gh = bytes_slice(canonical, bytes_len(canonical) - 32, bytes_len(canonical)) in
+      qc_build_group_names_loop(entries, gh, 0, size_res.val, AccEnd)
+
+test qc_canon_test =
+  let src = "fn add(a: Int, b: Int) -> Int !io\n  req a >= 0\n= a + b * 2\n" in
+  match qc_parse(src) {
+    Ok(p) =>
+      let h = qc_hash_program(p) in
+      len(h.canons) == 1 && bytes_len((list_at(h.canons, 0)).hash) == 32,
+    Err(_) => false
+  }
+

@@ -9,12 +9,12 @@
 //! The compiled code uses the SAME LLVM backend as Clang (C) and Rustc (Rust).
 //! Same performance. Zero interpreter overhead.
 
-use std::time::Instant;
-
 fn main() {
     #[cfg(not(feature = "llvm"))]
     {
-        eprintln!("LLVM not available. Build with: cargo run --example jit_compile --features llvm");
+        eprintln!(
+            "LLVM not available. Build with: cargo run --example jit_compile --features llvm"
+        );
         return;
     }
 
@@ -24,6 +24,7 @@ fn main() {
 
 #[cfg(feature = "llvm")]
 fn run() {
+    use std::time::Instant;
     println!("=== QLANG JIT Compilation Demo ===\n");
 
     use inkwell::context::Context;
@@ -41,7 +42,11 @@ fn run() {
     e.output("y", activated, TT::f32_vector(1024));
 
     let graph = e.build();
-    println!("  Graph: {} nodes, {} edges\n", graph.nodes.len(), graph.edges.len());
+    println!(
+        "  Graph: {} nodes, {} edges\n",
+        graph.nodes.len(),
+        graph.edges.len()
+    );
 
     // ─── 2. Show ASCII visualization ───
     println!("[2] Graph visualization:");
@@ -50,12 +55,9 @@ fn run() {
     // ─── 3. Compile to LLVM IR ───
     println!("[3] Compiling to LLVM IR...");
     let context = Context::create();
-    let compiled = qlang_compile::codegen::compile_graph(
-        &context,
-        &graph,
-        OptimizationLevel::Aggressive,
-    )
-    .expect("JIT compilation failed");
+    let compiled =
+        qlang_compile::codegen::compile_graph(&context, &graph, OptimizationLevel::Aggressive)
+            .expect("JIT compilation failed");
 
     println!("  LLVM IR generated ({} bytes)", compiled.llvm_ir.len());
     println!("\n  --- LLVM IR (excerpt) ---");
@@ -72,12 +74,8 @@ fn run() {
     // JIT execution
     println!("[4] Executing compiled native code...");
     let start_jit = Instant::now();
-    let jit_result = qlang_compile::codegen::execute_compiled(
-        &compiled,
-        &input_a,
-        &input_b,
-    )
-    .expect("JIT execution failed");
+    let jit_result = qlang_compile::codegen::execute_compiled(&compiled, &input_a, &input_b)
+        .expect("JIT execution failed");
     let jit_time = start_jit.elapsed();
 
     println!("  JIT time:    {:?}", jit_time);
@@ -100,7 +98,12 @@ fn run() {
     let interp_result = qlang_runtime::executor::execute(&graph, inputs).unwrap();
     let interp_time = start_interp.elapsed();
 
-    let interp_values = interp_result.outputs.get("y").unwrap().as_f32_slice().unwrap();
+    let interp_values = interp_result
+        .outputs
+        .get("y")
+        .unwrap()
+        .as_f32_slice()
+        .unwrap();
     println!("  Interpreter: {:?}", interp_time);
     println!("  First 10 values: {:?}", &interp_values[..10]);
 
@@ -142,11 +145,26 @@ fn run() {
     let count_zero = ternary_result.iter().filter(|&&v| v == 0.0).count();
 
     println!("  Ternary distribution:");
-    println!("    +1: {} ({:.1}%)", count_pos, count_pos as f64 / 1024.0 * 100.0);
-    println!("     0: {} ({:.1}%)", count_zero, count_zero as f64 / 1024.0 * 100.0);
-    println!("    -1: {} ({:.1}%)", count_neg, count_neg as f64 / 1024.0 * 100.0);
-    println!("  Compression: f32 → ternary = {:.0}x (with 2-bit packing: {:.0}x)",
-        4.0, 4.0 * 8.0 / 2.0);
+    println!(
+        "    +1: {} ({:.1}%)",
+        count_pos,
+        count_pos as f64 / 1024.0 * 100.0
+    );
+    println!(
+        "     0: {} ({:.1}%)",
+        count_zero,
+        count_zero as f64 / 1024.0 * 100.0
+    );
+    println!(
+        "    -1: {} ({:.1}%)",
+        count_neg,
+        count_neg as f64 / 1024.0 * 100.0
+    );
+    println!(
+        "  Compression: f32 → ternary = {:.0}x (with 2-bit packing: {:.0}x)",
+        4.0,
+        4.0 * 8.0 / 2.0
+    );
 
     // ─── 7. Show DOT output ───
     println!("\n[7] Graphviz DOT output (pipe to 'dot -Tpng > graph.png'):");

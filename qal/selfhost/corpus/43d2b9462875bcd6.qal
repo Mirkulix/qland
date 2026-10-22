@@ -1,0 +1,1 @@
+fn f() -> Int = len(1 + true, 2)

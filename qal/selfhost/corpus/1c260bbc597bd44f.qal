@@ -1,0 +1,2 @@
+fn spare() -> Int = 5
+fn twin() -> Int = 1

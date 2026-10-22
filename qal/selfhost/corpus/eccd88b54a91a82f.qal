@@ -1,0 +1,4 @@
+type Pair[A, B] = { fst: A, snd: B }
+fn d[T](x: T) -> Pair[T, T] = Pair { fst: x, snd: x }
+fn o[T](x: T) -> Option[T] = Some(x)
+fn l[T](x: T) -> List[T] = [x]

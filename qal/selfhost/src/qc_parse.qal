@@ -1,0 +1,1301 @@
+# Recursive-descent parser for QAL self-hosting compiler (spec §7: qc_parse, port of qal-text/src/parser.rs)
+
+type QcPState = {
+  toks: List[QcToken],
+  pos: Int,
+  depth: Int,
+  no_struct: Bool
+}
+
+type QcPRes[T] = {
+  val: Option[T],
+  err: Option[QcDiag],
+  state: QcPState
+}
+
+fn qc_pres_ok[T](v: T, s: QcPState) -> QcPRes[T] =
+  QcPRes { val: Some(v), err: None, state: s }
+
+fn qc_pres_err[T](d: QcDiag, s: QcPState) -> QcPRes[T] =
+  QcPRes { val: None, err: Some(d), state: s }
+
+fn qc_peek(s: QcPState) -> QcTok =
+  if s.pos < len(s.toks) then (list_at(s.toks, s.pos)).tok else QcTokEof
+
+fn qc_peek_tok(s: QcPState) -> QcToken =
+  if s.pos < len(s.toks) then list_at(s.toks, s.pos)
+  else QcToken { tok: QcTokEof, line: 1, col: 1 }
+
+fn qc_peek_at(s: QcPState, offset: Int) -> QcTok =
+  let idx = s.pos + offset in
+  if idx < len(s.toks) then (list_at(s.toks, idx)).tok else QcTokEof
+
+fn qc_next(s: QcPState) -> QcPState =
+  if s.pos < len(s.toks) then
+    QcPState { toks: s.toks, pos: s.pos + 1, depth: s.depth, no_struct: s.no_struct }
+  else s
+
+fn qc_err_here[T](s: QcPState, msg: Str) -> QcPRes[T] =
+  let t = qc_peek_tok(s) in
+  qc_pres_err(qc_diag_parse(t.line, t.col, msg), s)
+
+fn qc_err_here_hint[T](s: QcPState, msg: Str, hint: Str) -> QcPRes[T] =
+  let t = qc_peek_tok(s) in
+  qc_pres_err(qc_diag_parse_hint(t.line, t.col, msg, hint), s)
+
+fn qc_check_sym(s: QcPState, sym: Str) -> Bool =
+  match qc_peek(s) {
+    QcTokSym(op) => op == sym,
+    _ => false
+  }
+
+fn qc_check_ident(s: QcPState, id: Str) -> Bool =
+  match qc_peek(s) {
+    QcTokIdent(name) => name == id,
+    _ => false
+  }
+
+fn qc_tok_describe(tok: QcTok) -> Str =
+  match tok {
+    QcTokIdent(s) => "`" ++ s ++ "`",
+    QcTokInt(n) => if n < 0 then "`9223372036854775808`" else "`" ++ from_int(n) ++ "`",
+    QcTokFloat(f) => "`" ++ from_float(f) ++ "`",
+    QcTokStr(s) => "\"" ++ s ++ "\"",
+    QcTokSym(s) => "`" ++ s ++ "`",
+    QcTokEof => "end of input"
+  }
+
+fn qc_expect_kw(s: QcPState, kw: Str) -> Result[QcPState, QcDiag] =
+  match qc_peek(s) {
+    QcTokIdent(name) =>
+      if name == kw then Ok(qc_next(s))
+      else
+        let t = qc_peek_tok(s) in
+        Err(qc_diag_parse(t.line, t.col, "expected `" ++ kw ++ "`, found " ++ qc_tok_describe(t.tok))),
+    _ =>
+      let t = qc_peek_tok(s) in
+      Err(qc_diag_parse(t.line, t.col, "expected `" ++ kw ++ "`, found " ++ qc_tok_describe(t.tok)))
+  }
+
+fn qc_expect_sym(s: QcPState, sym: Str) -> Result[QcPState, QcDiag] =
+  match qc_peek(s) {
+    QcTokSym(op) =>
+      if op == sym then Ok(qc_next(s))
+      else
+        let t = qc_peek_tok(s) in
+        Err(qc_diag_parse(t.line, t.col, "expected `" ++ sym ++ "`, found " ++ qc_tok_describe(t.tok))),
+    _ =>
+      let t = qc_peek_tok(s) in
+      Err(qc_diag_parse(t.line, t.col, "expected `" ++ sym ++ "`, found " ++ qc_tok_describe(t.tok)))
+  }
+
+fn qc_expect_ident(s: QcPState) -> QcPRes[Str] =
+  match qc_peek(s) {
+    QcTokIdent(id) =>
+      if qc_is_keyword(id) then
+        let t = qc_peek_tok(s) in
+        if id == "std" then
+          qc_pres_err(qc_diag_parse_hint(t.line, t.col, "expected a name, found `std`", "`std` is a keyword since Phase 3b (standard library names are `std.<module>.<name>`); rename the parameter, local or field, e.g. to `std_`"), s)
+        else
+          qc_pres_err(qc_diag_parse(t.line, t.col, "expected a name, found `" ++ id ++ "`"), s)
+      else qc_pres_ok(id, qc_next(s)),
+    _ =>
+      let t = qc_peek_tok(s) in
+      qc_pres_err(qc_diag_parse(t.line, t.col, "expected a name, found " ++ qc_tok_describe(t.tok)), s)
+  }
+
+fn qc_is_qual_std(id: Str) -> Bool =
+  len(id) > 4 && slice(id, 0, 4) == "std."
+
+fn qc_expect_lower_what(s: QcPState, what: Str) -> QcPRes[Str] =
+  match qc_peek(s) {
+    QcTokIdent(id) =>
+      if qc_is_upper(id) then
+        let t = qc_peek_tok(s) in
+        qc_pres_err(qc_diag_parse(t.line, t.col, what ++ " names start with a lowercase letter, found `" ++ id ++ "`"), s)
+      else qc_expect_ident(s),
+    _ => qc_expect_ident(s)
+  }
+
+fn qc_expect_local(s: QcPState, what: Str) -> QcPRes[Str] =
+  match qc_peek(s) {
+    QcTokIdent(id) =>
+      if qc_is_qual_std(id) then
+        let t = qc_peek_tok(s) in
+        qc_pres_err(qc_diag_parse_hint(t.line, t.col, what ++ " names cannot be qualified, found `" ++ id ++ "`", "only definitions (functions, tests, types and variants) have `std.<module>.<name>` names"), s)
+      else qc_expect_lower_what(s, what),
+    _ => qc_expect_lower_what(s, what)
+  }
+
+fn qc_expect_upper_what(s: QcPState, what: Str, allow_qual: Bool) -> QcPRes[Str] =
+  match qc_peek(s) {
+    QcTokIdent(id) =>
+      if !allow_qual && qc_is_qual_std(id) then
+        let t = qc_peek_tok(s) in
+        qc_pres_err(qc_diag_parse_hint(t.line, t.col, what ++ " names cannot be qualified, found `" ++ id ++ "`", "only definitions (functions, tests, types and variants) have `std.<module>.<name>` names"), s)
+      else if !qc_is_upper(id) then
+        let t = qc_peek_tok(s) in
+        qc_pres_err(qc_diag_parse(t.line, t.col, what ++ " names start with an uppercase letter, found `" ++ id ++ "`"), s)
+      else qc_expect_ident(s),
+    _ => qc_expect_ident(s)
+  }
+
+fn qc_enter(s: QcPState) -> Result[QcPState, QcDiag] =
+  if s.depth >= 256 then
+    let t = qc_peek_tok(s) in
+    Err(qc_diag_parse(t.line, t.col, "expression nested too deeply (max 256 levels)"))
+  else
+    Ok(QcPState { toks: s.toks, pos: s.pos, depth: s.depth + 1, no_struct: s.no_struct })
+
+fn qc_leave(s: QcPState) -> QcPState =
+  QcPState { toks: s.toks, pos: s.pos, depth: s.depth - 1, no_struct: s.no_struct }
+
+# -----------------------------------------------------------------------------
+# Type parsing
+
+fn qc_parse_type(s: QcPState) -> QcPRes[QcType] =
+  match qc_enter(s) {
+    Err(d) => qc_pres_err(d, s),
+    Ok(s1) =>
+      let r = qc_parse_type_inner(s1) in
+      QcPRes { val: r.val, err: r.err, state: qc_leave(r.state) }
+  }
+
+fn qc_parse_type_inner(s: QcPState) -> QcPRes[QcType] =
+  match qc_peek(s) {
+    QcTokSym("(") =>
+      let s1 = qc_next(s) in
+      let r = qc_parse_type(s1) in
+      match r.err {
+        Some(d) => qc_pres_err(d, r.state),
+        None =>
+          match qc_expect_sym(r.state, ")") {
+            Err(d) => qc_pres_err(d, r.state),
+            Ok(s2) => qc_pres_ok(match r.val { Some(t) => t, None => QcTUnit }, s2)
+          }
+      },
+    QcTokIdent("Int") => qc_pres_ok(QcTInt, qc_next(s)),
+    QcTokIdent("Float") => qc_pres_ok(QcTFloat, qc_next(s)),
+    QcTokIdent("Bool") => qc_pres_ok(QcTBool, qc_next(s)),
+    QcTokIdent("Unit") => qc_pres_ok(QcTUnit, qc_next(s)),
+    QcTokIdent("Str") => qc_pres_ok(QcTStr, qc_next(s)),
+    QcTokIdent("Bytes") => qc_pres_ok(QcTBytes, qc_next(s)),
+    QcTokIdent("List") =>
+      let s1 = qc_next(s) in
+      match qc_expect_sym(s1, "[") {
+        Err(d) => qc_pres_err(d, s1),
+        Ok(s2) =>
+          let elem_r = qc_parse_type(s2) in
+          match elem_r.err {
+            Some(d) => qc_pres_err(d, elem_r.state),
+            None =>
+              match qc_expect_sym(elem_r.state, "]") {
+                Err(d) => qc_pres_err(d, elem_r.state),
+                Ok(s3) => qc_pres_ok(QcTList(match elem_r.val { Some(t) => t, None => QcTUnit }), s3)
+              }
+          }
+      },
+    QcTokIdent("Option") =>
+      let s1 = qc_next(s) in
+      match qc_expect_sym(s1, "[") {
+        Err(d) => qc_pres_err(d, s1),
+        Ok(s2) =>
+          let elem_r = qc_parse_type(s2) in
+          match elem_r.err {
+            Some(d) => qc_pres_err(d, elem_r.state),
+            None =>
+              match qc_expect_sym(elem_r.state, "]") {
+                Err(d) => qc_pres_err(d, elem_r.state),
+                Ok(s3) => qc_pres_ok(QcTOption(match elem_r.val { Some(t) => t, None => QcTUnit }), s3)
+              }
+          }
+      },
+    QcTokIdent("Result") =>
+      let s1 = qc_next(s) in
+      match qc_expect_sym(s1, "[") {
+        Err(d) => qc_pres_err(d, s1),
+        Ok(s2) =>
+          let ok_r = qc_parse_type(s2) in
+          match ok_r.err {
+            Some(d) => qc_pres_err(d, ok_r.state),
+            None =>
+              match qc_expect_sym(ok_r.state, ",") {
+                Err(d) => qc_pres_err(d, ok_r.state),
+                Ok(s3) =>
+                  let err_r = qc_parse_type(s3) in
+                  match err_r.err {
+                    Some(d) => qc_pres_err(d, err_r.state),
+                    None =>
+                      match qc_expect_sym(err_r.state, "]") {
+                        Err(d) => qc_pres_err(d, err_r.state),
+                        Ok(s4) =>
+                          qc_pres_ok(QcTResult(match ok_r.val { Some(t) => t, None => QcTUnit },
+                                              match err_r.val { Some(t) => t, None => QcTUnit }), s4)
+                      }
+                  }
+              }
+          }
+      },
+    QcTokIdent("Map") =>
+      let s1 = qc_next(s) in
+      match qc_expect_sym(s1, "[") {
+        Err(d) => qc_pres_err(d, s1),
+        Ok(s2) =>
+          let k_r = qc_parse_type(s2) in
+          match k_r.err {
+            Some(d) => qc_pres_err(d, k_r.state),
+            None =>
+              match qc_expect_sym(k_r.state, ",") {
+                Err(d) => qc_pres_err(d, k_r.state),
+                Ok(s3) =>
+                  let v_r = qc_parse_type(s3) in
+                  match v_r.err {
+                    Some(d) => qc_pres_err(d, v_r.state),
+                    None =>
+                      match qc_expect_sym(v_r.state, "]") {
+                        Err(d) => qc_pres_err(d, v_r.state),
+                        Ok(s4) =>
+                          qc_pres_ok(QcTMap(match k_r.val { Some(t) => t, None => QcTUnit },
+                                           match v_r.val { Some(t) => t, None => QcTUnit }), s4)
+                      }
+                  }
+              }
+          }
+      },
+    QcTokIdent("fn") =>
+      qc_parse_fn_type(qc_next(s)),
+    QcTokIdent(name) =>
+      if !qc_is_upper(name) then
+        qc_err_here(s, "expected a type (e.g. Int, Str, List[Int]), found `" ++ name ++ "`")
+      else
+        let s1 = qc_next(s) in
+        if qc_check_sym(s1, "[") then
+          let s2 = qc_next(s1) in
+          if qc_check_sym(s2, "]") then
+            qc_err_here(s2, "`" ++ name ++ "[]` needs at least one type argument")
+          else
+            let args_r = qc_parse_type_args(s2, AccEnd) in
+            match args_r.err {
+              Some(d) => qc_pres_err(d, args_r.state),
+              None => qc_pres_ok(QcTApp(name, match args_r.val { Some(l) => l, None => [] }), args_r.state)
+            }
+        else
+          qc_pres_ok(QcTNamed(name), s1),
+    _ => qc_err_here(s, "expected a type")
+  }
+
+fn qc_parse_type_args(s: QcPState, acc: Accum[QcType]) -> QcPRes[List[QcType]] =
+  if qc_check_sym(s, "]") then
+    qc_pres_ok(acc_list(acc), qc_next(s))
+  else
+    let r = qc_parse_type(s) in
+    match r.err {
+      Some(d) => qc_pres_err(d, r.state),
+      None =>
+        let t = match r.val { Some(x) => x, None => QcTUnit } in
+        let s2 = r.state in
+        if qc_check_sym(s2, ",") then
+          let s3 = qc_next(s2) in
+          if qc_check_sym(s3, "]") then qc_pres_ok(acc_list(AccPush(acc, t)), qc_next(s3))
+          else qc_parse_type_args(s3, AccPush(acc, t))
+        else if qc_check_sym(s2, "]") then
+          qc_pres_ok(acc_list(AccPush(acc, t)), qc_next(s2))
+        else
+          qc_err_here(s2, "expected `,` or `]`")
+    }
+
+fn qc_parse_fn_type(s: QcPState) -> QcPRes[QcType] =
+  match qc_expect_sym(s, "(") {
+    Err(d) => qc_pres_err(d, s),
+    Ok(s1) =>
+      let params_r = qc_parse_fn_type_params(s1, AccEnd) in
+      match params_r.err {
+        Some(d) => qc_pres_err(d, params_r.state),
+        None =>
+          match qc_expect_sym(params_r.state, "->") {
+            Err(d) => qc_pres_err(d, params_r.state),
+            Ok(s2) =>
+              let ret_r = qc_parse_type(s2) in
+              match ret_r.err {
+                Some(d) => qc_pres_err(d, ret_r.state),
+                None =>
+                  let eff_r = qc_parse_effects(ret_r.state, AccEnd) in
+                  qc_pres_ok(QcTFn(match params_r.val { Some(p) => p, None => [] },
+                                  match ret_r.val { Some(r) => r, None => QcTUnit },
+                                  match eff_r.val { Some(e) => e, None => [] }), eff_r.state)
+              }
+          }
+      }
+  }
+
+fn qc_parse_fn_type_params(s: QcPState, acc: Accum[QcType]) -> QcPRes[List[QcType]] =
+  if qc_check_sym(s, ")") then
+    qc_pres_ok(acc_list(acc), qc_next(s))
+  else
+    let r = qc_parse_type(s) in
+    match r.err {
+      Some(d) => qc_pres_err(d, r.state),
+      None =>
+        let t = match r.val { Some(x) => x, None => QcTUnit } in
+        let s2 = r.state in
+        if qc_check_sym(s2, ",") then
+          let s3 = qc_next(s2) in
+          if qc_check_sym(s3, ")") then qc_pres_ok(acc_list(AccPush(acc, t)), qc_next(s3))
+          else qc_parse_fn_type_params(s3, AccPush(acc, t))
+        else if qc_check_sym(s2, ")") then
+          qc_pres_ok(acc_list(AccPush(acc, t)), qc_next(s2))
+        else
+          qc_err_here(s2, "expected `,` or `)`")
+    }
+
+fn qc_insert_sorted_str_rec(xs: List[Str], s: Str, idx: Int, acc: Accum[Str]) -> List[Str] =
+  if idx >= len(xs) then acc_list(AccPush(acc, s))
+  else
+    let cur = list_at(xs, idx) in
+    if s == cur then xs
+    else if s < cur then
+      qc_append_rest_str(xs, idx, AccPush(acc, s))
+    else
+      qc_insert_sorted_str_rec(xs, s, idx + 1, AccPush(acc, cur))
+
+fn qc_append_rest_str(xs: List[Str], idx: Int, acc: Accum[Str]) -> List[Str] =
+  if idx >= len(xs) then acc_list(acc)
+  else qc_append_rest_str(xs, idx + 1, AccPush(acc, list_at(xs, idx)))
+
+fn qc_insert_sorted_str(xs: List[Str], s: Str) -> List[Str] =
+  qc_insert_sorted_str_rec(xs, s, 0, AccEnd)
+
+fn qc_sort_dedup_strs(xs: List[Str]) -> List[Str] =
+  fold(xs, [], qc_insert_sorted_str)
+
+fn qc_parse_effects(s: QcPState, acc: Accum[Str]) -> QcPRes[List[Str]] =
+  if qc_check_sym(s, "!") then
+    let s1 = qc_next(s) in
+    let id_r = qc_expect_local(s1, "effect") in
+    match id_r.err {
+      Some(d) => qc_pres_err(d, id_r.state),
+      None => qc_parse_effects(id_r.state, AccPush(acc, match id_r.val { Some(id) => id, None => "" }))
+    }
+  else
+    qc_pres_ok(qc_sort_dedup_strs(acc_list(acc)), s)
+
+# -----------------------------------------------------------------------------
+# Expressions
+
+fn qc_parse_expr(s: QcPState) -> QcPRes[QcExpr] =
+  match qc_enter(s) {
+    Err(d) => qc_pres_err(d, s),
+    Ok(s1) =>
+      let r = qc_parse_expr_inner(s1) in
+      QcPRes { val: r.val, err: r.err, state: qc_leave(r.state) }
+  }
+
+fn qc_parse_expr_inner(s: QcPState) -> QcPRes[QcExpr] =
+  match qc_peek(s) {
+    QcTokIdent("let") => qc_parse_let(qc_next(s)),
+    QcTokIdent("if") => qc_parse_if(qc_next(s)),
+    QcTokIdent("match") => qc_parse_match(qc_next(s)),
+    _ => qc_parse_binary(s, 1)
+  }
+
+fn qc_parse_let(s: QcPState) -> QcPRes[QcExpr] =
+  let name_r = qc_expect_local(s, "variable") in
+  match name_r.err {
+    Some(d) => qc_pres_err(d, name_r.state),
+    None =>
+      let name = match name_r.val { Some(n) => n, None => "" } in
+      let s1 = name_r.state in
+      let ty_r =
+        if qc_check_sym(s1, ":") then
+          let tr = qc_parse_type(qc_next(s1)) in
+          match tr.err {
+            Some(d) => QcPRes { val: None, err: Some(d), state: tr.state },
+            None => QcPRes { val: Some(tr.val), err: None, state: tr.state }
+          }
+        else
+          QcPRes { val: Some(None), err: None, state: s1 } in
+      match ty_r.err {
+        Some(d) => qc_pres_err(d, ty_r.state),
+        None =>
+          let ann = match ty_r.val { Some(opt) => opt, None => None } in
+          match qc_expect_sym(ty_r.state, "=") {
+            Err(d) => qc_pres_err(d, ty_r.state),
+            Ok(s2) =>
+              let val_r = qc_parse_expr(s2) in
+              match val_r.err {
+                Some(d) => qc_pres_err(d, val_r.state),
+                None =>
+                  match qc_expect_kw(val_r.state, "in") {
+                    Err(d) => qc_pres_err(d, val_r.state),
+                    Ok(s3) =>
+                      let body_r = qc_parse_expr(s3) in
+                      match body_r.err {
+                        Some(d) => qc_pres_err(d, body_r.state),
+                        None =>
+                          qc_pres_ok(QcELet(name, ann,
+                                           match val_r.val { Some(v) => v, None => QcEUnit },
+                                           match body_r.val { Some(b) => b, None => QcEUnit }), body_r.state)
+                      }
+                  }
+              }
+          }
+      }
+  }
+
+fn qc_parse_if(s: QcPState) -> QcPRes[QcExpr] =
+  let c_r = qc_parse_expr(s) in
+  match c_r.err {
+    Some(d) => qc_pres_err(d, c_r.state),
+    None =>
+      match qc_expect_kw(c_r.state, "then") {
+        Err(d) => qc_pres_err(d, c_r.state),
+        Ok(s1) =>
+          let t_r = qc_parse_expr(s1) in
+          match t_r.err {
+            Some(d) => qc_pres_err(d, t_r.state),
+            None =>
+              match qc_expect_kw(t_r.state, "else") {
+                Err(d) => qc_pres_err(d, t_r.state),
+                Ok(s2) =>
+                  let e_r = qc_parse_expr(s2) in
+                  match e_r.err {
+                    Some(d) => qc_pres_err(d, e_r.state),
+                    None =>
+                      qc_pres_ok(QcEIf(match c_r.val { Some(c) => c, None => QcEUnit },
+                                      match t_r.val { Some(t) => t, None => QcEUnit },
+                                      match e_r.val { Some(e) => e, None => QcEUnit }), e_r.state)
+                  }
+              }
+          }
+      }
+  }
+
+fn qc_parse_match(s: QcPState) -> QcPRes[QcExpr] =
+  let s_scrut = QcPState { toks: s.toks, pos: s.pos, depth: s.depth, no_struct: true } in
+  let scrut_r = qc_parse_expr(s_scrut) in
+  match scrut_r.err {
+    Some(d) => qc_pres_err(d, scrut_r.state),
+    None =>
+      let s1 = QcPState { toks: scrut_r.state.toks, pos: scrut_r.state.pos, depth: scrut_r.state.depth, no_struct: s.no_struct } in
+      match qc_expect_sym(s1, "{") {
+        Err(d) => qc_pres_err(d, s1),
+        Ok(s2) =>
+          let arms_r = qc_parse_arms(s2, AccEnd) in
+          match arms_r.err {
+            Some(d) => qc_pres_err(d, arms_r.state),
+            None =>
+              qc_pres_ok(QcEMatch(match scrut_r.val { Some(sc) => sc, None => QcEUnit },
+                                 match arms_r.val { Some(ar) => ar, None => [] }), arms_r.state)
+          }
+      }
+  }
+
+fn qc_parse_arms(s: QcPState, acc: Accum[QcArm]) -> QcPRes[List[QcArm]] =
+  if qc_check_sym(s, "}") then
+    qc_pres_ok(acc_list(acc), qc_next(s))
+  else
+    let pat_r = qc_parse_pat(s) in
+    match pat_r.err {
+      Some(d) => qc_pres_err(d, pat_r.state),
+      None =>
+        let pat = match pat_r.val { Some(p) => p, None => QcPWild } in
+        let s1 = pat_r.state in
+        let guard_r =
+          if qc_check_ident(s1, "if") then
+            let gr = qc_parse_expr(qc_next(s1)) in
+            match gr.err {
+              Some(d) => QcPRes { val: None, err: Some(d), state: gr.state },
+              None => QcPRes { val: Some(gr.val), err: None, state: gr.state }
+            }
+          else QcPRes { val: Some(None), err: None, state: s1 } in
+        match guard_r.err {
+          Some(d) => qc_pres_err(d, guard_r.state),
+          None =>
+            let guard = match guard_r.val { Some(g) => g, None => None } in
+            match qc_expect_sym(guard_r.state, "=>") {
+              Err(d) => qc_pres_err(d, guard_r.state),
+              Ok(s2) =>
+                let body_r = qc_parse_expr(s2) in
+                match body_r.err {
+                  Some(d) => qc_pres_err(d, body_r.state),
+                  None =>
+                    let body = match body_r.val { Some(b) => b, None => QcEUnit } in
+                    let arm = QcArm { pat: pat, guard: guard, body: body } in
+                    let s3 = body_r.state in
+                    if qc_check_sym(s3, ",") then
+                      let s4 = qc_next(s3) in
+                      if qc_check_sym(s4, "}") then qc_pres_ok(acc_list(AccPush(acc, arm)), qc_next(s4))
+                      else qc_parse_arms(s4, AccPush(acc, arm))
+                    else if qc_check_sym(s3, "}") then
+                      qc_pres_ok(acc_list(AccPush(acc, arm)), qc_next(s3))
+                    else
+                      qc_err_here(s3, "expected `,` or `}`")
+                }
+            }
+        }
+    }
+
+fn qc_parse_closure(s: QcPState) -> QcPRes[QcExpr] =
+  match qc_expect_sym(s, "(") {
+    Err(d) => qc_pres_err(d, s),
+    Ok(s1) =>
+      let ps_r = qc_parse_closure_params(s1, AccEnd) in
+      match ps_r.err {
+        Some(d) => qc_pres_err(d, ps_r.state),
+        None =>
+          match qc_expect_sym(ps_r.state, "=>") {
+            Err(d) => qc_pres_err(d, ps_r.state),
+            Ok(s2) =>
+              let body_r = qc_parse_expr(s2) in
+              match body_r.err {
+                Some(d) => qc_pres_err(d, body_r.state),
+                None =>
+                  qc_pres_ok(QcELambda(match ps_r.val { Some(p) => p, None => [] },
+                                      match body_r.val { Some(b) => b, None => QcEUnit }), body_r.state)
+              }
+          }
+      }
+  }
+
+fn qc_parse_closure_params(s: QcPState, acc: Accum[QcLambdaParam]) -> QcPRes[List[QcLambdaParam]] =
+  if qc_check_sym(s, ")") then
+    qc_pres_ok(acc_list(acc), qc_next(s))
+  else
+    let id_r = qc_expect_local(s, "parameter") in
+    match id_r.err {
+      Some(d) => qc_pres_err(d, id_r.state),
+      None =>
+        let name = match id_r.val { Some(n) => n, None => "" } in
+        let s1 = id_r.state in
+        let ty_r =
+          if qc_check_sym(s1, ":") then
+            let tr = qc_parse_type(qc_next(s1)) in
+            match tr.err {
+              Some(d) => QcPRes { val: None, err: Some(d), state: tr.state },
+              None => QcPRes { val: Some(tr.val), err: None, state: tr.state }
+            }
+          else QcPRes { val: Some(None), err: None, state: s1 } in
+        match ty_r.err {
+          Some(d) => qc_pres_err(d, ty_r.state),
+          None =>
+            let p = QcLambdaParam { name: name, ty: match ty_r.val { Some(opt) => opt, None => None } } in
+            let s2 = ty_r.state in
+            if qc_check_sym(s2, ",") then
+              let s3 = qc_next(s2) in
+              if qc_check_sym(s3, ")") then qc_pres_ok(acc_list(AccPush(acc, p)), qc_next(s3))
+              else qc_parse_closure_params(s3, AccPush(acc, p))
+            else if qc_check_sym(s2, ")") then
+              qc_pres_ok(acc_list(AccPush(acc, p)), qc_next(s2))
+            else
+              qc_err_here(s2, "expected `,` or `)`")
+        }
+    }
+
+fn qc_parse_binary(s: QcPState, min_prec: Int) -> QcPRes[QcExpr] =
+  let left_r = qc_parse_unary(s) in
+  match left_r.err {
+    Some(d) => qc_pres_err(d, left_r.state),
+    None => qc_climb_precedence(left_r.state, match left_r.val { Some(l) => l, None => QcEUnit }, min_prec)
+  }
+
+fn qc_peek_binop(s: QcPState) -> Option[QcBinOp] =
+  match qc_peek(s) {
+    QcTokSym("+") => Some(QcOpAdd),
+    QcTokSym("-") => Some(QcOpSub),
+    QcTokSym("*") => Some(QcOpMul),
+    QcTokSym("/") => Some(QcOpDiv),
+    QcTokSym("%") => Some(QcOpRem),
+    QcTokSym("++") => Some(QcOpConcat),
+    QcTokSym("==") => Some(QcOpEq),
+    QcTokSym("!=") => Some(QcOpNe),
+    QcTokSym("<") => Some(QcOpLt),
+    QcTokSym("<=") => Some(QcOpLe),
+    QcTokSym(">") => Some(QcOpGt),
+    QcTokSym(">=") => Some(QcOpGe),
+    QcTokSym("&&") => Some(QcOpAnd),
+    QcTokSym("||") => Some(QcOpOr),
+    _ => None
+  }
+
+fn qc_climb_precedence(s: QcPState, left: QcExpr, min_prec: Int) -> QcPRes[QcExpr] =
+  match qc_peek_binop(s) {
+    None => qc_pres_ok(left, s),
+    Some(op) =>
+      let prec = qc_binop_prec(op) in
+      if prec < min_prec then qc_pres_ok(left, s)
+      else
+        let s1 = qc_next(s) in
+        let next_min = prec + 1 in
+        let right_r = qc_parse_binary(s1, next_min) in
+        match right_r.err {
+          Some(d) => qc_pres_err(d, right_r.state),
+          None =>
+            let right = match right_r.val { Some(r) => r, None => QcEUnit } in
+            let new_left = QcEBin(op, left, right) in
+            let s2 = right_r.state in
+            if qc_binop_is_comparison(op) && (match qc_peek_binop(s2) { Some(next_op) => qc_binop_is_comparison(next_op), None => false }) then
+              qc_err_here(s2, "comparisons cannot be chained; use `&&`")
+            else
+              qc_climb_precedence(s2, new_left, min_prec)
+        }
+  }
+
+fn qc_parse_unary(s: QcPState) -> QcPRes[QcExpr] =
+  match qc_peek(s) {
+    QcTokSym("-") =>
+      let s1 = qc_next(s) in
+      match qc_enter(s1) {
+        Err(d) => qc_pres_err(d, s1),
+        Ok(s2) =>
+          let r = qc_parse_unary(s2) in
+          let s_out = qc_leave(r.state) in
+          match r.err {
+            Some(d) => qc_pres_err(d, s_out),
+            None => qc_pres_ok(QcEUn(QcUnNeg, match r.val { Some(e) => e, None => QcEUnit }), s_out)
+          }
+      },
+    QcTokSym("!") =>
+      let s1 = qc_next(s) in
+      match qc_enter(s1) {
+        Err(d) => qc_pres_err(d, s1),
+        Ok(s2) =>
+          let r = qc_parse_unary(s2) in
+          let s_out = qc_leave(r.state) in
+          match r.err {
+            Some(d) => qc_pres_err(d, s_out),
+            None => qc_pres_ok(QcEUn(QcUnNot, match r.val { Some(e) => e, None => QcEUnit }), s_out)
+          }
+      },
+    _ => qc_parse_postfix(s)
+  }
+
+fn qc_parse_postfix(s: QcPState) -> QcPRes[QcExpr] =
+  let atom_r = qc_parse_atom(s) in
+  match atom_r.err {
+    Some(d) => qc_pres_err(d, atom_r.state),
+    None => qc_postfix_fields(atom_r.state, match atom_r.val { Some(e) => e, None => QcEUnit })
+  }
+
+fn qc_postfix_fields(s: QcPState, target: QcExpr) -> QcPRes[QcExpr] =
+  if qc_check_sym(s, ".") then
+    let s1 = qc_next(s) in
+    let id_r = qc_expect_local(s1, "field") in
+    match id_r.err {
+      Some(d) => qc_pres_err(d, id_r.state),
+      None =>
+        let f = match id_r.val { Some(n) => n, None => "" } in
+        qc_postfix_fields(id_r.state, QcEField(target, f))
+    }
+  else
+    qc_pres_ok(target, s)
+
+fn qc_parse_atom(s: QcPState) -> QcPRes[QcExpr] =
+  match qc_peek(s) {
+    QcTokInt(n) =>
+      if n >= 0 then qc_pres_ok(QcEInt(n), qc_next(s))
+      else qc_err_here(s, "integer literal `9223372036854775808` does not fit in Int (64-bit); write `-9223372036854775807 - 1` for the minimum"),
+    QcTokFloat(f) => qc_pres_ok(QcEFloat(f), qc_next(s)),
+    QcTokStr(str_val) => qc_pres_ok(QcEStr(str_val), qc_next(s)),
+    QcTokIdent("true") => qc_pres_ok(QcEBool(true), qc_next(s)),
+    QcTokIdent("false") => qc_pres_ok(QcEBool(false), qc_next(s)),
+    QcTokSym("(") =>
+      let s1 = QcPState { toks: s.toks, pos: s.pos + 1, depth: s.depth, no_struct: false } in
+      if qc_check_sym(s1, ")") then qc_pres_ok(QcEUnit, QcPState { toks: s1.toks, pos: s1.pos + 1, depth: s1.depth, no_struct: s.no_struct })
+      else
+        let r = qc_parse_expr(s1) in
+        match r.err {
+          Some(d) => qc_pres_err(d, r.state),
+          None =>
+            match qc_expect_sym(r.state, ")") {
+              Err(d) => qc_pres_err(d, r.state),
+              Ok(s2) => qc_pres_ok(match r.val { Some(e) => e, None => QcEUnit }, QcPState { toks: s2.toks, pos: s2.pos, depth: s2.depth, no_struct: s.no_struct })
+            }
+        },
+    QcTokSym("[") =>
+      let s1 = QcPState { toks: s.toks, pos: s.pos + 1, depth: s.depth, no_struct: false } in
+      if qc_check_sym(s1, "]") then qc_pres_ok(QcEList([]), QcPState { toks: s1.toks, pos: s1.pos + 1, depth: s1.depth, no_struct: s.no_struct })
+      else
+        let items_r = qc_parse_expr_list(s1, AccEnd) in
+        match items_r.err {
+          Some(d) => qc_pres_err(d, items_r.state),
+          None => qc_pres_ok(QcEList(match items_r.val { Some(l) => l, None => [] }), QcPState { toks: items_r.state.toks, pos: items_r.state.pos, depth: items_r.state.depth, no_struct: s.no_struct })
+        },
+    QcTokSym("{") =>
+      let s1 = QcPState { toks: s.toks, pos: s.pos + 1, depth: s.depth, no_struct: false } in
+      let seq_r = qc_parse_seq_exprs(s1, AccEnd) in
+      match seq_r.err {
+        Some(d) => qc_pres_err(d, seq_r.state),
+        None => qc_pres_ok(QcESeq(match seq_r.val { Some(l) => l, None => [] }), QcPState { toks: seq_r.state.toks, pos: seq_r.state.pos, depth: seq_r.state.depth, no_struct: s.no_struct })
+      },
+    QcTokIdent(id) =>
+      if id == "fn" && qc_check_sym(qc_next(s), "(") then
+        let s1 = QcPState { toks: s.toks, pos: s.pos + 1, depth: s.depth, no_struct: false } in
+        let r = qc_parse_closure(s1) in
+        match r.err {
+          Some(d) => qc_pres_err(d, r.state),
+          None => qc_pres_ok(match r.val { Some(v) => v, None => QcEUnit }, QcPState { toks: r.state.toks, pos: r.state.pos, depth: r.state.depth, no_struct: s.no_struct })
+        }
+      else if qc_is_keyword(id) then
+        let t = qc_peek_tok(s) in
+        let extra = if id == "if" || id == "let" || id == "match" then " (wrap the `" ++ id ++ "` expression in parentheses here)" else "" in
+        qc_pres_err(qc_diag_parse(t.line, t.col, "expected an expression, found `" ++ id ++ "`" ++ extra), s)
+      else if qc_is_upper(id) && !s.no_struct && qc_check_sym(qc_next(s), "{") then
+        let s2 = QcPState { toks: s.toks, pos: s.pos + 2, depth: s.depth, no_struct: false } in
+        let r = qc_parse_record_literal(s2, id, AccEnd) in
+        match r.err {
+          Some(d) => qc_pres_err(d, r.state),
+          None => qc_pres_ok(match r.val { Some(v) => v, None => QcEUnit }, QcPState { toks: r.state.toks, pos: r.state.pos, depth: r.state.depth, no_struct: s.no_struct })
+        }
+      else
+        let s1 = qc_next(s) in
+        if qc_check_sym(s1, "(") then
+          let s2 = QcPState { toks: s1.toks, pos: s1.pos + 1, depth: s1.depth, no_struct: false } in
+          if qc_check_sym(s2, ")") then qc_pres_ok(QcECall(id, []), QcPState { toks: s2.toks, pos: s2.pos + 1, depth: s2.depth, no_struct: s.no_struct })
+          else
+            let args_r = qc_parse_call_args(s2, AccEnd) in
+            match args_r.err {
+              Some(d) => qc_pres_err(d, args_r.state),
+              None => qc_pres_ok(QcECall(id, match args_r.val { Some(a) => a, None => [] }), QcPState { toks: args_r.state.toks, pos: args_r.state.pos, depth: args_r.state.depth, no_struct: s.no_struct })
+            }
+        else
+          qc_pres_ok(QcEVar(id), s1),
+    _ => qc_err_here(s, "expected an expression, found " ++ qc_tok_describe(qc_peek(s)))
+  }
+
+fn qc_parse_record_literal(s: QcPState, name: Str, acc: Accum[QcFieldExpr]) -> QcPRes[QcExpr] =
+  if qc_check_sym(s, "}") then
+    qc_pres_ok(QcERecord(name, acc_list(acc)), qc_next(s))
+  else
+    let fn_r = qc_expect_local(s, "field") in
+    match fn_r.err {
+      Some(d) => qc_pres_err(d, fn_r.state),
+      None =>
+        let fname = match fn_r.val { Some(n) => n, None => "" } in
+        match qc_expect_sym(fn_r.state, ":") {
+          Err(d) => qc_pres_err(d, fn_r.state),
+          Ok(s1) =>
+            let val_r = qc_parse_expr(s1) in
+            match val_r.err {
+              Some(d) => qc_pres_err(d, val_r.state),
+              None =>
+                let fe = QcFieldExpr { name: fname, expr: match val_r.val { Some(e) => e, None => QcEUnit } } in
+                let s2 = val_r.state in
+                if qc_check_sym(s2, ",") then
+                  let s3 = qc_next(s2) in
+                  if qc_check_sym(s3, "}") then qc_pres_ok(QcERecord(name, acc_list(AccPush(acc, fe))), qc_next(s3))
+                  else qc_parse_record_literal(s3, name, AccPush(acc, fe))
+                else if qc_check_sym(s2, "}") then
+                  qc_pres_ok(QcERecord(name, acc_list(AccPush(acc, fe))), qc_next(s2))
+                else
+                  qc_err_here(s2, "expected `,` or `}`")
+            }
+        }
+    }
+
+fn qc_parse_call_args(s: QcPState, acc: Accum[QcExpr]) -> QcPRes[List[QcExpr]] =
+  if qc_check_sym(s, ")") then
+    qc_pres_ok(acc_list(acc), qc_next(s))
+  else
+    let r = qc_parse_expr(s) in
+    match r.err {
+      Some(d) => qc_pres_err(d, r.state),
+      None =>
+        let e = match r.val { Some(x) => x, None => QcEUnit } in
+        let s1 = r.state in
+        if qc_check_sym(s1, ",") then
+          let s2 = qc_next(s1) in
+          if qc_check_sym(s2, ")") then qc_pres_ok(acc_list(AccPush(acc, e)), qc_next(s2))
+          else qc_parse_call_args(s2, AccPush(acc, e))
+        else if qc_check_sym(s1, ")") then
+          qc_pres_ok(acc_list(AccPush(acc, e)), qc_next(s1))
+        else
+          qc_err_here(s1, "expected `,` or `)`")
+    }
+
+fn qc_parse_expr_list(s: QcPState, acc: Accum[QcExpr]) -> QcPRes[List[QcExpr]] =
+  if qc_check_sym(s, "]") then
+    qc_pres_ok(acc_list(acc), qc_next(s))
+  else
+    let r = qc_parse_expr(s) in
+    match r.err {
+      Some(d) => qc_pres_err(d, r.state),
+      None =>
+        let e = match r.val { Some(x) => x, None => QcEUnit } in
+        let s1 = r.state in
+        if qc_check_sym(s1, ",") then
+          let s2 = qc_next(s1) in
+          if qc_check_sym(s2, "]") then qc_pres_ok(acc_list(AccPush(acc, e)), qc_next(s2))
+          else qc_parse_expr_list(s2, AccPush(acc, e))
+        else if qc_check_sym(s1, "]") then
+          qc_pres_ok(acc_list(AccPush(acc, e)), qc_next(s1))
+        else
+          qc_err_here(s1, "expected `,` or `]`")
+    }
+
+fn qc_parse_seq_exprs(s: QcPState, acc: Accum[QcExpr]) -> QcPRes[List[QcExpr]] =
+  let r = qc_parse_expr(s) in
+  match r.err {
+    Some(d) => qc_pres_err(d, r.state),
+    None =>
+      let e = match r.val { Some(x) => x, None => QcEUnit } in
+      let s1 = r.state in
+      if qc_check_sym(s1, ";") then
+        let s2 = qc_next(s1) in
+        qc_parse_seq_exprs(s2, AccPush(acc, e))
+      else if qc_check_sym(s1, "}") then
+        qc_pres_ok(acc_list(AccPush(acc, e)), qc_next(s1))
+      else
+        qc_err_here(s1, "expected `;` or `}`")
+  }
+
+# -----------------------------------------------------------------------------
+# Patterns
+
+fn qc_parse_pat(s: QcPState) -> QcPRes[QcPat] =
+  match qc_enter(s) {
+    Err(d) => qc_pres_err(d, s),
+    Ok(s1) =>
+      let r = qc_parse_pat_inner(s1) in
+      QcPRes { val: r.val, err: r.err, state: qc_leave(r.state) }
+  }
+
+fn qc_parse_pat_inner(s: QcPState) -> QcPRes[QcPat] =
+  match qc_peek(s) {
+    QcTokIdent("_") => qc_pres_ok(QcPWild, qc_next(s)),
+    QcTokSym("_") => qc_pres_ok(QcPWild, qc_next(s)),
+    QcTokInt(n) =>
+      if n >= 0 then qc_pres_ok(QcPInt(n), qc_next(s))
+      else qc_err_here(s, "integer literal `9223372036854775808` does not fit in Int (64-bit); write `-9223372036854775807 - 1` for the minimum"),
+    QcTokStr(str_val) => qc_pres_ok(QcPStr(str_val), qc_next(s)),
+    QcTokIdent("true") => qc_pres_ok(QcPBool(true), qc_next(s)),
+    QcTokIdent("false") => qc_pres_ok(QcPBool(false), qc_next(s)),
+    QcTokSym("(") =>
+      if qc_check_sym(qc_next(s), ")") then
+        qc_pres_ok(QcPUnit, qc_next(qc_next(s)))
+      else
+        qc_err_here(s, "expected a pattern"),
+    QcTokSym("-") =>
+      let s1 = qc_next(s) in
+      match qc_peek(s1) {
+        QcTokInt(n) =>
+          let neg_n = if n < 0 then n else -n in
+          qc_pres_ok(QcPInt(neg_n), qc_next(s1)),
+        _ => qc_err_here(s, "expected a pattern")
+      },
+    QcTokIdent(id) =>
+      if qc_is_upper(id) then
+        let s1 = qc_next(s) in
+        if qc_check_sym(s1, "(") then
+          let s2 = qc_next(s1) in
+          if qc_check_sym(s2, ")") then qc_pres_ok(QcPVariant(id, []), qc_next(s2))
+          else
+            let sub_r = qc_parse_pat_list(s2, AccEnd) in
+            match sub_r.err {
+              Some(d) => qc_pres_err(d, sub_r.state),
+              None => qc_pres_ok(QcPVariant(id, match sub_r.val { Some(l) => l, None => [] }), sub_r.state)
+            }
+        else if qc_check_sym(s1, "{") then
+          qc_parse_pat_record_fields(qc_next(s1), id, AccEnd)
+        else
+          qc_pres_ok(QcPVariant(id, []), s1)
+      else
+        let vr = qc_expect_local(s, "variable") in
+        match vr.err {
+          Some(d) => qc_pres_err(d, vr.state),
+          None => qc_pres_ok(QcPBind(match vr.val { Some(v) => v, None => "" }), vr.state)
+        },
+    _ => qc_err_here(s, "expected a pattern")
+  }
+
+fn qc_parse_pat_list(s: QcPState, acc: Accum[QcPat]) -> QcPRes[List[QcPat]] =
+  if qc_check_sym(s, ")") then
+    qc_pres_ok(acc_list(acc), qc_next(s))
+  else
+    let r = qc_parse_pat(s) in
+    match r.err {
+      Some(d) => qc_pres_err(d, r.state),
+      None =>
+        let p = match r.val { Some(x) => x, None => QcPWild } in
+        let s1 = r.state in
+        if qc_check_sym(s1, ",") then
+          let s2 = qc_next(s1) in
+          if qc_check_sym(s2, ")") then qc_pres_ok(acc_list(AccPush(acc, p)), qc_next(s2))
+          else qc_parse_pat_list(s2, AccPush(acc, p))
+        else if qc_check_sym(s1, ")") then
+          qc_pres_ok(acc_list(AccPush(acc, p)), qc_next(s1))
+        else
+          qc_err_here(s1, "expected `,` or `)`")
+    }
+
+fn qc_parse_pat_record_fields(s: QcPState, name: Str, acc: Accum[QcFieldPat]) -> QcPRes[QcPat] =
+  if qc_check_sym(s, "}") then
+    qc_pres_ok(QcPRecord(name, acc_list(acc)), qc_next(s))
+  else
+    let id_r = qc_expect_local(s, "field") in
+    match id_r.err {
+      Some(d) => qc_pres_err(d, id_r.state),
+      None =>
+        let fname = match id_r.val { Some(n) => n, None => "" } in
+        let s1 = id_r.state in
+        let pat_r =
+          if qc_check_sym(s1, ":") then
+            qc_parse_pat(qc_next(s1))
+          else
+            QcPRes { val: Some(QcPBind(fname)), err: None, state: s1 } in
+        match pat_r.err {
+          Some(d) => qc_pres_err(d, pat_r.state),
+          None =>
+            let fp = QcFieldPat { name: fname, pat: match pat_r.val { Some(p) => p, None => QcPWild } } in
+            let s2 = pat_r.state in
+            if qc_check_sym(s2, ",") then
+              let s3 = qc_next(s2) in
+              if qc_check_sym(s3, "}") then qc_pres_ok(QcPRecord(name, acc_list(AccPush(acc, fp))), qc_next(s3))
+              else qc_parse_pat_record_fields(s3, name, AccPush(acc, fp))
+            else if qc_check_sym(s2, "}") then
+              qc_pres_ok(QcPRecord(name, acc_list(AccPush(acc, fp))), qc_next(s2))
+            else
+              qc_err_here(s2, "expected `,` or `}`")
+        }
+    }
+
+# -----------------------------------------------------------------------------
+# Definitions and Program
+
+fn qc_parse_tparams(s: QcPState) -> QcPRes[List[Str]] =
+  if qc_check_sym(s, "[") then
+    let s1 = qc_next(s) in
+    if qc_check_sym(s1, "]") then
+      qc_err_here(s1, "`[]` needs at least one type parameter")
+    else
+      qc_parse_tparams_loop(s1, AccEnd)
+  else
+    qc_pres_ok([], s)
+
+fn qc_parse_tparams_loop(s: QcPState, acc: Accum[Str]) -> QcPRes[List[Str]] =
+  if qc_check_sym(s, "]") then
+    qc_pres_ok(acc_list(acc), qc_next(s))
+  else
+    let id_r = qc_expect_upper_what(s, "type parameter", false) in
+    match id_r.err {
+      Some(d) => qc_pres_err(d, id_r.state),
+      None =>
+        let p = match id_r.val { Some(x) => x, None => "" } in
+        let s1 = id_r.state in
+        if qc_check_sym(s1, ",") then
+          let s2 = qc_next(s1) in
+          if qc_check_sym(s2, "]") then qc_pres_ok(acc_list(AccPush(acc, p)), qc_next(s2))
+          else qc_parse_tparams_loop(s2, AccPush(acc, p))
+        else if qc_check_sym(s1, "]") then
+          qc_pres_ok(acc_list(AccPush(acc, p)), qc_next(s1))
+        else
+          qc_err_here(s1, "expected `,` or `]`")
+    }
+
+fn qc_parse_fn_def(s: QcPState) -> QcPRes[QcDef] =
+  let name_r = qc_expect_lower_what(s, "function") in
+  match name_r.err {
+    Some(d) => qc_pres_err(d, name_r.state),
+    None =>
+      let name = match name_r.val { Some(n) => n, None => "" } in
+      let tp_r = qc_parse_tparams(name_r.state) in
+      match tp_r.err {
+        Some(d) => qc_pres_err(d, tp_r.state),
+        None =>
+          let tparams = match tp_r.val { Some(l) => l, None => [] } in
+          match qc_expect_sym(tp_r.state, "(") {
+            Err(d) => qc_pres_err(d, tp_r.state),
+            Ok(s1) =>
+              let params_r = qc_parse_fn_params(s1, AccEnd) in
+              match params_r.err {
+                Some(d) => qc_pres_err(d, params_r.state),
+                None =>
+                  match qc_expect_sym(params_r.state, "->") {
+                    Err(d) => qc_pres_err(d, params_r.state),
+                    Ok(s2) =>
+                      let ret_r = qc_parse_type(s2) in
+                      match ret_r.err {
+                        Some(d) => qc_pres_err(d, ret_r.state),
+                        None =>
+                          let eff_r = qc_parse_effects(ret_r.state, AccEnd) in
+                          match eff_r.err {
+                            Some(d) => qc_pres_err(d, eff_r.state),
+                            None =>
+                              let contracts_r = qc_parse_contracts(eff_r.state, AccEnd, AccEnd) in
+                              match contracts_r.err {
+                                Some(d) => qc_pres_err(d, contracts_r.state),
+                                None =>
+                                  match qc_expect_sym(contracts_r.state, "=") {
+                                    Err(d) => qc_pres_err(d, contracts_r.state),
+                                    Ok(s3) =>
+                                      let body_r = qc_parse_expr(s3) in
+                                      match body_r.err {
+                                        Some(d) => qc_pres_err(d, body_r.state),
+                                        None =>
+                                          let fn_def = QcFnDef {
+                                            name: name,
+                                            tparams: tparams,
+                                            params: match params_r.val { Some(p) => p, None => [] },
+                                            ret: match ret_r.val { Some(r) => r, None => QcTUnit },
+                                            effects: match eff_r.val { Some(e) => e, None => [] },
+                                            reqs: contracts_r.reqs,
+                                            enss: contracts_r.enss,
+                                            body: match body_r.val { Some(b) => b, None => QcEUnit }
+                                          } in
+                                          qc_pres_ok(QcDefFn(fn_def), body_r.state)
+                                      }
+                                  }
+                              }
+                          }
+                      }
+                  }
+              }
+          }
+      }
+  }
+
+fn qc_parse_fn_params(s: QcPState, acc: Accum[QcFieldType]) -> QcPRes[List[QcFieldType]] =
+  if qc_check_sym(s, ")") then
+    qc_pres_ok(acc_list(acc), qc_next(s))
+  else
+    let id_r = qc_expect_local(s, "parameter") in
+    match id_r.err {
+      Some(d) => qc_pres_err(d, id_r.state),
+      None =>
+        let name = match id_r.val { Some(n) => n, None => "" } in
+        match qc_expect_sym(id_r.state, ":") {
+          Err(d) => qc_pres_err(d, id_r.state),
+          Ok(s1) =>
+            let ty_r = qc_parse_type(s1) in
+            match ty_r.err {
+              Some(d) => qc_pres_err(d, ty_r.state),
+              None =>
+                let param = QcFieldType { name: name, ty: match ty_r.val { Some(t) => t, None => QcTUnit } } in
+                let s2 = ty_r.state in
+                if qc_check_sym(s2, ",") then
+                  let s3 = qc_next(s2) in
+                  if qc_check_sym(s3, ")") then qc_pres_ok(acc_list(AccPush(acc, param)), qc_next(s3))
+                  else qc_parse_fn_params(s3, AccPush(acc, param))
+                else if qc_check_sym(s2, ")") then
+                  qc_pres_ok(acc_list(AccPush(acc, param)), qc_next(s2))
+                else
+                  qc_err_here(s2, "expected `,` or `)`")
+            }
+        }
+    }
+
+type QcContractsRes = {
+  reqs: List[QcExpr],
+  enss: List[QcExpr],
+  err: Option[QcDiag],
+  state: QcPState
+}
+
+fn qc_parse_contracts(s: QcPState, req_acc: Accum[QcExpr], ens_acc: Accum[QcExpr]) -> QcContractsRes =
+  if qc_check_ident(s, "req") then
+    let r = qc_parse_expr(qc_next(s)) in
+    match r.err {
+      Some(d) => QcContractsRes { reqs: [], enss: [], err: Some(d), state: r.state },
+      None =>
+        let expr = match r.val { Some(e) => e, None => QcEUnit } in
+        qc_parse_contracts(r.state, AccPush(req_acc, expr), ens_acc)
+    }
+  else if qc_check_ident(s, "ens") then
+    let r = qc_parse_expr(qc_next(s)) in
+    match r.err {
+      Some(d) => QcContractsRes { reqs: [], enss: [], err: Some(d), state: r.state },
+      None =>
+        let expr = match r.val { Some(e) => e, None => QcEUnit } in
+        qc_parse_contracts(r.state, req_acc, AccPush(ens_acc, expr))
+    }
+  else
+    QcContractsRes { reqs: acc_list(req_acc), enss: acc_list(ens_acc), err: None, state: s }
+
+fn qc_parse_test_def(s: QcPState) -> QcPRes[QcDef] =
+  let name_r = qc_expect_lower_what(s, "test") in
+  match name_r.err {
+    Some(d) => qc_pres_err(d, name_r.state),
+    None =>
+      let name = match name_r.val { Some(n) => n, None => "" } in
+      match qc_expect_sym(name_r.state, "=") {
+        Err(d) => qc_pres_err(d, name_r.state),
+        Ok(s1) =>
+          let body_r = qc_parse_expr(s1) in
+          match body_r.err {
+            Some(d) => qc_pres_err(d, body_r.state),
+            None =>
+              let tdef = QcTestDef { name: name, body: match body_r.val { Some(b) => b, None => QcEUnit } } in
+              qc_pres_ok(QcDefTest(tdef), body_r.state)
+          }
+      }
+  }
+
+fn qc_parse_type_def(s: QcPState) -> QcPRes[QcDef] =
+  let name_r = qc_expect_upper_what(s, "type", true) in
+  match name_r.err {
+    Some(d) => qc_pres_err(d, name_r.state),
+    None =>
+      let name = match name_r.val { Some(n) => n, None => "" } in
+      let tp_r = qc_parse_tparams(name_r.state) in
+      match tp_r.err {
+        Some(d) => qc_pres_err(d, tp_r.state),
+        None =>
+          let params = match tp_r.val { Some(l) => l, None => [] } in
+          match qc_expect_sym(tp_r.state, "=") {
+            Err(d) => qc_pres_err(d, tp_r.state),
+            Ok(s1) =>
+              let body_r = qc_parse_type_def_body(s1) in
+              match body_r.err {
+                Some(d) => qc_pres_err(d, body_r.state),
+                None =>
+                  let body = match body_r.val { Some(b) => b, None => QcBodyEnum([]) } in
+                  let tdef = QcTypeDef { name: name, params: params, body: body } in
+                  qc_pres_ok(QcDefType(tdef), body_r.state)
+              }
+          }
+      }
+  }
+
+fn qc_wrap_enum(r: QcPRes[List[QcVariant]]) -> QcPRes[QcTypeBody] =
+  match r.err {
+    Some(d) => qc_pres_err(d, r.state),
+    None => qc_pres_ok(QcBodyEnum(match r.val { Some(v) => v, None => [] }), r.state)
+  }
+
+fn qc_parse_type_def_body(s: QcPState) -> QcPRes[QcTypeBody] =
+  if qc_check_sym(s, "{") then
+    let fields_r = qc_parse_record_type_fields(qc_next(s), AccEnd) in
+    match fields_r.err {
+      Some(d) => qc_pres_err(d, fields_r.state),
+      None => qc_pres_ok(QcBodyRecord(match fields_r.val { Some(f) => f, None => [] }), fields_r.state)
+    }
+  else if qc_check_sym(s, "|") then
+    let s1 = qc_next(s) in
+    # A lone `|` is an empty enum
+    match qc_peek(s1) {
+      QcTokIdent("fn") => qc_pres_ok(QcBodyEnum([]), s1),
+      QcTokIdent("type") => qc_pres_ok(QcBodyEnum([]), s1),
+      QcTokIdent("test") => qc_pres_ok(QcBodyEnum([]), s1),
+      QcTokEof => qc_pres_ok(QcBodyEnum([]), s1),
+      _ => qc_wrap_enum(qc_parse_enum_variants(s1, AccEnd))
+    }
+  else
+    qc_wrap_enum(qc_parse_enum_variants(s, AccEnd))
+
+fn qc_parse_record_type_fields(s: QcPState, acc: Accum[QcFieldType]) -> QcPRes[List[QcFieldType]] =
+  if qc_check_sym(s, "}") then
+    qc_pres_ok(acc_list(acc), qc_next(s))
+  else
+    let id_r = qc_expect_local(s, "field") in
+    match id_r.err {
+      Some(d) => qc_pres_err(d, id_r.state),
+      None =>
+        let fname = match id_r.val { Some(n) => n, None => "" } in
+        match qc_expect_sym(id_r.state, ":") {
+          Err(d) => qc_pres_err(d, id_r.state),
+          Ok(s1) =>
+            let ty_r = qc_parse_type(s1) in
+            match ty_r.err {
+              Some(d) => qc_pres_err(d, ty_r.state),
+              None =>
+                let ft = QcFieldType { name: fname, ty: match ty_r.val { Some(t) => t, None => QcTUnit } } in
+                let s2 = ty_r.state in
+                if qc_check_sym(s2, ",") then
+                  let s3 = qc_next(s2) in
+                  if qc_check_sym(s3, "}") then qc_pres_ok(acc_list(AccPush(acc, ft)), qc_next(s3))
+                  else qc_parse_record_type_fields(s3, AccPush(acc, ft))
+                else if qc_check_sym(s2, "}") then
+                  qc_pres_ok(acc_list(AccPush(acc, ft)), qc_next(s2))
+                else
+                  qc_err_here(s2, "expected `,` or `}`")
+            }
+        }
+    }
+
+fn qc_parse_enum_variants(s: QcPState, acc: Accum[QcVariant]) -> QcPRes[List[QcVariant]] =
+  let vname_r = qc_expect_upper_what(s, "variant", true) in
+  match vname_r.err {
+    Some(d) => qc_pres_err(d, vname_r.state),
+    None =>
+      let vname = match vname_r.val { Some(n) => n, None => "" } in
+      let s1 = vname_r.state in
+      let fields_r =
+        if qc_check_sym(s1, "(") then
+          let pfr = qc_parse_variant_fields(qc_next(s1), AccEnd) in
+          match pfr.err {
+            Some(d) => QcPRes { val: None, err: Some(d), state: pfr.state },
+            None => QcPRes { val: Some(match pfr.val { Some(l) => l, None => [] }), err: None, state: pfr.state }
+          }
+        else
+          QcPRes { val: Some([]), err: None, state: s1 } in
+      match fields_r.err {
+        Some(d) => qc_pres_err(d, fields_r.state),
+        None =>
+          let fields = match fields_r.val { Some(f) => f, None => [] } in
+          let v = QcVariant { name: vname, fields: fields } in
+          let s2 = fields_r.state in
+          if qc_check_sym(s2, "|") then
+            qc_parse_enum_variants(qc_next(s2), AccPush(acc, v))
+          else
+            qc_pres_ok(acc_list(AccPush(acc, v)), s2)
+      }
+  }
+
+fn qc_parse_variant_fields(s: QcPState, acc: Accum[QcType]) -> QcPRes[List[QcType]] =
+  if qc_check_sym(s, ")") then
+    qc_pres_ok(acc_list(acc), qc_next(s))
+  else
+    let r = qc_parse_type(s) in
+    match r.err {
+      Some(d) => qc_pres_err(d, r.state),
+      None =>
+        let t = match r.val { Some(x) => x, None => QcTUnit } in
+        let s1 = r.state in
+        if qc_check_sym(s1, ",") then
+          let s2 = qc_next(s1) in
+          if qc_check_sym(s2, ")") then qc_pres_ok(acc_list(AccPush(acc, t)), qc_next(s2))
+          else qc_parse_variant_fields(s2, AccPush(acc, t))
+        else if qc_check_sym(s1, ")") then
+          qc_pres_ok(acc_list(AccPush(acc, t)), qc_next(s1))
+        else
+          qc_err_here(s1, "expected `,` or `)`")
+    }
+
+fn qc_parse_def(s: QcPState) -> QcPRes[QcDef] =
+  match qc_peek(s) {
+    QcTokIdent("fn") => qc_parse_fn_def(qc_next(s)),
+    QcTokIdent("type") => qc_parse_type_def(qc_next(s)),
+    QcTokIdent("test") => qc_parse_test_def(qc_next(s)),
+    _ => qc_err_here(s, "expected `fn`, `type` or `test`")
+  }
+
+fn qc_parse_defs(s: QcPState, acc: Accum[QcDef]) -> Result[List[QcDef], QcDiag] =
+  match qc_peek(s) {
+    QcTokEof => Ok(acc_list(acc)),
+    _ =>
+      let r = qc_parse_def(s) in
+      match r.err {
+        Some(d) => Err(d),
+        None =>
+          let d = match r.val { Some(x) => x, None => QcDefTest(QcTestDef { name: "", body: QcEUnit }) } in
+          qc_parse_defs(r.state, AccPush(acc, d))
+      }
+  }
+
+fn qc_parse_tokens(toks: List[QcToken]) -> Result[QcProgram, QcDiag] =
+  let state = QcPState { toks: toks, pos: 0, depth: 0, no_struct: false } in
+  match qc_parse_defs(state, AccEnd) {
+    Err(d) => Err(d),
+    Ok(defs) => Ok(QcProgram { defs: defs })
+  }
+
+fn qc_parse(src: Str) -> Result[QcProgram, QcDiag] =
+  match qc_lex(src) {
+    Err(d) => Err(d),
+    Ok(toks) => qc_parse_tokens(toks)
+  }
+
+test qc_parse_test =
+  match qc_parse("type Pair[A, B] = { fst: A, snd: B }\nfn add(x: Int, y: Int) -> Int = x + y\ntest t = add(2, 3) == 5") {
+    Ok(p) => len(p.defs) == 3,
+    Err(_) => false
+  }

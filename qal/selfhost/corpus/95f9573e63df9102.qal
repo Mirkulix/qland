@@ -1,0 +1,5 @@
+fn succ(x: Int) -> Int req x < 100 ens r == x + 1 = x + 1
+fn two(x: Int) -> Int req x < 50 ens r == x + 2 = succ(succ(x))
+fn fact(n: Int) -> Int req n >= 0 ens r >= 1 = if n <= 1 then 1 else n * fact(n - 1)
+fn opaque(x: Int) -> Int = x
+fn uses_opaque(x: Int) -> Int ens r == x = opaque(x)

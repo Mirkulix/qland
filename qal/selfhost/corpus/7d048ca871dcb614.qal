@@ -1,0 +1,1 @@
+test t = match f(P { x: 1 }) { "s" => true, _ => false }

@@ -1,0 +1,46 @@
+# Days between two Gregorian dates (days-from-civil, Howard Hinnant's algorithm).
+
+fn is_digit(c: Str) -> Bool = c >= "0" && c <= "9"
+
+fn num(s: Str) -> Int = match to_int(s) { Some(n) => n, None => -1 }
+
+fn leap(y: Int) -> Bool = y % 4 == 0 && (y % 100 != 0 || y % 400 == 0)
+
+fn month_days(y: Int, m: Int) -> Int =
+  match m { 2 => if leap(y) then 29 else 28, 4 => 30, 6 => 30, 9 => 30, 11 => 30, _ => 31 }
+
+fn days_from_civil(y0: Int, m: Int, d: Int) -> Int =
+  let y = if m <= 2 then y0 - 1 else y0 in
+  let era = (if y >= 0 then y else y - 399) / 400 in
+  let yoe = y - era * 400 in
+  let doy = (153 * (if m > 2 then m - 3 else m + 9) + 2) / 5 + d - 1 in
+  let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy in
+  era * 146097 + doe
+
+fn well_formed(s: Str) -> Bool =
+  len(s) == 10 && slice(s, 4, 5) == "-" && slice(s, 7, 8) == "-" &&
+  len(filter(chars(slice(s, 0, 4) ++ slice(s, 5, 7) ++ slice(s, 8, 10)), is_digit)) == 8
+
+fn date(s: Str) -> Option[Int] =
+  if !well_formed(s) then None
+  else
+    let y = num(slice(s, 0, 4)) in
+    let m = num(slice(s, 5, 7)) in
+    let d = num(slice(s, 8, 10)) in
+    if y >= 1 && m >= 1 && m <= 12 && d >= 1 && d <= month_days(y, m) then Some(days_from_civil(y, m, d)) else None
+
+fn diff(line: Str) -> Str =
+  let ts = split(line, " ") in
+  match get(ts, 0) {
+    Some(a) if len(ts) == 2 => match date(a) {
+      Some(x) => match get(ts, 1) { Some(b) => match date(b) { Some(y) => from_int(y - x), None => "error" }, None => "error" },
+      None => "error",
+    },
+    _ => "error",
+  }
+
+test example = diff("2024-01-01 2024-03-01") == "60" && diff("2024-03-01 2023-03-01") == "-366" && diff("2023-02-29 2023-03-01") == "error"
+
+fn each_line() -> Int !io = match read_line() { None => 0, Some(l) => { print(diff(l)); each_line() } }
+
+fn main(args: List[Str]) -> Int !io = each_line()

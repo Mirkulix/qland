@@ -1,0 +1,90 @@
+{
+ "name": "h11_post_content_type_variants",
+ "description": "accepted content types",
+ "steps": [
+  {
+   "name": "charset",
+   "request": {
+    "method": "POST",
+    "path": "/todos",
+    "headers": [
+     {
+      "name": "content-type",
+      "value": "application/json; charset=utf-8"
+     }
+    ],
+    "body": "{\"title\":\"a\"}"
+   },
+   "expect": {
+    "status": 201,
+    "json": {
+     "id": 1,
+     "title": "a",
+     "done": false,
+     "created_at": {
+      "$type": "int"
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "mixed case",
+   "request": {
+    "method": "POST",
+    "path": "/todos",
+    "headers": [
+     {
+      "name": "Content-Type",
+      "value": "Application/JSON"
+     }
+    ],
+    "body": "{\"title\":\"b\"}"
+   },
+   "expect": {
+    "status": 201,
+    "json": {
+     "id": 2,
+     "title": "b",
+     "done": false,
+     "created_at": {
+      "$type": "int"
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "whitespace around JSON",
+   "request": {
+    "method": "POST",
+    "path": "/todos",
+    "headers": [
+     {
+      "name": "content-type",
+      "value": "application/json"
+     }
+    ],
+    "body": " \n {\"title\" : \"c\" , \"done\" : true}\n"
+   },
+   "expect": {
+    "status": 201,
+    "json": {
+     "id": 3,
+     "title": "c",
+     "done": true,
+     "created_at": {
+      "$type": "int"
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  }
+ ]
+}

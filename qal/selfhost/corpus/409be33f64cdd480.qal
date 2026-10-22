@@ -1,0 +1,1 @@
+test t = let a = (if true then 1 else 2) in a + (let b = 3 in b)

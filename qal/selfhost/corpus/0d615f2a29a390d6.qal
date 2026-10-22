@@ -1,0 +1,2 @@
+fn q() -> Result[Int, Str] !db = Ok(0)
+fn bad() -> Int !db = match db_exec("SELECT 1", []) { Ok(n) => n, Err(_) => 0 }

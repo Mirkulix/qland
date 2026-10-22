@@ -1,0 +1,587 @@
+# Financial Escrow & Multi-Sig Payout Engine (QAL Assurance Pilot)
+# Implements complete high-assurance domain invariants with Z3 contract proofs,
+# effect typing (!db, !time), and atomic host-level rollback resilience.
+
+# ==============================================================================
+# SECTION 1: FORMAL DOMAIN CONTRACTS (PROVEN BY Z3 THEOREM PROVER)
+# ==============================================================================
+
+# Invariant 1: Available Balance Non-Negativity
+fn can_deduct(balance: Int, amount: Int) -> Bool
+  req balance >= 0
+  req amount > 0
+  ens (r == true) == (balance >= amount)
+= balance >= amount
+
+fn deduct_balance(balance: Int, amount: Int) -> Int
+  req amount > 0
+  req balance >= amount
+  ens r >= 0 && r == balance - amount
+= balance - amount
+
+fn refund_balance(balance: Int, amount: Int) -> Int
+  req balance >= 0
+  req amount > 0
+  ens r > balance && r == balance + amount
+= balance + amount
+
+# Invariant 2: Multi-Sig Approval Thresholds
+# Tier 1 (<= 10,000 EUR / 1,000,000 cents) requires 1 approval.
+# Tier 2 (> 10,000 EUR / 1,000,000 cents) requires 2 distinct approvals.
+fn payout_threshold(amount: Int) -> Int
+  req amount > 0
+  ens (amount <= 1000000 && r == 1) || (amount > 1000000 && r == 2)
+= if amount <= 1000000 then 1 else 2
+
+fn is_approved(count: Int, threshold: Int) -> Bool
+  req count >= 0
+  req threshold >= 1
+  ens (r == true) == (count >= threshold)
+= count >= threshold
+
+# Invariant 3: Separation of Duties (No Self-Approval)
+fn can_self_approve(requester: Str, approver: Str) -> Bool =
+  requester != approver
+
+# Invariant 4: Treasury Conservation Laws (Zero-Sum Invariant)
+fn zero_sum_step(accounts: Int, escrow: Int, disbursed: Int, deposited: Int) -> Bool
+  ens (r == true) == (accounts + escrow + disbursed == deposited)
+= accounts + escrow + disbursed == deposited
+
+fn escrow_lock_conservation(acc_before: Int, esc_before: Int, amt: Int) -> Int
+  req amt > 0
+  req acc_before >= amt
+  ens r == acc_before + esc_before
+= (acc_before - amt) + (esc_before + amt)
+
+fn disburse_conservation(esc_before: Int, disb_before: Int, amt: Int) -> Int
+  req amt > 0
+  req esc_before >= amt
+  ens r == esc_before + disb_before
+= (esc_before - amt) + (disb_before + amt)
+
+fn cancel_conservation(acc_before: Int, esc_before: Int, amt: Int) -> Int
+  req amt > 0
+  req esc_before >= amt
+  ens r == acc_before + esc_before
+= (acc_before + amt) + (esc_before - amt)
+
+# ==============================================================================
+# SECTION 2: PURE JSON & STRING PARSING HELPERS
+# ==============================================================================
+
+fn find_from(s: Str, needle: Str, from: Int) -> Option[Int] =
+  let sub = slice(s, from, len(s)) in
+  match index_of(sub, needle) {
+    Some(i) => Some(from + i),
+    None => None
+  }
+
+fn skip_ws_and_colon(s: Str, pos: Int) -> Int =
+  if pos >= len(s) then pos
+  else
+    let c = slice(s, pos, pos + 1) in
+    if c == " " || c == ":" || c == "\t" || c == "\n" || c == "\r" then skip_ws_and_colon(s, pos + 1)
+    else pos
+
+fn find_quote(s: Str, pos: Int) -> Option[Int] =
+  find_from(s, "\"", pos)
+
+fn json_str(s: Str, key: Str) -> Option[Str] =
+  match index_of(s, "\"" ++ key ++ "\"") {
+    None => None,
+    Some(k_pos) =>
+      let after_k = k_pos + len(key) + 2 in
+      let val_start = skip_ws_and_colon(s, after_k) in
+      if val_start >= len(s) then None
+      else if slice(s, val_start, val_start + 1) != "\"" then None
+      else
+        let str_start = val_start + 1 in
+        match find_quote(s, str_start) {
+          Some(str_end) => Some(slice(s, str_start, str_end)),
+          None => None
+        }
+  }
+
+fn is_int_char(c: Str) -> Bool =
+  c == "-" || (c >= "0" && c <= "9")
+
+fn take_int_chars(s: Str, pos: Int) -> Str =
+  if pos >= len(s) then ""
+  else
+    let c = slice(s, pos, pos + 1) in
+    if is_int_char(c) then c ++ take_int_chars(s, pos + 1)
+    else ""
+
+fn json_int(s: Str, key: Str) -> Option[Int] =
+  match index_of(s, "\"" ++ key ++ "\"") {
+    None => None,
+    Some(k_pos) =>
+      let after_k = k_pos + len(key) + 2 in
+      let val_start = skip_ws_and_colon(s, after_k) in
+      if val_start >= len(s) then None
+      else
+        let digits = take_int_chars(s, val_start) in
+        if digits == "" || digits == "-" then None
+        else to_int(digits)
+  }
+
+# ==============================================================================
+# SECTION 3: HTTP RESPONSE CONSTRUCTORS
+# ==============================================================================
+
+fn json_resp(status: Int, body: Str) -> HttpResponse =
+  HttpResponse {
+    status: status,
+    headers: [HttpHeader { name: "content-type", value: "application/json" }],
+    body: body
+  }
+
+fn err_resp(status: Int, detail: Str) -> HttpResponse =
+  json_resp(status, "{\"ok\":false,\"detail\":\"" ++ detail ++ "\"}")
+
+# ==============================================================================
+# SECTION 4: DATABASE SETUP & MIGRATIONS
+# ==============================================================================
+
+fn setup() -> Result[Unit, Str] !db =
+  match db_exec("CREATE TABLE IF NOT EXISTS accounts (id INTEGER PRIMARY KEY, owner TEXT NOT NULL, balance_cents INTEGER NOT NULL)", []) {
+    Err(_) => Err("cannot create accounts table"),
+    Ok(_) => match db_exec("CREATE TABLE IF NOT EXISTS payouts (id INTEGER PRIMARY KEY AUTOINCREMENT, source_account INTEGER NOT NULL, target_iban TEXT NOT NULL, amount_cents INTEGER NOT NULL, requester TEXT NOT NULL, status TEXT NOT NULL)", []) {
+      Err(_) => Err("cannot create payouts table"),
+      Ok(_) => match db_exec("CREATE TABLE IF NOT EXISTS approvals (payout_id INTEGER NOT NULL, approver TEXT NOT NULL, PRIMARY KEY (payout_id, approver))", []) {
+        Err(_) => Err("cannot create approvals table"),
+        Ok(_) => match db_exec("CREATE TABLE IF NOT EXISTS audit (id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER NOT NULL, action TEXT NOT NULL, actor TEXT NOT NULL, payload TEXT NOT NULL)", []) {
+          Err(_) => Err("cannot create audit table"),
+          Ok(_) => match db_exec("CREATE TABLE IF NOT EXISTS treasury (key TEXT PRIMARY KEY, val INTEGER NOT NULL)", []) {
+            Err(_) => Err("cannot create treasury table"),
+            Ok(_) => match db_exec("INSERT OR IGNORE INTO treasury (key, val) VALUES ('total_deposited', 0)", []) {
+              Err(_) => Err("cannot init total_deposited"),
+              Ok(_) => match db_exec("INSERT OR IGNORE INTO treasury (key, val) VALUES ('escrow_pool', 0)", []) {
+                Err(_) => Err("cannot init escrow_pool"),
+                Ok(_) => match db_exec("INSERT OR IGNORE INTO treasury (key, val) VALUES ('total_disbursed', 0)", []) {
+                  Err(_) => Err("cannot init total_disbursed"),
+                  Ok(_) => Ok(())
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+# ==============================================================================
+# SECTION 5: DOMAIN DATABASE OPERATIONS
+# ==============================================================================
+
+fn record_audit(action: Str, actor: Str, payload: Str) -> Result[Unit, Str] !db !time =
+  let ts = now_ms() / 1000 in
+  match db_exec("INSERT INTO audit (ts, action, actor, payload) VALUES (?, ?, ?, ?)", [SqlInt(ts), SqlText(action), SqlText(actor), SqlText(payload)]) {
+    Ok(_) => Ok(()),
+    Err(_) => Err("audit insert failed")
+  }
+
+fn approval_item(r: List[SqlValue]) -> Str =
+  match get(r, 0) {
+    Some(SqlText(a)) => "\"" ++ a ++ "\"",
+    _ => "\"\""
+  }
+
+fn format_approvals_rows(rows: List[List[SqlValue]]) -> Str =
+  let items = map(rows, approval_item) in
+  "[" ++ join(items, ",") ++ "]"
+
+fn get_payout_approvals_json(payout_id: Int) -> Str !db =
+  match db_query("SELECT approver FROM approvals WHERE payout_id = ?", [SqlInt(payout_id)]) {
+    Ok(res) => format_approvals_rows(res.rows),
+    Err(_) => "[]"
+  }
+
+fn render_payout_json(id: Int, src: Int, tgt: Str, amt: Int, requester: Str, st: Str, apps_json: Str) -> Str =
+  "{\"ok\":true,\"payout\":{\"id\":" ++ from_int(id) ++ ",\"source_account\":" ++ from_int(src) ++ ",\"target_iban\":\"" ++ tgt ++ "\",\"amount_cents\":" ++ from_int(amt) ++ ",\"requester\":\"" ++ requester ++ "\",\"status\":\"" ++ st ++ "\",\"approvals\":" ++ apps_json ++ "}}"
+
+# ==============================================================================
+# SECTION 6: SERVICE ENDPOINT HANDLERS
+# ==============================================================================
+
+# Route: POST /accounts
+fn handle_create_account(body: Str) -> HttpResponse !db !time =
+  match json_int(body, "id") {
+    None => err_resp(400, "Missing account id"),
+    Some(id) => match json_str(body, "owner") {
+      None => err_resp(400, "Missing owner"),
+      Some(owner) => match json_int(body, "initial_balance_cents") {
+        None => err_resp(400, "Missing initial_balance_cents"),
+        Some(bal) =>
+          if bal < 0 then err_resp(400, "Initial balance cannot be negative")
+          else match db_exec("INSERT INTO accounts (id, owner, balance_cents) VALUES (?, ?, ?)", [SqlInt(id), SqlText(owner), SqlInt(bal)]) {
+            Err(_) => err_resp(400, "Account already exists"),
+            Ok(_) => match db_exec("UPDATE treasury SET val = val + ? WHERE key = 'total_deposited'", [SqlInt(bal)]) {
+              Err(_) => err_resp(500, "Failed to update treasury"),
+              Ok(_) =>
+                let _ = record_audit("account_created", owner, "{\"account_id\":" ++ from_int(id) ++ ",\"balance\":" ++ from_int(bal) ++ "}") in
+                json_resp(201, "{\"ok\":true,\"account\":{\"id\":" ++ from_int(id) ++ ",\"owner\":\"" ++ owner ++ "\",\"balance_cents\":" ++ from_int(bal) ++ "}}")
+            }
+          }
+      }
+    }
+  }
+
+# Route: GET /accounts/{id}
+fn handle_get_account(id_str: Str) -> HttpResponse !db =
+  match to_int(id_str) {
+    None => err_resp(400, "Invalid account id"),
+    Some(id) => match db_query("SELECT id, owner, balance_cents FROM accounts WHERE id = ?", [SqlInt(id)]) {
+      Err(_) => err_resp(500, "Database query error"),
+      Ok(res) => match get(res.rows, 0) {
+        None => err_resp(404, "Account not found"),
+        Some(row) => match get(row, 1) {
+          Some(SqlText(owner)) => match get(row, 2) {
+            Some(SqlInt(bal)) =>
+              json_resp(200, "{\"ok\":true,\"account\":{\"id\":" ++ from_int(id) ++ ",\"owner\":\"" ++ owner ++ "\",\"balance_cents\":" ++ from_int(bal) ++ "}}"),
+            _ => err_resp(500, "Invalid balance format")
+          },
+          _ => err_resp(500, "Invalid owner format")
+        }
+      }
+    }
+  }
+
+# Route: POST /payouts
+fn handle_create_payout(body: Str) -> HttpResponse !db !time =
+  match json_int(body, "source_account") {
+    None => err_resp(400, "Missing source_account"),
+    Some(src_id) => match json_str(body, "target_iban") {
+      None => err_resp(400, "Missing target_iban"),
+      Some(tgt_iban) => match json_int(body, "amount_cents") {
+        None => err_resp(400, "Missing amount_cents"),
+        Some(amt) => match json_str(body, "requester") {
+          None => err_resp(400, "Missing requester"),
+          Some(requester) =>
+            if amt <= 0 then err_resp(400, "Payout amount must be positive")
+            else match db_query("SELECT balance_cents FROM accounts WHERE id = ?", [SqlInt(src_id)]) {
+              Err(_) => err_resp(500, "Database error"),
+              Ok(res) => match get(res.rows, 0) {
+                None => err_resp(404, "Source account not found"),
+                Some(row) => match get(row, 0) {
+                  Some(SqlInt(bal)) =>
+                    if bal < 0 then err_resp(500, "Negative account balance")
+                    else if !can_deduct(bal, amt) then err_resp(422, "Insufficient funds")
+                    else
+                      let new_bal = deduct_balance(bal, amt) in
+                      match db_exec("UPDATE accounts SET balance_cents = ? WHERE id = ?", [SqlInt(new_bal), SqlInt(src_id)]) {
+                        Err(_) => err_resp(500, "Failed to deduct balance"),
+                        Ok(_) => match db_exec("UPDATE treasury SET val = val + ? WHERE key = 'escrow_pool'", [SqlInt(amt)]) {
+                          Err(_) => err_resp(500, "Failed to update escrow pool"),
+                          Ok(_) => match db_query("INSERT INTO payouts (source_account, target_iban, amount_cents, requester, status) VALUES (?, ?, ?, ?, 'pending') RETURNING id", [SqlInt(src_id), SqlText(tgt_iban), SqlInt(amt), SqlText(requester)]) {
+                            Err(_) => err_resp(500, "Failed to insert payout"),
+                            Ok(id_res) => match get(id_res.rows, 0) {
+                              Some(id_row) => match get(id_row, 0) {
+                                Some(SqlInt(payout_id)) =>
+                                  let _ = record_audit("payout_created", requester, "{\"payout_id\":" ++ from_int(payout_id) ++ ",\"amount\":" ++ from_int(amt) ++ "}") in
+                                  json_resp(201, render_payout_json(payout_id, src_id, tgt_iban, amt, requester, "pending", "[]")),
+                                _ => err_resp(500, "Invalid payout id returned")
+                              },
+                              None => err_resp(500, "No payout id returned")
+                            }
+                          }
+                        }
+                      },
+                  _ => err_resp(500, "Invalid account balance format")
+                }
+              }
+            }
+        }
+      }
+    }
+  }
+
+# Route: GET /payouts/{id}
+fn handle_get_payout(id_str: Str) -> HttpResponse !db =
+  match to_int(id_str) {
+    None => err_resp(400, "Invalid payout id"),
+    Some(payout_id) => match db_query("SELECT id, source_account, target_iban, amount_cents, requester, status FROM payouts WHERE id = ?", [SqlInt(payout_id)]) {
+      Err(_) => err_resp(500, "Database query error"),
+      Ok(res) => match get(res.rows, 0) {
+        None => err_resp(404, "Payout not found"),
+        Some(row) => match get(row, 1) {
+          Some(SqlInt(src)) => match get(row, 2) {
+            Some(SqlText(tgt)) => match get(row, 3) {
+              Some(SqlInt(amt)) => match get(row, 4) {
+                Some(SqlText(requester)) => match get(row, 5) {
+                  Some(SqlText(st)) =>
+                    let apps = get_payout_approvals_json(payout_id) in
+                    json_resp(200, render_payout_json(payout_id, src, tgt, amt, requester, st, apps)),
+                  _ => err_resp(500, "Invalid status")
+                },
+                _ => err_resp(500, "Invalid requester")
+              },
+              _ => err_resp(500, "Invalid amount")
+            },
+            _ => err_resp(500, "Invalid target")
+          },
+          _ => err_resp(500, "Invalid source")
+        }
+      }
+    }
+  }
+
+# Route: POST /payouts/{id}/approve
+fn handle_approve_payout(id_str: Str, body: Str) -> HttpResponse !db !time =
+  match to_int(id_str) {
+    None => err_resp(400, "Invalid payout id"),
+    Some(payout_id) => match json_str(body, "approver") {
+      None => err_resp(400, "Missing approver"),
+      Some(approver) => match db_query("SELECT id, source_account, target_iban, amount_cents, requester, status FROM payouts WHERE id = ?", [SqlInt(payout_id)]) {
+        Err(_) => err_resp(500, "Database error"),
+        Ok(res) => match get(res.rows, 0) {
+          None => err_resp(404, "Payout not found"),
+          Some(row) => match get(row, 1) {
+            Some(SqlInt(src)) => match get(row, 2) {
+              Some(SqlText(tgt)) => match get(row, 3) {
+                Some(SqlInt(amt)) =>
+                  if amt <= 0 then err_resp(500, "Corrupted payout amount")
+                  else match get(row, 4) {
+                  Some(SqlText(requester)) => match get(row, 5) {
+                    Some(SqlText(status)) =>
+                      if status != "pending" then err_resp(400, "Payout is not pending")
+                      else if !can_self_approve(requester, approver) then err_resp(403, "Self-approval forbidden")
+                      else match db_query("SELECT 1 FROM approvals WHERE payout_id = ? AND approver = ?", [SqlInt(payout_id), SqlText(approver)]) {
+                        Err(_) => err_resp(500, "Database query error"),
+                        Ok(app_check) =>
+                          if len(app_check.rows) > 0 then err_resp(409, "Already approved by this user")
+                          else match db_exec("INSERT INTO approvals (payout_id, approver) VALUES (?, ?)", [SqlInt(payout_id), SqlText(approver)]) {
+                            Err(_) => err_resp(500, "Failed to insert approval"),
+                            Ok(_) => match db_query("SELECT COUNT(*) FROM approvals WHERE payout_id = ?", [SqlInt(payout_id)]) {
+                              Err(_) => err_resp(500, "Failed to count approvals"),
+                              Ok(count_res) => match get(count_res.rows, 0) {
+                                Some(count_row) => match get(count_row, 0) {
+                                  Some(SqlInt(count)) =>
+                                    if count < 0 then err_resp(500, "Corrupted approval count")
+                                    else
+                                      let threshold = payout_threshold(amt) in
+                                      let new_status = if is_approved(count, threshold) then "approved" else "pending" in
+                                      let _ = if new_status != status then match db_exec("UPDATE payouts SET status = ? WHERE id = ?", [SqlText(new_status), SqlInt(payout_id)]) { Ok(_) => 0, Err(_) => -1 } else 0 in
+                                      let _ = record_audit("payout_approved", approver, "{\"payout_id\":" ++ from_int(payout_id) ++ ",\"new_status\":\"" ++ new_status ++ "\"}") in
+                                      let apps = get_payout_approvals_json(payout_id) in
+                                      json_resp(200, render_payout_json(payout_id, src, tgt, amt, requester, new_status, apps)),
+                                  _ => err_resp(500, "Invalid approval count")
+                                },
+                                None => err_resp(500, "No approval count returned")
+                              }
+                            }
+                          }
+                      },
+                    _ => err_resp(500, "Invalid status")
+                  },
+                  _ => err_resp(500, "Invalid requester")
+                },
+                _ => err_resp(500, "Invalid amount")
+              },
+              _ => err_resp(500, "Invalid target")
+            },
+            _ => err_resp(500, "Invalid source")
+          }
+        }
+      }
+    }
+  }
+
+# Route: POST /payouts/{id}/disburse
+fn handle_disburse_payout(id_str: Str) -> HttpResponse !db !time =
+  match to_int(id_str) {
+    None => err_resp(400, "Invalid payout id"),
+    Some(payout_id) => match db_query("SELECT id, source_account, target_iban, amount_cents, requester, status FROM payouts WHERE id = ?", [SqlInt(payout_id)]) {
+      Err(_) => err_resp(500, "Database error"),
+      Ok(res) => match get(res.rows, 0) {
+        None => err_resp(404, "Payout not found"),
+        Some(row) => match get(row, 1) {
+          Some(SqlInt(src)) => match get(row, 2) {
+            Some(SqlText(tgt)) => match get(row, 3) {
+              Some(SqlInt(amt)) => match get(row, 4) {
+                Some(SqlText(requester)) => match get(row, 5) {
+                  Some(SqlText(status)) =>
+                    if status == "disbursed" then err_resp(409, "Already disbursed")
+                    else if status != "approved" then err_resp(400, "Payout not approved")
+                    else match db_exec("UPDATE payouts SET status = 'disbursed' WHERE id = ?", [SqlInt(payout_id)]) {
+                      Err(_) => err_resp(500, "Failed to update payout status"),
+                      Ok(_) => match db_exec("UPDATE treasury SET val = val - ? WHERE key = 'escrow_pool'", [SqlInt(amt)]) {
+                        Err(_) => err_resp(500, "Failed to update escrow pool"),
+                        Ok(_) => match db_exec("UPDATE treasury SET val = val + ? WHERE key = 'total_disbursed'", [SqlInt(amt)]) {
+                          Err(_) => err_resp(500, "Failed to update total disbursed"),
+                          Ok(_) =>
+                            let _ = record_audit("payout_disbursed", "system", "{\"payout_id\":" ++ from_int(payout_id) ++ ",\"amount\":" ++ from_int(amt) ++ "}") in
+                            let apps = get_payout_approvals_json(payout_id) in
+                            json_resp(200, render_payout_json(payout_id, src, tgt, amt, requester, "disbursed", apps))
+                        }
+                      }
+                    },
+                  _ => err_resp(500, "Invalid status")
+                },
+                _ => err_resp(500, "Invalid requester")
+              },
+              _ => err_resp(500, "Invalid amount")
+            },
+            _ => err_resp(500, "Invalid target")
+          },
+          _ => err_resp(500, "Invalid source")
+        }
+      }
+    }
+  }
+
+# Route: POST /payouts/{id}/cancel
+fn handle_cancel_payout(id_str: Str, body: Str) -> HttpResponse !db !time =
+  match to_int(id_str) {
+    None => err_resp(400, "Invalid payout id"),
+    Some(payout_id) => match db_query("SELECT id, source_account, target_iban, amount_cents, requester, status FROM payouts WHERE id = ?", [SqlInt(payout_id)]) {
+      Err(_) => err_resp(500, "Database error"),
+      Ok(res) => match get(res.rows, 0) {
+        None => err_resp(404, "Payout not found"),
+        Some(row) => match get(row, 1) {
+          Some(SqlInt(src)) => match get(row, 2) {
+            Some(SqlText(tgt)) => match get(row, 3) {
+              Some(SqlInt(amt)) => match get(row, 4) {
+                Some(SqlText(requester)) => match get(row, 5) {
+                  Some(SqlText(status)) =>
+                    if status == "disbursed" then err_resp(409, "Cannot cancel disbursed payout")
+                    else if status == "cancelled" then err_resp(400, "Already cancelled")
+                    else match db_exec("UPDATE accounts SET balance_cents = balance_cents + ? WHERE id = ?", [SqlInt(amt), SqlInt(src)]) {
+                      Err(_) => err_resp(500, "Failed to refund account"),
+                      Ok(_) => match db_exec("UPDATE treasury SET val = val - ? WHERE key = 'escrow_pool'", [SqlInt(amt)]) {
+                        Err(_) => err_resp(500, "Failed to update escrow pool"),
+                        Ok(_) => match db_exec("UPDATE payouts SET status = 'cancelled' WHERE id = ?", [SqlInt(payout_id)]) {
+                          Err(_) => err_resp(500, "Failed to update payout status"),
+                          Ok(_) =>
+                            let reason = match json_str(body, "reason") { Some(r) => r, None => "No reason provided" } in
+                            let _ = record_audit("payout_cancelled", "risk_officer", "{\"payout_id\":" ++ from_int(payout_id) ++ ",\"reason\":\"" ++ reason ++ "\"}") in
+                            let apps = get_payout_approvals_json(payout_id) in
+                            json_resp(200, render_payout_json(payout_id, src, tgt, amt, requester, "cancelled", apps))
+                        }
+                      }
+                    },
+                  _ => err_resp(500, "Invalid status")
+                },
+                _ => err_resp(500, "Invalid requester")
+              },
+              _ => err_resp(500, "Invalid amount")
+            },
+            _ => err_resp(500, "Invalid target")
+          },
+          _ => err_resp(500, "Invalid source")
+        }
+      }
+    }
+  }
+
+fn extract_escrow(acc: Int, r: List[SqlValue]) -> Int =
+  match get(r, 0) {
+    Some(SqlText("escrow_pool")) => match get(r, 1) { Some(SqlInt(v)) => v, _ => acc },
+    _ => acc
+  }
+
+fn extract_disbursed(acc: Int, r: List[SqlValue]) -> Int =
+  match get(r, 0) {
+    Some(SqlText("total_disbursed")) => match get(r, 1) { Some(SqlInt(v)) => v, _ => acc },
+    _ => acc
+  }
+
+fn extract_deposited(acc: Int, r: List[SqlValue]) -> Int =
+  match get(r, 0) {
+    Some(SqlText("total_deposited")) => match get(r, 1) { Some(SqlInt(v)) => v, _ => acc },
+    _ => acc
+  }
+
+# Route: GET /reconciliation
+fn handle_reconciliation() -> HttpResponse !db =
+  match db_query("SELECT COALESCE(SUM(balance_cents), 0) FROM accounts", []) {
+    Err(_) => err_resp(500, "Database query error"),
+    Ok(acc_res) => match get(acc_res.rows, 0) {
+      None => err_resp(500, "No account sum"),
+      Some(acc_row) => match get(acc_row, 0) {
+        Some(SqlInt(acc_sum)) => match db_query("SELECT key, val FROM treasury", []) {
+          Err(_) => err_resp(500, "Database query error"),
+          Ok(t_res) =>
+            let escrow = fold(t_res.rows, 0, extract_escrow) in
+            let disbursed = fold(t_res.rows, 0, extract_disbursed) in
+            let deposited = fold(t_res.rows, 0, extract_deposited) in
+            let current_total = acc_sum + escrow + disbursed in
+            let balanced = zero_sum_step(acc_sum, escrow, disbursed, deposited) && acc_sum >= 0 && escrow >= 0 in
+            json_resp(200, "{\"ok\":true,\"balanced\":" ++ (if balanced then "true" else "false") ++ ",\"accounts_sum\":" ++ from_int(acc_sum) ++ ",\"escrow_pool\":" ++ from_int(escrow) ++ ",\"total_disbursed\":" ++ from_int(disbursed) ++ ",\"total_deposited\":" ++ from_int(deposited) ++ ",\"current_total\":" ++ from_int(current_total) ++ "}")
+        },
+        _ => err_resp(500, "Invalid account sum format")
+      }
+    }
+  }
+
+# Route: GET /audit
+fn format_audit_row(row: List[SqlValue]) -> Str =
+  match get(row, 0) {
+    Some(SqlInt(id)) => match get(row, 1) {
+      Some(SqlInt(ts)) => match get(row, 2) {
+        Some(SqlText(action)) => match get(row, 3) {
+          Some(SqlText(actor)) => match get(row, 4) {
+            Some(SqlText(payload)) =>
+              "{\"id\":" ++ from_int(id) ++ ",\"ts\":" ++ from_int(ts) ++ ",\"action\":\"" ++ action ++ "\",\"actor\":\"" ++ actor ++ "\",\"payload\":" ++ payload ++ "}",
+            _ => "{}"
+          },
+          _ => "{}"
+        },
+        _ => "{}"
+      },
+      _ => "{}"
+    },
+    _ => "{}"
+  }
+
+fn handle_audit() -> HttpResponse !db =
+  match db_query("SELECT id, ts, action, actor, payload FROM audit ORDER BY id ASC", []) {
+    Err(_) => err_resp(500, "Database query error"),
+    Ok(res) =>
+      let items = map(res.rows, format_audit_row) in
+      json_resp(200, "{\"ok\":true,\"entries\":[" ++ join(items, ",") ++ "]}")
+  }
+
+# ==============================================================================
+# SECTION 7: HTTP REQUEST ROUTER (MAIN ENTRY POINT)
+# ==============================================================================
+
+fn handle(rq: HttpRequest) -> HttpResponse !db !time =
+  let p = rq.path in
+  let m = rq.method in
+  if p == "/accounts" && m == "POST" then handle_create_account(rq.body)
+  else if starts_with(p, "/accounts/") && m == "GET" then handle_get_account(slice(p, 10, len(p)))
+  else if p == "/payouts" && m == "POST" then handle_create_payout(rq.body)
+  else if starts_with(p, "/payouts/") then
+    let sub = slice(p, 9, len(p)) in
+    if contains(sub, "/approve") && m == "POST" then
+      let id_part = slice(sub, 0, len(sub) - 8) in
+      handle_approve_payout(id_part, rq.body)
+    else if contains(sub, "/disburse") && m == "POST" then
+      let id_part = slice(sub, 0, len(sub) - 9) in
+      handle_disburse_payout(id_part)
+    else if contains(sub, "/cancel") && m == "POST" then
+      let id_part = slice(sub, 0, len(sub) - 7) in
+      handle_cancel_payout(id_part, rq.body)
+    else if m == "GET" then
+      handle_get_payout(sub)
+    else
+      err_resp(404, "Endpoint not found")
+  else if p == "/reconciliation" && m == "GET" then handle_reconciliation()
+  else if p == "/audit" && m == "GET" then handle_audit()
+  else err_resp(404, "Endpoint not found")
+
+# ==============================================================================
+# SECTION 8: UNIT & PROPERTY TESTS
+# ==============================================================================
+
+test t_can_deduct_1 = can_deduct(1000, 500) == true
+test t_can_deduct_2 = can_deduct(1000, 1500) == false
+test t_threshold_1 = payout_threshold(1000000) == 1
+test t_threshold_2 = payout_threshold(1000001) == 2
+test t_self_approve_1 = can_self_approve("Alice", "Bob") == true
+test t_self_approve_2 = can_self_approve("Alice", "Alice") == false
+test t_zero_sum = zero_sum_step(500, 200, 300, 1000) == true
+test t_json_int = json_int("{\"id\": 42, \"balance\": 999}", "id") == Some(42)
+test t_json_str = json_str("{\"owner\": \"Alice\"}", "owner") == Some("Alice")

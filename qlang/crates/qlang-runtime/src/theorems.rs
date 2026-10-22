@@ -176,7 +176,11 @@ pub fn verify_compression(
     n: usize,
     beta: f64,
 ) -> CompressionVerification {
-    assert_eq!(original.len(), compressed.len(), "weight vectors must have equal length");
+    assert_eq!(
+        original.len(),
+        compressed.len(),
+        "weight vectors must have equal length"
+    );
     assert!(n > 0, "n must be positive");
 
     // Actual distortion: ||W - Π(W)||² / n
@@ -200,10 +204,14 @@ pub fn verify_compression(
 
     // Estimate sigma_sq_min from original weights (variance of smallest component).
     let mean: f64 = original.iter().map(|&w| w as f64).sum::<f64>() / original.len() as f64;
-    let variance: f64 = original.iter().map(|&w| {
-        let d = w as f64 - mean;
-        d * d
-    }).sum::<f64>() / original.len() as f64;
+    let variance: f64 = original
+        .iter()
+        .map(|&w| {
+            let d = w as f64 - mean;
+            d * d
+        })
+        .sum::<f64>()
+        / original.len() as f64;
     let sigma_sq_min = variance.max(1e-10);
 
     // k = effective compressed dimensionality
@@ -339,7 +347,9 @@ mod tests {
     #[test]
     fn test_non_convergence_when_loss_oscillates() {
         // Oscillating loss that never settles.
-        let history: Vec<f64> = (0..100).map(|i| if i % 2 == 0 { 5.0 } else { 0.5 }).collect();
+        let history: Vec<f64> = (0..100)
+            .map(|i| if i % 2 == 0 { 5.0 } else { 0.5 })
+            .collect();
         let result = check_convergence(&history, 0.1, 0.01);
         assert!(!result.converged, "should not converge: {:?}", result);
     }
@@ -405,7 +415,10 @@ mod tests {
     fn test_verify_compression_identical() {
         let w: Vec<f32> = vec![1.0, 2.0, 3.0, 4.0];
         let v = verify_compression(&w, &w, 4, 1.0);
-        assert!((v.distortion - 0.0).abs() < 1e-10, "identical weights should have zero distortion");
+        assert!(
+            (v.distortion - 0.0).abs() < 1e-10,
+            "identical weights should have zero distortion"
+        );
     }
 
     // -- Theorem 5.3: Generalization --
@@ -437,7 +450,11 @@ mod tests {
         let a: Vec<f32> = vec![1.0, 2.0, 3.0, 4.0, 5.0];
         let mi = estimate_mutual_information(&a, &a);
         // For identical vectors r=1, so MI should be very large.
-        assert!(mi > 5.0, "MI of identical vectors should be high, got {}", mi);
+        assert!(
+            mi > 5.0,
+            "MI of identical vectors should be high, got {}",
+            mi
+        );
     }
 
     #[test]
@@ -446,7 +463,11 @@ mod tests {
         let a: Vec<f32> = vec![1.0, -1.0, 1.0, -1.0, 1.0, -1.0, 1.0, -1.0];
         let b: Vec<f32> = vec![1.0, 1.0, -1.0, -1.0, 1.0, 1.0, -1.0, -1.0];
         let mi = estimate_mutual_information(&a, &b);
-        assert!(mi < 0.5, "MI of uncorrelated vectors should be low, got {}", mi);
+        assert!(
+            mi < 0.5,
+            "MI of uncorrelated vectors should be low, got {}",
+            mi
+        );
     }
 
     // -- Full verification report --
@@ -456,7 +477,10 @@ mod tests {
         let loss_history: Vec<f64> = (0..100).map(|i| 0.5 * (-0.05 * i as f64).exp()).collect();
         let n = 64;
         let original: Vec<f32> = (0..n).map(|i| (i as f32) * 0.01).collect();
-        let compressed: Vec<f32> = original.iter().map(|&w| if w > 0.3 { 1.0 } else { 0.0 }).collect();
+        let compressed: Vec<f32> = original
+            .iter()
+            .map(|&w| if w > 0.3 { 1.0 } else { 0.0 })
+            .collect();
         let layer_a: Vec<f32> = vec![0.1, 0.2, 0.3, 0.4];
         let layer_b: Vec<f32> = vec![0.2, 0.3, 0.4, 0.5];
 

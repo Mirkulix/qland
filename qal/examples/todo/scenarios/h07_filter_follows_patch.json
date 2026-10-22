@@ -1,0 +1,200 @@
+{
+ "name": "h07_filter_follows_patch",
+ "description": "filter reflects updates",
+ "steps": [
+  {
+   "name": "create a",
+   "request": {
+    "method": "POST",
+    "path": "/todos",
+    "json": {
+     "title": "one"
+    }
+   },
+   "expect": {
+    "status": 201,
+    "json": {
+     "id": {
+      "$var": "a"
+     },
+     "title": "one",
+     "done": false,
+     "created_at": {
+      "$type": "int"
+     }
+    },
+    "headers": {
+     "location": "/todos/{{a}}",
+     "content-type": "application/json"
+    }
+   },
+   "capture": {
+    "a": "/id"
+   }
+  },
+  {
+   "name": "create b",
+   "request": {
+    "method": "POST",
+    "path": "/todos",
+    "json": {
+     "title": "two"
+    }
+   },
+   "expect": {
+    "status": 201,
+    "json": {
+     "id": {
+      "$var": "b"
+     },
+     "title": "two",
+     "done": false,
+     "created_at": {
+      "$type": "int"
+     }
+    },
+    "headers": {
+     "location": "/todos/{{b}}",
+     "content-type": "application/json"
+    }
+   },
+   "capture": {
+    "b": "/id"
+   }
+  },
+  {
+   "name": "none done",
+   "request": {
+    "method": "GET",
+    "path": "/todos",
+    "query": "done=true"
+   },
+   "expect": {
+    "status": 200,
+    "json": [],
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "finish b",
+   "request": {
+    "method": "PATCH",
+    "path": "/todos/{{b}}",
+    "json": {
+     "done": true
+    }
+   },
+   "expect": {
+    "status": 200,
+    "json": {
+     "id": {
+      "$var": "b"
+     },
+     "title": "two",
+     "done": true,
+     "created_at": {
+      "$type": "int"
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "list",
+   "request": {
+    "method": "GET",
+    "path": "/todos",
+    "query": "done=true"
+   },
+   "expect": {
+    "status": 200,
+    "json": [
+     {
+      "id": {
+       "$var": "b"
+      },
+      "title": "two",
+      "done": true,
+      "created_at": {
+       "$type": "int"
+      }
+     }
+    ],
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "list",
+   "request": {
+    "method": "GET",
+    "path": "/todos",
+    "query": "done=false"
+   },
+   "expect": {
+    "status": 200,
+    "json": [
+     {
+      "id": {
+       "$var": "a"
+      },
+      "title": "one",
+      "done": false,
+      "created_at": {
+       "$type": "int"
+      }
+     }
+    ],
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "reopen b",
+   "request": {
+    "method": "PATCH",
+    "path": "/todos/{{b}}",
+    "json": {
+     "done": false
+    }
+   },
+   "expect": {
+    "status": 200,
+    "json": {
+     "id": {
+      "$var": "b"
+     },
+     "title": "two",
+     "done": false,
+     "created_at": {
+      "$type": "int"
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "none done again",
+   "request": {
+    "method": "GET",
+    "path": "/todos",
+    "query": "done=true"
+   },
+   "expect": {
+    "status": 200,
+    "json": [],
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  }
+ ]
+}

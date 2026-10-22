@@ -1,0 +1,2 @@
+fn base() -> Int = 1
+fn user() -> Int = base() + 1

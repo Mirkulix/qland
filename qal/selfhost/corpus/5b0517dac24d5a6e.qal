@@ -1,0 +1,12 @@
+fn build(n: Int, a: Accum[Int]) -> Accum[Int] = if n == 0 then a else build(n - 1, AccPush(a, n))
+fn list(n: Int) -> List[Int] = acc_list(build(n, AccEnd))
+fn strs() -> List[Str] = acc_list(AccPush(AccPush(AccPush(AccEnd, "a"), "b"), "c"))
+fn floats() -> List[Float] = acc_list(AccPush(AccPush(AccEnd, 1.5), -0.0))
+fn nested() -> List[List[Int]] = acc_list(AccPush(AccPush(AccEnd, [1]), [2, 3]))
+fn count(a: Accum[Str]) -> Int = match a { AccEnd => 0, AccPush(rest, _) => 1 + count(rest) }
+fn last(a: Accum[Str]) -> Option[Str] = match a { AccEnd => None, AccPush(_, x) => Some(x) }
+type Builder = { items: Accum[Str], n: Int }
+fn add(b: Builder, s: Str) -> Builder = Builder { items: AccPush(b.items, s), n: b.n + 1 }
+fn built() -> List[Str] = acc_list(add(add(Builder { items: AccEnd, n: 0 }, "x"), "y").items)
+fn same() -> Bool = AccPush(AccEnd, 1) == AccPush(AccEnd, 1) && compare(AccPush(AccEnd, 1), AccPush(AccEnd, 2)) == -1
+fn empty() -> List[Int] = acc_list(AccEnd)

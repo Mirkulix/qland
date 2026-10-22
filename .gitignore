@@ -24,16 +24,20 @@ Thumbs.db
 # Rust
 target/
 Cargo.lock
+!qal/Cargo.lock
 
 # IGQK specific
 *.db
 *.db-journal
+*.db-shm
+*.db-wal
 compressed_models/
 models_cache/
 datasets_cache/
 *.pth
 *.safetensors
 *.bin
+data/
 
 # Logs
 *.log
@@ -50,3 +54,13 @@ nul
 
 # Claude worktrees
 .claude/worktrees/
+
+# QAL project stores and build output (qal init / qal mcp)
+.qal/
+
+# QAL team keys (Phase 4): never versioned
+*.ed25519
+
+# Study temporary workdirs
+pilot/escrow/study/workdirs/
+pilot/escrow/ops/runtime/

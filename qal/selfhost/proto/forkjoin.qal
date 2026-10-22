@@ -1,0 +1,71 @@
+# A minimal compiler module for the QALQ/QALR protocol (self-hosting spec §4), used by the 5a
+# tests of `qal_run::selfhost::drive`. Written with the 5a built-ins (bit operations, bytes_at,
+# Accum, bytes_join, sha256); no loops, no mutable buffers.
+#
+#   PARSE text (op 1): one byte -> DONE sha256(text); longer -> FORK "cat" with one PARSE item per byte
+#   JOIN (op 7):       DONE with the payloads of the results, concatenated in item order
+#   op 100 text:       allocates `text` MiB (decimal) and answers DONE of the size (memory tests)
+#   op 101:            traps (index out of range)
+#   anything else:     INTERNAL
+
+type Num = { v: Int, at: Int }
+
+fn uint_at(b: Bytes, i: Int, shift: Int, acc: Int) -> Num =
+  let x = bytes_at(b, i) in
+  let acc2 = bit_or(acc, shl(bit_and(x, 127), shift)) in
+  if bit_and(x, 128) == 0 then Num { v: acc2, at: i + 1 } else uint_at(b, i + 1, shift + 7, acc2)
+
+fn uint_bytes(n: Int, a: Accum[Int]) -> Accum[Int] =
+  if n < 128 then AccPush(a, n) else uint_bytes(ushr(n, 7), AccPush(a, bit_or(bit_and(n, 127), 128)))
+
+fn leb(n: Int) -> Bytes = bytes_from(acc_list(uint_bytes(n, AccEnd)))
+
+fn blob(b: Bytes) -> Bytes = bytes_join([leb(bytes_len(b)), b])
+
+fn blob_at(b: Bytes, at: Int) -> Bytes = let n = uint_at(b, at, 0, 0) in bytes_slice(b, n.at, n.at + n.v)
+
+fn res_head(status: Int) -> Bytes = bytes_join([to_bytes("QALR"), bytes_from([1, status])])
+
+fn done(payload: Bytes) -> Bytes = bytes_join([res_head(0), blob(payload)])
+
+fn internal(m: Str) -> Bytes = bytes_join([res_head(3), blob(to_bytes(m))])
+
+fn req_parse(text: Bytes) -> Bytes = bytes_join([to_bytes("QALQ"), bytes_from([1, 1]), blob(text)])
+
+fn items(t: Bytes, i: Int, a: Accum[Bytes]) -> Accum[Bytes] =
+  if i == bytes_len(t) then a else items(t, i + 1, AccPush(a, blob(req_parse(bytes_slice(t, i, i + 1)))))
+
+fn parse(rq: Bytes) -> Bytes =
+  let t = blob_at(rq, 6) in
+  if bytes_len(t) <= 1 then done(sha256(t))
+  else bytes_join([res_head(2), blob(to_bytes("cat")), leb(bytes_len(t)), bytes_join(acc_list(items(t, 0, AccEnd)))])
+
+fn payloads(b: Bytes, at: Int, k: Int, a: Accum[Bytes]) -> Accum[Bytes] =
+  if k == 0 then a
+  else let n = uint_at(b, at, 0, 0) in payloads(b, n.at + n.v, k - 1, AccPush(a, blob_at(bytes_slice(b, n.at, n.at + n.v), 6)))
+
+fn join_results(rq: Bytes) -> Bytes =
+  let c = uint_at(rq, 6, 0, 0) in
+  let k = uint_at(rq, c.at + c.v, 0, 0) in
+  done(bytes_join(acc_list(payloads(rq, k.at, k.v, AccEnd))))
+
+fn double(b: Bytes, k: Int) -> Bytes = if k == 0 then b else double(b ++ b, k - 1)
+
+fn grow(rq: Bytes) -> Bytes =
+  let mib = double(to_bytes("x"), 20) in
+  let k = match bytes_to_str(blob_at(rq, 6)) { Some(s) => match to_int(s) { Some(n) => n, None => 0 }, None => 0 } in
+  let big = bytes_join(map(range(0, k), fn(i) => mib)) in
+  let late = "after " ++ from_int(bytes_len(big)) in
+  done(to_bytes(match index_of(late, " ") { Some(i) => slice(late, i + 1, len(late)), None => "?" }))
+
+fn qc_main(rq: Bytes) -> Bytes =
+  if bytes_len(rq) < 6 || bytes_slice(rq, 0, 4) != to_bytes("QALQ") then internal("not a request")
+  else match bytes_at(rq, 5) {
+    1 => parse(rq),
+    7 => join_results(rq),
+    100 => grow(rq),
+    101 => bytes_from([list_at([], 0)]),
+    _ => internal("unknown operation")
+  }
+
+test leb_round_trip = uint_at(leb(300), 0, 0, 0).v == 300 && bytes_len(leb(127)) == 1 && bytes_len(leb(128)) == 2

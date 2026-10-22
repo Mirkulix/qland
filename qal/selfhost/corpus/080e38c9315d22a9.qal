@@ -1,0 +1,5 @@
+fn fetch(m: Str, u: Str, b: Str) -> Str !net = match http(HttpCall { method: m, url: u, headers: [HttpHeader { name: "x-test", value: "1" }], body: b }) {
+Ok(r) => from_int(r.status) ++ "|" ++ join(map(r.headers, show), ";") ++ "|" ++ r.body,
+Err(NetDenied(m)) => "denied: " ++ m, Err(NetInvalid(m)) => "invalid: " ++ m, Err(NetConnect(m)) => "connect: " ++ m, Err(NetTimeout) => "timeout", Err(NetTooLarge) => "too large" }
+fn show(h: HttpHeader) -> Str = h.name ++ "=" ++ h.value
+fn twice(u: Str) -> Str !net = fetch("GET", u, "") ++ fetch("GET", u, "")

@@ -1,0 +1,8 @@
+type P = { a: Int, b: Str }
+fn insert_sorted[T](xs: List[T], x: T) -> List[T] = concat(push(filter(xs, fn(y) => compare(y, x) <= 0), x), filter(xs, fn(y) => compare(y, x) > 0))
+fn sort[T](xs: List[T]) -> List[T] = fold(xs, [], fn(acc, x) => insert_sorted(acc, x))
+test ints = compare(1, 2) == -1 && compare(2, 2) == 0 && compare(-9223372036854775807 - 1, 0) == -1
+test strs = sort(["b", "ab", "a", "B"]) == ["B", "a", "ab", "b"]
+test structured = compare(P { a: 1, b: "z" }, P { a: 1, b: "a" }) == 1 && compare(None, Some(0)) == -1 && compare([1, 2], [1]) == 1 && compare(true, false) == 1
+test floats = compare(-0.0, 0.0) == -1 && compare(1.5, 1.5) == 0
+test maps = compare(map_put(map_new(), 1, "a"), map_put(map_new(), 1, "b")) == -1

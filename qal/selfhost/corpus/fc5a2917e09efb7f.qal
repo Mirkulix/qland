@@ -1,0 +1,1 @@
+test t = { print("a"); { 1 }; 2 } == (User { id: 1, n: [] }).id

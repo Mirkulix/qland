@@ -5,15 +5,20 @@
 //! - TensorType, Dtype, Shape (the type system)
 //! - QuantumState / DensityMatrix (probabilistic values)
 //! - Constraint, Proof (verification primitives)
+//! - Crypto: SHA-256 hashing, HMAC-SHA256 signatures (protocol security)
 
+pub mod binary;
+pub mod cache;
+pub mod crypto;
 pub mod errors;
+pub mod ffi;
 pub mod graph;
+pub mod merkle;
 pub mod ops;
 pub mod quantum;
 pub mod serial;
+pub mod shape_inference;
 pub mod stats;
 pub mod tensor;
-pub mod shape_inference;
 pub mod type_check;
 pub mod verify;
-pub mod ffi;

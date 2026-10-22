@@ -1,0 +1,1 @@
+fn swap[X, Y](q: Pair[X, Y]) -> Pair[Y, X]

@@ -1,0 +1,1 @@
+fn m() -> Map[Str, List[Int]] = map_put(map_new(), "k", [1])

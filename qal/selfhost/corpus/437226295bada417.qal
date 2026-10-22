@@ -1,0 +1,2 @@
+type R = { x: Bool }
+fn f(p: R) -> Int = match p { R { x: true, x: false } => 1, R { x: false } => 2 }

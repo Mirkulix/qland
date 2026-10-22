@@ -1,0 +1,2 @@
+fn g(t: Str) -> Int req len(t) > 0 = 0
+fn f(t: Str) -> Int = g(t)

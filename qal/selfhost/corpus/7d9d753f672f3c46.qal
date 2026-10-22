@@ -1,0 +1,1 @@
+fn f(xs: List[Int]) -> Int ens list_at(xs, 0) == list_at(xs, 0) = 0

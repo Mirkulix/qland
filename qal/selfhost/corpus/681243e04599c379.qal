@@ -1,0 +1,1 @@
+fn main(args: List[Str]) -> Int = if f0(1) && f0("s") then 0 else 1

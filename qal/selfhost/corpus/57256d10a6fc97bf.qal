@@ -1,0 +1,2 @@
+fn base(x: Int) -> Int = x
+fn uses() -> Int = base(1) * 10

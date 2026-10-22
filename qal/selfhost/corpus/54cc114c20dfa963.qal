@@ -1,0 +1,1 @@
+fn inc(n: Int) -> Int ens r > n = if n > 5 then n else n + 1

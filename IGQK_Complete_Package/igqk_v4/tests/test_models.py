@@ -56,7 +56,6 @@ def test_quantum_gpt_standard():
     assert generated.shape == (1, 10), "Wrong generation shape!"
 
     print(f"[PASS] QuantumGPT (Standard) - ALL TESTS PASSED!")
-    return True
 
 
 def test_quantum_gpt_ternary():
@@ -94,7 +93,6 @@ def test_quantum_gpt_ternary():
     assert logits.shape == (batch_size, seq_len, config.vocab_size), "Wrong output shape!"
 
     print(f"[PASS] QuantumGPT (Ternary) - ALL TESTS PASSED!")
-    return True
 
 
 def test_quantum_bert_standard():
@@ -146,7 +144,6 @@ def test_quantum_bert_standard():
     assert cls_rep.shape == (batch_size, config.d_model), "Wrong CLS shape!"
 
     print(f"[PASS] QuantumBERT (Standard) - ALL TESTS PASSED!")
-    return True
 
 
 def test_quantum_bert_ternary():
@@ -187,7 +184,6 @@ def test_quantum_bert_ternary():
     assert pooled_output.shape == (batch_size, config.d_model), "Wrong pooled shape!"
 
     print(f"[PASS] QuantumBERT (Ternary) - ALL TESTS PASSED!")
-    return True
 
 
 def test_quantum_vit_standard():
@@ -235,7 +231,6 @@ def test_quantum_vit_standard():
     assert features.shape == (batch_size, config.d_model), "Wrong features shape!"
 
     print(f"[PASS] QuantumViT (Standard) - ALL TESTS PASSED!")
-    return True
 
 
 def test_quantum_vit_ternary():
@@ -275,7 +270,6 @@ def test_quantum_vit_ternary():
     assert logits.shape == (batch_size, config.num_classes), "Wrong output shape!"
 
     print(f"[PASS] QuantumViT (Ternary) - ALL TESTS PASSED!")
-    return True
 
 
 def main():
@@ -287,37 +281,43 @@ def main():
     results = []
 
     try:
-        results.append(("GPT Standard", test_quantum_gpt_standard()))
+        test_quantum_gpt_standard()
+        results.append(("GPT Standard", True))
     except Exception as e:
         print(f"[FAIL] GPT Standard FAILED: {e}")
         results.append(("GPT Standard", False))
 
     try:
-        results.append(("GPT Ternary", test_quantum_gpt_ternary()))
+        test_quantum_gpt_ternary()
+        results.append(("GPT Ternary", True))
     except Exception as e:
         print(f"[FAIL] GPT Ternary FAILED: {e}")
         results.append(("GPT Ternary", False))
 
     try:
-        results.append(("BERT Standard", test_quantum_bert_standard()))
+        test_quantum_bert_standard()
+        results.append(("BERT Standard", True))
     except Exception as e:
         print(f"[FAIL] BERT Standard FAILED: {e}")
         results.append(("BERT Standard", False))
 
     try:
-        results.append(("BERT Ternary", test_quantum_bert_ternary()))
+        test_quantum_bert_ternary()
+        results.append(("BERT Ternary", True))
     except Exception as e:
         print(f"[FAIL] BERT Ternary FAILED: {e}")
         results.append(("BERT Ternary", False))
 
     try:
-        results.append(("ViT Standard", test_quantum_vit_standard()))
+        test_quantum_vit_standard()
+        results.append(("ViT Standard", True))
     except Exception as e:
         print(f"[FAIL] ViT Standard FAILED: {e}")
         results.append(("ViT Standard", False))
 
     try:
-        results.append(("ViT Ternary", test_quantum_vit_ternary()))
+        test_quantum_vit_ternary()
+        results.append(("ViT Ternary", True))
     except Exception as e:
         print(f"[FAIL] ViT Ternary FAILED: {e}")
         results.append(("ViT Ternary", False))

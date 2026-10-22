@@ -1,0 +1,54 @@
+# Statistics of a text file: lines, words, characters, longest line, most frequent word.
+
+fn is_space(c: Str) -> Bool = c == " " || c == "\t" || c == "\r" || c == "\n"
+
+fn space_out(c: Str) -> Str = if is_space(c) then " " else c
+
+fn non_empty(s: Str) -> Bool = s != ""
+
+fn words(text: Str) -> List[Str] = filter(split(join(map(chars(text), space_out), ""), " "), non_empty)
+
+fn lines(text: Str) -> List[Str] =
+  let parts = split(text, "\n") in
+  match get(parts, len(parts) - 1) {
+    Some("") => reverse(drop_first(reverse(parts))),
+    _ => parts,
+  }
+
+fn drop_first(xs: List[Str]) -> List[Str] = filter_index(xs, 1, [])
+
+fn filter_index(xs: List[Str], i: Int, acc: List[Str]) -> List[Str] =
+  match get(xs, i) { None => acc, Some(x) => filter_index(xs, i + 1, push(acc, x)) }
+
+fn longer(best: Int, line: Str) -> Int = if len(line) > best then len(line) else best
+
+type Top = { word: Str, count: Int, cur: Str, run: Int }
+
+# Over sorted words: the first word with the highest count wins ties.
+fn tally(t: Top, w: Str) -> Top =
+  let run = if w == t.cur then t.run + 1 else 1 in
+  if run > t.count then Top { word: w, count: run, cur: w, run: run } else Top { word: t.word, count: t.count, cur: w, run: run }
+
+test counts = lines("a\nb\n") == ["a", "b"] && lines("") == [] && lines("a\n\nb") == ["a", "", "b"] && len(words(" a\tb\n")) == 2
+
+fn stats(text: Str) -> Int !io =
+  let ws = words(text) in
+  let ls = lines(text) in {
+    print("lines " ++ from_int(len(ls)));
+    print("words " ++ from_int(len(ws)));
+    print("chars " ++ from_int(len(text)));
+    print("longest " ++ from_int(fold(ls, 0, longer)));
+    let t = fold(sort_str(map(ws, to_lower_word)), Top { word: "", count: 0, cur: "", run: 0 }, tally) in
+    if t.count > 0 then { print("top " ++ t.word ++ " " ++ from_int(t.count)); 0 } else 0
+  }
+
+fn to_lower_word(w: Str) -> Str = to_lower(w)
+
+fn main(args: List[Str]) -> Int !io !fs =
+  match get(args, 0) {
+    Some(path) if len(args) == 1 => match read_file(path) {
+      Ok(text) => stats(text),
+      Err(_) => { print("error: cannot read " ++ path); 1 },
+    },
+    _ => { print("usage: file_stats <path>"); 2 },
+  }

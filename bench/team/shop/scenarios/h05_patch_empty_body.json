@@ -1,0 +1,25 @@
+{
+  "name": "h05_patch_empty_body",
+  "description": "PATCH with no update fields gives 400 no_updates",
+  "steps": [
+    {
+      "name": "create",
+      "request": {"method": "POST", "path": "/products", "json": {"sku": "P-EMPTY", "name": "Cup", "price_cents": 500, "stock": 10}},
+      "expect": {"status": 201},
+      "capture": {"id": "/id"}
+    },
+    {
+      "name": "patch empty",
+      "request": {"method": "PATCH", "path": "/products/{{id}}", "json": {}},
+      "expect": {
+        "status": 400,
+        "json": {
+          "error": {
+            "code": "no_updates",
+            "message": {"$type": "str"}
+          }
+        }
+      }
+    }
+  ]
+}

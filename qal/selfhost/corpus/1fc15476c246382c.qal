@@ -1,0 +1,4 @@
+type P = { x: Int }
+fn mk() -> P = P { x: 1 }
+fn get_x(p: P) -> Int = p.x
+test t = get_x(mk()) == 1

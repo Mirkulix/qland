@@ -1,0 +1,2 @@
+type T[A] = L | N(T[List[A]])
+test t = L == L

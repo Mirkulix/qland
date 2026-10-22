@@ -1,0 +1,2 @@
+type Header = { name: Str, value: Str }
+fn h(n: Str) -> Header = Header { name: n, value: "" }

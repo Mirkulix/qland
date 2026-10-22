@@ -1,0 +1,31 @@
+{
+  "name": "h12_below_filter_zero",
+  "description": "below=0 returns empty array, below=stock is strict less-than",
+  "steps": [
+    {
+      "name": "create prod",
+      "request": {"method": "POST", "path": "/products", "json": {"sku": "BELOW-1", "name": "Item", "price_cents": 100, "stock": 10}},
+      "expect": {"status": 201}
+    },
+    {
+      "name": "below 0",
+      "request": {"method": "GET", "path": "/products", "query": "below=0"},
+      "expect": {"status": 200, "json": []}
+    },
+    {
+      "name": "below 10",
+      "request": {"method": "GET", "path": "/products", "query": "below=10"},
+      "expect": {"status": 200, "json": []}
+    },
+    {
+      "name": "below 11",
+      "request": {"method": "GET", "path": "/products", "query": "below=11"},
+      "expect": {
+        "status": 200,
+        "json": [
+          {"id": 1, "sku": "BELOW-1", "name": "Item", "price_cents": 100, "stock": 10}
+        ]
+      }
+    }
+  ]
+}

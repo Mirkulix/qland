@@ -1,0 +1,160 @@
+{
+ "name": "h13_post_not_object",
+ "description": "body must be an object",
+ "steps": [
+  {
+   "name": "array",
+   "request": {
+    "method": "POST",
+    "path": "/todos",
+    "headers": [
+     {
+      "name": "content-type",
+      "value": "application/json"
+     }
+    ],
+    "body": "[{\"title\":\"a\"}]"
+   },
+   "expect": {
+    "status": 400,
+    "json": {
+     "error": {
+      "code": "invalid_type",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "string",
+   "request": {
+    "method": "POST",
+    "path": "/todos",
+    "headers": [
+     {
+      "name": "content-type",
+      "value": "application/json"
+     }
+    ],
+    "body": "\"a\""
+   },
+   "expect": {
+    "status": 400,
+    "json": {
+     "error": {
+      "code": "invalid_type",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "number",
+   "request": {
+    "method": "POST",
+    "path": "/todos",
+    "headers": [
+     {
+      "name": "content-type",
+      "value": "application/json"
+     }
+    ],
+    "body": "1"
+   },
+   "expect": {
+    "status": 400,
+    "json": {
+     "error": {
+      "code": "invalid_type",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "null",
+   "request": {
+    "method": "POST",
+    "path": "/todos",
+    "headers": [
+     {
+      "name": "content-type",
+      "value": "application/json"
+     }
+    ],
+    "body": "null"
+   },
+   "expect": {
+    "status": 400,
+    "json": {
+     "error": {
+      "code": "invalid_type",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "bool",
+   "request": {
+    "method": "POST",
+    "path": "/todos",
+    "headers": [
+     {
+      "name": "content-type",
+      "value": "application/json"
+     }
+    ],
+    "body": "true"
+   },
+   "expect": {
+    "status": 400,
+    "json": {
+     "error": {
+      "code": "invalid_type",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "nothing created",
+   "request": {
+    "method": "GET",
+    "path": "/todos"
+   },
+   "expect": {
+    "status": 200,
+    "json": [],
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  }
+ ]
+}

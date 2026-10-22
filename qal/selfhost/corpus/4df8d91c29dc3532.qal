@@ -1,0 +1,2 @@
+type T[A] = L | N(T[List[A]])
+type M = { m: Map[T[Int], Int] }

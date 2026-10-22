@@ -1,0 +1,1 @@
+fn newuser() -> Int = base() + 1

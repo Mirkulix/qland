@@ -1,0 +1,93 @@
+# Integer expression evaluator: tokenize, parse (recursive descent), then evaluate.
+
+type Tok = Num(Int) | Sym(Str)
+
+type E = Lit(Int) | Neg(E) | Bin(Str, E, E)
+
+type Parsed = { e: E, pos: Int }
+
+fn is_digit(c: Str) -> Bool = c >= "0" && c <= "9"
+
+fn digits_end(cs: List[Str], i: Int) -> Int = match get(cs, i) { Some(c) if is_digit(c) => digits_end(cs, i + 1), _ => i }
+
+fn digits(cs: List[Str], from: Int, to: Int, acc: Int) -> Int =
+  if from >= to then acc else digits(cs, from + 1, to, acc * 10 + (match get(cs, from) { Some(c) => char_code(c) - 48, None => 0 }))
+
+fn lex(cs: List[Str], i: Int, acc: List[Tok]) -> Option[List[Tok]] =
+  match get(cs, i) {
+    None => Some(acc),
+    Some(c) =>
+      if c == " " || c == "\t" then lex(cs, i + 1, acc)
+      else if is_digit(c) then let e = digits_end(cs, i) in lex(cs, e, push(acc, Num(digits(cs, i, e, 0))))
+      else if contains("+-*/%()", c) then lex(cs, i + 1, push(acc, Sym(c)))
+      else None,
+  }
+
+fn sym_at(ts: List[Tok], i: Int) -> Str = match get(ts, i) { Some(Sym(s)) => s, _ => "" }
+
+fn expr(ts: List[Tok], i: Int) -> Option[Parsed] = match term(ts, i) { None => None, Some(p) => expr_rest(ts, p) }
+
+fn expr_rest(ts: List[Tok], left: Parsed) -> Option[Parsed] =
+  let op = sym_at(ts, left.pos) in
+  if op == "+" || op == "-" then
+    match term(ts, left.pos + 1) { None => None, Some(r) => expr_rest(ts, Parsed { e: Bin(op, left.e, r.e), pos: r.pos }) }
+  else Some(left)
+
+fn term(ts: List[Tok], i: Int) -> Option[Parsed] = match unary(ts, i) { None => None, Some(p) => term_rest(ts, p) }
+
+fn term_rest(ts: List[Tok], left: Parsed) -> Option[Parsed] =
+  let op = sym_at(ts, left.pos) in
+  if op == "*" || op == "/" || op == "%" then
+    match unary(ts, left.pos + 1) { None => None, Some(r) => term_rest(ts, Parsed { e: Bin(op, left.e, r.e), pos: r.pos }) }
+  else Some(left)
+
+fn unary(ts: List[Tok], i: Int) -> Option[Parsed] =
+  if sym_at(ts, i) == "-" then match unary(ts, i + 1) { None => None, Some(p) => Some(Parsed { e: Neg(p.e), pos: p.pos }) }
+  else atom(ts, i)
+
+fn atom(ts: List[Tok], i: Int) -> Option[Parsed] =
+  match get(ts, i) {
+    Some(Num(n)) => Some(Parsed { e: Lit(n), pos: i + 1 }),
+    Some(Sym("(")) => match expr(ts, i + 1) {
+      Some(p) if sym_at(ts, p.pos) == ")" => Some(Parsed { e: p.e, pos: p.pos + 1 }),
+      _ => None,
+    },
+    _ => None,
+  }
+
+fn eval(e: E) -> Result[Int, Str] =
+  match e {
+    Lit(n) => Ok(n),
+    Neg(x) => match eval(x) { Ok(v) => Ok(0 - v), Err(m) => Err(m) },
+    Bin(op, l, r) => match eval(l) {
+      Err(m) => Err(m),
+      Ok(a) => match eval(r) {
+        Err(m) => Err(m),
+        Ok(b) => apply(op, a, b),
+      },
+    },
+  }
+
+fn apply(op: Str, a: Int, b: Int) -> Result[Int, Str] =
+  match op {
+    "+" => Ok(a + b),
+    "-" => Ok(a - b),
+    "*" => Ok(a * b),
+    _ => if b == 0 then Err("error: division by zero") else if op == "/" then Ok(a / b) else Ok(a % b),
+  }
+
+fn calc(line: Str) -> Str =
+  match lex(chars(line), 0, []) {
+    None => "error: syntax",
+    Some(ts) => match expr(ts, 0) {
+      Some(p) if p.pos == len(ts) => match eval(p.e) { Ok(v) => from_int(v), Err(m) => m },
+      _ => "error: syntax",
+    },
+  }
+
+test precedence = calc("1 + 2 * 3") == "7" && calc("(1 + 2) * 3") == "9" && calc("10 - 4 - 3") == "3" && calc("2*-3") == "-6"
+test errors = calc("7 / 0") == "error: division by zero" && calc("2 +") == "error: syntax" && calc("") == "error: syntax" && calc("1/0 + (") == "error: syntax"
+
+fn each_line() -> Int !io = match read_line() { None => 0, Some(l) => { print(calc(l)); each_line() } }
+
+fn main(args: List[Str]) -> Int !io = each_line()

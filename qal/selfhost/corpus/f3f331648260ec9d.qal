@@ -1,0 +1,2 @@
+fn base() -> Int = 7
+fn added() -> Int = 1

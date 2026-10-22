@@ -1,0 +1,5 @@
+fn pick(c: Bool, a: Int, b: Int) -> Int = if c then a else b
+fn u() -> Unit = ()
+fn neg(b: Bool) -> Bool = !b
+fn greet(name: Str, xs: List[Str]) -> Str = name ++ ":" ++ join(xs, ",")
+fn half(x: Float) -> Float = x / 2.0

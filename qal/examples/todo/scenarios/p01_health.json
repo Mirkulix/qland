@@ -1,0 +1,22 @@
+{
+ "name": "p01_health",
+ "description": "GET /health",
+ "steps": [
+  {
+   "name": "health",
+   "request": {
+    "method": "GET",
+    "path": "/health"
+   },
+   "expect": {
+    "status": 200,
+    "json": {
+     "ok": true
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  }
+ ]
+}

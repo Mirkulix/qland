@@ -39,9 +39,14 @@ impl ExecutionProfile {
     /// Print a formatted report.
     pub fn report(&self) -> String {
         let mut s = String::new();
-        s.push_str(&format!("Execution Profile (total: {:?})\n", self.total_time));
-        s.push_str(&format!("{:>6} {:>15} {:>10} {:>10} {:>8}\n",
-            "Node", "Operation", "Time", "FLOPs", "% Total"));
+        s.push_str(&format!(
+            "Execution Profile (total: {:?})\n",
+            self.total_time
+        ));
+        s.push_str(&format!(
+            "{:>6} {:>15} {:>10} {:>10} {:>8}\n",
+            "Node", "Operation", "Time", "FLOPs", "% Total"
+        ));
         s.push_str(&format!("{}\n", "─".repeat(55)));
 
         for node in &self.nodes {
@@ -50,17 +55,17 @@ impl ExecutionProfile {
             } else {
                 0.0
             };
-            s.push_str(&format!("{:>6} {:>15} {:>10.2?} {:>10} {:>7.1}%\n",
-                node.node_id,
-                node.op_name,
-                node.execution_time,
-                node.estimated_flops,
-                pct));
+            s.push_str(&format!(
+                "{:>6} {:>15} {:>10.2?} {:>10} {:>7.1}%\n",
+                node.node_id, node.op_name, node.execution_time, node.estimated_flops, pct
+            ));
         }
 
         if let Some(bottleneck) = self.bottleneck() {
-            s.push_str(&format!("\nBottleneck: node {} ({}) — {:?}\n",
-                bottleneck.node_id, bottleneck.op_name, bottleneck.execution_time));
+            s.push_str(&format!(
+                "\nBottleneck: node {} ({}) — {:?}\n",
+                bottleneck.node_id, bottleneck.op_name, bottleneck.execution_time
+            ));
         }
 
         s
@@ -102,22 +107,23 @@ pub fn execute_profiled(
     if total_estimated_flops > 0 {
         for node in &mut nodes {
             let fraction = node.estimated_flops as f64 / total_estimated_flops as f64;
-            node.execution_time = Duration::from_nanos(
-                (total_time.as_nanos() as f64 * fraction) as u64
-            );
+            node.execution_time =
+                Duration::from_nanos((total_time.as_nanos() as f64 * fraction) as u64);
         }
     }
 
-    let profile = ExecutionProfile {
-        total_time,
-        nodes,
-    };
+    let profile = ExecutionProfile { total_time, nodes };
 
     Ok((result, profile))
 }
 
-fn estimate_flops(op: &Op, input_types: &[qlang_core::tensor::TensorType], output_types: &[qlang_core::tensor::TensorType]) -> u64 {
-    let output_elems = output_types.first()
+fn estimate_flops(
+    op: &Op,
+    input_types: &[qlang_core::tensor::TensorType],
+    output_types: &[qlang_core::tensor::TensorType],
+) -> u64 {
+    let output_elems = output_types
+        .first()
         .and_then(|t| t.shape.numel())
         .unwrap_or(0) as u64;
 
@@ -129,8 +135,14 @@ fn estimate_flops(op: &Op, input_types: &[qlang_core::tensor::TensorType], outpu
             // [m, k] × [k, n] = 2*m*k*n FLOPs
             if input_types.len() >= 2 {
                 let a_elems = input_types[0].shape.numel().unwrap_or(0) as u64;
-                let b_cols = input_types[1].shape.0.last()
-                    .map(|d| match d { qlang_core::tensor::Dim::Fixed(n) => *n as u64, _ => 1 })
+                let b_cols = input_types[1]
+                    .shape
+                    .0
+                    .last()
+                    .map(|d| match d {
+                        qlang_core::tensor::Dim::Fixed(n) => *n as u64,
+                        _ => 1,
+                    })
                     .unwrap_or(1);
                 a_elems * b_cols * 2
             } else {
@@ -147,7 +159,8 @@ fn estimate_flops(op: &Op, input_types: &[qlang_core::tensor::TensorType], outpu
 }
 
 fn estimate_bytes(output_types: &[qlang_core::tensor::TensorType]) -> u64 {
-    output_types.first()
+    output_types
+        .first()
         .and_then(|t| t.size_bytes())
         .unwrap_or(0) as u64
 }
@@ -157,22 +170,44 @@ mod tests {
     use super::*;
     use qlang_core::graph::Graph;
     use qlang_core::ops::Op;
-    use qlang_core::tensor::{Shape, TensorType, TensorData};
+    use qlang_core::tensor::{Shape, TensorData, TensorType};
 
     #[test]
     fn profile_simple_graph() {
         let mut g = Graph::new("profile_test");
-        let a = g.add_node(Op::Input { name: "a".into() }, vec![], vec![TensorType::f32_vector(100)]);
-        let b = g.add_node(Op::Input { name: "b".into() }, vec![], vec![TensorType::f32_vector(100)]);
-        let add = g.add_node(Op::Add, vec![TensorType::f32_vector(100); 2], vec![TensorType::f32_vector(100)]);
-        let out = g.add_node(Op::Output { name: "y".into() }, vec![TensorType::f32_vector(100)], vec![]);
+        let a = g.add_node(
+            Op::Input { name: "a".into() },
+            vec![],
+            vec![TensorType::f32_vector(100)],
+        );
+        let b = g.add_node(
+            Op::Input { name: "b".into() },
+            vec![],
+            vec![TensorType::f32_vector(100)],
+        );
+        let add = g.add_node(
+            Op::Add,
+            vec![TensorType::f32_vector(100); 2],
+            vec![TensorType::f32_vector(100)],
+        );
+        let out = g.add_node(
+            Op::Output { name: "y".into() },
+            vec![TensorType::f32_vector(100)],
+            vec![],
+        );
         g.add_edge(a, 0, add, 0, TensorType::f32_vector(100));
         g.add_edge(b, 0, add, 1, TensorType::f32_vector(100));
         g.add_edge(add, 0, out, 0, TensorType::f32_vector(100));
 
         let mut inputs = HashMap::new();
-        inputs.insert("a".into(), TensorData::from_f32(Shape::vector(100), &vec![1.0; 100]));
-        inputs.insert("b".into(), TensorData::from_f32(Shape::vector(100), &vec![2.0; 100]));
+        inputs.insert(
+            "a".into(),
+            TensorData::from_f32(Shape::vector(100), &vec![1.0; 100]),
+        );
+        inputs.insert(
+            "b".into(),
+            TensorData::from_f32(Shape::vector(100), &vec![2.0; 100]),
+        );
 
         let (result, profile) = execute_profiled(&g, inputs).unwrap();
         assert!(!result.outputs.is_empty());

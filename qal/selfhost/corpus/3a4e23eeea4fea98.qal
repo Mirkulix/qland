@@ -1,0 +1,2 @@
+type String = { s: Str }
+fn f(s: String) -> Str = s.s

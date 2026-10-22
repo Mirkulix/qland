@@ -1,0 +1,2 @@
+fn lib_hello() -> Int = check_password("x")
+fn check_password(p: Str) -> Int = 1

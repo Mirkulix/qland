@@ -1,0 +1,2 @@
+fn plus_one(n: Int) -> Int
+= n + 1

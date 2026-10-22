@@ -1,0 +1,200 @@
+# Static checks of SQL literals for db_exec / db_query (spec §7: qc_sql, matching qal-core/src/sql.rs)
+
+type QcSqlTok =
+  | QcSqlWord(Str)
+  | QcSqlParam
+  | QcSqlSemicolon
+  | QcSqlOther
+
+fn qc_sql_is_ident(c: Int) -> Bool =
+  (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c == 95 || c == 36 || c > 127
+
+fn qc_sql_is_whitespace(c: Int) -> Bool =
+  c == 32 || c == 9 || c == 10 || c == 13
+
+fn qc_sql_is_digit(c: Int) -> Bool =
+  c >= 48 && c <= 57
+
+fn qc_sql_close_quote(b: Bytes, start_idx: Int, q: Int, what: Str) -> Result[Int, Str] =
+  let n = bytes_len(b) in
+  qc_sql_close_quote_loop(b, start_idx, n, q, what)
+
+fn qc_sql_close_quote_loop(b: Bytes, i: Int, n: Int, q: Int, what: Str) -> Result[Int, Str] =
+  if i >= n then Err("unterminated " ++ what)
+  else
+    let c = bytes_at(b, i) in
+    if c == q then
+      if i + 1 < n && bytes_at(b, i + 1) == q then
+        qc_sql_close_quote_loop(b, i + 2, n, q, what)
+      else Ok(i + 1)
+    else
+      qc_sql_close_quote_loop(b, i + 1, n, q, what)
+
+fn qc_sql_close_bracket_loop(b: Bytes, i: Int, n: Int) -> Result[Int, Str] =
+  if i >= n then Err("unterminated quoted identifier")
+  else if bytes_at(b, i) == 93 then Ok(i + 1) # ']'
+  else qc_sql_close_bracket_loop(b, i + 1, n)
+
+fn qc_sql_skip_line_comment_loop(b: Bytes, i: Int, n: Int) -> Int =
+  if i >= n then i
+  else if bytes_at(b, i) == 10 then i # '\n'
+  else qc_sql_skip_line_comment_loop(b, i + 1, n)
+
+fn qc_sql_skip_block_comment_loop(b: Bytes, i: Int, n: Int) -> Result[Int, Str] =
+  if i >= n then Err("unterminated comment")
+  else if bytes_at(b, i) == 42 && i + 1 < n && bytes_at(b, i + 1) == 47 then Ok(i + 2) # '*/'
+  else qc_sql_skip_block_comment_loop(b, i + 1, n)
+
+fn qc_sql_read_word_loop(b: Bytes, i: Int, n: Int) -> Int =
+  if i >= n then i
+  else if qc_sql_is_ident(bytes_at(b, i)) then qc_sql_read_word_loop(b, i + 1, n)
+  else i
+
+fn qc_sql_tokenize_loop(b: Bytes, i: Int, n: Int, acc: Accum[QcSqlTok]) -> Result[List[QcSqlTok], Str] =
+  if i >= n then Ok(acc_list(acc))
+  else
+    let c = bytes_at(b, i) in
+    if qc_sql_is_whitespace(c) then
+      qc_sql_tokenize_loop(b, i + 1, n, acc)
+    else if c == 45 && i + 1 < n && bytes_at(b, i + 1) == 45 then # '--'
+      let next_i = qc_sql_skip_line_comment_loop(b, i + 2, n) in
+      qc_sql_tokenize_loop(b, next_i, n, acc)
+    else if c == 47 && i + 1 < n && bytes_at(b, i + 1) == 42 then # '/*'
+      match qc_sql_skip_block_comment_loop(b, i + 2, n) {
+        Err(e) => Err(e),
+        Ok(next_i) => qc_sql_tokenize_loop(b, next_i, n, acc)
+      }
+    else if c == 39 then # '\''
+      match qc_sql_close_quote(b, i + 1, 39, "string") {
+        Err(e) => Err(e),
+        Ok(next_i) => qc_sql_tokenize_loop(b, next_i, n, AccPush(acc, QcSqlOther))
+      }
+    else if c == 34 || c == 96 then # '"' or '`'
+      match qc_sql_close_quote(b, i + 1, c, "quoted identifier") {
+        Err(e) => Err(e),
+        Ok(next_i) => qc_sql_tokenize_loop(b, next_i, n, AccPush(acc, QcSqlOther))
+      }
+    else if c == 91 then # '['
+      match qc_sql_close_bracket_loop(b, i + 1, n) {
+        Err(e) => Err(e),
+        Ok(next_i) => qc_sql_tokenize_loop(b, next_i, n, AccPush(acc, QcSqlOther))
+      }
+    else if c == 59 then # ';'
+      qc_sql_tokenize_loop(b, i + 1, n, AccPush(acc, QcSqlSemicolon))
+    else if c == 63 then # '?'
+      if i + 1 < n && qc_sql_is_digit(bytes_at(b, i + 1)) then
+        Err("numbered parameters (`?NNN`) are not allowed: use `?` and pass the values in order")
+      else
+        qc_sql_tokenize_loop(b, i + 1, n, AccPush(acc, QcSqlParam))
+    else if (c == 58 || c == 64 || c == 36 || c == 35) && i + 1 < n && qc_sql_is_ident(bytes_at(b, i + 1)) then
+      # ':' '@' '$' '#'
+      let char_str = match bytes_to_str(bytes_from([c])) { Some(s) => s, None => "?" } in
+      Err("named parameters (`" ++ char_str ++ "name`) are not allowed: use `?` and pass the values in order")
+    else if qc_sql_is_ident(c) then
+      let end_word = qc_sql_read_word_loop(b, i, n) in
+      let w_bytes = bytes_slice(b, i, end_word) in
+      let w_str = match bytes_to_str(w_bytes) { Some(s) => s, None => "" } in
+      qc_sql_tokenize_loop(b, end_word, n, AccPush(acc, QcSqlWord(w_str)))
+    else
+      qc_sql_tokenize_loop(b, i + 1, n, AccPush(acc, QcSqlOther))
+
+fn qc_sql_tokens(sql: Str) -> Result[List[QcSqlTok], Str] =
+  let b = to_bytes(sql) in
+  qc_sql_tokenize_loop(b, 0, bytes_len(b), AccEnd)
+
+fn qc_sql_tok_word(t: QcSqlTok) -> Option[Str] =
+  match t {
+    QcSqlWord(w) => Some(to_upper(w)),
+    _ => None
+  }
+
+fn qc_sql_is_trigger(toks: List[QcSqlTok]) -> Bool =
+  if len(toks) < 2 then false
+  else
+    match qc_sql_tok_word(list_at(toks, 0)) {
+      Some(w0) =>
+        if w0 != "CREATE" then false
+        else
+          let w1 = qc_sql_tok_word(list_at(toks, 1)) in
+          if w1 == Some("TRIGGER") then true
+          else if w1 == Some("TEMP") || w1 == Some("TEMPORARY") then
+            if len(toks) >= 3 && qc_sql_tok_word(list_at(toks, 2)) == Some("TRIGGER") then true
+            else false
+          else false,
+      None => false
+    }
+
+fn qc_sql_statement_end_loop(toks: List[QcSqlTok], k: Int, n: Int, trigger: Bool) -> Int =
+  if k >= n then n
+  else
+    let t = list_at(toks, k) in
+    match t {
+      QcSqlSemicolon =>
+        if !trigger then k
+        else if k >= 2 && qc_sql_tok_word(list_at(toks, k - 1)) == Some("END") && list_at(toks, k - 2) == QcSqlSemicolon then k
+        else qc_sql_statement_end_loop(toks, k + 1, n, trigger),
+      _ => qc_sql_statement_end_loop(toks, k + 1, n, trigger)
+    }
+
+fn qc_sql_statement_end(toks: List[QcSqlTok]) -> Int =
+  let trigger = qc_sql_is_trigger(toks) in
+  qc_sql_statement_end_loop(toks, 0, len(toks), trigger)
+
+fn qc_sql_is_forbidden(w: Str) -> Bool =
+  w == "ATTACH" || w == "DETACH" || w == "PRAGMA" || w == "VACUUM" ||
+  w == "BEGIN" || w == "COMMIT" || w == "END" || w == "ROLLBACK" ||
+  w == "SAVEPOINT" || w == "RELEASE"
+
+fn qc_sql_extract_words_loop(toks: List[QcSqlTok], i: Int, end_idx: Int, acc: Accum[Str]) -> List[Str] =
+  if i >= end_idx then acc_list(acc)
+  else
+    match list_at(toks, i) {
+      QcSqlWord(w) => qc_sql_extract_words_loop(toks, i + 1, end_idx, AccPush(acc, to_upper(w))),
+      _ => qc_sql_extract_words_loop(toks, i + 1, end_idx, acc)
+    }
+
+fn qc_sql_count_params_loop(toks: List[QcSqlTok], i: Int, end_idx: Int, count: Int) -> Int =
+  if i >= end_idx then count
+  else
+    match list_at(toks, i) {
+      QcSqlParam => qc_sql_count_params_loop(toks, i + 1, end_idx, count + 1),
+      _ => qc_sql_count_params_loop(toks, i + 1, end_idx, count)
+    }
+
+fn qc_sql_has_nul_loop(b: Bytes, i: Int, n: Int) -> Bool =
+  if i >= n then false
+  else if bytes_at(b, i) == 0 then true
+  else qc_sql_has_nul_loop(b, i + 1, n)
+
+fn qc_sql_check_statement(sql: Str) -> Result[Int, Str] =
+  let b = to_bytes(sql) in
+  if bytes_len(b) > 65536 then Err("the SQL text is longer than 65536 bytes")
+  else if qc_sql_has_nul_loop(b, 0, bytes_len(b)) then Err("the SQL text contains a NUL character")
+  else
+    match qc_sql_tokens(sql) {
+      Err(e) => Err(e),
+      Ok(toks) =>
+        let end_idx = qc_sql_statement_end(toks) in
+        if len(toks) > end_idx + 1 then Err("only one statement is allowed (a single trailing `;` is fine)")
+        else
+          let words = qc_sql_extract_words_loop(toks, 0, end_idx, AccEnd) in
+          if len(words) == 0 then Err("the SQL text has no statement")
+          else
+            let first0 = list_at(words, 0) in
+            let first =
+              if first0 == "EXPLAIN" then
+                let next1 = if len(words) > 1 then list_at(words, 1) else "" in
+                if next1 == "QUERY" then
+                  if len(words) > 3 then list_at(words, 3) else ""
+                else next1
+              else first0 in
+            if qc_sql_is_forbidden(first) then
+              Err("`" ++ first ++ "` statements are not allowed: the host controls the database file, its settings and the transaction")
+            else
+              Ok(qc_sql_count_params_loop(toks, 0, end_idx, 0))
+    }
+
+test qc_sql_test =
+  qc_sql_check_statement("SELECT id, title FROM todos WHERE id = ?") == Ok(1) &&
+  qc_sql_check_statement("insert into t (a, b) values (?, ?);") == Ok(2) &&
+  qc_sql_check_statement("ATTACH 'x' AS y") == Err("`ATTACH` statements are not allowed: the host controls the database file, its settings and the transaction")

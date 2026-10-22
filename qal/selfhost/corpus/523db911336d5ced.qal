@@ -1,0 +1,1 @@
+fn f(xs: List[Int]) -> Int ens let y = fold(xs, 0, fn(a, x) => a / x) in true = 0

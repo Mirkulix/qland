@@ -1,0 +1,2 @@
+type P = { x: Unit, y: Unit }
+fn main(args: List[Str]) -> Int !io = let p = P { y: print("y"), x: print("x") } in 0

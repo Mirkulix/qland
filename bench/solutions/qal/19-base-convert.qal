@@ -1,0 +1,36 @@
+# Conversion between bases 2..36.
+
+fn digit_value(c: Str) -> Int =
+  let k = char_code(c) in
+  if k >= 48 && k <= 57 then k - 48 else if k >= 97 && k <= 122 then k - 87 else if k >= 65 && k <= 90 then k - 55 else 99
+
+fn digit_char(v: Int) -> Str = if v < 10 then from_char_code(48 + v) else from_char_code(87 + v)
+
+type Acc = { base: Int, value: Int, ok: Bool }
+
+fn add_digit(a: Acc, c: Str) -> Acc =
+  let v = digit_value(c) in
+  if !a.ok || v >= a.base then Acc { base: a.base, value: 0, ok: false } else Acc { base: a.base, value: a.value * a.base + v, ok: true }
+
+fn render(v: Int, base: Int, acc: Str) -> Str = if v < base then digit_char(v) ++ acc else render(v / base, base, digit_char(v % base) ++ acc)
+
+fn is_digit(c: Str) -> Bool = c >= "0" && c <= "9"
+
+fn base(s: Str) -> Int = if s != "" && len(filter(chars(s), is_digit)) == len(s) then (match to_int(s) { Some(n) if n >= 2 && n <= 36 => n, _ => 0 }) else 0
+
+fn convert(line: Str) -> Str =
+  let ts = split(line, " ") in
+  let from = base(match get(ts, 0) { Some(t) => t, None => "" }) in
+  let to = base(match get(ts, 1) { Some(t) => t, None => "" }) in
+  let number = match get(ts, 2) { Some(t) => t, None => "" } in
+  let neg = starts_with(number, "-") in
+  let digits = if neg then slice(number, 1, len(number)) else number in
+  let a = fold(chars(digits), Acc { base: from, value: 0, ok: true }, add_digit) in
+  if len(ts) != 3 || from == 0 || to == 0 || digits == "" || !a.ok then "error"
+  else (if neg && a.value != 0 then "-" else "") ++ render(a.value, to, "")
+
+test example = convert("10 2 10") == "1010" && convert("16 10 ff") == "255" && convert("2 16 -1010") == "-a" && convert("10 37 5") == "error" && convert("2 36 -0") == "0"
+
+fn each_line() -> Int !io = match read_line() { None => 0, Some(l) => { print(convert(l)); each_line() } }
+
+fn main(args: List[Str]) -> Int !io = each_line()

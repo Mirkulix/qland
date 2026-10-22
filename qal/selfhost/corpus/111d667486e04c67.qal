@@ -1,0 +1,1 @@
+type Tree[T] = Leaf | Node(Tree[T], T, Tree[T])

@@ -21,14 +21,23 @@ fn main() {
     let mut emitter = qlang_agent::emitter::GraphEmitter::new("hello_qlang");
 
     // Input: a 2×3 matrix (e.g., mini-batch of 2 samples, 3 features)
-    let a = emitter.input("A", qlang_core::tensor::Dtype::F32, qlang_core::tensor::Shape::matrix(2, 3));
+    let a = emitter.input(
+        "A",
+        qlang_core::tensor::Dtype::F32,
+        qlang_core::tensor::Shape::matrix(2, 3),
+    );
 
     // Input: a 3×2 weight matrix
-    let b = emitter.input("B", qlang_core::tensor::Dtype::F32, qlang_core::tensor::Shape::matrix(3, 2));
+    let b = emitter.input(
+        "B",
+        qlang_core::tensor::Dtype::F32,
+        qlang_core::tensor::Shape::matrix(3, 2),
+    );
 
     // MatMul: A × B → [2, 2]
     let matmul = emitter.matmul(
-        a, b,
+        a,
+        b,
         qlang_core::tensor::TensorType::f32_matrix(2, 3),
         qlang_core::tensor::TensorType::f32_matrix(3, 2),
         qlang_core::tensor::TensorType::f32_matrix(2, 2),
@@ -38,7 +47,8 @@ fn main() {
     let activated = emitter.relu(matmul, qlang_core::tensor::TensorType::f32_matrix(2, 2));
 
     // IGQK: Compress to ternary weights
-    let compressed = emitter.to_ternary(activated, qlang_core::tensor::TensorType::f32_matrix(2, 2));
+    let compressed =
+        emitter.to_ternary(activated, qlang_core::tensor::TensorType::f32_matrix(2, 2));
 
     // Output
     emitter.output(
@@ -49,7 +59,11 @@ fn main() {
 
     let graph = emitter.build();
 
-    println!("  Graph built: {} nodes, {} edges", graph.nodes.len(), graph.edges.len());
+    println!(
+        "  Graph built: {} nodes, {} edges",
+        graph.nodes.len(),
+        graph.edges.len()
+    );
     println!("\n{graph}");
 
     // ─── Step 2: Verify the graph ───

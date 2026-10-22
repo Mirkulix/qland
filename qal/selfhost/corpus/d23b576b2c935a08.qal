@@ -1,0 +1,2 @@
+fn f(p: Point) -> Int
+= p.x

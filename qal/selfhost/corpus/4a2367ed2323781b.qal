@@ -1,0 +1,2 @@
+type T = { x: Int }
+fn f(a: Accum) -> Int = 0

@@ -45,7 +45,11 @@ pub enum StdLibError {
     /// Unknown function name.
     UnknownFunction(String),
     /// Wrong number of arguments.
-    ArityMismatch { name: String, expected: String, got: usize },
+    ArityMismatch {
+        name: String,
+        expected: String,
+        got: usize,
+    },
     /// Argument has the wrong type.
     TypeError { name: String, message: String },
     /// Runtime error (e.g. I/O failure).
@@ -56,7 +60,11 @@ impl fmt::Display for StdLibError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             StdLibError::UnknownFunction(name) => write!(f, "unknown function: {name}"),
-            StdLibError::ArityMismatch { name, expected, got } => {
+            StdLibError::ArityMismatch {
+                name,
+                expected,
+                got,
+            } => {
                 write!(f, "{name}: expected {expected} argument(s), got {got}")
             }
             StdLibError::TypeError { name, message } => write!(f, "{name}: {message}"),
@@ -152,7 +160,10 @@ impl Lcg {
     /// Returns a value in [0, 1).
     fn next_f64(&mut self) -> f64 {
         // Numerical Recipes LCG
-        self.state = self.state.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+        self.state = self
+            .state
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1);
         // Use upper 32 bits for quality.
         let upper = (self.state >> 33) as f64;
         upper / (1u64 << 31) as f64
@@ -253,7 +264,10 @@ impl StdLib {
         // Time
         fns.insert("clock", stdlib_clock);
 
-        Self { fns, rng: Lcg::new(seed) }
+        Self {
+            fns,
+            rng: Lcg::new(seed),
+        }
     }
 
     /// Call a built-in function by name.
@@ -417,9 +431,7 @@ fn stdlib_len(name: &str, args: &[Value], _rng: &mut Lcg) -> Result<Value, StdLi
     match &args[0] {
         Value::Array(a) => Ok(Value::Number(a.len() as f64)),
         Value::String(s) => Ok(Value::Number(s.len() as f64)),
-        Value::Tensor { shape, .. } => {
-            Ok(Value::Number(shape.iter().product::<usize>() as f64))
-        }
+        Value::Tensor { shape, .. } => Ok(Value::Number(shape.iter().product::<usize>() as f64)),
         _ => Err(StdLibError::TypeError {
             name: name.to_string(),
             message: "expected Array, String, or Tensor".to_string(),
@@ -691,9 +703,7 @@ fn stdlib_to_string(name: &str, args: &[Value], _rng: &mut Lcg) -> Result<Value,
 fn stdlib_shape(name: &str, args: &[Value], _rng: &mut Lcg) -> Result<Value, StdLibError> {
     arity(name, args, 1)?;
     match &args[0] {
-        Value::Tensor { shape, .. } => {
-            Ok(Value::Array(shape.iter().map(|&s| s as f64).collect()))
-        }
+        Value::Tensor { shape, .. } => Ok(Value::Array(shape.iter().map(|&s| s as f64).collect())),
         Value::Array(a) => Ok(Value::Array(vec![a.len() as f64])),
         _ => Err(StdLibError::TypeError {
             name: name.to_string(),
@@ -723,7 +733,10 @@ fn stdlib_reshape(name: &str, args: &[Value], _rng: &mut Lcg) -> Result<Value, S
             data.len()
         )));
     }
-    Ok(Value::Tensor { data, shape: new_shape })
+    Ok(Value::Tensor {
+        data,
+        shape: new_shape,
+    })
 }
 
 fn stdlib_transpose(name: &str, args: &[Value], _rng: &mut Lcg) -> Result<Value, StdLibError> {
@@ -832,11 +845,7 @@ fn stdlib_random_range(name: &str, args: &[Value], rng: &mut Lcg) -> Result<Valu
     Ok(Value::Number(v))
 }
 
-fn stdlib_random_array(
-    name: &str,
-    args: &[Value],
-    rng: &mut Lcg,
-) -> Result<Value, StdLibError> {
+fn stdlib_random_array(name: &str, args: &[Value], rng: &mut Lcg) -> Result<Value, StdLibError> {
     arity(name, args, 1)?;
     let n = as_number(name, &args[0])? as usize;
     let out: Vec<f64> = (0..n).map(|_| rng.next_f64()).collect();
@@ -879,7 +888,8 @@ mod tests {
             Value::Number(3.0)
         );
         assert_eq!(
-            sl.call("pow", &[Value::Number(2.0), Value::Number(10.0)]).unwrap(),
+            sl.call("pow", &[Value::Number(2.0), Value::Number(10.0)])
+                .unwrap(),
             Value::Number(1024.0)
         );
     }
@@ -1008,10 +1018,7 @@ mod tests {
         }
 
         if let Value::Number(v) = sl
-            .call(
-                "random_range",
-                &[Value::Number(10.0), Value::Number(20.0)],
-            )
+            .call("random_range", &[Value::Number(10.0), Value::Number(20.0)])
             .unwrap()
         {
             assert!((10.0..20.0).contains(&v));
@@ -1086,7 +1093,11 @@ mod tests {
         let result = sl.call("abs", &[]);
         assert!(result.is_err());
         match result.unwrap_err() {
-            StdLibError::ArityMismatch { name, expected, got } => {
+            StdLibError::ArityMismatch {
+                name,
+                expected,
+                got,
+            } => {
                 assert_eq!(name, "abs");
                 assert_eq!(expected, "1");
                 assert_eq!(got, 0);

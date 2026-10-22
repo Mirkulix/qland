@@ -1,0 +1,7 @@
+fn i(xs: List[Int], k: Int) -> Int = list_at(xs, k)
+fn s(xs: List[Str], k: Int) -> Str = list_at(xs, k)
+fn f(xs: List[Float], k: Int) -> Float = list_at(xs, k)
+fn b(xs: List[Bool], k: Int) -> Bool = list_at(xs, k)
+fn o(xs: List[Option[Int]], k: Int) -> Option[Int] = list_at(xs, k)
+fn by(b: Bytes, k: Int) -> Int = bytes_at(b, k)
+fn sum(b: Bytes, k: Int, acc: Int) -> Int = if k == bytes_len(b) then acc else sum(b, k + 1, acc + bytes_at(b, k))

@@ -240,7 +240,7 @@ class QuantumLLMTrainer:
             # Apply advanced math frameworks
             if self.config.use_hlwt and self.hlwt is not None:
                 # HLWT: Adaptive learning rate based on local stability
-                adaptive_lr = self.hlwt.compute_adaptive_lr(loss.item())
+                adaptive_lr = self.hlwt.compute_adaptive_lr(loss.item(), base_lr=self.config.learning_rate)
                 for param_group in self.optimizer.param_groups:
                     param_group['lr'] = adaptive_lr
 

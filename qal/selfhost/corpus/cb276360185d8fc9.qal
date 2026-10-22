@@ -1,0 +1,1 @@
+fn f(sql: Str) -> Result[Int, DbError] !db = db_exec(sql, [])

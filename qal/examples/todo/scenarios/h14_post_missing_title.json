@@ -1,0 +1,66 @@
+{
+ "name": "h14_post_missing_title",
+ "description": "title is required",
+ "steps": [
+  {
+   "name": "empty object",
+   "request": {
+    "method": "POST",
+    "path": "/todos",
+    "json": {}
+   },
+   "expect": {
+    "status": 400,
+    "json": {
+     "error": {
+      "code": "missing_field",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "only done",
+   "request": {
+    "method": "POST",
+    "path": "/todos",
+    "json": {
+     "done": true
+    }
+   },
+   "expect": {
+    "status": 400,
+    "json": {
+     "error": {
+      "code": "missing_field",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "nothing created",
+   "request": {
+    "method": "GET",
+    "path": "/todos"
+   },
+   "expect": {
+    "status": 200,
+    "json": [],
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  }
+ ]
+}

@@ -1,12 +1,20 @@
-// First QLANG program in text syntax
-// This is a human-readable VIEW — the graph is the truth.
+// QLANG - Hello World
+print("Hello from QLANG!")
+print("QLANG version: 0.1.0")
 
-graph hello_world {
-  input x: f32[4]
-  input y: f32[4]
+let name = "World"
+print("Hello, " + name + "!")
 
-  node sum = add(x, y)
-  node activated = relu(sum)
+// Variables and math
+let x = 42
+let y = x * 2 + 1
+print("x = " + str(x) + ", y = " + str(y))
 
-  output result = activated
-}
+// Built-in functions
+print("type(x) = " + type(x))
+print("type(name) = " + type(name))
+print("abs(-7) = " + str(abs(-7)))
+print("min(3, 5) = " + str(min(3, 5)))
+print("max(3, 5) = " + str(max(3, 5)))
+print("sqrt(16) = " + str(sqrt(16)))
+print("len(name) = " + str(len(name)))

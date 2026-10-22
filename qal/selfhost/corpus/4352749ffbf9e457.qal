@@ -1,0 +1,1 @@
+test t = let x: Option[List[Int]] = None in match x { Some(_) => 0, None => 1 }

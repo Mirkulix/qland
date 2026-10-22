@@ -1,0 +1,1 @@
+fn f() -> Int !io = { print("a"); print("b"); 3 }

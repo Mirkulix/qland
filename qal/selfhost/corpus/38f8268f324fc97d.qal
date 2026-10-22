@@ -1,0 +1,2 @@
+type Tree[T] = Leaf | Node(Forest[T], T)
+type Forest[T] = Empty | More(Tree[T], Forest[T])

@@ -11,12 +11,46 @@ use std::fmt;
 
 /// All valid operation names in QLANG, used for suggesting fixes on typos.
 const KNOWN_OPS: &[&str] = &[
-    "input", "output", "const", "add", "sub", "mul", "div", "neg", "matmul",
-    "transpose", "reshape", "slice", "concat", "reduce_sum", "reduce_mean",
-    "reduce_max", "relu", "sigmoid", "tanh", "softmax", "superpose", "evolve",
-    "measure", "entangle", "collapse", "entropy", "to_ternary", "to_lowrank",
-    "to_sparse", "fisher_metric", "project", "layer_norm", "attention",
-    "embedding", "residual", "gelu", "dropout", "cond", "scan", "subgraph",
+    "input",
+    "output",
+    "const",
+    "add",
+    "sub",
+    "mul",
+    "div",
+    "neg",
+    "matmul",
+    "transpose",
+    "reshape",
+    "slice",
+    "concat",
+    "reduce_sum",
+    "reduce_mean",
+    "reduce_max",
+    "relu",
+    "sigmoid",
+    "tanh",
+    "softmax",
+    "superpose",
+    "evolve",
+    "measure",
+    "entangle",
+    "collapse",
+    "entropy",
+    "to_ternary",
+    "to_lowrank",
+    "to_sparse",
+    "fisher_metric",
+    "project",
+    "layer_norm",
+    "attention",
+    "embedding",
+    "residual",
+    "gelu",
+    "dropout",
+    "cond",
+    "scan",
+    "subgraph",
 ];
 
 /// Known dtype names for type-mismatch suggestions.
@@ -54,10 +88,7 @@ pub enum QlangError {
     },
 
     /// Failure during a compilation phase.
-    CompilationError {
-        phase: String,
-        message: String,
-    },
+    CompilationError { phase: String, message: String },
 
     /// Filesystem / IO failure.
     IoError {
@@ -80,16 +111,15 @@ pub enum QlangError {
     },
 
     /// Operation exceeded its time budget.
-    TimeoutError {
-        elapsed_ms: u64,
-        limit_ms: u64,
-    },
+    TimeoutError { elapsed_ms: u64, limit_ms: u64 },
 }
 
 impl fmt::Display for QlangError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            QlangError::ParseError { line, col, message, .. } => {
+            QlangError::ParseError {
+                line, col, message, ..
+            } => {
                 write!(f, "parse error at {}:{}: {}", line, col, message)
             }
             QlangError::TypeError { expected, got, .. } => {
@@ -101,24 +131,38 @@ impl fmt::Display for QlangError {
             QlangError::CompilationError { phase, message } => {
                 write!(f, "compilation error in {}: {}", phase, message)
             }
-            QlangError::IoError { path, operation, message } => {
+            QlangError::IoError {
+                path,
+                operation,
+                message,
+            } => {
                 write!(f, "I/O error: {} on '{}': {}", operation, path, message)
             }
-            QlangError::ShapeError { expected_shape, got_shape, .. } => {
+            QlangError::ShapeError {
+                expected_shape,
+                got_shape,
+                ..
+            } => {
                 write!(
                     f,
                     "shape error: expected {:?}, got {:?}",
                     expected_shape, got_shape
                 )
             }
-            QlangError::MemoryError { requested_bytes, available_bytes } => {
+            QlangError::MemoryError {
+                requested_bytes,
+                available_bytes,
+            } => {
                 write!(
                     f,
                     "out of memory: requested {} bytes but only {} available",
                     requested_bytes, available_bytes
                 )
             }
-            QlangError::TimeoutError { elapsed_ms, limit_ms } => {
+            QlangError::TimeoutError {
+                elapsed_ms,
+                limit_ms,
+            } => {
                 write!(
                     f,
                     "timeout: operation took {}ms, limit was {}ms",
@@ -157,7 +201,11 @@ pub fn levenshtein_distance(a: &str, b: &str) -> usize {
     for i in 1..=a_len {
         curr_row[0] = i;
         for j in 1..=b_len {
-            let cost = if a_bytes[i - 1] == b_bytes[j - 1] { 0 } else { 1 };
+            let cost = if a_bytes[i - 1] == b_bytes[j - 1] {
+                0
+            } else {
+                1
+            };
             curr_row[j] = (prev_row[j] + 1)
                 .min(curr_row[j - 1] + 1)
                 .min(prev_row[j - 1] + cost);
@@ -176,7 +224,12 @@ fn closest_match<'a>(input: &str, candidates: &[&'a str]) -> Option<&'a str> {
 
     candidates
         .iter()
-        .map(|c| (*c, levenshtein_distance(&input.to_lowercase(), &c.to_lowercase())))
+        .map(|c| {
+            (
+                *c,
+                levenshtein_distance(&input.to_lowercase(), &c.to_lowercase()),
+            )
+        })
         .filter(|(_, d)| *d <= max_allowed && *d > 0)
         .min_by_key(|(_, d)| *d)
         .map(|(c, _)| c)
@@ -192,7 +245,11 @@ fn closest_match<'a>(input: &str, candidates: &[&'a str]) -> Option<&'a str> {
 /// - **Type mismatches**: Suggest appropriate cast.
 pub fn suggest_fix(error: &QlangError) -> Option<String> {
     match error {
-        QlangError::ParseError { message, suggestion, .. } => {
+        QlangError::ParseError {
+            message,
+            suggestion,
+            ..
+        } => {
             // If the error already carries a suggestion, return it.
             if let Some(s) = suggestion {
                 return Some(s.clone());
@@ -206,7 +263,12 @@ pub fn suggest_fix(error: &QlangError) -> Option<String> {
             None
         }
 
-        QlangError::TypeError { expected, got, suggestion, .. } => {
+        QlangError::TypeError {
+            expected,
+            got,
+            suggestion,
+            ..
+        } => {
             if let Some(s) = suggestion {
                 return Some(s.clone());
             }
@@ -228,14 +290,18 @@ pub fn suggest_fix(error: &QlangError) -> Option<String> {
             None
         }
 
-        QlangError::ShapeError { expected_shape, got_shape, .. } => {
-            Some(format!(
-                "Insert a reshape to convert {:?} -> {:?}: reshape(x, target_shape={:?})",
-                got_shape, expected_shape, expected_shape
-            ))
-        }
+        QlangError::ShapeError {
+            expected_shape,
+            got_shape,
+            ..
+        } => Some(format!(
+            "Insert a reshape to convert {:?} -> {:?}: reshape(x, target_shape={:?})",
+            got_shape, expected_shape, expected_shape
+        )),
 
-        QlangError::MemoryError { requested_bytes, .. } => {
+        QlangError::MemoryError {
+            requested_bytes, ..
+        } => {
             let mb = *requested_bytes as f64 / (1024.0 * 1024.0);
             Some(format!(
                 "Reduce memory usage ({:.1} MB requested). Consider: \
@@ -245,13 +311,11 @@ pub fn suggest_fix(error: &QlangError) -> Option<String> {
             ))
         }
 
-        QlangError::TimeoutError { limit_ms, .. } => {
-            Some(format!(
-                "Operation exceeded the {}ms limit. Consider breaking the \
+        QlangError::TimeoutError { limit_ms, .. } => Some(format!(
+            "Operation exceeded the {}ms limit. Consider breaking the \
                  computation into smaller sub-graphs or increasing the timeout.",
-                limit_ms
-            ))
-        }
+            limit_ms
+        )),
 
         // No automatic suggestion for these.
         QlangError::RuntimeError { .. }
@@ -298,7 +362,13 @@ pub fn format_error(error: &QlangError, source: Option<&str>) -> String {
     let mut out = String::new();
 
     match error {
-        QlangError::ParseError { line, col, message, source_line, .. } => {
+        QlangError::ParseError {
+            line,
+            col,
+            message,
+            source_line,
+            ..
+        } => {
             out.push_str(&format!(
                 "{}error{} at line {}{}{}, column {}{}{}:\n",
                 RED, RESET, CYAN, line, RESET, CYAN, col, RESET
@@ -306,9 +376,7 @@ pub fn format_error(error: &QlangError, source: Option<&str>) -> String {
             // Show the source line (from the error struct or the provided source).
             let display_line = source_line
                 .as_deref()
-                .or_else(|| {
-                    source.and_then(|s| s.lines().nth(line.saturating_sub(1)))
-                });
+                .or_else(|| source.and_then(|s| s.lines().nth(line.saturating_sub(1))));
             if let Some(src) = display_line {
                 out.push_str(&format!("  {}{}{}\n", GRAY, src, RESET));
                 // Underline caret.
@@ -326,7 +394,12 @@ pub fn format_error(error: &QlangError, source: Option<&str>) -> String {
             }
         }
 
-        QlangError::TypeError { node_id, expected, got, .. } => {
+        QlangError::TypeError {
+            node_id,
+            expected,
+            got,
+            ..
+        } => {
             out.push_str(&format!("{}error{}: type mismatch", RED, RESET));
             if let Some(id) = node_id {
                 out.push_str(&format!(" at node {}{}{}", CYAN, id, RESET));
@@ -338,7 +411,11 @@ pub fn format_error(error: &QlangError, source: Option<&str>) -> String {
             ));
         }
 
-        QlangError::RuntimeError { message, node_id, stack_trace } => {
+        QlangError::RuntimeError {
+            message,
+            node_id,
+            stack_trace,
+        } => {
             out.push_str(&format!("{}runtime error{}", RED, RESET));
             if let Some(id) = node_id {
                 out.push_str(&format!(" at node {}{}{}", CYAN, id, RESET));
@@ -359,14 +436,22 @@ pub fn format_error(error: &QlangError, source: Option<&str>) -> String {
             ));
         }
 
-        QlangError::IoError { path, operation, message } => {
+        QlangError::IoError {
+            path,
+            operation,
+            message,
+        } => {
             out.push_str(&format!(
                 "{}I/O error{}: {} on '{}{}{}': {}\n",
                 RED, RESET, operation, CYAN, path, RESET, message
             ));
         }
 
-        QlangError::ShapeError { expected_shape, got_shape, node_id } => {
+        QlangError::ShapeError {
+            expected_shape,
+            got_shape,
+            node_id,
+        } => {
             out.push_str(&format!("{}shape error{}", RED, RESET));
             if let Some(id) = node_id {
                 out.push_str(&format!(" at node {}{}{}", CYAN, id, RESET));
@@ -378,7 +463,10 @@ pub fn format_error(error: &QlangError, source: Option<&str>) -> String {
             ));
         }
 
-        QlangError::MemoryError { requested_bytes, available_bytes } => {
+        QlangError::MemoryError {
+            requested_bytes,
+            available_bytes,
+        } => {
             let req_mb = *requested_bytes as f64 / (1024.0 * 1024.0);
             let avail_mb = *available_bytes as f64 / (1024.0 * 1024.0);
             out.push_str(&format!(
@@ -387,7 +475,10 @@ pub fn format_error(error: &QlangError, source: Option<&str>) -> String {
             ));
         }
 
-        QlangError::TimeoutError { elapsed_ms, limit_ms } => {
+        QlangError::TimeoutError {
+            elapsed_ms,
+            limit_ms,
+        } => {
             out.push_str(&format!(
                 "{}timeout{}: operation took {}{}ms{} (limit: {}ms)\n",
                 YELLOW, RESET, RED, elapsed_ms, RESET, limit_ms
@@ -411,10 +502,19 @@ fn token_length_at(line: &str, col: usize) -> usize {
     let bytes = line.as_bytes();
     let start = col - 1;
     let mut end = start;
-    while end < bytes.len() && !bytes[end].is_ascii_whitespace() && bytes[end] != b'(' && bytes[end] != b')' && bytes[end] != b',' {
+    while end < bytes.len()
+        && !bytes[end].is_ascii_whitespace()
+        && bytes[end] != b'('
+        && bytes[end] != b')'
+        && bytes[end] != b','
+    {
         end += 1;
     }
-    if end == start { 1 } else { end - start }
+    if end == start {
+        1
+    } else {
+        end - start
+    }
 }
 
 // ── Multi-error collection ───────────────────────────────────────────────────
@@ -549,11 +649,12 @@ mod tests {
             source_line: None,
             suggestion: None,
         };
-        let source = "line 1\nline 2\nline 3\nline 4\nline 5\nline 6\nnode h = matmol(x, W)\nline 8";
+        let source =
+            "line 1\nline 2\nline 3\nline 4\nline 5\nline 6\nnode h = matmol(x, W)\nline 8";
         let formatted = format_error(&err, Some(source));
         assert!(formatted.contains("matmol"));
         assert!(formatted.contains("matmul")); // suggestion
-        // Line number is present (possibly surrounded by ANSI codes).
+                                               // Line number is present (possibly surrounded by ANSI codes).
         assert!(formatted.contains("7"));
     }
 

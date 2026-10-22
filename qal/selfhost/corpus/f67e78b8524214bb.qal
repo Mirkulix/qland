@@ -1,0 +1,1 @@
+fn f(xs: List[Int]) -> Int ens let ys = map(xs, fn(x) => 10 / x) in true = 0

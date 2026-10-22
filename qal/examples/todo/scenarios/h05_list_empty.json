@@ -1,0 +1,35 @@
+{
+ "name": "h05_list_empty",
+ "description": "empty list",
+ "steps": [
+  {
+   "name": "list is empty",
+   "request": {
+    "method": "GET",
+    "path": "/todos"
+   },
+   "expect": {
+    "status": 200,
+    "json": [],
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "empty filtered",
+   "request": {
+    "method": "GET",
+    "path": "/todos",
+    "query": "done=true"
+   },
+   "expect": {
+    "status": 200,
+    "json": [],
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  }
+ ]
+}

@@ -1,0 +1,2 @@
+type Pair[A, B] = { fst: A, snd: B }
+fn swap[A, B](p: Pair[A, B]) -> Pair[B, A] = Pair { fst: p.snd, snd: p.fst }

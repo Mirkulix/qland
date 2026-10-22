@@ -1,0 +1,1 @@
+fn check_password(p: Str) -> Int = if p == "s3cret" then 1 else 0

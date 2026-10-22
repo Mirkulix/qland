@@ -1,0 +1,1183 @@
+# Phase 5c: Lowering of typed expressions to WebAssembly and module compilation (qc_wasm.qal)
+
+type QcSite = {
+  path: Str,
+  label: Str,
+  contract: Option[Int],
+  values: List[QcFieldType]
+}
+
+type QcContractVal = {
+  name: Str,
+  ty: QcType,
+  local: Int
+}
+
+type QcFuncMeta = {
+  name: Str,
+  export: Str,
+  is_test: Bool,
+  params: List[QcFieldType],
+  ret: QcType,
+  effects: List[Str],
+  reqs: List[QcExpr],
+  enss: List[QcExpr],
+  sites: List[QcSite]
+}
+
+type QcCompiledModule = {
+  wasm: Bytes,
+  funcs: List[QcFuncMeta],
+  types: List[QcTypeDef],
+  imports: List[Str],
+  table_len: Int,
+  memory_max_pages: Int
+}
+
+type QcEntry =
+  | QcEntryFn(Str)
+  | QcEntryFns(List[Str])
+  | QcEntryTests
+  | QcEntryAll
+
+type QcFnGen = {
+  m: QcMb,
+  meta: Int,
+  fn_index: Map[Int, Int],
+  locals: List[QcType],
+  local_map: Map[Int, Int],
+  a: QcAsm,
+  sites: List[QcSite]
+}
+
+type QcFnGenL = {
+  g: QcFnGen,
+  l: Int
+}
+
+type QcFnGenOut = {
+  m: QcMb,
+  f_bytes: Bytes,
+  sites: List[QcSite]
+}
+
+fn qc_fngen_init_locals_loop(a: QcAsm, locals: List[QcType], idx: Int) -> QcAsm =
+  if idx >= len(locals) then a
+  else
+    let lr = qc_asm_local(a, qc_type_val(list_at(locals, idx))) in
+    qc_fngen_init_locals_loop(lr.a, locals, idx + 1)
+
+fn qc_fngen_init_map_loop(mp: Map[Int, Int], idx: Int, n: Int) -> Map[Int, Int] =
+  if idx >= n then mp
+  else qc_fngen_init_map_loop(map_put(mp, idx, idx), idx + 1, n)
+
+fn qc_fngen_new(m: QcMb, meta: Int, fn_index: Map[Int, Int], locals: List[QcType], n_params: Int) -> QcFnGen =
+  let a0 = qc_asm_new(n_params) in
+  let a1 = qc_fngen_init_locals_loop(a0, locals, n_params) in
+  let mp = qc_fngen_init_map_loop(map_new(), 0, len(locals)) in
+  QcFnGen {
+    m: m,
+    meta: meta,
+    fn_index: fn_index,
+    locals: locals,
+    local_map: mp,
+    a: a1,
+    sites: []
+  }
+
+fn qc_fngen_set_a(g: QcFnGen, a: QcAsm) -> QcFnGen =
+  QcFnGen { m: g.m, meta: g.meta, fn_index: g.fn_index, locals: g.locals, local_map: g.local_map, a: a, sites: g.sites }
+
+fn qc_fngen_set_ma(g: QcFnGen, m: QcMb, a: QcAsm) -> QcFnGen =
+  QcFnGen { m: m, meta: g.meta, fn_index: g.fn_index, locals: g.locals, local_map: g.local_map, a: a, sites: g.sites }
+
+fn qc_fngen_i(g: QcFnGen, ins: QcIns) -> QcFnGen =
+  qc_fngen_set_a(g, qc_asm_i(g.a, ins))
+
+fn qc_fngen_all(g: QcFnGen, inss: List[QcIns]) -> QcFnGen =
+  qc_fngen_set_a(g, qc_asm_all(g.a, inss))
+
+fn qc_fngen_opt(g: QcFnGen, ins: Option[QcIns]) -> QcFnGen =
+  qc_fngen_set_a(g, qc_asm_opt(g.a, ins))
+
+fn qc_fngen_bug(g: QcFnGen, msg: Str) -> QcFnGen =
+  QcFnGen { m: qc_mb_bug(g.m, msg), meta: g.meta, fn_index: g.fn_index, locals: g.locals, local_map: g.local_map, a: g.a, sites: g.sites }
+
+fn qc_fngen_l(g: QcFnGen, id: Int) -> QcFnGenL =
+  match map_get(g.local_map, id) {
+    Some(l) => QcFnGenL { g: g, l: l },
+    None =>
+      let vt = qc_type_val(list_at(g.locals, id)) in
+      let lr = qc_asm_local(g.a, vt) in
+      let g2 = QcFnGen {
+        m: g.m, meta: g.meta, fn_index: g.fn_index, locals: g.locals,
+        local_map: map_put(g.local_map, id, lr.l),
+        a: lr.a, sites: g.sites
+      } in
+      QcFnGenL { g: g2, l: lr.l }
+  }
+
+fn qc_fngen_temp(g: QcFnGen, r: QcRepr) -> QcFnGenL =
+  let lr = qc_asm_local(g.a, qc_repr_val(r)) in
+  QcFnGenL { g: qc_fngen_set_a(g, lr.a), l: lr.l }
+
+fn qc_fngen_call_rt(g: QcFnGen, rt: QcRt) -> QcFnGen =
+  let r = qc_mb_rt(g.m, rt) in
+  qc_fngen_set_ma(g, r.m, qc_asm_i(g.a, QcICall(r.idx)))
+
+fn qc_fngen_alloc(g: QcFnGen, size: Int, into: Int) -> QcFnGen =
+  let g1 = qc_fngen_i(g, QcII64Const(size)) in
+  let g2 = qc_fngen_call_rt(g1, QcRtAlloc) in
+  qc_fngen_i(g2, QcILocalSet(into))
+
+type QcFnGenSite = {
+  g: QcFnGen,
+  site: Int
+}
+
+fn qc_fngen_site(g: QcFnGen, path: Str, label: Str, values: List[QcFieldType], contract: Option[Int]) -> QcFnGenSite =
+  let idx = len(g.sites) in
+  let s = QcSite { path: path, label: label, contract: contract, values: values } in
+  let g2 = QcFnGen {
+    m: g.m, meta: g.meta, fn_index: g.fn_index, locals: g.locals,
+    local_map: g.local_map, a: g.a, sites: push(g.sites, s)
+  } in
+  QcFnGenSite { g: g2, site: idx }
+
+fn qc_fngen_site_args(g: QcFnGen, site: Int) -> QcFnGen =
+  qc_fngen_all(g, [QcII32Const(g.meta), QcII32Const(site)])
+
+type QcFnGenElem = {
+  g: QcFnGen,
+  repr: QcRepr
+}
+
+fn qc_fngen_elem(g: QcFnGen, t: QcType) -> QcFnGenElem =
+  match t {
+    QcTList(x) => QcFnGenElem { g: g, repr: qc_repr_of(x) },
+    other => QcFnGenElem { g: qc_fngen_bug(g, "list built-in applied to " ++ qc_print_type(other)), repr: QcRI64 }
+  }
+
+fn qc_types_to_valtypes_loop(ts: List[QcType], idx: Int, acc: Accum[QcValType]) -> List[QcValType] =
+  if idx >= len(ts) then acc_list(acc)
+  else qc_types_to_valtypes_loop(ts, idx + 1, AccPush(acc, qc_type_val(list_at(ts, idx))))
+
+fn qc_lambda_params_map_loop(params: List[Int], k: Int, mp: Map[Int, Int]) -> Map[Int, Int] =
+  if k >= len(params) then mp
+  else qc_lambda_params_map_loop(params, k + 1, map_put(mp, list_at(params, k), 1 + k))
+
+fn qc_lambda_load_captures_loop(g: QcFnGen, captures: List[Int], k: Int) -> QcFnGen =
+  if k >= len(captures) then g
+  else
+    let c = list_at(captures, k) in
+    let lr = qc_fngen_l(g, c) in
+    let g1 = qc_fngen_all(lr.g, [QcILocalGet(0), QcII64Load(8 + 8 * k)]) in
+    let g2 = qc_fngen_opt(g1, qc_from_slot(qc_repr_of(list_at(g1.locals, c)))) in
+    let g3 = qc_fngen_i(g2, QcILocalSet(lr.l)) in
+    qc_lambda_load_captures_loop(g3, captures, k + 1)
+
+fn qc_lambda_store_captures_loop(g: QcFnGen, p: Int, captures: List[Int], k: Int) -> QcFnGen =
+  if k >= len(captures) then g
+  else
+    let c = list_at(captures, k) in
+    let lr = qc_fngen_l(g, c) in
+    let g1 = qc_fngen_all(lr.g, [QcILocalGet(p), QcILocalGet(lr.l)]) in
+    let g2 = qc_fngen_opt(g1, qc_to_slot(qc_repr_of(list_at(g1.locals, c)))) in
+    let g3 = qc_fngen_i(g2, QcII64Store(8 + 8 * k)) in
+    qc_lambda_store_captures_loop(g3, p, captures, k + 1)
+
+fn qc_fngen_lambda(g: QcFnGen, l: QcTLambda, ty: QcType) -> QcFnGen =
+  match ty {
+    QcTFn(ps, r, _) =>
+      let wparams = [QcVI32] ++ qc_types_to_valtypes_loop(ps, 0, AccEnd) in
+      let dr = qc_mb_declare(g.m, wparams, [qc_type_val(r)]) in
+      let index = dr.idx in
+      let sr = qc_mb_table_slot(dr.m, index) in
+      let slot = sr.idx in
+      let mp = qc_lambda_params_map_loop(l.params, 0, map_new()) in
+      let g_inner0 = QcFnGen {
+        m: sr.m,
+        meta: g.meta,
+        fn_index: g.fn_index,
+        locals: g.locals,
+        local_map: mp,
+        a: qc_asm_new(len(wparams)),
+        sites: g.sites
+      } in
+      let g_inner1 = qc_lambda_load_captures_loop(g_inner0, l.captures, 0) in
+      let g_inner2 = qc_fngen_expr(g_inner1, l.body, true) in
+      let m2 = qc_mb_define(g_inner2.m, index, qc_asm_finish(g_inner2.a)) in
+      let g_outer0 = QcFnGen {
+        m: m2,
+        meta: g.meta,
+        fn_index: g.fn_index,
+        locals: g.locals,
+        local_map: g.local_map,
+        a: g.a,
+        sites: g_inner2.sites
+      } in
+      let tr = qc_fngen_temp(g_outer0, QcRI32) in
+      let p = tr.l in
+      let g_outer1 = qc_fngen_alloc(tr.g, 8 + 8 * len(l.captures), p) in
+      let g_outer2 = qc_fngen_all(g_outer1, [QcILocalGet(p), QcII32Const(slot), QcII32Store(0)]) in
+      let g_outer3 = qc_lambda_store_captures_loop(g_outer2, p, l.captures, 0) in
+      qc_fngen_i(g_outer3, QcILocalGet(p)),
+    _ =>
+      qc_fngen_i(qc_fngen_bug(g, "closure of type " ++ qc_print_type(ty)), QcIUnreachable)
+  }
+
+fn qc_fngen_store_slots_loop(g: QcFnGen, p: Int, offset: Int, xs: List[QcTExpr], k: Int) -> QcFnGen =
+  if k >= len(xs) then g
+  else
+    let x = list_at(xs, k) in
+    let g1 = qc_fngen_i(g, QcILocalGet(p)) in
+    let g2 = qc_fngen_expr(g1, x, false) in
+    let g3 = qc_fngen_opt(g2, qc_to_slot(qc_repr_of(x.ty))) in
+    let g4 = qc_fngen_i(g3, QcII64Store(offset + 8 * k)) in
+    qc_fngen_store_slots_loop(g4, p, offset, xs, k + 1)
+
+fn qc_fngen_store_record_loop(g: QcFnGen, p: Int, fs: List[QcTField], k: Int) -> QcFnGen =
+  if k >= len(fs) then g
+  else
+    let rf = list_at(fs, k) in
+    let g1 = qc_fngen_i(g, QcILocalGet(p)) in
+    let g2 = qc_fngen_expr(g1, rf.expr, false) in
+    let g3 = qc_fngen_opt(g2, qc_to_slot(qc_repr_of(rf.expr.ty))) in
+    let g4 = qc_fngen_i(g3, QcII64Store(8 * rf.idx)) in
+    qc_fngen_store_record_loop(g4, p, fs, k + 1)
+
+fn qc_fngen_seq_loop(g: QcFnGen, items: List[QcTExpr], k: Int, tail: Bool) -> QcFnGen =
+  let n = len(items) in
+  if n == 0 then qc_fngen_i(g, QcII32Const(0))
+  else if k + 1 == n then qc_fngen_expr(g, list_at(items, k), tail)
+  else
+    let g1 = qc_fngen_expr(g, list_at(items, k), false) in
+    let g2 = qc_fngen_i(g1, QcIDrop) in
+    qc_fngen_seq_loop(g2, items, k + 1, tail)
+
+fn qc_fngen_exprs_loop(g: QcFnGen, xs: List[QcTExpr], k: Int) -> QcFnGen =
+  if k >= len(xs) then g
+  else
+    let g1 = qc_fngen_expr(g, list_at(xs, k), false) in
+    qc_fngen_exprs_loop(g1, xs, k + 1)
+
+fn qc_binop_is_arith(op: QcBinOp) -> Bool =
+  match op {
+    QcOpAdd => true,
+    QcOpSub => true,
+    QcOpMul => true,
+    QcOpDiv => true,
+    QcOpRem => true,
+    _ => false
+  }
+
+type QcFnGenOptSite = {
+  g: QcFnGen,
+  site: Option[Int]
+}
+
+fn qc_fngen_binary(g0: QcFnGen, op: QcBinOp, l: QcTExpr, r: QcTExpr, path: Str) -> QcFnGen =
+  match op {
+    QcOpAnd =>
+      let g1 = qc_fngen_expr(g0, l, false) in
+      let g2 = qc_fngen_i(g1, QcIIf(QcBtResult(QcVI32))) in
+      let g3 = qc_fngen_expr(g2, r, false) in
+      qc_fngen_all(g3, [QcIElse, QcII32Const(0), QcIEnd]),
+    QcOpOr =>
+      let g1 = qc_fngen_expr(g0, l, false) in
+      let g2 = qc_fngen_all(g1, [QcIIf(QcBtResult(QcVI32)), QcII32Const(1), QcIElse]) in
+      let g3 = qc_fngen_expr(g2, r, false) in
+      qc_fngen_i(g3, QcIEnd),
+    _ =>
+      let is_float = match l.ty { QcTFloat => true, _ => false } in
+      let os = if !is_float && qc_binop_is_arith(op) then
+        let sr = qc_fngen_site(g0, path, qc_binop_sym(op), [
+          QcFieldType { name: "left", ty: QcTInt },
+          QcFieldType { name: "right", ty: QcTInt }
+        ], None) in
+        QcFnGenOptSite { g: sr.g, site: Some(sr.site) }
+      else
+        QcFnGenOptSite { g: g0, site: None }
+      in
+      let g2 = qc_fngen_expr(os.g, l, false) in
+      let g3 = qc_fngen_expr(g2, r, false) in
+      if qc_binop_is_arith(op) then
+        match os.site {
+          Some(site) =>
+            let g4 = qc_fngen_site_args(g3, site) in
+            qc_fngen_call_rt(g4, QcRtArith(op)),
+          None =>
+            let ins = match op {
+              QcOpAdd => QcIF64Add,
+              QcOpSub => QcIF64Sub,
+              QcOpMul => QcIF64Mul,
+              _ => QcIF64Div
+            } in
+            qc_fngen_i(g3, ins)
+        }
+      else
+        let is_str = match l.ty { QcTStr => true, _ => false } in
+        let is_cmp = match op { QcOpLt => true, QcOpLe => true, QcOpGt => true, QcOpGe => true, _ => false } in
+        if is_cmp && is_str then
+          let g4 = qc_fngen_call_rt(g3, QcRtStrCmp) in
+          let cmp_ins = match op {
+            QcOpLt => QcII32LtS,
+            QcOpLe => QcII32LeS,
+            QcOpGt => QcII32GtS,
+            _ => QcII32GeS
+          } in
+          qc_fngen_all(g4, [QcII32Const(0), cmp_ins])
+        else
+          match op {
+            QcOpLt => qc_fngen_i(g3, if is_float then QcIF64Lt else QcII64LtS),
+            QcOpLe => qc_fngen_i(g3, if is_float then QcIF64Le else QcII64LeS),
+            QcOpGt => qc_fngen_i(g3, if is_float then QcIF64Gt else QcII64GtS),
+            QcOpGe => qc_fngen_i(g3, if is_float then QcIF64Ge else QcII64GeS),
+            QcOpEq =>
+              let ma = qc_mb_emit_eq(g3.m, g3.a, l.ty) in
+              qc_fngen_set_ma(g3, ma.m, ma.a),
+            QcOpNe =>
+              let ma = qc_mb_emit_eq(g3.m, g3.a, l.ty) in
+              qc_fngen_set_ma(g3, ma.m, qc_asm_i(ma.a, QcII32Eqz)),
+            QcOpConcat =>
+              let is_str_or_bytes = match l.ty { QcTStr => true, QcTBytes => true, _ => false } in
+              qc_fngen_call_rt(g3, if is_str_or_bytes then QcRtStrConcat else QcRtListConcat),
+            _ => qc_fngen_bug(g3, "`&&`/`||` reached the strict operators")
+          }
+  }
+
+fn qc_map_builtin_args_loop(g: QcFnGen, args: List[QcTExpr], idx: Int) -> QcFnGen =
+  if idx >= len(args) then g
+  else
+    let x = list_at(args, idx) in
+    let g1 = qc_fngen_expr(g, x, false) in
+    let g2 = qc_fngen_opt(g1, qc_to_slot(qc_repr_of(x.ty))) in
+    qc_map_builtin_args_loop(g2, args, idx + 1)
+
+fn qc_fngen_map_builtin(g: QcFnGen, b: QcBuiltin, args: List[QcTExpr]) -> Option[QcFnGen] =
+  let is_map_b = match b {
+    QcBMapGet => true,
+    QcBMapPut => true,
+    QcBMapDel => true,
+    QcBMapHas => true,
+    _ => false
+  } in
+  if !is_map_b then None
+  else if len(args) == 0 then
+    Some(qc_fngen_i(qc_fngen_bug(g, "map built-in without a map argument"), QcIUnreachable))
+  else
+    let a0 = list_at(args, 0) in
+    match a0.ty {
+      QcTMap(k, _) =>
+        let cr = qc_mb_cmp_fn(g.m, k) in
+        let cmp = cr.idx in
+        let g1 = qc_fngen_set_ma(g, cr.m, g.a) in
+        let g2 = qc_fngen_expr(g1, a0, false) in
+        let g3 = qc_map_builtin_args_loop(g2, args, 1) in
+        let g4 = match b {
+          QcBMapGet => qc_fngen_call_rt(g3, QcRtMapGet(cmp)),
+          QcBMapPut => qc_fngen_call_rt(g3, QcRtMapPut(cmp)),
+          QcBMapDel => qc_fngen_call_rt(g3, QcRtMapDel(cmp)),
+          _ =>
+            let g_f = qc_fngen_call_rt(g3, QcRtMapFind(cmp)) in
+            qc_fngen_all(g_f, [QcII32Const(0), QcII32Ne])
+        } in
+        Some(g4),
+      _ =>
+        Some(qc_fngen_i(qc_fngen_bug(g, "map built-in without a map argument"), QcIUnreachable))
+    }
+
+fn qc_fngen_builtin(g0: QcFnGen, b: QcBuiltin, args: List[QcTExpr], path: Str, ret: QcType) -> QcFnGen =
+  match qc_fngen_map_builtin(g0, b, args) {
+    Some(g_res) => g_res,
+    None =>
+      match b {
+        QcBTodo =>
+          let sr = qc_fngen_site(g0, path, "todo()", [], None) in
+          let ma = qc_mb_emit_fail(sr.g.m, sr.g.a, 8, QcArgConst(sr.g.meta), QcArgConst(sr.site), []) in
+          qc_fngen_set_ma(sr.g, ma.m, ma.a),
+        QcBCompare =>
+          if len(args) == 0 then
+            qc_fngen_i(qc_fngen_bug(g0, "`compare` without arguments"), QcIUnreachable)
+          else
+            let t = list_at(args, 0).ty in
+            let cr = qc_mb_cmp_fn(g0.m, t) in
+            let g1 = qc_fngen_set_ma(g0, cr.m, g0.a) in
+            let g2 = qc_map_builtin_args_loop(g1, args, 0) in
+            qc_fngen_all(g2, [QcICall(cr.idx), QcII64ExtendI32S]),
+        _ =>
+          let g = qc_fngen_exprs_loop(g0, args, 0) in
+          match b {
+            QcBStrLen => qc_fngen_call_rt(g, QcRtStrLen),
+            QcBListLen => qc_fngen_all(g, [QcII32Load(0), QcII64ExtendI32U]),
+            QcBSlice =>
+              let sr = qc_fngen_site(g, path, "slice", [
+                QcFieldType { name: "start", ty: QcTInt },
+                QcFieldType { name: "end", ty: QcTInt },
+                QcFieldType { name: "len", ty: QcTInt }
+              ], None) in
+              qc_fngen_call_rt(qc_fngen_site_args(sr.g, sr.site), QcRtStrSlice),
+            QcBSplit =>
+              let sr = qc_fngen_site(g, path, "split: req sep != \"\"", [QcFieldType { name: "sep", ty: QcTStr }], None) in
+              qc_fngen_call_rt(qc_fngen_site_args(sr.g, sr.site), QcRtStrSplit),
+            QcBJoin => qc_fngen_call_rt(g, QcRtStrJoin),
+            QcBTrim => qc_fngen_call_rt(g, QcRtStrTrim),
+            QcBContains => qc_fngen_call_rt(g, QcRtStrContains),
+            QcBStartsWith => qc_fngen_call_rt(g, QcRtStrStartsWith),
+            QcBToInt => qc_fngen_call_rt(g, QcRtStrToInt),
+            QcBFromInt => qc_fngen_call_rt(g, QcRtIntToStr),
+            QcBChars => qc_fngen_call_rt(g, QcRtStrChars),
+            QcBToFloat =>
+              let t_ok = qc_fngen_temp(g, QcRI32) in
+              let t_v = qc_fngen_temp(t_ok.g, QcRF64) in
+              let ok = t_ok.l in
+              let v = t_v.l in
+              let ir = qc_mb_import(t_v.g.m, "str_to_float") in
+              let g1 = qc_fngen_set_ma(t_v.g, ir.m, qc_asm_all(t_v.g.a, [
+                QcICall(ir.idx), QcILocalSet(v), QcILocalSet(ok), QcILocalGet(ok),
+                QcIIf(QcBtResult(QcVI32)), QcII32Const(1), QcILocalGet(v), QcII64ReinterpretF64
+              ])) in
+              let g2 = qc_fngen_call_rt(g1, QcRtVariant1) in
+              qc_fngen_all(g2, [QcIElse, QcII32Const(qc_tag_addr(0)), QcIEnd]),
+            QcBFromFloat =>
+              let ir = qc_mb_import(g.m, "float_to_str") in
+              qc_fngen_set_ma(g, ir.m, qc_asm_i(g.a, QcICall(ir.idx))),
+            QcBGet => qc_fngen_call_rt(g, QcRtListGet),
+            QcBPush =>
+              let g1 = qc_fngen_opt(g, qc_to_slot(qc_repr_of(list_at(args, 1).ty))) in
+              qc_fngen_call_rt(g1, QcRtListPush),
+            QcBConcat => qc_fngen_call_rt(g, QcRtListConcat),
+            QcBMap =>
+              let e1 = qc_fngen_elem(g, list_at(args, 0).ty) in
+              let e2 = qc_fngen_elem(e1.g, ret) in
+              qc_fngen_call_rt(e2.g, QcRtMap(e1.repr, e2.repr)),
+            QcBFilter =>
+              let e1 = qc_fngen_elem(g, list_at(args, 0).ty) in
+              qc_fngen_call_rt(e1.g, QcRtFilter(e1.repr)),
+            QcBFold =>
+              let e1 = qc_fngen_elem(g, list_at(args, 0).ty) in
+              qc_fngen_call_rt(e1.g, QcRtFold(qc_repr_of(ret), e1.repr)),
+            QcBRange => qc_fngen_call_rt(g, QcRtListRange),
+            QcBReverse => qc_fngen_call_rt(g, QcRtListReverse),
+            QcBSortInt => qc_fngen_call_rt(g, QcRtListSort(false)),
+            QcBSortStr => qc_fngen_call_rt(g, QcRtListSort(true)),
+            QcBCharCode =>
+              let sr = qc_fngen_site(g, path, "char_code: req s != \"\"", [QcFieldType { name: "s", ty: QcTStr }], None) in
+              qc_fngen_call_rt(qc_fngen_site_args(sr.g, sr.site), QcRtCharCode),
+            QcBFromCharCode =>
+              let sr = qc_fngen_site(g, path, "from_char_code: req 0 <= n <= 1114111 && !(55296 <= n <= 57343)", [QcFieldType { name: "n", ty: QcTInt }], None) in
+              qc_fngen_call_rt(qc_fngen_site_args(sr.g, sr.site), QcRtFromCharCode),
+            QcBToUpper => qc_fngen_call_rt(g, QcRtStrCase(true)),
+            QcBToLower => qc_fngen_call_rt(g, QcRtStrCase(false)),
+            QcBReplace =>
+              let sr = qc_fngen_site(g, path, "replace: req from != \"\"", [QcFieldType { name: "from", ty: QcTStr }], None) in
+              qc_fngen_call_rt(qc_fngen_site_args(sr.g, sr.site), QcRtStrReplace),
+            QcBIndexOf => qc_fngen_call_rt(g, QcRtStrIndexOf),
+            QcBIntToFloat => qc_fngen_i(g, QcIF64ConvertI64S),
+            QcBFloatToInt => qc_fngen_call_rt(g, QcRtFloatToInt),
+            QcBPrint =>
+              let ir = qc_mb_import(g.m, "io.print") in
+              qc_fngen_set_ma(g, ir.m, qc_asm_all(g.a, [QcICall(ir.idx), QcII32Const(0)])),
+            QcBReadLine =>
+              let ir = qc_mb_import(g.m, "io.read_line") in
+              let g1 = qc_fngen_set_ma(g, ir.m, qc_asm_i(g.a, QcICall(ir.idx))) in
+              qc_fngen_call_rt(g1, QcRtOptFromPtr),
+            QcBReadAll =>
+              let ir = qc_mb_import(g.m, "io.read_all") in
+              qc_fngen_set_ma(g, ir.m, qc_asm_i(g.a, QcICall(ir.idx))),
+            QcBReadFile =>
+              let ir = qc_mb_import(g.m, "fs.read_file") in
+              let g1 = qc_fngen_set_ma(g, ir.m, qc_asm_i(g.a, QcICall(ir.idx))) in
+              qc_fngen_call_rt(g1, QcRtResultFrom),
+            QcBWriteFile =>
+              let ir = qc_mb_import(g.m, "fs.write_file") in
+              let g1 = qc_fngen_set_ma(g, ir.m, qc_asm_i(g.a, QcICall(ir.idx))) in
+              qc_fngen_call_rt(g1, QcRtResultUnitFrom),
+            QcBNowMs =>
+              let ir = qc_mb_import(g.m, "time.now_ms") in
+              qc_fngen_set_ma(g, ir.m, qc_asm_i(g.a, QcICall(ir.idx))),
+            QcBMapNew => qc_fngen_i(g, QcII32Const(0)),
+            QcBMapSize => qc_fngen_call_rt(g, QcRtMapSize),
+            QcBBytesLen => qc_fngen_all(g, [QcII32Load(0), QcII64ExtendI32U]),
+            QcBMapKeys => qc_fngen_call_rt(g, QcRtMapKeys),
+            QcBMapValues => qc_fngen_call_rt(g, QcRtMapValues),
+            QcBToBytes => g,
+            QcBBytesGet => qc_fngen_call_rt(g, QcRtBytesGet),
+            QcBBytesSlice =>
+              let sr = qc_fngen_site(g, path, "bytes_slice", [
+                QcFieldType { name: "start", ty: QcTInt },
+                QcFieldType { name: "end", ty: QcTInt },
+                QcFieldType { name: "len", ty: QcTInt }
+              ], None) in
+              qc_fngen_call_rt(qc_fngen_site_args(sr.g, sr.site), QcRtBytesSlice),
+            QcBBytesFrom =>
+              let sr = qc_fngen_site(g, path, "bytes_from: req 0 <= x <= 255", [QcFieldType { name: "x", ty: QcTInt }], None) in
+              qc_fngen_call_rt(qc_fngen_site_args(sr.g, sr.site), QcRtBytesFrom),
+            QcBBytesToList => qc_fngen_call_rt(g, QcRtBytesToList),
+            QcBBytesToStr =>
+              let tr = qc_fngen_temp(g, QcRI32) in
+              let p = tr.l in
+              let ir = qc_mb_import(tr.g.m, "utf8_valid") in
+              let g1 = qc_fngen_set_ma(tr.g, ir.m, qc_asm_all(tr.g.a, [
+                QcILocalTee(p), QcICall(ir.idx),
+                QcIIf(QcBtResult(QcVI32)), QcII32Const(1), QcILocalGet(p), QcII64ExtendI32U
+              ])) in
+              let g2 = qc_fngen_call_rt(g1, QcRtVariant1) in
+              qc_fngen_all(g2, [QcIElse, QcII32Const(qc_tag_addr(0)), QcIEnd]),
+            QcBHttp =>
+              let ir = qc_mb_import(g.m, "net.http") in
+              qc_fngen_set_ma(g, ir.m, qc_asm_i(g.a, QcICall(ir.idx))),
+            QcBDbExec =>
+              let ir = qc_mb_import(g.m, "db.exec") in
+              qc_fngen_set_ma(g, ir.m, qc_asm_i(g.a, QcICall(ir.idx))),
+            QcBDbQuery =>
+              let ir = qc_mb_import(g.m, "db.query") in
+              qc_fngen_set_ma(g, ir.m, qc_asm_i(g.a, QcICall(ir.idx))),
+            QcBRandInt =>
+              let sr = qc_fngen_site(g, path, "rand_int: req lo <= hi", [
+                QcFieldType { name: "lo", ty: QcTInt },
+                QcFieldType { name: "hi", ty: QcTInt }
+              ], None) in
+              qc_fngen_call_rt(qc_fngen_site_args(sr.g, sr.site), QcRtRandChecked),
+            QcBBitAnd => qc_fngen_i(g, QcII64And),
+            QcBBitOr => qc_fngen_i(g, QcII64Or),
+            QcBBitXor => qc_fngen_i(g, QcII64Xor),
+            QcBBitNot => qc_fngen_all(g, [QcII64Const(-1), QcII64Xor]),
+            QcBShl =>
+              let sr = qc_fngen_site(g, path, "shl: req 0 <= n && n < 64", [
+                QcFieldType { name: "a", ty: QcTInt },
+                QcFieldType { name: "n", ty: QcTInt }
+              ], None) in
+              qc_fngen_call_rt(qc_fngen_site_args(sr.g, sr.site), QcRtShift(QcShiftShl)),
+            QcBShr =>
+              let sr = qc_fngen_site(g, path, "shr: req 0 <= n && n < 64", [
+                QcFieldType { name: "a", ty: QcTInt },
+                QcFieldType { name: "n", ty: QcTInt }
+              ], None) in
+              qc_fngen_call_rt(qc_fngen_site_args(sr.g, sr.site), QcRtShift(QcShiftShrS)),
+            QcBUshr =>
+              let sr = qc_fngen_site(g, path, "ushr: req 0 <= n && n < 64", [
+                QcFieldType { name: "a", ty: QcTInt },
+                QcFieldType { name: "n", ty: QcTInt }
+              ], None) in
+              qc_fngen_call_rt(qc_fngen_site_args(sr.g, sr.site), QcRtShift(QcShiftShrU)),
+            QcBFloatBits => qc_fngen_i(g, QcII64ReinterpretF64),
+            QcBFloatOfBits => qc_fngen_i(g, QcIF64ReinterpretI64),
+            QcBListAt =>
+              let sr = qc_fngen_site(g, path, "list_at", [
+                QcFieldType { name: "i", ty: QcTInt },
+                QcFieldType { name: "len", ty: QcTInt }
+              ], None) in
+              let g1 = qc_fngen_call_rt(qc_fngen_site_args(sr.g, sr.site), QcRtListAt) in
+              qc_fngen_opt(g1, qc_from_slot(qc_repr_of(ret))),
+            QcBBytesAt =>
+              let sr = qc_fngen_site(g, path, "bytes_at", [
+                QcFieldType { name: "i", ty: QcTInt },
+                QcFieldType { name: "len", ty: QcTInt }
+              ], None) in
+              qc_fngen_call_rt(qc_fngen_site_args(sr.g, sr.site), QcRtBytesAt),
+            QcBAccList => qc_fngen_call_rt(g, QcRtAccList),
+            QcBBytesJoin => qc_fngen_call_rt(g, QcRtBytesJoin),
+            QcBSha256 =>
+              let ir = qc_mb_import(g.m, "sha256") in
+              qc_fngen_set_ma(g, ir.m, qc_asm_i(g.a, QcICall(ir.idx))),
+            _ => qc_fngen_bug(g, "built-in not handled before its arguments")
+          }
+      }
+  }
+
+fn qc_fngen_sub_pattern(g: QcFnGen, p: QcTPat, v: Int, offset: Int, t: QcType, depth: Int) -> QcFnGen =
+  match p {
+    QcTPWild => g,
+    _ =>
+      let tr = qc_fngen_temp(g, qc_repr_of(t)) in
+      let x = tr.l in
+      let g1 = qc_fngen_all(tr.g, [QcILocalGet(v), QcII64Load(offset)]) in
+      let g2 = qc_fngen_opt(g1, qc_from_slot(qc_repr_of(t))) in
+      let g3 = qc_fngen_i(g2, QcILocalSet(x)) in
+      qc_fngen_pattern(g3, p, x, t, depth)
+  }
+
+fn qc_fngen_pat_variant_loop(g: QcFnGen, ps: List[QcTPat], fields: List[QcType], k: Int, v: Int, depth: Int) -> QcFnGen =
+  if k >= len(ps) || k >= len(fields) then g
+  else
+    let g1 = qc_fngen_sub_pattern(g, list_at(ps, k), v, 8 + 8 * k, list_at(fields, k), depth) in
+    qc_fngen_pat_variant_loop(g1, ps, fields, k + 1, v, depth)
+
+fn qc_fngen_pat_record_loop(g: QcFnGen, fs: List[QcTPField], all: List[QcFieldType], k: Int, v: Int, depth: Int) -> QcFnGen =
+  if k >= len(fs) then g
+  else
+    let pf = list_at(fs, k) in
+    let ft = list_at(all, pf.idx).ty in
+    let g1 = qc_fngen_sub_pattern(g, pf.pat, v, 8 * pf.idx, ft, depth) in
+    qc_fngen_pat_record_loop(g1, fs, all, k + 1, v, depth)
+
+fn qc_fngen_pattern(g: QcFnGen, p: QcTPat, v: Int, t: QcType, depth: Int) -> QcFnGen =
+  match p {
+    QcTPWild => g,
+    QcTPBind(id) =>
+      let lr = qc_fngen_l(g, id) in
+      qc_fngen_all(lr.g, [QcILocalGet(v), QcILocalSet(lr.l)]),
+    QcTPInt(n) =>
+      qc_fngen_all(g, [QcILocalGet(v), QcII64Const(n), QcII64Ne, QcIBrIf(depth)]),
+    QcTPBool(b) =>
+      let bi = if b then 1 else 0 in
+      qc_fngen_all(g, [QcILocalGet(v), QcII32Const(bi), QcII32Ne, QcIBrIf(depth)]),
+    QcTPUnit => g,
+    QcTPStr(s) =>
+      let sr = qc_mb_str_addr(g.m, s) in
+      let g1 = qc_fngen_set_ma(g, sr.m, qc_asm_all(g.a, [QcILocalGet(v), QcII32Const(sr.idx)])) in
+      let g2 = qc_fngen_call_rt(g1, QcRtStrEq) in
+      qc_fngen_all(g2, [QcII32Eqz, QcIBrIf(depth)]),
+    QcTPVariant(tag, ps) =>
+      let g1 = qc_fngen_all(g, [QcILocalGet(v), QcII32Load(0), QcII32Const(tag), QcII32Ne, QcIBrIf(depth)]) in
+      let fields = qc_tp_variant_fields(g1.m.p, t, tag) in
+      qc_fngen_pat_variant_loop(g1, ps, fields, 0, v, depth),
+    QcTPRecord(fs) =>
+      let all = qc_tp_record_fields(g.m.p, t) in
+      qc_fngen_pat_record_loop(g, fs, all, 0, v, depth)
+  }
+
+fn qc_fngen_match_arms_loop(g: QcFnGen, arms: List[QcTArm], k: Int, scrut: Int, sty: QcType, tail: Bool) -> QcFnGen =
+  if k >= len(arms) then g
+  else
+    let arm = list_at(arms, k) in
+    let g1 = qc_fngen_i(g, QcIBlock(QcBtEmpty)) in
+    let g2 = qc_fngen_pattern(g1, arm.pat, scrut, sty, 0) in
+    let g3 = match arm.guard {
+      Some(grd) =>
+        let gg = qc_fngen_expr(g2, grd, false) in
+        qc_fngen_all(gg, [QcII32Eqz, QcIBrIf(0)]),
+      None => g2
+    } in
+    let g4 = qc_fngen_expr(g3, arm.body, tail) in
+    let g5 = qc_fngen_all(g4, [QcIBr(1), QcIEnd]) in
+    qc_fngen_match_arms_loop(g5, arms, k + 1, scrut, sty, tail)
+
+fn qc_fngen_match(g0: QcFnGen, s: QcTExpr, arms: List[QcTArm], ty: QcType, tail: Bool) -> QcFnGen =
+  let tr = qc_fngen_temp(g0, qc_repr_of(s.ty)) in
+  let scrut = tr.l in
+  let g1 = qc_fngen_expr(tr.g, s, false) in
+  let g2 = qc_fngen_all(g1, [QcILocalSet(scrut), QcIBlock(QcBtResult(qc_type_val(ty)))]) in
+  let g3 = qc_fngen_match_arms_loop(g2, arms, 0, scrut, s.ty, tail) in
+  qc_fngen_all(g3, [QcIUnreachable, QcIEnd])
+
+fn qc_fngen_expr(g: QcFnGen, e: QcTExpr, tail: Bool) -> QcFnGen =
+  match e.kind {
+    QcTKInt(n) => qc_fngen_i(g, QcII64Const(n)),
+    QcTKFloat(x) => qc_fngen_i(g, QcIF64Const(x)),
+    QcTKBool(b) => qc_fngen_i(g, QcII32Const(if b then 1 else 0)),
+    QcTKUnit => qc_fngen_i(g, QcII32Const(0)),
+    QcTKStr(s) =>
+      let sr = qc_mb_str_addr(g.m, s) in
+      qc_fngen_set_ma(g, sr.m, qc_asm_i(g.a, QcII32Const(sr.idx))),
+    QcTKLocal(id) =>
+      let lr = qc_fngen_l(g, id) in
+      qc_fngen_i(lr.g, QcILocalGet(lr.l)),
+    QcTKFnRef(i) =>
+      match map_get(g.fn_index, i) {
+        Some(f) =>
+          match e.ty {
+            QcTFn(ps, r, _) =>
+              let params = qc_types_to_valtypes_loop(ps, 0, AccEnd) in
+              let fvr = qc_mb_fn_value(g.m, f, params, qc_type_val(r)) in
+              qc_fngen_set_ma(g, fvr.m, qc_asm_i(g.a, QcII32Const(fvr.idx))),
+            _ =>
+              qc_fngen_i(qc_fngen_bug(g, "function value " ++ from_int(i) ++ " of type " ++ qc_print_type(e.ty) ++ " is not reachable"), QcIUnreachable)
+          },
+        None =>
+          qc_fngen_i(qc_fngen_bug(g, "function value " ++ from_int(i) ++ " of type " ++ qc_print_type(e.ty) ++ " is not reachable"), QcIUnreachable)
+      },
+    QcTKLambda(l) => qc_fngen_lambda(g, l, e.ty),
+    QcTKCallG(_, _, _) => qc_fngen_i(qc_fngen_bug(g, "generic function reached code generation"), QcIUnreachable),
+    QcTKFnRefG(_, _) => qc_fngen_i(qc_fngen_bug(g, "generic function reached code generation"), QcIUnreachable),
+    QcTKUn(QcUnNot, x, _) =>
+      let g1 = qc_fngen_expr(g, x, false) in
+      qc_fngen_i(g1, QcII32Eqz),
+    QcTKUn(QcUnNeg, x, path) =>
+      let is_float = match x.ty { QcTFloat => true, _ => false } in
+      if is_float then
+        let g1 = qc_fngen_expr(g, x, false) in
+        qc_fngen_i(g1, QcIF64Neg)
+      else
+        let sr = qc_fngen_site(g, path, "-", [
+          QcFieldType { name: "zero", ty: QcTInt },
+          QcFieldType { name: "operand", ty: QcTInt }
+        ], None) in
+        let g1 = qc_fngen_i(sr.g, QcII64Const(0)) in
+        let g2 = qc_fngen_expr(g1, x, false) in
+        let g3 = qc_fngen_site_args(g2, sr.site) in
+        qc_fngen_call_rt(g3, QcRtArith(QcOpSub)),
+    QcTKBin(op, l, r, path) => qc_fngen_binary(g, op, l, r, path),
+    QcTKIf(c, t, f) =>
+      let g1 = qc_fngen_expr(g, c, false) in
+      let g2 = qc_fngen_i(g1, QcIIf(QcBtResult(qc_type_val(e.ty)))) in
+      let g3 = qc_fngen_expr(g2, t, tail) in
+      let g4 = qc_fngen_i(g3, QcIElse) in
+      let g5 = qc_fngen_expr(g4, f, tail) in
+      qc_fngen_i(g5, QcIEnd),
+    QcTKLet(id, v, body) =>
+      let g1 = qc_fngen_expr(g, v, false) in
+      let lr = qc_fngen_l(g1, id) in
+      let g2 = qc_fngen_i(lr.g, QcILocalSet(lr.l)) in
+      qc_fngen_expr(g2, body, tail),
+    QcTKSeq(items) => qc_fngen_seq_loop(g, items, 0, tail),
+    QcTKCall(i, args) =>
+      let g1 = qc_fngen_exprs_loop(g, args, 0) in
+      match map_get(g1.fn_index, i) {
+        Some(f) => qc_fngen_i(g1, if tail then QcIReturnCall(f) else QcICall(f)),
+        None => qc_fngen_i(qc_fngen_bug(g1, "callee " ++ from_int(i) ++ " is not reachable"), QcIUnreachable)
+      },
+    QcTKCallIndirect(f, args) =>
+      let tr = qc_fngen_temp(g, QcRI32) in
+      let c = tr.l in
+      let g1 = qc_fngen_expr(tr.g, f, false) in
+      let g2 = qc_fngen_i(g1, QcILocalTee(c)) in
+      let g3 = qc_fngen_exprs_loop(g2, args, 0) in
+      let g4 = qc_fngen_all(g3, [QcILocalGet(c), QcII32Load(0)]) in
+      match f.ty {
+        QcTFn(ps, r, _) =>
+          let params = [QcVI32] ++ qc_types_to_valtypes_loop(ps, 0, AccEnd) in
+          let tyr = qc_mb_ty(g4.m, params, [qc_type_val(r)]) in
+          let ins = if tail then QcIReturnCallIndirect(tyr.idx) else QcICallIndirect(tyr.idx) in
+          qc_fngen_set_ma(g4, tyr.m, qc_asm_i(g4.a, ins)),
+        _ =>
+          qc_fngen_i(qc_fngen_bug(g4, "indirect callee of type " ++ qc_print_type(f.ty) ++ " is not a function"), QcIUnreachable)
+      },
+    QcTKList(items) =>
+      let tr = qc_fngen_temp(g, QcRI32) in
+      let p = tr.l in
+      let g1 = qc_fngen_i(tr.g, QcII32Const(len(items))) in
+      let g2 = qc_fngen_call_rt(g1, QcRtListNew) in
+      let g3 = qc_fngen_i(g2, QcILocalSet(p)) in
+      let g4 = qc_fngen_store_slots_loop(g3, p, 8, items, 0) in
+      qc_fngen_i(g4, QcILocalGet(p)),
+    QcTKVariant(tag, xs) =>
+      if len(xs) == 0 then
+        qc_fngen_i(g, QcII32Const(qc_tag_addr(tag)))
+      else
+        let tr = qc_fngen_temp(g, QcRI32) in
+        let p = tr.l in
+        let g1 = qc_fngen_alloc(tr.g, 8 + 8 * len(xs), p) in
+        let g2 = qc_fngen_all(g1, [QcILocalGet(p), QcII32Const(tag), QcII32Store(0)]) in
+        let g3 = qc_fngen_store_slots_loop(g2, p, 8, xs, 0) in
+        qc_fngen_i(g3, QcILocalGet(p)),
+    QcTKRecord(fs) =>
+      let tr = qc_fngen_temp(g, QcRI32) in
+      let p = tr.l in
+      let g1 = qc_fngen_alloc(tr.g, 8 * len(fs), p) in
+      let g2 = qc_fngen_store_record_loop(g1, p, fs, 0) in
+      qc_fngen_i(g2, QcILocalGet(p)),
+    QcTKField(x, i) =>
+      let g1 = qc_fngen_expr(g, x, false) in
+      let g2 = qc_fngen_i(g1, QcII64Load(8 * i)) in
+      qc_fngen_opt(g2, qc_from_slot(qc_repr_of(e.ty))),
+    QcTKMatch(s, arms) => qc_fngen_match(g, s, arms, e.ty, tail),
+    QcTKBuiltin(b, args, path) => qc_fngen_builtin(g, b, args, path, e.ty)
+  }
+
+fn qc_cvals_to_site_vals_loop(vals: List[QcContractVal], k: Int, acc: Accum[QcFieldType]) -> List[QcFieldType] =
+  if k >= len(vals) then acc_list(acc)
+  else
+    let v = list_at(vals, k) in
+    qc_cvals_to_site_vals_loop(vals, k + 1, AccPush(acc, QcFieldType { name: v.name, ty: v.ty }))
+
+fn qc_cvals_to_fail_vals_loop(vals: List[QcContractVal], k: Int, acc: Accum[QcFailVal]) -> List[QcFailVal] =
+  if k >= len(vals) then acc_list(acc)
+  else
+    let v = list_at(vals, k) in
+    qc_cvals_to_fail_vals_loop(vals, k + 1, AccPush(acc, QcFailVal { local: v.local, repr: qc_repr_of(v.ty) }))
+
+fn qc_fngen_contract(g0: QcFnGen, c: QcTExpr, kind: Int, path: Str, index: Int, vals: List[QcContractVal]) -> QcFnGen =
+  let svals = qc_cvals_to_site_vals_loop(vals, 0, AccEnd) in
+  let sr = qc_fngen_site(g0, path, path, svals, Some(index)) in
+  let g1 = qc_fngen_expr(sr.g, c, false) in
+  let g2 = qc_fngen_all(g1, [QcII32Eqz, QcIIf(QcBtEmpty)]) in
+  let fvals = qc_cvals_to_fail_vals_loop(vals, 0, AccEnd) in
+  let ma = qc_mb_emit_fail(g2.m, g2.a, kind, QcArgConst(g2.meta), QcArgConst(sr.site), fvals) in
+  qc_fngen_set_ma(g2, ma.m, qc_asm_i(ma.a, QcIEnd))
+
+fn qc_params_to_cvals_loop(ps: List[QcFieldType], k: Int, acc: Accum[QcContractVal]) -> List[QcContractVal] =
+  if k >= len(ps) then acc_list(acc)
+  else
+    let p = list_at(ps, k) in
+    qc_params_to_cvals_loop(ps, k + 1, AccPush(acc, QcContractVal { name: p.name, ty: p.ty, local: k }))
+
+fn qc_fngen_contracts_loop(g: QcFnGen, cs: List[QcTExpr], kind: Int, prefix: Str, i: Int, vals: List[QcContractVal]) -> QcFnGen =
+  if i >= len(cs) then g
+  else
+    let path = prefix ++ "[" ++ from_int(i) ++ "]" in
+    let g1 = qc_fngen_contract(g, list_at(cs, i), kind, path, i, vals) in
+    qc_fngen_contracts_loop(g1, cs, kind, prefix, i + 1, vals)
+
+fn qc_fngen_fn_body(g0: QcFnGen, f: QcTFn) -> QcFnGenOut =
+  let vals = qc_params_to_cvals_loop(f.def.params, 0, AccEnd) in
+  let g1 = qc_fngen_contracts_loop(g0, f.reqs, 1, "req", 0, vals) in
+  let g_final = match f.result_local {
+    None => qc_fngen_expr(g1, f.body, true),
+    Some(r) =>
+      let g2 = qc_fngen_expr(g1, f.body, false) in
+      let g3 = qc_fngen_i(g2, QcILocalSet(r)) in
+      let vals2 = push(vals, QcContractVal { name: "r", ty: f.def.ret, local: r }) in
+      let g4 = qc_fngen_contracts_loop(g3, f.enss, 2, "ens", 0, vals2) in
+      qc_fngen_i(g4, QcILocalGet(r))
+  } in
+  QcFnGenOut { m: g_final.m, f_bytes: qc_asm_finish(g_final.a), sites: g_final.sites }
+
+fn qc_fngen_test_body(g0: QcFnGen, t: QcTTest) -> QcFnGenOut =
+  let g1 = qc_fngen_expr(g0, t.body, false) in
+  QcFnGenOut { m: g1.m, f_bytes: qc_asm_finish(g1.a), sites: g1.sites }
+
+# Reachability walk and module compilation (compile_with in qal-wasm/src/lib.rs)
+type QcWalkState = {
+  stack: List[Int],
+  builtins: Map[Int, Bool]
+}
+
+fn qc_walk_exprs_loop(xs: List[QcTExpr], k: Int, st: QcWalkState) -> QcWalkState =
+  if k >= len(xs) then st
+  else qc_walk_exprs_loop(xs, k + 1, qc_walk_expr(list_at(xs, k), st))
+
+fn qc_walk_rec_loop(fs: List[QcTField], k: Int, st: QcWalkState) -> QcWalkState =
+  if k >= len(fs) then st
+  else qc_walk_rec_loop(fs, k + 1, qc_walk_expr(list_at(fs, k).expr, st))
+
+fn qc_walk_arms_loop(arms: List[QcTArm], k: Int, st: QcWalkState) -> QcWalkState =
+  if k >= len(arms) then st
+  else
+    let arm = list_at(arms, k) in
+    let st1 = match arm.guard {
+      Some(g) => qc_walk_expr(g, st),
+      None => st
+    } in
+    let st2 = qc_walk_expr(arm.body, st1) in
+    qc_walk_arms_loop(arms, k + 1, st2)
+
+fn qc_walk_expr(e: QcTExpr, st: QcWalkState) -> QcWalkState =
+  match e.kind {
+    QcTKFnRef(i) => QcWalkState { stack: push(st.stack, i), builtins: st.builtins },
+    QcTKLambda(l) => qc_walk_expr(l.body, st),
+    QcTKUn(_, x, _) => qc_walk_expr(x, st),
+    QcTKField(x, _) => qc_walk_expr(x, st),
+    QcTKBin(_, l, r, _) => qc_walk_expr(r, qc_walk_expr(l, st)),
+    QcTKLet(_, l, r) => qc_walk_expr(r, qc_walk_expr(l, st)),
+    QcTKIf(c, t, f) => qc_walk_expr(f, qc_walk_expr(t, qc_walk_expr(c, st))),
+    QcTKCall(i, xs) =>
+      let st1 = QcWalkState { stack: push(st.stack, i), builtins: st.builtins } in
+      qc_walk_exprs_loop(xs, 0, st1),
+    QcTKBuiltin(b, xs, _) =>
+      let st1 = QcWalkState { stack: st.stack, builtins: map_put(st.builtins, qc_builtin_to_idx(b), true) } in
+      qc_walk_exprs_loop(xs, 0, st1),
+    QcTKCallIndirect(f, xs) =>
+      qc_walk_exprs_loop(xs, 0, qc_walk_expr(f, st)),
+    QcTKList(xs) => qc_walk_exprs_loop(xs, 0, st),
+    QcTKVariant(_, xs) => qc_walk_exprs_loop(xs, 0, st),
+    QcTKSeq(xs) => qc_walk_exprs_loop(xs, 0, st),
+    QcTKRecord(fs) => qc_walk_rec_loop(fs, 0, st),
+    QcTKMatch(s, arms) => qc_walk_arms_loop(arms, 0, qc_walk_expr(s, st)),
+    _ => st
+  }
+
+fn qc_tp_fn_index_loop(fns: List[QcTFn], name: Str, idx: Int) -> Option[Int] =
+  if idx >= len(fns) then None
+  else if list_at(fns, idx).def.name == name then Some(idx)
+  else qc_tp_fn_index_loop(fns, name, idx + 1)
+
+fn qc_tp_fn_indices_loop(fns: List[QcTFn], names: List[Str], idx: Int, acc: Accum[Int]) -> List[Int] =
+  if idx >= len(names) then acc_list(acc)
+  else
+    let acc2 = match qc_tp_fn_index_loop(fns, list_at(names, idx), 0) {
+      Some(i) => AccPush(acc, i),
+      None => acc
+    } in
+    qc_tp_fn_indices_loop(fns, names, idx + 1, acc2)
+
+fn qc_walk_tests_loop(tests: List[QcTTest], idxs: List[Int], k: Int, st: QcWalkState) -> QcWalkState =
+  if k >= len(idxs) then st
+  else
+    let t = list_at(tests, list_at(idxs, k)) in
+    qc_walk_tests_loop(tests, idxs, k + 1, qc_walk_expr(t.body, st))
+
+type QcReachRes = {
+  reached: Map[Int, Bool],
+  builtins: Map[Int, Bool]
+}
+
+fn qc_reach_loop(fns: List[QcTFn], reached: Map[Int, Bool], st: QcWalkState) -> Result[QcReachRes, Str] =
+  let n_stack = len(st.stack) in
+  if n_stack == 0 then Ok(QcReachRes { reached: reached, builtins: st.builtins })
+  else
+    let i = list_at(st.stack, n_stack - 1) in
+    let stack_rest = qc_list_take_int(st.stack, 0, n_stack - 1, AccEnd) in
+    let st0 = QcWalkState { stack: stack_rest, builtins: st.builtins } in
+    if i < 0 || i >= len(fns) then
+      Err("internal compiler error: reference to function " ++ from_int(i) ++ ", which does not exist")
+    else if map_has(reached, i) then
+      qc_reach_loop(fns, reached, st0)
+    else
+      let reached2 = map_put(reached, i, true) in
+      let f = list_at(fns, i) in
+      let st1 = qc_walk_exprs_loop(f.reqs, 0, st0) in
+      let st2 = qc_walk_exprs_loop(f.enss, 0, st1) in
+      let st3 = qc_walk_expr(f.body, st2) in
+      qc_reach_loop(fns, reached2, st3)
+
+fn qc_list_take_int(xs: List[Int], idx: Int, end: Int, acc: Accum[Int]) -> List[Int] =
+  if idx >= end then acc_list(acc)
+  else qc_list_take_int(xs, idx + 1, end, AccPush(acc, list_at(xs, idx)))
+
+fn qc_builtin_host_import(b: QcBuiltin) -> Option[Str] =
+  match b {
+    QcBFromFloat => Some("float_to_str"),
+    QcBToFloat => Some("str_to_float"),
+    QcBBytesToStr => Some("utf8_valid"),
+    QcBSha256 => Some("sha256"),
+    QcBPrint => Some("io.print"),
+    QcBReadLine => Some("io.read_line"),
+    QcBReadAll => Some("io.read_all"),
+    QcBReadFile => Some("fs.read_file"),
+    QcBWriteFile => Some("fs.write_file"),
+    QcBNowMs => Some("time.now_ms"),
+    QcBRandInt => Some("rand.rand_int"),
+    QcBHttp => Some("net.http"),
+    QcBDbExec => Some("db.exec"),
+    QcBDbQuery => Some("db.query"),
+    _ => None
+  }
+
+fn qc_collect_imports_loop(b_idxs: List[Int], k: Int, acc: Accum[Str]) -> List[Str] =
+  if k >= len(b_idxs) then acc_list(acc)
+  else
+    let b = qc_builtin_from_idx(list_at(b_idxs, k)) in
+    let acc2 = match qc_builtin_host_import(b) {
+      Some(name) => AccPush(acc, name),
+      None => acc
+    } in
+    qc_collect_imports_loop(b_idxs, k + 1, acc2)
+
+fn qc_params_valtypes_loop(ps: List[QcFieldType], k: Int, acc: Accum[QcValType]) -> List[QcValType] =
+  if k >= len(ps) then acc_list(acc)
+  else qc_params_valtypes_loop(ps, k + 1, AccPush(acc, qc_type_val(list_at(ps, k).ty)))
+
+type QcDeclFnsState = {
+  m: QcMb,
+  fn_index: Map[Int, Int],
+  exports: Accum[QcExport],
+  metas: Accum[QcFuncMeta]
+}
+
+fn qc_declare_fns_loop(p: QcTProgram, r_idxs: List[Int], k: Int, st: QcDeclFnsState) -> QcDeclFnsState =
+  if k >= len(r_idxs) then st
+  else
+    let i = list_at(r_idxs, k) in
+    let f = list_at(p.fns, i) in
+    let params = qc_params_valtypes_loop(f.def.params, 0, AccEnd) in
+    let dr = qc_mb_declare(st.m, params, [qc_type_val(f.def.ret)]) in
+    let idx = dr.idx in
+    let meta = QcFuncMeta {
+      name: f.def.name,
+      export: f.def.name,
+      is_test: false,
+      params: f.def.params,
+      ret: f.def.ret,
+      effects: f.def.effects,
+      reqs: f.def.reqs,
+      enss: f.def.enss,
+      sites: []
+    } in
+    let st2 = QcDeclFnsState {
+      m: dr.m,
+      fn_index: map_put(st.fn_index, i, idx),
+      exports: AccPush(st.exports, QcExport { name: f.def.name, idx: idx }),
+      metas: AccPush(st.metas, meta)
+    } in
+    qc_declare_fns_loop(p, r_idxs, k + 1, st2)
+
+type QcDeclTestsState = {
+  m: QcMb,
+  test_index: Accum[Int],
+  exports: Accum[QcExport],
+  metas: Accum[QcFuncMeta]
+}
+
+fn qc_declare_tests_loop(p: QcTProgram, tests: List[Int], k: Int, st: QcDeclTestsState) -> QcDeclTestsState =
+  if k >= len(tests) then st
+  else
+    let t = list_at(tests, k) in
+    let name = list_at(p.tests, t).name in
+    let dr = qc_mb_declare(st.m, [], [QcVI32]) in
+    let idx = dr.idx in
+    let export_name = "test:" ++ name in
+    let meta = QcFuncMeta {
+      name: name,
+      export: export_name,
+      is_test: true,
+      params: [],
+      ret: QcTBool,
+      effects: [],
+      reqs: [],
+      enss: [],
+      sites: []
+    } in
+    let st2 = QcDeclTestsState {
+      m: dr.m,
+      test_index: AccPush(st.test_index, idx),
+      exports: AccPush(st.exports, QcExport { name: export_name, idx: idx }),
+      metas: AccPush(st.metas, meta)
+    } in
+    qc_declare_tests_loop(p, tests, k + 1, st2)
+
+fn qc_meta_with_sites(fm: QcFuncMeta, sites: List[QcSite]) -> QcFuncMeta =
+  QcFuncMeta {
+    name: fm.name, export: fm.export, is_test: fm.is_test,
+    params: fm.params, ret: fm.ret, effects: fm.effects,
+    reqs: fm.reqs, enss: fm.enss, sites: sites
+  }
+
+type QcGenBodiesState = {
+  m: QcMb,
+  meta_idx: Int,
+  metas_acc: Accum[QcFuncMeta]
+}
+
+fn qc_gen_fns_loop(p: QcTProgram, r_idxs: List[Int], k: Int, fn_index: Map[Int, Int], all_metas: List[QcFuncMeta], st: QcGenBodiesState) -> QcGenBodiesState =
+  if k >= len(r_idxs) then st
+  else
+    let i = list_at(r_idxs, k) in
+    let f = list_at(p.fns, i) in
+    let g0 = qc_fngen_new(st.m, st.meta_idx, fn_index, f.locals, len(f.def.params)) in
+    let out = qc_fngen_fn_body(g0, f) in
+    let m2 = match map_get(fn_index, i) {
+      Some(idx) => qc_mb_define(out.m, idx, out.f_bytes),
+      None => qc_mb_bug(out.m, "function `" ++ f.def.name ++ "` was not declared")
+    } in
+    let fm = qc_meta_with_sites(list_at(all_metas, st.meta_idx), out.sites) in
+    let st2 = QcGenBodiesState {
+      m: m2,
+      meta_idx: st.meta_idx + 1,
+      metas_acc: AccPush(st.metas_acc, fm)
+    } in
+    qc_gen_fns_loop(p, r_idxs, k + 1, fn_index, all_metas, st2)
+
+fn qc_gen_tests_loop(p: QcTProgram, tests: List[Int], test_index: List[Int], k: Int, fn_index: Map[Int, Int], all_metas: List[QcFuncMeta], st: QcGenBodiesState) -> QcGenBodiesState =
+  if k >= len(tests) then st
+  else
+    let t = list_at(tests, k) in
+    let idx = list_at(test_index, k) in
+    let test_def = list_at(p.tests, t) in
+    let g0 = qc_fngen_new(st.m, st.meta_idx, fn_index, test_def.locals, 0) in
+    let out = qc_fngen_test_body(g0, test_def) in
+    let m2 = qc_mb_define(out.m, idx, out.f_bytes) in
+    let fm = qc_meta_with_sites(list_at(all_metas, st.meta_idx), out.sites) in
+    let st2 = QcGenBodiesState {
+      m: m2,
+      meta_idx: st.meta_idx + 1,
+      metas_acc: AccPush(st.metas_acc, fm)
+    } in
+    qc_gen_tests_loop(p, tests, test_index, k + 1, fn_index, all_metas, st2)
+
+type QcEntryRoots = {
+  fn_roots: List[Int],
+  with_tests: Bool
+}
+
+fn qc_compile_with(p: QcTProgram, entry: QcEntry, max_pages: Int) -> Result[QcCompiledModule, Str] =
+  if max_pages <= 0 || max_pages > 16384 then
+    Err("memory_max_pages must be between 1 and 16384, not " ++ from_int(max_pages))
+  else
+    let er = match entry {
+      QcEntryFn(name) =>
+        match qc_tp_fn_index_loop(p.fns, name, 0) {
+          Some(i) => QcEntryRoots { fn_roots: [i], with_tests: false },
+          None => QcEntryRoots { fn_roots: [], with_tests: false }
+        },
+      QcEntryFns(names) => QcEntryRoots { fn_roots: qc_tp_fn_indices_loop(p.fns, names, 0, AccEnd), with_tests: false },
+      QcEntryTests => QcEntryRoots { fn_roots: [], with_tests: true },
+      QcEntryAll => QcEntryRoots { fn_roots: range(0, len(p.fns)), with_tests: true }
+    } in
+    let tests = if er.with_tests then range(0, len(p.tests)) else [] in
+    let st0 = QcWalkState { stack: er.fn_roots, builtins: map_new() } in
+    let st1 = qc_walk_tests_loop(p.tests, tests, 0, st0) in
+    match qc_reach_loop(p.fns, map_new(), st1) {
+      Err(e) => Err(e),
+      Ok(rr) =>
+        let r_idxs = map_keys(rr.reached) in
+        let b_idxs = map_keys(rr.builtins) in
+        let imports = qc_collect_imports_loop(b_idxs, 0, AccPush(AccEnd, "fail")) in
+        let mb0 = qc_mb_new(p, imports, max_pages) in
+        let df = qc_declare_fns_loop(p, r_idxs, 0, QcDeclFnsState {
+          m: mb0, fn_index: map_new(), exports: AccEnd, metas: AccEnd
+        }) in
+        let dt = qc_declare_tests_loop(p, tests, 0, QcDeclTestsState {
+          m: df.m, test_index: AccEnd, exports: df.exports, metas: df.metas
+        }) in
+        let test_index = acc_list(dt.test_index) in
+        let exports = acc_list(dt.exports) in
+        let all_metas = acc_list(dt.metas) in
+        let gb1 = qc_gen_fns_loop(p, r_idxs, 0, df.fn_index, all_metas, QcGenBodiesState {
+          m: dt.m, meta_idx: 0, metas_acc: AccEnd
+        }) in
+        let gb2 = qc_gen_tests_loop(p, tests, test_index, 0, df.fn_index, all_metas, gb1) in
+        match qc_mb_finish(gb2.m, exports) {
+          Err(e) => Err(e),
+          Ok(wo) =>
+            Ok(QcCompiledModule {
+              wasm: wo.wasm,
+              funcs: acc_list(gb2.metas_acc),
+              types: p.types,
+              imports: imports,
+              table_len: wo.table_len,
+              memory_max_pages: max_pages
+            })
+        }
+    }
+
+# Binary encoding of CompiledModule for BUILD / CHECK_FILE responses (matching put_module in proto.rs)
+fn qc_strs_acc(strs: List[Str], acc: Accum[Int]) -> Accum[Int] =
+  let a0 = qc_varint_acc(len(strs), acc) in
+  fold(strs, a0, fn(st: Accum[Int], s: Str) => qc_str_acc(s, st))
+
+fn qc_tform_put_exprs(exprs: List[QcExpr], acc: Accum[Int]) -> Accum[Int] =
+  let a0 = qc_varint_acc(len(exprs), acc) in
+  fold(exprs, a0, fn(st: Accum[Int], e: QcExpr) => qc_tform_expr_acc(e, st))
+
+fn qc_put_site_val_acc(sv: QcFieldType, acc: Accum[Int]) -> Accum[Int] =
+  let a0 = qc_str_acc(sv.name, acc) in
+  qc_tform_type_acc(sv.ty, a0)
+
+fn qc_put_site_acc(s: QcSite, acc: Accum[Int]) -> Accum[Int] =
+  let a0 = qc_str_acc(s.path, acc) in
+  let a1 = qc_str_acc(s.label, a0) in
+  let a2 = match s.contract {
+    Some(c) => qc_varint_acc(c, AccPush(a1, 1)),
+    None => AccPush(a1, 0)
+  } in
+  let a3 = qc_varint_acc(len(s.values), a2) in
+  fold(s.values, a3, fn(st: Accum[Int], sv: QcFieldType) => qc_put_site_val_acc(sv, st))
+
+fn qc_put_func_meta_acc(f: QcFuncMeta, acc: Accum[Int]) -> Accum[Int] =
+  let a0 = qc_str_acc(f.name, acc) in
+  let a1 = qc_str_acc(f.export, a0) in
+  let a2 = AccPush(a1, if f.is_test then 1 else 0) in
+  let a3 = qc_varint_acc(len(f.params), a2) in
+  let a4 = fold(f.params, a3, fn(st: Accum[Int], p: QcFieldType) =>
+    qc_tform_type_acc(p.ty, qc_str_acc(p.name, st))
+  ) in
+  let a5 = qc_tform_type_acc(f.ret, a4) in
+  let a6 = qc_strs_acc(f.effects, a5) in
+  let a7 = qc_tform_put_exprs(f.reqs, a6) in
+  let a8 = qc_tform_put_exprs(f.enss, a7) in
+  let a9 = qc_varint_acc(len(f.sites), a8) in
+  fold(f.sites, a9, fn(st: Accum[Int], s: QcSite) => qc_put_site_acc(s, st))
+
+fn qc_encode_compiled_module(cm: QcCompiledModule) -> Bytes =
+  let wasm_hdr = bytes_from(acc_list(qc_varint_acc(bytes_len(cm.wasm), AccEnd))) in
+  let a0 = qc_strs_acc(cm.imports, AccEnd) in
+  let a1 = qc_varint_acc(cm.table_len, a0) in
+  let a2 = qc_varint_acc(cm.memory_max_pages, a1) in
+  let a3 = qc_varint_acc(len(cm.types), a2) in
+  let a4 = fold(cm.types, a3, fn(st: Accum[Int], td: QcTypeDef) => qc_tform_typedef_acc(td, st)) in
+  let a5 = qc_varint_acc(len(cm.funcs), a4) in
+  let a6 = fold(cm.funcs, a5, fn(st: Accum[Int], fm: QcFuncMeta) => qc_put_func_meta_acc(fm, st)) in
+  let rest = bytes_from(acc_list(a6)) in
+  bytes_join([wasm_hdr, cm.wasm, rest])

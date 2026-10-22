@@ -1,0 +1,99 @@
+{
+ "name": "h10_post_415",
+ "description": "content type checks",
+ "steps": [
+  {
+   "name": "no content-type",
+   "request": {
+    "method": "POST",
+    "path": "/todos",
+    "headers": [],
+    "body": "{\"title\":\"x\"}"
+   },
+   "expect": {
+    "status": 415,
+    "json": {
+     "error": {
+      "code": "unsupported_media_type",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "text/plain",
+   "request": {
+    "method": "POST",
+    "path": "/todos",
+    "headers": [
+     {
+      "name": "content-type",
+      "value": "text/plain"
+     }
+    ],
+    "body": "{\"title\":\"x\"}"
+   },
+   "expect": {
+    "status": 415,
+    "json": {
+     "error": {
+      "code": "unsupported_media_type",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "form",
+   "request": {
+    "method": "POST",
+    "path": "/todos",
+    "headers": [
+     {
+      "name": "content-type",
+      "value": "application/x-www-form-urlencoded"
+     }
+    ],
+    "body": "title=x"
+   },
+   "expect": {
+    "status": 415,
+    "json": {
+     "error": {
+      "code": "unsupported_media_type",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "nothing created",
+   "request": {
+    "method": "GET",
+    "path": "/todos"
+   },
+   "expect": {
+    "status": 200,
+    "json": [],
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  }
+ ]
+}

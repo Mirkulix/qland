@@ -1,0 +1,5 @@
+type HttpHeader = { name: Str, value: Str }
+type Status = SqlNull | Ok2
+fn hv(h: HttpHeader) -> Str = h.value
+fn st(s: Status) -> Int = match s { SqlNull => 0, Ok2 => 1 }
+test t = st(Ok2) == 1 && hv(HttpHeader { name: "a", value: "b" }) == "b"

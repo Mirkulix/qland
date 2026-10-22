@@ -1,0 +1,4 @@
+fn count[T](xs: List[T]) -> Int ens r >= 0 = len(xs)
+fn pick[T](c: Bool, a: T, b: T) -> T = if c then a else b
+fn pos(x: Int) -> Int req x > 0 = x
+fn use_both(n: Int) -> Int req n > 0 = pos(pick(true, n, 1)) + count([n]) + count(["a"])

@@ -1,0 +1,50 @@
+{
+  "name": "h11_multiline_partial_stock_fail",
+  "description": "Multi-line order fails on line 2, line 1 reservation rolls back atomically",
+  "steps": [
+    {
+      "name": "create a",
+      "request": {"method": "POST", "path": "/products", "json": {"sku": "ML-A", "name": "Desk", "price_cents": 15000, "stock": 5}},
+      "expect": {"status": 201},
+      "capture": {"a": "/id"}
+    },
+    {
+      "name": "create b",
+      "request": {"method": "POST", "path": "/products", "json": {"sku": "ML-B", "name": "Chair", "price_cents": 8000, "stock": 1}},
+      "expect": {"status": 201},
+      "capture": {"b": "/id"}
+    },
+    {
+      "name": "order 2 desks and 2 chairs",
+      "request": {
+        "method": "POST",
+        "path": "/orders",
+        "json": {
+          "lines": [
+            {"product_id": "{{a}}", "qty": 2},
+            {"product_id": "{{b}}", "qty": 2}
+          ]
+        }
+      },
+      "expect": {
+        "status": 409,
+        "json": {
+          "error": {
+            "code": "insufficient_stock",
+            "message": {"$type": "str"}
+          }
+        }
+      }
+    },
+    {
+      "name": "verify desk stock unchanged",
+      "request": {"method": "GET", "path": "/products/{{a}}"},
+      "expect": {"status": 200, "json": {"id": {"$var": "a"}, "sku": "ML-A", "name": "Desk", "price_cents": 15000, "stock": 5}}
+    },
+    {
+      "name": "verify chair stock unchanged",
+      "request": {"method": "GET", "path": "/products/{{b}}"},
+      "expect": {"status": 200, "json": {"id": {"$var": "b"}, "sku": "ML-B", "name": "Chair", "price_cents": 8000, "stock": 1}}
+    }
+  ]
+}

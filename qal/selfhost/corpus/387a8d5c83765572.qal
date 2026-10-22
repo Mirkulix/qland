@@ -1,0 +1,1 @@
+fn g(s: Str) -> Int ens let t = slice(s, 5, 3) in true = 0

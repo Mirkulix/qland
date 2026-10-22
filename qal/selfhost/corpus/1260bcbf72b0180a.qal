@@ -1,0 +1,1 @@
+fn h(s: Str) -> Int ens slice(s, 5, 3) == slice(s, 5, 3) || true = 0

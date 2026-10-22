@@ -1,0 +1,165 @@
+{
+ "name": "h39_patch_body_format",
+ "description": "PATCH content type and JSON",
+ "steps": [
+  {
+   "name": "create a",
+   "request": {
+    "method": "POST",
+    "path": "/todos",
+    "json": {
+     "title": "orig"
+    }
+   },
+   "expect": {
+    "status": 201,
+    "json": {
+     "id": {
+      "$var": "a"
+     },
+     "title": "orig",
+     "done": false,
+     "created_at": {
+      "$type": "int"
+     }
+    },
+    "headers": {
+     "location": "/todos/{{a}}",
+     "content-type": "application/json"
+    }
+   },
+   "capture": {
+    "a": "/id"
+   }
+  },
+  {
+   "name": "no content-type",
+   "request": {
+    "method": "PATCH",
+    "path": "/todos/{{a}}",
+    "body": "{\"done\":true}"
+   },
+   "expect": {
+    "status": 415,
+    "json": {
+     "error": {
+      "code": "unsupported_media_type",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "text/plain",
+   "request": {
+    "method": "PATCH",
+    "path": "/todos/{{a}}",
+    "headers": [
+     {
+      "name": "content-type",
+      "value": "text/plain"
+     }
+    ],
+    "body": "{\"done\":true}"
+   },
+   "expect": {
+    "status": 415,
+    "json": {
+     "error": {
+      "code": "unsupported_media_type",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "invalid JSON",
+   "request": {
+    "method": "PATCH",
+    "path": "/todos/{{a}}",
+    "headers": [
+     {
+      "name": "content-type",
+      "value": "application/json"
+     }
+    ],
+    "body": "{\"done\":tru}"
+   },
+   "expect": {
+    "status": 400,
+    "json": {
+     "error": {
+      "code": "invalid_json",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "array body",
+   "request": {
+    "method": "PATCH",
+    "path": "/todos/{{a}}",
+    "headers": [
+     {
+      "name": "content-type",
+      "value": "application/json"
+     }
+    ],
+    "body": "[]"
+   },
+   "expect": {
+    "status": 400,
+    "json": {
+     "error": {
+      "code": "invalid_type",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "get a",
+   "request": {
+    "method": "GET",
+    "path": "/todos/{{a}}"
+   },
+   "expect": {
+    "status": 200,
+    "json": {
+     "id": {
+      "$var": "a"
+     },
+     "title": "orig",
+     "done": false,
+     "created_at": {
+      "$type": "int"
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  }
+ ]
+}

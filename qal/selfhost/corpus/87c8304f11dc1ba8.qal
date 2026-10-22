@@ -1,0 +1,2 @@
+fn c[T](x: T) -> Int = compare(x, x)
+test t = c(fn() => 1) == 0

@@ -1,0 +1,1 @@
+fn f() -> Int !db = let g = db_exec in 0

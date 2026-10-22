@@ -1,0 +1,1 @@
+fn tax(cents: Int) -> Int = cents * 20 / 100

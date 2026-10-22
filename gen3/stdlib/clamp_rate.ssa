@@ -1,0 +1,10 @@
+fn clamp_rate(arg0: I64, arg1: I64) -> I64 {
+  v00 = arg0
+  v01 = arg1
+  v02 = 0
+  v03 = 100
+  v04 = clamp(v01, v02, v03)          # invariant: [0, 100]
+  v05 = v00 * v04                     # invariant: >= 0
+  v06 = v05 / v03                     # invariant: >= 0
+  return v06
+}

@@ -1,0 +1,42 @@
+# INI file queries: parse sections and keys up to `---`, then answer `section.key` queries.
+
+type Entry = { section: Str, key: Str, value: Str }
+
+type Ini = { entries: List[Entry], section: Str }
+
+fn ends_with(s: Str, suffix: Str) -> Bool = len(s) >= len(suffix) && slice(s, len(s) - len(suffix), len(s)) == suffix
+
+fn parse_line(ini: Ini, line: Str) -> Ini =
+  let t = trim(line) in
+  if t == "" || starts_with(t, ";") || starts_with(t, "#") then ini
+  else if starts_with(t, "[") && ends_with(t, "]") then Ini { entries: ini.entries, section: trim(slice(t, 1, len(t) - 1)) }
+  else match index_of(t, "=") {
+    Some(i) => Ini { entries: push(ini.entries, Entry { section: ini.section, key: trim(slice(t, 0, i)), value: trim(slice(t, i + 1, len(t))) }), section: ini.section },
+    None => ini,
+  }
+
+# The last assignment wins: search from the end.
+fn lookup(es: List[Entry], section: Str, key: Str, i: Int) -> Str =
+  match get(es, i) {
+    None => "<missing>",
+    Some(e) => if e.section == section && e.key == key then e.value else lookup(es, section, key, i - 1),
+  }
+
+fn query(es: List[Entry], q: Str) -> Str =
+  let t = trim(q) in
+  match index_of(t, ".") {
+    Some(i) => lookup(es, slice(t, 0, i), slice(t, i + 1, len(t)), len(es) - 1),
+    None => lookup(es, "", t, len(es) - 1),
+  }
+
+test example =
+  let ini = fold(["name = demo", "[server]", "host = example.org", "port=8080", "; comment"], Ini { entries: [], section: "" }, parse_line) in
+  query(ini.entries, "server.host") == "example.org" && query(ini.entries, "name") == "demo" && query(ini.entries, "server.user") == "<missing>"
+
+fn read_ini(ini: Ini) -> Option[Ini] !io =
+  match read_line() { None => None, Some("---") => Some(ini), Some(l) => read_ini(parse_line(ini, l)) }
+
+fn answer(es: List[Entry]) -> Int !io = match read_line() { None => 0, Some(q) => { print(query(es, q)); answer(es) } }
+
+fn main(args: List[Str]) -> Int !io =
+  match read_ini(Ini { entries: [], section: "" }) { None => 0, Some(ini) => answer(ini.entries) }

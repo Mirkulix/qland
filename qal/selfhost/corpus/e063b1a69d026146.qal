@@ -1,0 +1,1 @@
+fn main[T](args: List[Str]) -> Int = 0

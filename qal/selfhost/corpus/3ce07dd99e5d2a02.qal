@@ -1,0 +1,1 @@
+fn cell(v: SqlValue) -> Int = match v { SqlInt(n) => n, _ => 0 }

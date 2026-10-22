@@ -1,0 +1,665 @@
+{
+ "name": "h42_many_todos",
+ "description": "a dozen todos",
+ "steps": [
+  {
+   "name": "create t0",
+   "request": {
+    "method": "POST",
+    "path": "/todos",
+    "json": {
+     "title": "task 0",
+     "done": true
+    }
+   },
+   "expect": {
+    "status": 201,
+    "json": {
+     "id": {
+      "$var": "t0"
+     },
+     "title": "task 0",
+     "done": true,
+     "created_at": {
+      "$type": "int"
+     }
+    },
+    "headers": {
+     "location": "/todos/{{t0}}",
+     "content-type": "application/json"
+    }
+   },
+   "capture": {
+    "t0": "/id"
+   }
+  },
+  {
+   "name": "create t1",
+   "request": {
+    "method": "POST",
+    "path": "/todos",
+    "json": {
+     "title": "task 1",
+     "done": false
+    }
+   },
+   "expect": {
+    "status": 201,
+    "json": {
+     "id": {
+      "$var": "t1"
+     },
+     "title": "task 1",
+     "done": false,
+     "created_at": {
+      "$type": "int"
+     }
+    },
+    "headers": {
+     "location": "/todos/{{t1}}",
+     "content-type": "application/json"
+    }
+   },
+   "capture": {
+    "t1": "/id"
+   }
+  },
+  {
+   "name": "create t2",
+   "request": {
+    "method": "POST",
+    "path": "/todos",
+    "json": {
+     "title": "task 2",
+     "done": false
+    }
+   },
+   "expect": {
+    "status": 201,
+    "json": {
+     "id": {
+      "$var": "t2"
+     },
+     "title": "task 2",
+     "done": false,
+     "created_at": {
+      "$type": "int"
+     }
+    },
+    "headers": {
+     "location": "/todos/{{t2}}",
+     "content-type": "application/json"
+    }
+   },
+   "capture": {
+    "t2": "/id"
+   }
+  },
+  {
+   "name": "create t3",
+   "request": {
+    "method": "POST",
+    "path": "/todos",
+    "json": {
+     "title": "task 3",
+     "done": true
+    }
+   },
+   "expect": {
+    "status": 201,
+    "json": {
+     "id": {
+      "$var": "t3"
+     },
+     "title": "task 3",
+     "done": true,
+     "created_at": {
+      "$type": "int"
+     }
+    },
+    "headers": {
+     "location": "/todos/{{t3}}",
+     "content-type": "application/json"
+    }
+   },
+   "capture": {
+    "t3": "/id"
+   }
+  },
+  {
+   "name": "create t4",
+   "request": {
+    "method": "POST",
+    "path": "/todos",
+    "json": {
+     "title": "task 4",
+     "done": false
+    }
+   },
+   "expect": {
+    "status": 201,
+    "json": {
+     "id": {
+      "$var": "t4"
+     },
+     "title": "task 4",
+     "done": false,
+     "created_at": {
+      "$type": "int"
+     }
+    },
+    "headers": {
+     "location": "/todos/{{t4}}",
+     "content-type": "application/json"
+    }
+   },
+   "capture": {
+    "t4": "/id"
+   }
+  },
+  {
+   "name": "create t5",
+   "request": {
+    "method": "POST",
+    "path": "/todos",
+    "json": {
+     "title": "task 5",
+     "done": false
+    }
+   },
+   "expect": {
+    "status": 201,
+    "json": {
+     "id": {
+      "$var": "t5"
+     },
+     "title": "task 5",
+     "done": false,
+     "created_at": {
+      "$type": "int"
+     }
+    },
+    "headers": {
+     "location": "/todos/{{t5}}",
+     "content-type": "application/json"
+    }
+   },
+   "capture": {
+    "t5": "/id"
+   }
+  },
+  {
+   "name": "create t6",
+   "request": {
+    "method": "POST",
+    "path": "/todos",
+    "json": {
+     "title": "task 6",
+     "done": true
+    }
+   },
+   "expect": {
+    "status": 201,
+    "json": {
+     "id": {
+      "$var": "t6"
+     },
+     "title": "task 6",
+     "done": true,
+     "created_at": {
+      "$type": "int"
+     }
+    },
+    "headers": {
+     "location": "/todos/{{t6}}",
+     "content-type": "application/json"
+    }
+   },
+   "capture": {
+    "t6": "/id"
+   }
+  },
+  {
+   "name": "create t7",
+   "request": {
+    "method": "POST",
+    "path": "/todos",
+    "json": {
+     "title": "task 7",
+     "done": false
+    }
+   },
+   "expect": {
+    "status": 201,
+    "json": {
+     "id": {
+      "$var": "t7"
+     },
+     "title": "task 7",
+     "done": false,
+     "created_at": {
+      "$type": "int"
+     }
+    },
+    "headers": {
+     "location": "/todos/{{t7}}",
+     "content-type": "application/json"
+    }
+   },
+   "capture": {
+    "t7": "/id"
+   }
+  },
+  {
+   "name": "create t8",
+   "request": {
+    "method": "POST",
+    "path": "/todos",
+    "json": {
+     "title": "task 8",
+     "done": false
+    }
+   },
+   "expect": {
+    "status": 201,
+    "json": {
+     "id": {
+      "$var": "t8"
+     },
+     "title": "task 8",
+     "done": false,
+     "created_at": {
+      "$type": "int"
+     }
+    },
+    "headers": {
+     "location": "/todos/{{t8}}",
+     "content-type": "application/json"
+    }
+   },
+   "capture": {
+    "t8": "/id"
+   }
+  },
+  {
+   "name": "create t9",
+   "request": {
+    "method": "POST",
+    "path": "/todos",
+    "json": {
+     "title": "task 9",
+     "done": true
+    }
+   },
+   "expect": {
+    "status": 201,
+    "json": {
+     "id": {
+      "$var": "t9"
+     },
+     "title": "task 9",
+     "done": true,
+     "created_at": {
+      "$type": "int"
+     }
+    },
+    "headers": {
+     "location": "/todos/{{t9}}",
+     "content-type": "application/json"
+    }
+   },
+   "capture": {
+    "t9": "/id"
+   }
+  },
+  {
+   "name": "create t10",
+   "request": {
+    "method": "POST",
+    "path": "/todos",
+    "json": {
+     "title": "task 10",
+     "done": false
+    }
+   },
+   "expect": {
+    "status": 201,
+    "json": {
+     "id": {
+      "$var": "t10"
+     },
+     "title": "task 10",
+     "done": false,
+     "created_at": {
+      "$type": "int"
+     }
+    },
+    "headers": {
+     "location": "/todos/{{t10}}",
+     "content-type": "application/json"
+    }
+   },
+   "capture": {
+    "t10": "/id"
+   }
+  },
+  {
+   "name": "create t11",
+   "request": {
+    "method": "POST",
+    "path": "/todos",
+    "json": {
+     "title": "task 11",
+     "done": false
+    }
+   },
+   "expect": {
+    "status": 201,
+    "json": {
+     "id": {
+      "$var": "t11"
+     },
+     "title": "task 11",
+     "done": false,
+     "created_at": {
+      "$type": "int"
+     }
+    },
+    "headers": {
+     "location": "/todos/{{t11}}",
+     "content-type": "application/json"
+    }
+   },
+   "capture": {
+    "t11": "/id"
+   }
+  },
+  {
+   "name": "list",
+   "request": {
+    "method": "GET",
+    "path": "/todos"
+   },
+   "expect": {
+    "status": 200,
+    "json": [
+     {
+      "id": {
+       "$var": "t0"
+      },
+      "title": "task 0",
+      "done": true,
+      "created_at": {
+       "$type": "int"
+      }
+     },
+     {
+      "id": {
+       "$var": "t1"
+      },
+      "title": "task 1",
+      "done": false,
+      "created_at": {
+       "$type": "int"
+      }
+     },
+     {
+      "id": {
+       "$var": "t2"
+      },
+      "title": "task 2",
+      "done": false,
+      "created_at": {
+       "$type": "int"
+      }
+     },
+     {
+      "id": {
+       "$var": "t3"
+      },
+      "title": "task 3",
+      "done": true,
+      "created_at": {
+       "$type": "int"
+      }
+     },
+     {
+      "id": {
+       "$var": "t4"
+      },
+      "title": "task 4",
+      "done": false,
+      "created_at": {
+       "$type": "int"
+      }
+     },
+     {
+      "id": {
+       "$var": "t5"
+      },
+      "title": "task 5",
+      "done": false,
+      "created_at": {
+       "$type": "int"
+      }
+     },
+     {
+      "id": {
+       "$var": "t6"
+      },
+      "title": "task 6",
+      "done": true,
+      "created_at": {
+       "$type": "int"
+      }
+     },
+     {
+      "id": {
+       "$var": "t7"
+      },
+      "title": "task 7",
+      "done": false,
+      "created_at": {
+       "$type": "int"
+      }
+     },
+     {
+      "id": {
+       "$var": "t8"
+      },
+      "title": "task 8",
+      "done": false,
+      "created_at": {
+       "$type": "int"
+      }
+     },
+     {
+      "id": {
+       "$var": "t9"
+      },
+      "title": "task 9",
+      "done": true,
+      "created_at": {
+       "$type": "int"
+      }
+     },
+     {
+      "id": {
+       "$var": "t10"
+      },
+      "title": "task 10",
+      "done": false,
+      "created_at": {
+       "$type": "int"
+      }
+     },
+     {
+      "id": {
+       "$var": "t11"
+      },
+      "title": "task 11",
+      "done": false,
+      "created_at": {
+       "$type": "int"
+      }
+     }
+    ],
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "list",
+   "request": {
+    "method": "GET",
+    "path": "/todos",
+    "query": "done=true"
+   },
+   "expect": {
+    "status": 200,
+    "json": [
+     {
+      "id": {
+       "$var": "t0"
+      },
+      "title": "task 0",
+      "done": true,
+      "created_at": {
+       "$type": "int"
+      }
+     },
+     {
+      "id": {
+       "$var": "t3"
+      },
+      "title": "task 3",
+      "done": true,
+      "created_at": {
+       "$type": "int"
+      }
+     },
+     {
+      "id": {
+       "$var": "t6"
+      },
+      "title": "task 6",
+      "done": true,
+      "created_at": {
+       "$type": "int"
+      }
+     },
+     {
+      "id": {
+       "$var": "t9"
+      },
+      "title": "task 9",
+      "done": true,
+      "created_at": {
+       "$type": "int"
+      }
+     }
+    ],
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "list",
+   "request": {
+    "method": "GET",
+    "path": "/todos",
+    "query": "done=false"
+   },
+   "expect": {
+    "status": 200,
+    "json": [
+     {
+      "id": {
+       "$var": "t1"
+      },
+      "title": "task 1",
+      "done": false,
+      "created_at": {
+       "$type": "int"
+      }
+     },
+     {
+      "id": {
+       "$var": "t2"
+      },
+      "title": "task 2",
+      "done": false,
+      "created_at": {
+       "$type": "int"
+      }
+     },
+     {
+      "id": {
+       "$var": "t4"
+      },
+      "title": "task 4",
+      "done": false,
+      "created_at": {
+       "$type": "int"
+      }
+     },
+     {
+      "id": {
+       "$var": "t5"
+      },
+      "title": "task 5",
+      "done": false,
+      "created_at": {
+       "$type": "int"
+      }
+     },
+     {
+      "id": {
+       "$var": "t7"
+      },
+      "title": "task 7",
+      "done": false,
+      "created_at": {
+       "$type": "int"
+      }
+     },
+     {
+      "id": {
+       "$var": "t8"
+      },
+      "title": "task 8",
+      "done": false,
+      "created_at": {
+       "$type": "int"
+      }
+     },
+     {
+      "id": {
+       "$var": "t10"
+      },
+      "title": "task 10",
+      "done": false,
+      "created_at": {
+       "$type": "int"
+      }
+     },
+     {
+      "id": {
+       "$var": "t11"
+      },
+      "title": "task 11",
+      "done": false,
+      "created_at": {
+       "$type": "int"
+      }
+     }
+    ],
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  }
+ ]
+}

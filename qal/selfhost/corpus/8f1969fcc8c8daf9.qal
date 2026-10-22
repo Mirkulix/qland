@@ -1,0 +1,4 @@
+fn g(t: Str) -> Int req len(t) == 0 = 0
+fn h[T](x: T) -> Int = if 1 == 1 then g("x") else 0
+fn f(t: Str) -> Int req len(t) == 0 = h(1) + g(t)
+fn k(t: Str) -> Int = h(1) + g(t)

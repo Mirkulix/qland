@@ -27,8 +27,14 @@ fn test_graph_build_and_execute() {
     g.add_edge(add, 0, out, 0, f32v(4));
 
     let mut inputs = HashMap::new();
-    inputs.insert("a".into(), TensorData::from_f32(Shape::vector(4), &[1.0, 2.0, 3.0, 4.0]));
-    inputs.insert("b".into(), TensorData::from_f32(Shape::vector(4), &[10.0, 20.0, 30.0, 40.0]));
+    inputs.insert(
+        "a".into(),
+        TensorData::from_f32(Shape::vector(4), &[1.0, 2.0, 3.0, 4.0]),
+    );
+    inputs.insert(
+        "b".into(),
+        TensorData::from_f32(Shape::vector(4), &[10.0, 20.0, 30.0, 40.0]),
+    );
 
     let result = qlang_runtime::executor::execute(&g, inputs).unwrap();
     let y = result.outputs.get("y").unwrap().as_f32_slice().unwrap();
@@ -62,7 +68,11 @@ fn test_serialize_json_roundtrip() {
 fn test_serialize_binary_roundtrip() {
     let mut g = Graph::new("bin_rt");
     g.add_node(Op::Input { name: "x".into() }, vec![], vec![f32m(4, 4)]);
-    g.add_node(Op::ToTernary, vec![f32m(4, 4)], vec![TensorType::ternary_matrix(4, 4)]);
+    g.add_node(
+        Op::ToTernary,
+        vec![f32m(4, 4)],
+        vec![TensorType::ternary_matrix(4, 4)],
+    );
     g.add_edge(0, 0, 1, 0, f32m(4, 4));
 
     let bin = qlang_core::serial::to_binary(&g).unwrap();
@@ -79,7 +89,7 @@ fn test_serialize_binary_roundtrip() {
 
 #[test]
 fn test_train_mlp_loss_decreases() {
-    use qlang_runtime::training::{MlpWeights, generate_toy_dataset};
+    use qlang_runtime::training::{generate_toy_dataset, MlpWeights};
 
     let dim = 16;
     let mut mlp = MlpWeights::new(dim, 8, 4);
@@ -94,7 +104,10 @@ fn test_train_mlp_loss_decreases() {
 
     let probs_after = mlp.forward(&images);
     let loss_after = mlp.loss(&probs_after, &labels);
-    assert!(loss_after < loss_before, "Loss did not decrease: {loss_before} -> {loss_after}");
+    assert!(
+        loss_after < loss_before,
+        "Loss did not decrease: {loss_before} -> {loss_after}"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -109,10 +122,16 @@ fn test_ternary_compression() {
     let compressed = mlp.compress_ternary();
 
     for &w in &compressed.w1 {
-        assert!(w == -1.0 || w == 0.0 || w == 1.0, "Non-ternary w1 value: {w}");
+        assert!(
+            w == -1.0 || w == 0.0 || w == 1.0,
+            "Non-ternary w1 value: {w}"
+        );
     }
     for &w in &compressed.w2 {
-        assert!(w == -1.0 || w == 0.0 || w == 1.0, "Non-ternary w2 value: {w}");
+        assert!(
+            w == -1.0 || w == 0.0 || w == 1.0,
+            "Non-ternary w2 value: {w}"
+        );
     }
 }
 
@@ -270,7 +289,10 @@ fn test_autograd_gradients_finite() {
 
     for id in [a, b] {
         let grad = tape.grad(id).expect("gradient should exist");
-        assert!(grad.iter().all(|g| g.is_finite()), "non-finite gradient found");
+        assert!(
+            grad.iter().all(|g| g.is_finite()),
+            "non-finite gradient found"
+        );
     }
 }
 
@@ -304,14 +326,32 @@ fn test_checkpoint_save_load() {
 #[test]
 fn test_graph_display() {
     let mut g = Graph::new("display_integ");
-    g.add_node(Op::Input { name: "features".into() }, vec![], vec![f32v(10)]);
+    g.add_node(
+        Op::Input {
+            name: "features".into(),
+        },
+        vec![],
+        vec![f32v(10)],
+    );
     g.add_node(Op::Relu, vec![f32v(10)], vec![f32v(10)]);
-    g.add_node(Op::Output { name: "result".into() }, vec![f32v(10)], vec![]);
+    g.add_node(
+        Op::Output {
+            name: "result".into(),
+        },
+        vec![f32v(10)],
+        vec![],
+    );
     g.add_edge(0, 0, 1, 0, f32v(10));
     g.add_edge(1, 0, 2, 0, f32v(10));
 
     let display = format!("{g}");
-    assert!(display.contains("input(features)"), "missing input node name");
-    assert!(display.contains("output(result)"), "missing output node name");
+    assert!(
+        display.contains("input(features)"),
+        "missing input node name"
+    );
+    assert!(
+        display.contains("output(result)"),
+        "missing output node name"
+    );
     assert!(display.contains("relu"), "missing relu node");
 }

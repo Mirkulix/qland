@@ -1,0 +1,3 @@
+fn hi() -> Unit !io = print("hi")
+fn take(f: fn() -> Unit) -> Unit = f()
+fn g() -> Unit = take(hi)
