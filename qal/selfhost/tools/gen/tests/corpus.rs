@@ -5,8 +5,8 @@
 use qal_compiler::Entry;
 use qal_core::tform;
 
-/// Programs of part (1): examples, fixtures, 20 benchmark solutions, the std, todo and shop packages.
-const FILES: usize = 28;
+/// Programs of part (1): examples, fixtures, 20 benchmark solutions, the std, todo and shop packages, and qalc.
+const FILES: usize = 29;
 /// Programs of part (2), extracted by `selfhost/tools/extract_corpus.py`.
 const EXTRACTED: usize = 770;
 
@@ -16,7 +16,7 @@ fn the_corpus_size_is_fixed() {
     let names: Vec<&str> = files.iter().map(|s| s.name.as_str()).collect();
     assert_eq!(files.len(), FILES, "{names:#?}");
     assert_eq!(names.iter().filter(|n| n.starts_with("bench/solutions/qal/")).count(), 20);
-    assert!(names.contains(&"std/std.qalpkg") && names.contains(&"examples/todo/todo.qalpkg") && names.contains(&"examples/shop/shop.qalpkg"));
+    assert!(names.contains(&"std/std.qalpkg") && names.contains(&"examples/todo/todo.qalpkg") && names.contains(&"examples/shop/shop.qalpkg") && names.contains(&"selfhost/qalc.qalpkg"));
     assert!(files.iter().all(|s| !s.text.is_empty()), "unreadable corpus file");
     assert_eq!(qal_gen::extracted_corpus().len(), EXTRACTED, "re-run qal/selfhost/tools/extract_corpus.py and update EXTRACTED");
 }
@@ -69,7 +69,7 @@ fn every_checked_corpus_program_round_trips_through_qalt() {
     }
     assert_eq!((files.parsed, files.checked), (FILES, FILES), "{files:?}");
     // Fixed with the corpus: a change means the corpus or the pipeline changed.
-    assert_eq!((st.parsed, st.checked), (747, 525), "{st:?}");
+    assert_eq!((st.parsed, st.checked), (748, 526), "{st:?}");
 }
 
 
