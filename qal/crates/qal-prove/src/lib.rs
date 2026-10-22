@@ -498,6 +498,15 @@ fn solve(s: &Solver, only: &[Bool], vc: &Vc, k: usize, rlimit: u32, timeout_ms: 
             let eval = |t: &Option<Term>| match t {
                 Some(Term::I(x)) => model.eval(x, true).and_then(|v| v.as_i64()).map(Value::Int),
                 Some(Term::B(b)) => model.eval(b, true).and_then(|v| v.as_bool()).map(Value::Bool),
+                Some(Term::S(s)) => model.eval(&s.s, true).and_then(|v| v.as_string()).map(Value::Str),
+                Some(Term::L(l)) => {
+                    let len = model.eval(&l.len, true).and_then(|v| v.as_i64()).unwrap_or(0);
+                    if len == 0 {
+                        Some(Value::List(Vec::new()))
+                    } else {
+                        None
+                    }
+                }
                 None => None,
             };
             let call = o.args.iter().map(|(n, t)| (n.clone(), eval(t))).collect();

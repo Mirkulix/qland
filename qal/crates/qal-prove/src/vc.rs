@@ -25,8 +25,9 @@
 use qal_core::ast::{BinOp, Type, UnOp};
 use qal_core::tast::{Builtin, TArm, TExpr, TFn, TKind, TPat, TProgram, TTest};
 use std::collections::BTreeSet;
+use std::str::FromStr;
 use std::time::Instant;
-use z3::ast::{Bool, Int};
+use z3::ast::{Bool, Int, String as Z3String};
 
 /// Callee contracts are encoded this many calls deep (contracts calling functions with contracts);
 /// deeper calls are fresh values.
@@ -38,23 +39,53 @@ const MAX_INLINE: usize = 3;
 pub const MAX_VC_NODES: usize = 50_000;
 
 #[derive(Clone, Debug)]
+pub struct StrTerm {
+    pub s: Z3String,
+    pub len: Int,
+}
+
+#[derive(Clone, Debug)]
+pub struct ListTerm {
+    pub len: Int,
+    pub id: Int,
+}
+
+#[derive(Clone, Debug)]
 pub enum Term {
     I(Int),
     B(Bool),
+    S(StrTerm),
+    L(ListTerm),
 }
 
 impl Term {
     fn int(&self) -> Option<&Int> {
         match self {
             Term::I(i) => Some(i),
-            Term::B(_) => None,
+            _ => None,
         }
     }
 
     fn bool(&self) -> Option<&Bool> {
         match self {
             Term::B(b) => Some(b),
-            Term::I(_) => None,
+            _ => None,
+        }
+    }
+
+    #[allow(dead_code)]
+    fn str(&self) -> Option<&StrTerm> {
+        match self {
+            Term::S(s) => Some(s),
+            _ => None,
+        }
+    }
+
+    #[allow(dead_code)]
+    fn list(&self) -> Option<&ListTerm> {
+        match self {
+            Term::L(l) => Some(l),
+            _ => None,
         }
     }
 }
@@ -184,19 +215,6 @@ pub(crate) fn bit_facts(b: Builtin, x: &Int, vals: &[Option<Term>]) -> Vec<Bool>
     }
 }
 
-/// A fresh value of a modelled type and the facts every value of the type satisfies.
-fn havoc(ty: &Type) -> (Option<Term>, Bool) {
-    match ty {
-        Type::Int => {
-            let x = Int::fresh_const("v");
-            let r = in_range(&x);
-            (Some(Term::I(x)), r)
-        }
-        Type::Bool => (Some(Term::B(Bool::fresh_const("b"))), truth()),
-        _ => (None, truth()),
-    }
-}
-
 struct Enc<'p> {
     tp: &'p TProgram,
     /// Collect call-site obligations (only while encoding the body being proven, not contracts).
@@ -231,6 +249,26 @@ pub fn function<'p>(tp: &'p TProgram, f: &'p TFn, deadline: Option<Instant>) -> 
                 Some(Term::I(x))
             }
             Type::Bool => Some(Term::B(Bool::new_const(p.name.as_str()))),
+            Type::Str => {
+                let s = Z3String::new_const(p.name.as_str());
+                let len = Int::new_const(format!("{}_len", p.name).as_str());
+                let zero = Int::from_i64(0);
+                let max = Int::from_i64(u32::MAX as i64);
+                facts.push(Bool::and(&[len.ge(&zero), len.le(&max)]));
+                Some(Term::S(StrTerm { s, len }))
+            }
+            Type::List(_) => {
+                let len = Int::new_const(format!("{}_len", p.name).as_str());
+                let id = Int::new_const(format!("{}_id", p.name).as_str());
+                let zero = Int::from_i64(0);
+                let max = Int::from_i64(u32::MAX as i64);
+                facts.push(Bool::and(&[
+                    len.ge(&zero),
+                    len.le(&max),
+                    len.eq(&zero).eq(id.eq(&zero)),
+                ]));
+                Some(Term::L(ListTerm { len, id }))
+            }
             _ => None,
         };
         params.push((p.name.clone(), ty, t.clone()));
@@ -276,6 +314,42 @@ pub fn test<'p>(tp: &'p TProgram, t: &'p TTest, deadline: Option<Instant>) -> Vc
 }
 
 impl<'p> Enc<'p> {
+    /// A fresh value of a modelled type and the facts every value of the type satisfies.
+    fn havoc(&mut self, ty: &Type) -> (Option<Term>, Bool) {
+        match ty {
+            Type::Int => {
+                let x = Int::fresh_const("v");
+                let r = in_range(&x);
+                self.defs.push(r.clone());
+                (Some(Term::I(x)), r)
+            }
+            Type::Bool => (Some(Term::B(Bool::fresh_const("b"))), truth()),
+            Type::Str => {
+                let s = Z3String::fresh_const("s");
+                let len = Int::fresh_const("str_len");
+                let zero = Int::from_i64(0);
+                let max = Int::from_i64(u32::MAX as i64);
+                let r = Bool::and(&[len.ge(&zero), len.le(&max)]);
+                self.defs.push(r.clone());
+                (Some(Term::S(StrTerm { s, len })), r)
+            }
+            Type::List(_) => {
+                let len = Int::fresh_const("list_len");
+                let id = Int::fresh_const("list_id");
+                let zero = Int::from_i64(0);
+                let max = Int::from_i64(u32::MAX as i64);
+                let r = Bool::and(&[
+                    len.ge(&zero),
+                    len.le(&max),
+                    len.eq(&zero).eq(id.eq(&zero)),
+                ]);
+                self.defs.push(r.clone());
+                (Some(Term::L(ListTerm { len, id })), r)
+            }
+            _ => (None, truth()),
+        }
+    }
+
     /// A fresh constant defined as `c` (a literal stays itself): a condition that many obligations
     /// share, like the path condition after each item of a long list, then stays one node in each
     /// of them, where the solver would otherwise flatten it into every obligation (quadratic).
@@ -302,19 +376,19 @@ impl<'p> Enc<'p> {
     /// Encodes `e` under path condition `pc`: (value, ok). A modelled type always has a value.
     fn enc(&mut self, e: &TExpr, env: &mut Vec<Option<Term>>, pc: &Bool, path: &str) -> (Option<Term>, Bool) {
         self.nodes += 1;
-        if self.nodes % CLOCK_EVERY == 0 && self.deadline.is_some_and(|d| Instant::now() > d) {
+        if self.nodes.is_multiple_of(CLOCK_EVERY) && self.deadline.is_some_and(|d| Instant::now() > d) {
             self.out_of_time = true;
         }
         if self.nodes > MAX_VC_NODES || self.out_of_time {
             // Too large or too slow: the result is discarded (`Vc::truncated`, `Vc::out_of_time`);
             // stop encoding.
-            return havoc(&e.ty);
+            return self.havoc(&e.ty);
         }
         let (v, ok) = self.enc_inner(e, env, pc, path);
         match v {
             Some(v) => (Some(v), ok),
             None => {
-                let (h, facts) = havoc(&e.ty);
+                let (h, facts) = self.havoc(&e.ty);
                 (h, and(&[ok, facts]))
             }
         }
@@ -322,10 +396,10 @@ impl<'p> Enc<'p> {
 
     /// A fresh value of type `ty` standing for `what` (noted when the type is modelled).
     fn unknown(&mut self, ty: &Type, what: &str) -> (Option<Term>, Bool) {
-        if matches!(ty, Type::Int | Type::Bool) {
+        if matches!(ty, Type::Int | Type::Bool | Type::Str | Type::List(_)) {
             self.approx.insert(what.to_string());
         }
-        havoc(ty)
+        self.havoc(ty)
     }
 
     /// Encodes `xs` left to right; each is evaluated only if the previous ones did not trap.
@@ -347,7 +421,15 @@ impl<'p> Enc<'p> {
         match &e.kind {
             TKind::Int(n) => (Some(Term::I(Int::from_i64(*n))), truth()),
             TKind::Bool(b) => (Some(Term::B(Bool::from_bool(*b))), truth()),
-            TKind::Float(_) | TKind::Str(_) | TKind::Unit | TKind::FnRef(_) | TKind::FnRefG(..) => (None, truth()),
+            TKind::Str(s) => match Z3String::from_str(s) {
+                Ok(zs) => {
+                    let char_count = s.chars().count() as i64;
+                    let len = Int::from_i64(char_count);
+                    (Some(Term::S(StrTerm { s: zs, len })), truth())
+                }
+                Err(_) => (None, truth()),
+            },
+            TKind::Float(_) | TKind::Unit | TKind::FnRef(_) | TKind::FnRefG(..) => (None, truth()),
             TKind::Local(id) => (env.get(*id as usize).cloned().flatten(), truth()),
             TKind::Lambda(l) => {
                 // The body runs later, any number of times, with any arguments; everything it can see
@@ -356,7 +438,7 @@ impl<'p> Enc<'p> {
                 let mut facts = vec![pc.clone()];
                 for p in &l.params {
                     let ty = self.locals.last().and_then(|ls| ls.get(*p as usize)).cloned().unwrap_or(Type::Unit);
-                    let (h, f) = havoc(&ty);
+                    let (h, f) = self.havoc(&ty);
                     if let Some(slot) = env.get_mut(*p as usize) {
                         *slot = h;
                     }
@@ -393,6 +475,16 @@ impl<'p> Enc<'p> {
                 let v = match (av, bv) {
                     (Some(Term::I(x)), Some(Term::I(y))) => Some(Term::I(cv.ite(&x, &y))),
                     (Some(Term::B(x)), Some(Term::B(y))) => Some(Term::B(cv.ite(&x, &y))),
+                    (Some(Term::S(x)), Some(Term::S(y))) => {
+                        let s = cv.ite(&x.s, &y.s);
+                        let len = cv.ite(&x.len, &y.len);
+                        Some(Term::S(StrTerm { s, len }))
+                    }
+                    (Some(Term::L(x)), Some(Term::L(y))) => {
+                        let len = cv.ite(&x.len, &y.len);
+                        let id = cv.ite(&x.id, &y.id);
+                        Some(Term::L(ListTerm { len, id }))
+                    }
                     _ => None,
                 };
                 (v, ok)
@@ -409,7 +501,19 @@ impl<'p> Enc<'p> {
                 let (mut vals, ok) = self.seq(items, env, pc, path, "items");
                 (vals.pop().flatten(), ok)
             }
-            TKind::List(items) => (None, self.seq(items, env, pc, path, "items").1),
+            TKind::List(items) => {
+                let (_, ok) = self.seq(items, env, pc, path, "items");
+                let n = items.len() as i64;
+                let len = Int::from_i64(n);
+                let id = if n == 0 {
+                    Int::from_i64(0)
+                } else {
+                    let id = Int::fresh_const("list_lit");
+                    self.defs.push(id.eq(Int::from_i64(0)).not());
+                    id
+                };
+                (Some(Term::L(ListTerm { len, id })), ok)
+            }
             TKind::Variant(_, args) => (None, self.seq(args, env, pc, path, "args").1),
             TKind::Record(fs) => {
                 let names = self.tp.record_fields(&e.ty);
@@ -438,6 +542,86 @@ impl<'p> Enc<'p> {
             }
             TKind::Builtin(b, args, _) => {
                 let (vals, ok) = self.seq(args, env, pc, path, "args");
+                match b {
+                    Builtin::StrLen => {
+                        if let Some(Some(Term::S(s))) = vals.first() {
+                            return (Some(Term::I(s.len.clone())), ok);
+                        }
+                    }
+                    Builtin::ListLen => {
+                        if let Some(Some(Term::L(l))) = vals.first() {
+                            return (Some(Term::I(l.len.clone())), ok);
+                        }
+                    }
+                    Builtin::Push => {
+                        if let Some(Some(Term::L(l))) = vals.first() {
+                            let one = Int::from_i64(1);
+                            let len = Int::add(&[&l.len, &one]);
+                            let id = Int::fresh_const("push_id");
+                            let zero = Int::from_i64(0);
+                            self.defs.push(len.ge(&zero));
+                            self.defs.push(len.eq(&zero).eq(id.eq(&zero)));
+                            self.defs.push(id.eq(&l.id).not());
+                            return (Some(Term::L(ListTerm { len, id })), ok);
+                        }
+                    }
+                    Builtin::Concat if matches!(e.ty, Type::List(_)) => {
+                        if let (Some(Some(Term::L(a))), Some(Some(Term::L(b)))) = (vals.first(), vals.get(1)) {
+                            let len = Int::add(&[&a.len, &b.len]);
+                            let id = Int::fresh_const("concat_id");
+                            let zero = Int::from_i64(0);
+                            self.defs.push(len.ge(&zero));
+                            self.defs.push(len.eq(&zero).eq(id.eq(&zero)));
+                            self.defs.push(b.len.eq(&zero).implies(id.eq(&a.id)));
+                            self.defs.push(a.len.eq(&zero).implies(id.eq(&b.id)));
+                            return (Some(Term::L(ListTerm { len, id })), ok);
+                        }
+                    }
+                    Builtin::Reverse => {
+                        if let Some(Some(Term::L(l))) = vals.first() {
+                            let id = Int::fresh_const("rev_id");
+                            let zero = Int::from_i64(0);
+                            let one = Int::from_i64(1);
+                            self.defs.push(l.len.eq(&zero).eq(id.eq(&zero)));
+                            self.defs.push(l.len.le(&one).implies(id.eq(&l.id)));
+                            return (Some(Term::L(ListTerm { len: l.len.clone(), id })), ok);
+                        }
+                    }
+                    Builtin::SortInt | Builtin::SortStr => {
+                        if let Some(Some(Term::L(l))) = vals.first() {
+                            let id = Int::fresh_const("sort_id");
+                            let zero = Int::from_i64(0);
+                            let one = Int::from_i64(1);
+                            self.defs.push(l.len.eq(&zero).eq(id.eq(&zero)));
+                            self.defs.push(l.len.le(&one).implies(id.eq(&l.id)));
+                            return (Some(Term::L(ListTerm { len: l.len.clone(), id })), ok);
+                        }
+                    }
+                    Builtin::Contains => {
+                        if let (Some(Some(Term::S(s))), Some(Some(Term::S(sub)))) = (vals.first(), vals.get(1)) {
+                            let cont = s.s.contains(&sub.s);
+                            self.defs.push(cont.implies(s.len.ge(&sub.len)));
+                            return (Some(Term::B(cont)), ok);
+                        }
+                    }
+                    Builtin::StartsWith => {
+                        if let (Some(Some(Term::S(s))), Some(Some(Term::S(p)))) = (vals.first(), vals.get(1)) {
+                            let pref = s.s.prefix(&p.s);
+                            self.defs.push(pref.implies(s.len.ge(&p.len)));
+                            return (Some(Term::B(pref)), ok);
+                        }
+                    }
+                    Builtin::Slice => {
+                        if let (Some(Some(Term::S(s))), Some(Some(Term::I(from))), Some(Some(Term::I(to)))) = (vals.first(), vals.get(1), vals.get(2)) {
+                            let length = Int::sub(&[to, from]);
+                            let sub = s.s.substr(from, &length);
+                            let mut facts = vec![ok];
+                            facts.extend(self.builtin_traps(*b, &vals));
+                            return (Some(Term::S(StrTerm { s: sub, len: length })), and(&facts));
+                        }
+                    }
+                    _ => {}
+                }
                 let (v, range) = self.unknown(&e.ty, &format!("built-in `{}`", b.name()));
                 let mut facts = vec![ok, range];
                 if let Some(Term::I(x)) = &v {
@@ -449,10 +633,11 @@ impl<'p> Enc<'p> {
                         Builtin::Compare => {
                             facts.push(x.ge(Int::from_i64(-1)));
                             facts.push(x.le(Int::from_i64(1)));
-                            // Int and Bool order numerically: exact.
+                            // Int, Bool and Str order: exact.
                             match (vals.first(), vals.get(1)) {
                                 (Some(Some(Term::I(a))), Some(Some(Term::I(c)))) => facts.push(x.eq(a.lt(c).ite(&Int::from_i64(-1), &a.eq(c).ite(&Int::from_i64(0), &Int::from_i64(1))))),
                                 (Some(Some(Term::B(a))), Some(Some(Term::B(c)))) => facts.push(x.eq(a.eq(c).ite(&Int::from_i64(0), &a.ite(&Int::from_i64(1), &Int::from_i64(-1))))),
+                                (Some(Some(Term::S(a))), Some(Some(Term::S(c)))) => facts.push(x.eq(a.s.str_lt(&c.s).ite(&Int::from_i64(-1), &a.s.eq(&c.s).ite(&Int::from_i64(0), &Int::from_i64(1))))),
                                 _ => {}
                             }
                         }
@@ -520,7 +705,16 @@ impl<'p> Enc<'p> {
                 _ => vec![self.untracked(b)],
             },
             // An index below a length the encoding does not model: the index is at least 0.
-            B::ListAt | B::BytesAt => {
+            B::ListAt => match (vals.first(), vals.get(1)) {
+                (Some(Some(Term::L(l))), Some(Some(Term::I(i)))) => {
+                    vec![i.ge(&zero), i.lt(&l.len)]
+                }
+                (_, Some(Some(Term::I(i)))) => {
+                    vec![self.untracked(b), i.ge(&zero)]
+                }
+                _ => vec![self.untracked(b)],
+            },
+            B::BytesAt => {
                 let mut c = vec![self.untracked(b)];
                 if let Some(i) = int(1) {
                     c.push(i.ge(&zero));
@@ -528,7 +722,16 @@ impl<'p> Enc<'p> {
                 c
             }
             // slice/bytes_slice(x, from, to): 0 <= from <= to <= length (the length is not modelled).
-            B::Slice | B::BytesSlice => {
+            B::Slice => match (vals.first(), vals.get(1), vals.get(2)) {
+                (Some(Some(Term::S(s))), Some(Some(Term::I(from))), Some(Some(Term::I(to)))) => {
+                    vec![from.ge(&zero), from.le(to), to.le(&s.len)]
+                }
+                (_, Some(Some(Term::I(from))), Some(Some(Term::I(to)))) => {
+                    vec![self.untracked(b), from.ge(&zero), from.le(to)]
+                }
+                _ => vec![self.untracked(b)],
+            },
+            B::BytesSlice => {
                 let mut c = vec![self.untracked(b)];
                 if let Some(from) = int(1) {
                     c.push(from.ge(&zero));
@@ -598,6 +801,43 @@ impl<'p> Enc<'p> {
                 let ok = and(&[ok, b.eq(Int::from_i64(0)).not()]);
                 (Some(Term::I(v)), ok)
             }
+            (BinOp::Lt, _) if l.ty == Type::Str => match (&lv, &rv) {
+                (Some(Term::S(a)), Some(Term::S(b))) => (Some(Term::B(a.s.str_lt(&b.s))), ok),
+                _ => (None, ok),
+            },
+            (BinOp::Le, _) if l.ty == Type::Str => match (&lv, &rv) {
+                (Some(Term::S(a)), Some(Term::S(b))) => (Some(Term::B(a.s.str_le(&b.s))), ok),
+                _ => (None, ok),
+            },
+            (BinOp::Gt, _) if l.ty == Type::Str => match (&lv, &rv) {
+                (Some(Term::S(a)), Some(Term::S(b))) => (Some(Term::B(a.s.str_gt(&b.s))), ok),
+                _ => (None, ok),
+            },
+            (BinOp::Ge, _) if l.ty == Type::Str => match (&lv, &rv) {
+                (Some(Term::S(a)), Some(Term::S(b))) => (Some(Term::B(a.s.str_ge(&b.s))), ok),
+                _ => (None, ok),
+            },
+            (BinOp::Concat, _) if l.ty == Type::Str => match (&lv, &rv) {
+                (Some(Term::S(a)), Some(Term::S(b))) => {
+                    let c = Z3String::concat(&[&a.s, &b.s]);
+                    let len = Int::add(&[&a.len, &b.len]);
+                    (Some(Term::S(StrTerm { s: c, len })), ok)
+                }
+                _ => (None, ok),
+            },
+            (BinOp::Concat, _) if matches!(l.ty, Type::List(_)) => match (&lv, &rv) {
+                (Some(Term::L(a)), Some(Term::L(b))) => {
+                    let len = Int::add(&[&a.len, &b.len]);
+                    let id = Int::fresh_const("concat_id");
+                    let zero = Int::from_i64(0);
+                    self.defs.push(len.ge(&zero));
+                    self.defs.push(len.eq(&zero).eq(id.eq(&zero)));
+                    self.defs.push(b.len.eq(&zero).implies(id.eq(&a.id)));
+                    self.defs.push(a.len.eq(&zero).implies(id.eq(&b.id)));
+                    (Some(Term::L(ListTerm { len, id })), ok)
+                }
+                _ => (None, ok),
+            },
             (BinOp::Lt, Some((a, b))) => (Some(Term::B(a.lt(&b))), ok),
             (BinOp::Le, Some((a, b))) => (Some(Term::B(a.le(&b))), ok),
             (BinOp::Gt, Some((a, b))) => (Some(Term::B(a.gt(&b))), ok),
@@ -606,6 +846,17 @@ impl<'p> Enc<'p> {
                 let eq = match (&lv, &rv) {
                     (Some(Term::I(a)), Some(Term::I(b))) => Some(a.eq(b)),
                     (Some(Term::B(a)), Some(Term::B(b))) => Some(a.eq(b)),
+                    (Some(Term::S(a)), Some(Term::S(b))) => {
+                        let zero = Int::from_i64(0);
+                        self.defs.push(Bool::and(&[a.len.ge(&zero), b.len.ge(&zero), a.s.eq(&b.s)]).implies(a.len.eq(&b.len)));
+                        Some(a.s.eq(&b.s))
+                    }
+                    (Some(Term::L(a)), Some(Term::L(b))) => {
+                        self.defs.push(a.id.eq(&b.id).implies(a.len.eq(&b.len)));
+                        let zero = Int::from_i64(0);
+                        self.defs.push(Bool::and(&[a.len.eq(&zero), b.len.eq(&zero)]).implies(a.id.eq(&b.id)));
+                        Some(a.id.eq(&b.id))
+                    }
                     _ => None,
                 };
                 match eq {
@@ -634,7 +885,7 @@ impl<'p> Enc<'p> {
             let traps = self.untracked_note("a call the prover cannot resolve".into());
             return (h, and(&[args_ok, f, traps]));
         };
-        let (v, range) = havoc(ty);
+        let (v, range) = self.havoc(ty);
         // Strict rule (re-review I1): a call of a user function returns only if its body does not
         // trap, which the encoding does not model (calls are abstracted by contracts). So every
         // call contributes a fresh condition to `ok`: a contract that calls a user function is
@@ -650,7 +901,7 @@ impl<'p> Enc<'p> {
             }
             return (v, and(&facts));
         }
-        if callee.ens.is_empty() && matches!(ty, Type::Int | Type::Bool) {
+        if callee.ens.is_empty() && matches!(ty, Type::Int | Type::Bool | Type::Str | Type::List(_)) {
             self.approx.insert(format!("the result of `{}` (it has no `ens`)", callee.def.name));
         }
         let (saved, record) = (self.depth, self.record);
@@ -735,6 +986,16 @@ impl<'p> Enc<'p> {
             v = match (x, v) {
                 (Some(Term::I(a)), Some(Term::I(b))) => Some(Term::I(sel.ite(&a, &b))),
                 (Some(Term::B(a)), Some(Term::B(b))) => Some(Term::B(sel.ite(&a, &b))),
+                (Some(Term::S(a)), Some(Term::S(b))) => {
+                    let s = sel.ite(&a.s, &b.s);
+                    let len = sel.ite(&a.len, &b.len);
+                    Some(Term::S(StrTerm { s, len }))
+                }
+                (Some(Term::L(a)), Some(Term::L(b))) => {
+                    let len = sel.ite(&a.len, &b.len);
+                    let id = sel.ite(&a.id, &b.id);
+                    Some(Term::L(ListTerm { len, id }))
+                }
                 _ => None,
             };
         }
@@ -755,9 +1016,13 @@ impl<'p> Enc<'p> {
             }
             (TPat::Int(n), Some(Term::I(x))) => x.eq(Int::from_i64(*n)),
             (TPat::Bool(b), Some(Term::B(x))) => x.eq(Bool::from_bool(*b)),
+            (TPat::Str(s), Some(Term::S(x))) => match Z3String::from_str(s) {
+                Ok(lit) => x.s.eq(&lit),
+                Err(_) => truth(),
+            },
             _ => {
                 self.bind_unknown(p, ty, env, facts);
-                if matches!(ty, Type::Int | Type::Bool) || self.binds_modelled(p, ty) {
+                if matches!(ty, Type::Int | Type::Bool | Type::Str | Type::List(_)) || self.binds_modelled(p, ty) {
                     self.approx.insert(format!("patterns on {ty}"));
                 }
                 Bool::fresh_const("m")
@@ -765,10 +1030,10 @@ impl<'p> Enc<'p> {
         }
     }
 
-    /// True if `p` binds a variable of type Int or Bool inside a value of type `ty`.
+    /// True if `p` binds a variable of a modelled type inside a value of type `ty`.
     fn binds_modelled(&self, p: &TPat, ty: &Type) -> bool {
         match p {
-            TPat::Bind(_) => matches!(ty, Type::Int | Type::Bool),
+            TPat::Bind(_) => matches!(ty, Type::Int | Type::Bool | Type::Str | Type::List(_)),
             TPat::Variant(tag, ps) => {
                 let fields = self.tp.variant_fields(ty, *tag);
                 ps.iter().zip(&fields).any(|(q, t)| self.binds_modelled(q, t))
@@ -785,7 +1050,7 @@ impl<'p> Enc<'p> {
     fn bind_unknown(&mut self, p: &TPat, ty: &Type, env: &mut [Option<Term>], facts: &mut Vec<Bool>) {
         match p {
             TPat::Bind(id) => {
-                let (v, f) = havoc(ty);
+                let (v, f) = self.havoc(ty);
                 facts.push(f);
                 if let Some(slot) = env.get_mut(*id as usize) {
                     *slot = v;

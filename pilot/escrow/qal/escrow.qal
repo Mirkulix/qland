@@ -40,8 +40,9 @@ fn is_approved(count: Int, threshold: Int) -> Bool
 = count >= threshold
 
 # Invariant 3: Separation of Duties (No Self-Approval)
-fn can_self_approve(requester: Str, approver: Str) -> Bool =
-  requester != approver
+fn can_self_approve(requester: Str, approver: Str) -> Bool
+  ens (r == true) == (requester != approver)
+= requester != approver
 
 # Invariant 4: Treasury Conservation Laws (Zero-Sum Invariant)
 fn zero_sum_step(accounts: Int, escrow: Int, disbursed: Int, deposited: Int) -> Bool

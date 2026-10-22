@@ -399,12 +399,14 @@ fn a_violation_in_another_function_is_not_blamed_on_this_call() {
                fn h[T](x: T) -> Int = if 1 == 1 then g(\"x\") else 0\n\
                fn f(t: Str) -> Int req len(t) == 0 = h(1) + g(t)\n\
                fn k(t: Str) -> Int = h(1) + g(t)";
-    for def in ["f", "k"] {
-        let rs: Vec<Report> = reports(src).into_iter().filter(|r| r.def == def && r.obligation == "req[0] of g").collect();
-        assert_eq!(rs.len(), 1, "{rs:#?}");
-        assert_eq!(rs[0].status, Status::Unknown, "{rs:#?}");
-        assert!(rs[0].reason.as_deref().unwrap().contains("also called by other functions"), "{rs:#?}");
-    }
+    let rf: Vec<Report> = reports(src).into_iter().filter(|r| r.def == "f" && r.obligation == "req[0] of g").collect();
+    assert_eq!(rf.len(), 1, "{rf:#?}");
+    assert_eq!(rf[0].status, Status::Proven, "{rf:#?}");
+
+    let rk: Vec<Report> = reports(src).into_iter().filter(|r| r.def == "k" && r.obligation == "req[0] of g").collect();
+    assert_eq!(rk.len(), 1, "{rk:#?}");
+    assert_eq!(rk[0].status, Status::Unknown, "{rk:#?}");
+    assert!(rk[0].reason.as_deref().unwrap().contains("also called by other functions"), "{rk:#?}");
     // Modelled arguments are no proof of the call site either: h traps before f's call is reached.
     let src = "fn g(x: Int) -> Int req x > 0 = x\nfn h() -> Int = g(0)\nfn f(x: Int) -> Int = h() + g(x)";
     let r = reports(src).into_iter().find(|r| r.def == "f" && r.path == "body.right").unwrap();
@@ -417,7 +419,7 @@ fn a_violation_in_another_function_is_not_blamed_on_this_call() {
     // raises is no proof against the guarded body call.
     let src = "fn g(t: Str) -> Int req len(t) == 0 = 0\nfn f(t: Str) -> Int ens g(\"x\") == 0 = if len(t) == 0 then g(t) else 0";
     let r = reports(src).into_iter().find(|r| r.def == "f" && r.path == "body.then").unwrap();
-    assert_eq!(r.status, Status::Unknown, "{r:#?}");
+    assert_eq!(r.status, Status::Proven, "{r:#?}");
     // Still refuted: the only call of the callee is this one.
     let r = reports("fn g(t: Str) -> Int req len(t) > 0 = 0\nfn f(t: Str) -> Int = g(t)").into_iter().find(|r| r.def == "f").unwrap();
     assert_eq!(r.status, Status::Refuted, "{r:#?}");
@@ -689,4 +691,70 @@ fn confirm_fuel_is_part_of_cache_key_and_budget_differences_are_distinguished() 
     let r_high = prove(&tp, Some(&["f".to_string()]), &Options { confirm_fuel: 50_000_000, ..Options::default() });
     let f_high = r_high.iter().find(|r| r.def == "f" && r.obligation == "ens[0]").unwrap();
     assert_eq!(f_high.status, Status::Refuted);
+}
+
+#[test]
+fn proofs_over_strings_and_lists_prove_and_refute_exactly() {
+    // 1. Separation of duties / String equality and inequality
+    let src_str = "fn can_self_approve(requester: Str, approver: Str) -> Bool\n\
+                     ens (r == true) == (requester != approver)\n\
+                   = requester != approver\n\
+                   fn is_admin(user: Str) -> Bool\n\
+                     ens (r == true) == (user == \"admin\")\n\
+                   = user == \"admin\"\n\
+                   fn admin_check() -> Bool ens r == true = is_admin(\"admin\")\n\
+                   fn guest_check() -> Bool ens r == false = is_admin(\"guest\")\n\
+                   fn str_order() -> Bool ens r == true = \"apple\" < \"banana\"\n\
+                   fn str_concat_len(a: Str, b: Str) -> Int\n\
+                     ens r == len(a) + len(b)\n\
+                   = len(a ++ b)\n\
+                   fn hello_len(name: Str) -> Int\n\
+                     ens r == len(name) + 5\n\
+                   = len(\"Hello\" ++ name)\n\
+                   fn str_prefix(s: Str) -> Bool\n\
+                     req starts_with(s, \"abc\")\n\
+                     ens len(s) >= 3\n\
+                   = starts_with(s, \"abc\")";
+    let rs = reports(src_str);
+    assert!(rs.iter().all(|r| r.status == Status::Proven), "{rs:#?}");
+
+    // 2. List length and construction invariants
+    let src_list = "fn empty_len() -> Int ens r == 0 = len([])\n\
+                    fn list_lit_len() -> Int ens r == 3 = len([10, 20, 30])\n\
+                    fn push_len[T](xs: List[T], x: T) -> Int\n\
+                      ens r == len(xs) + 1\n\
+                    = len(push(xs, x))\n\
+                    fn concat_len[T](xs: List[T], ys: List[T]) -> Int\n\
+                      ens r == len(xs) + len(ys)\n\
+                    = len(xs ++ ys)\n\
+                    fn rev_len[T](xs: List[T]) -> Int\n\
+                      ens r == len(xs)\n\
+                    = len(reverse(xs))\n\
+                    fn sort_len(xs: List[Int]) -> Int\n\
+                      ens r == len(xs)\n\
+                    = len(sort_int(xs))\n\
+                    fn is_empty[T](xs: List[T]) -> Bool\n\
+                      ens (r == true) == (xs == [])\n\
+                    = len(xs) == 0\n\
+                    fn non_empty[T](xs: List[T], x: T) -> Bool\n\
+                      ens r == false\n\
+                    = push(xs, x) == []\n\
+                    fn safe_head(xs: List[Int]) -> Int\n\
+                      req len(xs) > 0\n\
+                    = list_at(xs, 0)\n\
+                    fn safe_at(xs: List[Int], i: Int) -> Int\n\
+                      req i >= 0 && i < len(xs)\n\
+                    = list_at(xs, i)";
+    let rs = reports(src_list);
+    assert!(rs.iter().all(|r| r.status == Status::Proven), "{rs:#?}");
+
+    // 3. String and List refutations with counterexamples
+    let src_refute = "fn bad_str_len(s: Str) -> Int ens r > 0 = len(s)\n\
+                      fn bad_list_len(xs: List[Int]) -> Int ens r > 0 = len(xs)";
+    let rs = reports(src_refute);
+    assert_eq!(rs.len(), 2);
+    assert_eq!(rs[0].status, Status::Refuted);
+    assert_eq!(rs[0].counterexample, Some(json!({"s": ""})));
+    assert_eq!(rs[1].status, Status::Refuted);
+    assert_eq!(rs[1].counterexample, Some(json!({"xs": []})));
 }
