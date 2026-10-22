@@ -363,6 +363,52 @@ fn tampering_with_records_is_detected() {
     assert_eq!((code(&o), o.error.as_ref().unwrap().seq), ("E0922", 4), "{o:?}");
 }
 
+/// A write checks the chain head before it extends it: a tampered last record (body, hash or
+/// signature) or a member row whose key is not the session's key refuses the write itself, not
+/// only the next `qal verify`.
+#[test]
+fn writes_refuse_to_extend_a_broken_chain_head() {
+    // One byte in the last record's body: its hash no longer matches.
+    let (mut s, _, again, _) = signed_store();
+    let last = count(&s, "records");
+    flip(&s, "records", "body", &format!("seq = {last}"), 20);
+    as_member(&mut s, again);
+    let e = s.define("fn h() -> Int = 3", "x").unwrap_err();
+    assert_eq!((e[0].code, e[0].kind), ("E0922", "chain_broken"), "{e:?}");
+    assert!(e[0].message.contains(&format!("record {last}")), "{e:?}");
+    assert_eq!(count(&s, "records"), last, "nothing was appended");
+    // Body and hash rewritten consistently, but not re-signed.
+    let (mut s, _, again, _) = signed_store();
+    let last = count(&s, "records");
+    let c = raw(&s);
+    let body: Vec<u8> = c.query_row("SELECT body FROM records WHERE seq = ?1", [last], |r| r.get(0)).unwrap();
+    let text = String::from_utf8(body).unwrap().replace("\"session\":\"s000000000001\"", "\"session\":\"s000000000009\"");
+    assert!(text.contains("s000000000009"), "the last record is the architect's");
+    c.execute("UPDATE records SET body = ?1, hash = ?2 WHERE seq = ?3", rusqlite::params![text.as_bytes(), Hash::of(text.as_bytes()).to_hex(), last]).unwrap();
+    drop(c);
+    as_member(&mut s, again);
+    let e = s.define("fn h() -> Int = 3", "x").unwrap_err();
+    assert_eq!((e[0].code, e[0].kind), ("E0921", "signature_invalid"), "{e:?}");
+    // One byte in the last signature.
+    let (mut s, _, again, _) = signed_store();
+    let last = count(&s, "records");
+    flip(&s, "records", "sig", &format!("seq = {last}"), 7);
+    as_member(&mut s, again);
+    assert_eq!(s.define("fn h() -> Int = 3", "x").unwrap_err()[0].code, "E0921");
+    // The member's public key replaced in `members` (same key id): the session's key is not it.
+    let (mut s, _, again, _) = signed_store();
+    let other = KeyDir::at(temp("k3").join("k")).generate(s.project_dir().unwrap()).unwrap();
+    raw(&s).execute("UPDATE members SET key = ?1 WHERE id = 'arch-1'", [keys::public_hex(&other.public())]).unwrap();
+    as_member(&mut s, again);
+    let e = s.define("fn h() -> Int = 3", "x").unwrap_err();
+    assert_eq!((e[0].code, e[0].kind), ("E0921", "signature_invalid"), "{e:?}");
+    // An intact head: the write goes through and the chain stays verifiable.
+    let (mut s, trust, again, _) = signed_store();
+    as_member(&mut s, again);
+    s.define("fn h() -> Int = 3", "x").unwrap();
+    assert!(verified(&mut s, Some(&trust)).ok);
+}
+
 #[test]
 fn tampering_with_names_and_definitions_is_detected() {
     // A name pointing to another hash: on main and in the change set.

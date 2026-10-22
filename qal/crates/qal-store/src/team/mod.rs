@@ -20,6 +20,7 @@ mod tests;
 
 use crate::{now_ms, sql, Defined, Store};
 use canonical::hex;
+use ed25519_dalek::{Signature, VerifyingKey};
 use keys::{KeyDir, SecretKey};
 pub use log::{Call, TeamLog};
 use policy::{Role, OWNER};
@@ -264,9 +265,56 @@ pub(crate) fn require_signer(conn: &Connection, signer: Option<&Signer>) -> Resu
     Ok(true)
 }
 
+/// E0922 `chain_broken` found at write time.
+fn chain_broken(message: String) -> Diagnostic {
+    Diagnostic::new("E0922", "chain_broken", "", "", message).hint("the store was changed outside QAL; `qal verify` names the first bad record")
+}
+
+/// E0921 `signature_invalid` found at write time.
+fn signature_invalid(message: String) -> Diagnostic {
+    Diagnostic::new("E0921", "signature_invalid", "", "", message).hint("the store was changed outside QAL; `qal verify` names the first bad record")
+}
+
+/// Whether `sig` (128 hex digits) is `public`'s Ed25519 signature of `message`.
+fn signature_ok(public: &VerifyingKey, message: &[u8], sig: &str) -> bool {
+    match canonical::unhex::<64>(sig) {
+        Some(bytes) => public.verify_strict(message, &Signature::from_bytes(&bytes)).is_ok(),
+        None => false,
+    }
+}
+
+/// The chain head `(seq, hash)` a record is appended to, checked first (spec §9.1): the head's
+/// hash is the SHA-256 of its body and, where its signer still uses the key the body names, its
+/// signature verifies under the member's stored public key. `qal verify` checks the whole chain;
+/// this check makes a broken head refuse every further write instead of extending it. `None` for
+/// an empty chain (the genesis record).
+fn checked_head(tx: &Transaction) -> Result<Option<(i64, String)>, Vec<Diagnostic>> {
+    let last: Option<(i64, String, Vec<u8>, String)> = tx
+        .query_row("SELECT seq, hash, body, sig FROM records ORDER BY seq DESC LIMIT 1", [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
+        .optional()
+        .map_err(sql)?;
+    let Some((seq, hash, body, sig)) = last else { return Ok(None) };
+    if Hash::of(&body).to_hex() != hash {
+        return Err(one(chain_broken(format!("the hash of record {seq} (the chain head) is not the hash of its body"))));
+    }
+    let parsed: Option<Value> = body.strip_prefix(RECORD_PREFIX.as_bytes()).and_then(|b| serde_json::from_slice(b).ok());
+    let Some(v) = parsed else { return Err(one(chain_broken(format!("record {seq} (the chain head) is not a record")))) };
+    let (by, key_id) = (v["member"].as_str().unwrap_or(""), v["key"].as_str().unwrap_or(""));
+    if let Some(m) = member(tx, by)? {
+        if m.key_id == key_id {
+            let public = keys::parse_public(&m.key).ok_or_else(|| one(signature_invalid(format!("the stored public key of `{}` is not a key", m.id))))?;
+            if !signature_ok(&public, &body, &sig) {
+                return Err(one(signature_invalid(format!("the signature of record {seq} (the chain head) by `{}` (key {key_id}) is not valid", m.id))));
+            }
+        }
+    }
+    Ok(Some((seq, hash)))
+}
+
 /// Appends the signed record of a write to the chain inside `tx` (spec §9.1) and links the history
 /// rows of this transaction to it. Refuses (and so rolls back the write) if the signer may not
-/// make this record. Returns its sequence number.
+/// make this record, if its key is not the member's stored public key, or if the chain head is
+/// broken ([`checked_head`]). Returns its sequence number.
 pub(crate) fn append(tx: &Transaction, signer: &Signer, op: &str, args: Value, before: &Rows, after: &Rows) -> Result<i64, Vec<Diagnostic>> {
     append_in(tx, signer, op, args, &Space::Main, before, after)
 }
@@ -280,6 +328,10 @@ pub(crate) fn append_in(tx: &Transaction, signer: &Signer, op: &str, args: Value
     }
     if m.key_id != signer.key.key_id() {
         return Err(one(keys::unusable(format!("key {} is not the current key of `{}` (that is {})", signer.key.key_id(), m.id, m.key_id)).hint("the member was rekeyed: restart the server so it loads the new key")));
+    }
+    // The key id alone is a prefix of a hash: the session's key must be the stored public key itself.
+    if keys::parse_public(&m.key) != Some(signer.key.public()) {
+        return Err(one(signature_invalid(format!("the key {} of this session is not the public key stored for `{}`", signer.key.key_id(), m.id))));
     }
     let kind = change::kind_of(tx, space, &m.id)?;
     // A record about a change set signs its metadata (review I4).
@@ -295,8 +347,7 @@ pub(crate) fn append_in(tx: &Transaction, signer: &Signer, op: &str, args: Value
         d.found = Some(m.role.clone());
         return Err(one(d));
     }
-    let last: Option<(i64, String)> = tx.query_row("SELECT seq, hash FROM records ORDER BY seq DESC LIMIT 1", [], |r| Ok((r.get(0)?, r.get(1)?))).optional().map_err(sql)?;
-    let (seq, prev) = match last {
+    let (seq, prev) = match checked_head(tx)? {
         Some((s, h)) => (s + 1, h),
         None => (1, ZERO_HASH.to_string()),
     };
