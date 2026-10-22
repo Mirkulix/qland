@@ -637,6 +637,34 @@
     .tag-yes { color: var(--green); font-weight: bold; }
     .tag-no { color: var(--text-dim); }
 
+    /* Benchmark Section */
+    .benchmark-section {
+      margin-bottom: 5rem;
+    }
+    .bench-discussion {
+      margin-top: 2rem;
+      background: var(--surface);
+      border: 1px solid var(--surface-border);
+      border-radius: var(--radius);
+      padding: 1.5rem;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1.5rem;
+    }
+    @media (max-width: 800px) {
+      .bench-discussion { grid-template-columns: 1fr; }
+    }
+    .bench-box h4 {
+      font-size: 1rem;
+      margin-bottom: 0.5rem;
+      color: var(--text);
+    }
+    .bench-box p {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+      line-height: 1.6;
+    }
+
     /* Footer */
     footer {
       border-top: 1px solid var(--surface-border);
@@ -672,6 +700,7 @@
       <a href="#playground" data-i18n="nav.playground">Playground</a>
       <a href="#architecture" data-i18n="nav.arch">Architektur</a>
       <a href="#comparison" data-i18n="nav.comp">Vergleich</a>
+      <a href="#benchmark" data-i18n="nav.benchmark">Benchmark</a>
       <a href="proof.html" style="color: var(--green); font-weight: 600;" data-i18n="nav.proof">Formal Proof Certificate &rarr;</a>
       <a href="dashboard.html" style="color: var(--cyan); font-weight: 600;">Live Agent Cockpit &rarr;</a>
       <a href="AGENTS_PLAYBOOK.md" target="_blank" style="color: var(--purple); font-weight: 600;">Agent Playbook</a>
@@ -687,7 +716,7 @@
     <section class="hero">
       <div class="hero-pill">
         <span class="dot"></span>
-        <span data-i18n="hero.pill">Phase 1&ndash;5 Complete &middot; Self-Hosted Seed Fixpoint &middot; Z3 Verified</span>
+        <span data-i18n="hero.pill">Phase 1&ndash;4 Complete &middot; Phase 5 Seed Fixpoint (&#9680;) &middot; Z3 Verified</span>
       </div>
       <h1 data-i18n="hero.title">Die provable Programmiersprache & Plattform für autonome KI-Systeme</h1>
       <p class="subtitle" data-i18n="hero.desc">
@@ -1170,6 +1199,116 @@ test t_max = max_val(10, 42) == 42</textarea>
         </table>
       </div>
     </section>
+
+    <!-- Empirical Benchmark Section (Phase 1e Rerun) -->
+    <section id="benchmark" class="benchmark-section">
+      <div class="section-header">
+        <div class="section-tag" data-i18n="bench.tag">Empirische Messung</div>
+        <h2 class="section-title" data-i18n="bench.title">Kontrollierter Agenten-Benchmark: QAL vs. Rust (Phase 1e Rerun)</h2>
+        <p class="section-subtitle" data-i18n="bench.subtitle">
+          80 unabhängige Läufe (20 Aufgaben &times; 2 Durchläufe) mit Claude-Code-Subagenten unter identischen Regeln, Prompts und versteckten Unit-Tests.
+        </p>
+      </div>
+
+      <!-- Benchmark Metric Cards -->
+      <div class="metrics-grid" style="margin-bottom: 2rem;">
+        <div class="metric-card">
+          <div class="metric-val green">40 / 40 (100%)</div>
+          <div class="metric-label" data-i18n="bench.cardQal">QAL Erfolgsquote (1. Versuch)</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-val green">40 / 40 (100%)</div>
+          <div class="metric-label" data-i18n="bench.cardRust">Rust Erfolgsquote (1. Versuch)</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-val purple">36.7k vs 22.3k</div>
+          <div class="metric-label" data-i18n="bench.cardTokens">Tokens / verifizierte Lösung (+64% QAL)</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-val blue">0 Defekte</div>
+          <div class="metric-label" data-i18n="bench.cardDefects">Versteckte Testbrüche / Speicherlecks</div>
+        </div>
+      </div>
+
+      <!-- Benchmark Table -->
+      <div class="table-container">
+        <table class="compare-table">
+          <thead>
+            <tr>
+              <th>Metrik / Benchmark-Dimension</th>
+              <th class="col-highlight">QAL Arm (MCP Tools)</th>
+              <th>Rust Arm (Cargo + Files)</th>
+              <th>Verhältnis / Befund</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Bestandene Aufgaben (Hidden Tests)</strong></td>
+              <td class="col-highlight"><span class="tag-yes">&#10003; 40 / 40 (100%)</span></td>
+              <td><span class="tag-yes">&#10003; 40 / 40 (100%)</span></td>
+              <td>Parität &middot; 0 entkommene Defekte</td>
+            </tr>
+            <tr>
+              <td><strong>First-Attempt Success Rate</strong></td>
+              <td class="col-highlight"><span class="tag-yes">&#10003; 40 / 40 (100%)</span></td>
+              <td><span class="tag-yes">&#10003; 40 / 40 (100%)</span></td>
+              <td>Keine Retries bei beiden Armen nötig</td>
+            </tr>
+            <tr>
+              <td><strong>Dispatch Tokens je Lösung (Mittelwert)</strong></td>
+              <td class="col-highlight">36.700 Tokens</td>
+              <td>22.300 Tokens</td>
+              <td>QAL benötigt +64% Tokens (Prompts &amp; Kontrakte)</td>
+            </tr>
+            <tr>
+              <td><strong>Verarbeitete Kontext-Tokens (inkl. Cache)</strong></td>
+              <td class="col-highlight">308.800 Tokens</td>
+              <td>161.200 Tokens</td>
+              <td>Faktor 1.92&times; Kontext-Throughput</td>
+            </tr>
+            <tr>
+              <td><strong>Tool-Calls gesamt (40 Lösungen)</strong></td>
+              <td class="col-highlight">270 Calls (57 Abweisungen)</td>
+              <td>170 Calls (18 Abweisungen)</td>
+              <td>Compiler-Feedback fängt Fehler vor Speicherung ab</td>
+            </tr>
+            <tr>
+              <td><strong>Gesamte Entwickler-Wandzeit (Wall Time)</strong></td>
+              <td class="col-highlight">87.2 Minuten (~2.2 Min / Task)</td>
+              <td>51.6 Minuten (~1.3 Min / Task)</td>
+              <td>QAL Z3-Beweis-Loops beanspruchen mehr Zeit</td>
+            </tr>
+            <tr>
+              <td><strong>Sicherheits-Garantie (Contracts &amp; Effects)</strong></td>
+              <td class="col-highlight"><span class="tag-yes">&#10003; Statisch bewiesen (Z3)</span></td>
+              <td><span class="tag-no">&#10007; Nur Laufzeittests</span></td>
+              <td>QAL garantiert Invarianten auch für ungeprüfte Inputs</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Honest Discussion Grid -->
+      <div class="bench-discussion">
+        <div class="bench-box">
+          <h4 data-i18n="bench.disc1Title">&#128269; Was die Zahlen ungeschönt zeigen</h4>
+          <p data-i18n="bench.disc1Body">
+            Die These, dass eine KI-native Sprache den Token-Aufwand bei Standard-CLI-Aufgaben senkt, wird durch die Daten <strong>nicht gestützt</strong>: QAL verbraucht 1.6&times; bis 1.9&times; mehr Tokens als Rust. Der Hauptgrund liegt im Prompt-Overhead (~11 KB Sprachreferenz) und dem Fehlen von Inline-Closures (Agenten müssen separate Top-Level-Funktionen definieren).
+          </p>
+        </div>
+        <div class="bench-box">
+          <h4 data-i18n="bench.disc2Title">&#128737; Wo der reale Wert von QAL liegt</h4>
+          <p data-i18n="bench.disc2Body">
+            QAL gewinnt bei der <strong>Assurance</strong>: 100% aller Aufgaben wurden verifiziert, 0 Speicherlecks, 0 Kontraktbrüche. Jede abgewiesene Definition wurde durch exakte Fehlermeldungen innerhalb von 1–2 Tool-Calls korrigiert. Die Z3-Beweise garantieren Invarianten mathematisch, wo Rust lediglich stichprobenartig testet.
+          </p>
+        </div>
+      </div>
+      <div style="text-align: center; margin-top: 1.5rem;">
+        <a href="bench/rerun-2026-10-22/report.md" target="_blank" style="color: var(--primary); font-family: var(--font-mono); font-size: 0.85rem; text-decoration: none;">
+          &rarr; Vollständigen Benchmark-Prüfbericht und Rohdaten einsehen (report.md)
+        </a>
+      </div>
+    </section>
   </main>
 
   <footer>
@@ -1217,7 +1356,19 @@ test t_max = max_val(10, 42) == 42</textarea>
         "arch.subtitle": "Vom selbsthostenden Compiler bis zur Agenten-Orchestrierung: Jede Schicht ist auf Verifizierbarkeit und Robustheit ausgelegt.",
         "comp.tag": "Vergleichsmatrix",
         "comp.title": "Warum QAL? Der direkte Vergleich",
-        "comp.subtitle": "Wie sich QAL gegenüber konventionellen Sprachen bei autonomer KI-Entwicklung und Software-Assurance abhebt."
+        "comp.subtitle": "Wie sich QAL gegenüber konventionellen Sprachen bei autonomer KI-Entwicklung und Software-Assurance abhebt.",
+        "nav.benchmark": "Benchmark",
+        "bench.tag": "Empirische Messung",
+        "bench.title": "Kontrollierter Agenten-Benchmark: QAL vs. Rust (Phase 1e Rerun)",
+        "bench.subtitle": "80 unabhängige Läufe (20 Aufgaben × 2 Durchläufe) mit Claude-Code-Subagenten unter identischen Regeln, Prompts und versteckten Unit-Tests.",
+        "bench.cardQal": "QAL Erfolgsquote (1. Versuch)",
+        "bench.cardRust": "Rust Erfolgsquote (1. Versuch)",
+        "bench.cardTokens": "Tokens / verifizierte Lösung (+64% QAL)",
+        "bench.cardDefects": "Versteckte Testbrüche / Speicherlecks",
+        "bench.disc1Title": "🔍 Was die Zahlen ungeschönt zeigen",
+        "bench.disc1Body": "Die These, dass eine KI-native Sprache den Token-Aufwand bei Standard-CLI-Aufgaben senkt, wird durch die Daten nicht gestützt: QAL verbraucht 1.6× bis 1.9× mehr Tokens als Rust. Der Hauptgrund liegt im Prompt-Overhead (~11 KB Sprachreferenz) und dem Fehlen von Inline-Closures (Agenten müssen separate Top-Level-Funktionen definieren).",
+        "bench.disc2Title": "🛡️ Wo der reale Wert von QAL liegt",
+        "bench.disc2Body": "QAL gewinnt bei der Assurance: 100% aller Aufgaben wurden verifiziert, 0 Speicherlecks, 0 Kontraktbrüche. Jede abgewiesene Definition wurde durch exakte Fehlermeldungen innerhalb von 1–2 Tool-Calls korrigiert. Die Z3-Beweise garantieren Invarianten mathematisch, wo Rust lediglich stichprobenartig testet."
       },
       en: {
         "nav.useCases": "Use Cases",
@@ -1225,7 +1376,7 @@ test t_max = max_val(10, 42) == 42</textarea>
         "nav.arch": "Architecture",
         "nav.comp": "Comparison",
         "nav.proof": "Formal Proof (Z3) →",
-        "hero.pill": "Phase 1–5 Complete · Self-Hosted Seed Fixpoint · Z3 Verified",
+        "hero.pill": "Phase 1–4 Complete · Phase 5 Seed Fixpoint (◐) · Z3 Verified",
         "hero.title": "The Provable Language & Substrate for Autonomous AI Systems",
         "hero.desc": "QLand and QAL unify mathematical contract proofs (Z3), conflict-free definition-level AST merges, algebraic effect isolation, and content-addressed software deployment into an uncompromising substrate for autonomous AI engineering.",
         "hero.btnExplore": "Explore Use Cases",
@@ -1254,7 +1405,19 @@ test t_max = max_val(10, 42) == 42</textarea>
         "arch.subtitle": "From the self-hosted compiler to multi-agent swarm orchestration: engineered for absolute reliability.",
         "comp.tag": "Comparison Matrix",
         "comp.title": "Why QAL? Direct Comparison",
-        "comp.subtitle": "How QAL stands out against conventional programming languages in autonomous AI engineering."
+        "comp.subtitle": "How QAL stands out against conventional programming languages in autonomous AI engineering.",
+        "nav.benchmark": "Benchmark",
+        "bench.tag": "Empirical Measurement",
+        "bench.title": "Controlled Agent Benchmark: QAL vs. Rust (Phase 1e Rerun)",
+        "bench.subtitle": "80 independent runs (20 tasks × 2 runs) with Claude Code subagents under identical rules, prompts, and hidden unit tests.",
+        "bench.cardQal": "QAL Success Rate (1st Attempt)",
+        "bench.cardRust": "Rust Success Rate (1st Attempt)",
+        "bench.cardTokens": "Tokens / verified solution (+64% QAL)",
+        "bench.cardDefects": "Hidden test failures / memory leaks",
+        "bench.disc1Title": "🔍 Unvarnished Findings",
+        "bench.disc1Body": "The thesis that an AI-native language reduces token overhead on small CLI tasks is not supported: QAL consumes 1.6× to 1.9× more tokens than Rust, largely due to prompt overhead (~11 KB language reference) and lack of closures (requiring top-level helper functions).",
+        "bench.disc2Title": "🛡️ Where QAL Delivers Value",
+        "bench.disc2Body": "QAL wins on assurance: 100% verification across all tasks, 0 memory leaks, 0 contract violations. Every rejected definition was resolved in 1–2 tool calls via exact compiler diagnostics. Z3 proofs mathematically guarantee invariants where Rust relies on sample tests."
       }
     };
 
