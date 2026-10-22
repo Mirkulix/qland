@@ -170,6 +170,7 @@ fn qc_mono_instance(st: QcMonoState, caller: Str, g: Int, targs: List[QcType]) -
         let next_def = QcFnDef {
           name: name,
           tparams: [],
+          eparams: gf.def.eparams,
           params: next_params,
           ret: qc_type_instantiate(gf.body.ty, tps, targs),
           effects: gf.def.effects,

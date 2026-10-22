@@ -1,0 +1,2 @@
+fn each[T, !e](xs: List[T], f: fn(T) -> Unit !e) -> Unit !e = each_from(xs, 0, f)
+fn each_from[T, !e](xs: List[T], i: Int, f: fn(T) -> Unit !e) -> Unit !e = match get(xs, i) { None => (), Some(x) => { f(x); each_from(xs, i + 1, f) } }

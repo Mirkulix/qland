@@ -22,7 +22,9 @@ fn print_def(d: &Def) -> String {
         }
         Def::Fn(f) => {
             let params: Vec<String> = f.params.iter().map(|p| format!("{}: {}", p.name, p.ty)).collect();
-            let name = format!("{}{}", f.name, tparams(&f.tparams));
+            let mut heads = f.tparams.clone();
+            heads.extend(f.eparams.iter().map(|e| format!("!{e}")));
+            let name = format!("{}{}", f.name, tparams(&heads));
             let mut s = match f.ret {
                 // `fn f() -> fn() -> Int !io` would give `!io` to the result type; parenthesize it.
                 Type::Fn(..) => format!("fn {name}({}) -> ({})", params.join(", "), f.ret),
@@ -286,6 +288,19 @@ mod tests {
             "type E = A | B(Int, Str)\n\ntype R = { x: Float }\n\n\
              fn f(e: E) -> Str\n= match e { A => \"a\\n\", B(n, s) if n > 0 => s, _ => \"\" }\n"
         );
+    }
+
+    #[test]
+    fn prints_effect_parameters() {
+        let p = parse_program("fn twice[!e](op: fn() -> Unit !e) -> Unit !e = { op(); op() }").unwrap();
+        assert_eq!(print_program(&p), "fn twice[!e](op: fn() -> Unit !e) -> Unit !e\n= { op(); op() }\n");
+        roundtrip("fn each[T, !e](xs: List[T], f: fn(T) -> Unit !e) -> Unit !e = f(xs)");
+        roundtrip("fn retry[T, !e](n: Int, op: fn() -> Result[T, Str] !e) -> Result[T, Str] !e !time req n >= 1 = op()");
+        let Def::Fn(f) = &p.defs[0] else { panic!() };
+        assert_eq!((f.tparams.clone(), f.eparams.clone()), (vec![], vec!["e".to_string()]));
+        // A type has no effect parameters.
+        let e = parse_program("type Sink[T, !e] = { put: fn(T) -> Unit !e }").unwrap_err();
+        assert!(e.message.contains("no effect parameters"), "{e:?}");
     }
 
     #[test]

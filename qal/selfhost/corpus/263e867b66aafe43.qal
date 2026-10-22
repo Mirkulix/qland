@@ -1,0 +1,1 @@
+fn bad10[!e](op: fn() -> Unit !e) -> Unit !e = { op(); print("x") }

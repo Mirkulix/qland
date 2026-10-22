@@ -851,3 +851,102 @@ fn todo_takes_the_expected_type() {
     assert_eq!(one("fn todo() -> Int = 1").kind, "duplicate_name");
     assert_eq!(kinds("fn a() -> Int = todo() + \"x\"").first().map(|k| k.0), Some("type_mismatch"));
 }
+
+const EACH: &str = "fn each[T, !e](xs: List[T], f: fn(T) -> Unit !e) -> Unit !e = each_from(xs, 0, f)\n\
+                    fn each_from[T, !e](xs: List[T], i: Int, f: fn(T) -> Unit !e) -> Unit !e = match get(xs, i) { None => (), Some(x) => { f(x); each_from(xs, i + 1, f) } }\n\
+                    fn twice[!e](op: fn() -> Unit !e) -> Unit !e = { op(); op() }\n";
+
+/// Spec 2026-10-22 §3.3: an effect parameter takes the effects of the argument at each call.
+#[test]
+fn effect_parameters_take_the_arguments_effects() {
+    let src = format!(
+        "{EACH}\
+         fn main(args: List[Str]) -> Int !io = {{ each(args, fn(a) => print(a)); 0 }}\n\
+         fn count[T](xs: List[T]) -> Int = {{ each(xs, fn(_) => ()); len(xs) }}\n\
+         fn log_twice(m: Str) -> Unit !io = twice(fn() => print(m))\n\
+         fn pure_twice() -> Unit = twice(fn() => ())\n\
+         fn both[!e](a: fn() -> Unit !e, b: fn() -> Unit !e) -> Unit !e = {{ a(); b() }}\n\
+         fn mixed() -> Unit !io !time = both(fn() => print(\"x\"), fn() => {{ now_ms(); () }})\n\
+         fn retry[T, !e](n: Int, op: fn() -> Result[T, Str] !e) -> Result[T, Str] !e !time\n  req n >= 1\n= match op() {{ Ok(v) => Ok(v), Err(m) => if n == 1 then Err(m) else {{ now_ms(); retry(n - 1, op) }} }}\n\
+         fn use_retry() -> Result[Int, Str] !io !time = retry(3, fn() => {{ print(\"try\"); Ok(1) }})"
+    );
+    assert_eq!(check_src(&src), vec![]);
+    let tp = typed(&src);
+    // Effect parameters alone make no instances: `twice` and `both` are ordinary functions.
+    assert!(tp.fns.iter().any(|f| f.def.name == "twice" && f.instance.is_none()));
+    // Nothing of the effect variables leaks into the typed program.
+    for f in &tp.fns {
+        for t in &f.locals {
+            assert!(!t.to_string().contains('?'), "{}: {t}", f.def.name);
+        }
+    }
+}
+
+/// Spec 2026-10-22 §3.4: the effects of the argument always reach the caller.
+#[test]
+fn effect_parameters_cannot_launder() {
+    let bad = |body: &str| {
+        let d = check_src(&format!("{EACH}{body}"));
+        assert!(d.iter().any(|d| d.kind == "effect_violation"), "{body}: {d:#?}");
+    };
+    bad("fn bad3[T, !e](xs: List[T], f: fn(T) -> Unit !e) -> Unit = each(xs, f)");
+    bad("fn bad4[!e](op: fn() -> Unit !e) -> Unit !e = { op(); print(\"x\") }");
+    bad("fn bad5() -> Unit = twice(fn() => print(\"x\"))");
+    // Through a function value, an Option, a list and a record field.
+    bad("fn bad6() -> Unit = let g = twice in g(fn() => print(\"x\"))");
+    bad("fn hold[!e](op: fn() -> Unit !e) -> Option[fn() -> Unit !e] = Some(op)\n\
+         fn bad7() -> Unit = match hold(fn() => print(\"x\")) { Some(f) => f(), None => () }");
+    bad("fn wrap[!e](op: fn() -> Unit !e) -> List[fn() -> Unit !e] = [op]\n\
+         fn bad8() -> Unit = match get(wrap(fn() => print(\"x\")), 0) { Some(f) => f(), None => () }");
+    bad("type Box[T] = { v: T }\n\
+         fn boxed[!e](op: fn() -> Unit !e) -> Box[fn() -> Unit !e] = Box { v: op }\n\
+         fn bad9() -> Unit = let b = boxed(fn() => print(\"x\")) in let f = b.v in f()");
+    // Inside a generic body the parameter is a constant: `io` is not covered by `e`.
+    bad("fn bad10[!e](op: fn() -> Unit !e) -> Unit !e = { op(); print(\"x\") }");
+}
+
+#[test]
+fn one_effect_parameter_per_function() {
+    let d = check_src("fn bad1[!e, !f](a: fn() -> Unit !e, b: fn() -> Unit !f) -> Unit !e !f = { a(); b() }");
+    assert!(d.iter().any(|d| d.kind == "effect_params"), "{d:#?}");
+    assert_eq!(one("fn bad2[!e]() -> Unit !e = ()").kind, "effect_param_unused");
+    assert_eq!(one("fn bad[!io](f: fn() -> Unit !io) -> Unit !io = f()").kind, "duplicate_name");
+    // An undeclared effect name in a type or in the signature.
+    assert_eq!(kinds("fn bad(f: fn() -> Unit !e) -> Unit = f()")[0].0, "unknown_name");
+    assert_eq!(one("fn bad(f: fn() -> Unit) -> Unit !e = f()").kind, "unknown_name");
+}
+
+#[test]
+fn effect_variables_resolve_to_pure_when_unused() {
+    let tp = typed(&format!("{EACH}fn use_each() -> Int = let g = each in 0"));
+    let f = tp.fns.iter().find(|f| f.def.name == "use_each").unwrap();
+    let g = f.locals.iter().find(|t| matches!(t, Type::Fn(..))).unwrap();
+    assert_eq!(g.to_string(), "fn(List[Unit], fn(Unit) -> Unit) -> Unit");
+}
+
+#[test]
+fn generic_type_arguments_stay_invariant_with_effect_variables() {
+    let src = "type Sink[T] = { put: fn(T) -> Unit }\n\
+               fn run(cb: fn() -> Unit) -> Unit = cb()\n\
+               fn pure_sink() -> Sink[fn() -> Unit] = Sink { put: run }\n\
+               fn feed[!e](s: Sink[fn() -> Unit !e], cb: fn() -> Unit !e) -> Unit = let p = s.put in p(cb)\n\
+               fn main(args: List[Str]) -> Int !io = { feed(pure_sink(), fn() => print(\"x\")); 0 }";
+    let d = check_src(src);
+    assert!(d.iter().any(|d| d.kind == "type_mismatch" && d.def == "main"), "{d:#?}");
+    // With a sink of the same effect it goes through: the exact unification of the type argument
+    // settles the variable to `io`, and the callback fits it.
+    let ok = "type Sink[T] = { put: fn(T) -> Unit !io }\n\
+              fn run_io(cb: fn() -> Unit !io) -> Unit !io = cb()\n\
+              fn io_sink() -> Sink[fn() -> Unit !io] = Sink { put: run_io }\n\
+              fn feed[!e](s: Sink[fn() -> Unit !e], cb: fn() -> Unit !e) -> Unit !io = let p = s.put in p(cb)\n\
+              fn main(args: List[Str]) -> Int !io = { feed(io_sink(), fn() => print(\"x\")); 0 }";
+    assert_eq!(check_src(ok), vec![]);
+    // Settled by the sink, the variable cannot grow for the callback.
+    let more = "type Sink[T] = { put: fn(T) -> Unit !io }\n\
+                fn run_io(cb: fn() -> Unit !io) -> Unit !io = cb()\n\
+                fn io_sink() -> Sink[fn() -> Unit !io] = Sink { put: run_io }\n\
+                fn feed[!e](s: Sink[fn() -> Unit !e], cb: fn() -> Unit !e) -> Unit !io = let p = s.put in p(cb)\n\
+                fn main(args: List[Str]) -> Int !io !time = { feed(io_sink(), fn() => { now_ms(); () }); 0 }";
+    let d = check_src(more);
+    assert!(d.iter().any(|d| d.kind == "type_mismatch" && d.def == "main"), "{d:#?}");
+}

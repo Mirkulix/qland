@@ -16,6 +16,18 @@ pub const MAX_TYPE_DEPTH: u32 = 256;
 /// Maximum size (nodes of the fully expanded tree) of an inferred type.
 pub const MAX_TYPE_SIZE: u32 = 4096;
 
+/// An effect variable: the effects it must at least carry (names, or `?M` for other variables),
+/// and whether it may still grow. It grows while it stands on the expected side of a check
+/// (`found ⊆ expected`): each argument adds what it needs, so one parameter can serve several
+/// callbacks with the union of their effects. It is frozen as soon as a check depends on its
+/// value staying as it is (it stood on the found side, or a call's effects were checked), so a
+/// later growth can never invalidate an earlier check.
+#[derive(Debug, Default)]
+struct Evar {
+    lower: Vec<String>,
+    frozen: bool,
+}
+
 #[derive(Debug, Default)]
 pub struct Subst {
     /// Binding of each inference variable `Type::Var(i)`.
@@ -26,6 +38,10 @@ pub struct Subst {
     size: Vec<u32>,
     /// For each variable, the variables whose binding mentions it directly.
     users: Vec<Vec<u32>>,
+    /// Effect variables: an entry `?N` in the effect list of a function type stands for variable
+    /// `N`. A call of a function with an effect parameter makes one; the arguments grow it
+    /// (`unify_effects`) until something reads its value, which freezes it.
+    evars: Vec<Evar>,
     /// Set when a unification failed because a type would exceed `MAX_TYPE_DEPTH`.
     pub too_deep: bool,
     /// Set when a unification failed because a type would exceed `MAX_TYPE_SIZE`.
@@ -63,6 +79,7 @@ impl Subst {
     }
 
     /// Replaces all bound variables; unbound ones become `Unit` (their representation never matters).
+    /// Effect lists become their concrete effects (an open effect variable adds none).
     pub fn finish(&self, t: &Type) -> Type {
         match self.resolve(t) {
             Type::Var(_) => Type::Unit,
@@ -71,9 +88,79 @@ impl Subst {
             Type::Result(a, b) => Type::result(self.finish(&a), self.finish(&b)),
             Type::Map(a, b) => Type::map(self.finish(&a), self.finish(&b)),
             Type::App(n, args) => Type::App(n, args.iter().map(|a| self.finish(a)).collect()),
-            Type::Fn(ps, r, e) => Type::Fn(ps.iter().map(|p| self.finish(p)).collect(), Box::new(self.finish(&r)), e),
+            Type::Fn(ps, r, e) => Type::Fn(ps.iter().map(|p| self.finish(p)).collect(), Box::new(self.finish(&r)), self.resolve_effects(&e).0.into_iter().collect()),
             t => t,
         }
+    }
+
+    /// A fresh effect variable, as the entry a function type's effect list carries for it.
+    pub fn fresh_effect(&mut self) -> String {
+        self.evars.push(Evar::default());
+        format!("?{}", self.evars.len() - 1)
+    }
+
+    fn evar(e: &str) -> Option<u32> {
+        e.strip_prefix('?').and_then(|n| n.parse().ok())
+    }
+
+    /// The effects an effect list carries (following variables) and the variables in it that may
+    /// still grow.
+    pub fn resolve_effects(&self, effs: &[String]) -> (BTreeSet<String>, BTreeSet<u32>) {
+        let (mut names, mut open, mut seen) = (BTreeSet::new(), BTreeSet::new(), HashSet::new());
+        let mut stack: Vec<String> = effs.to_vec();
+        while let Some(e) = stack.pop() {
+            match Self::evar(&e) {
+                Some(v) if !seen.insert(v) => {}
+                Some(v) => {
+                    let ev = &self.evars[v as usize];
+                    stack.extend(ev.lower.iter().cloned());
+                    if !ev.frozen {
+                        open.insert(v);
+                    }
+                }
+                None => {
+                    names.insert(e);
+                }
+            }
+        }
+        (names, open)
+    }
+
+    /// Freezes every growable variable in `effs`: its value has been read.
+    pub fn freeze_effects(&mut self, effs: &[String]) {
+        for v in self.resolve_effects(effs).1 {
+            self.evars[v as usize].frozen = true;
+        }
+    }
+
+    /// `found ⊆ expected` as effect sets (`exact`: equal). A growable variable on the expected
+    /// side takes what `found` has beyond `expected` (the union over all arguments of a call);
+    /// without one, the check is on the effects as they are, and the variables of `found` are
+    /// frozen (the check depends on them).
+    pub fn unify_effects(&mut self, expected: &[String], found: &[String], exact: bool) -> bool {
+        self.effects_sub(expected, found) && (!exact || self.effects_sub(found, expected))
+    }
+
+    fn effects_sub(&mut self, expected: &[String], found: &[String]) -> bool {
+        let (c1, v1) = self.resolve_effects(expected);
+        let (c2, v2) = self.resolve_effects(found);
+        if let Some(&v) = v1.iter().next() {
+            let extra: Vec<String> = c2.difference(&c1).cloned().chain(v2.iter().filter(|w| !v1.contains(w)).map(|w| format!("?{w}"))).collect();
+            let lower = &mut self.evars[v as usize].lower;
+            for e in extra {
+                if !lower.contains(&e) {
+                    lower.push(e);
+                }
+            }
+            return true;
+        }
+        if !c2.is_subset(&c1) {
+            return false;
+        }
+        for w in v2 {
+            self.evars[w as usize].frozen = true;
+        }
+        true
     }
 
     /// Depth of `t`, using the tracked depth of its variables (recursion only over `t` as written).
@@ -229,8 +316,7 @@ impl Subst {
                     // Parameters are contravariant: effect subtyping flips.
                     && p1.iter().zip(p2).all(|(x, y)| self.unify_in(y, x, exact))
                     && self.unify_in(r1, r2, exact)
-                    && e2.iter().all(|e| e1.contains(e))
-                    && (!exact || e1.iter().all(|e| e2.contains(e)))
+                    && self.unify_effects(e1, e2, exact)
             }
             _ => a == b,
         }
@@ -315,10 +401,13 @@ impl Subst {
                     ps.push(j);
                 }
                 let (r, c) = self.join_in(r1, r2, covariant)?;
+                // Open effect variables stay in a union (the join may still grow) and leave an
+                // intersection (a parameter usable as both is pure where nothing is known).
+                let ((c1, v1), (c2, v2)) = (self.resolve_effects(e1), self.resolve_effects(e2));
                 let effs: Vec<String> = if covariant {
-                    e1.iter().chain(e2).collect::<BTreeSet<_>>().into_iter().cloned().collect()
+                    c1.union(&c2).cloned().chain(v1.union(&v2).map(|v| format!("?{v}"))).collect()
                 } else {
-                    e1.iter().filter(|e| e2.contains(e)).collect::<BTreeSet<_>>().into_iter().cloned().collect()
+                    c1.intersection(&c2).cloned().collect()
                 };
                 let changed = changed || c || effs.len() != e1.len() || !effs.iter().all(|e| e1.contains(e));
                 same(self, Type::Fn(ps, Box::new(r), effs), changed)

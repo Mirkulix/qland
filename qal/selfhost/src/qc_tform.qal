@@ -214,8 +214,10 @@ fn qc_tform_typedef_acc(t: QcTypeDef, acc: Accum[Int]) -> Accum[Int] =
   }
 
 fn qc_tform_fndef_acc(f: QcFnDef, acc: Accum[Int]) -> Accum[Int] =
-  let a1 = qc_varint_acc(len(f.tparams), qc_str_acc(f.name, acc)) in
-  let a2 = fold(f.tparams, a1, fn(st: Accum[Int], p: Str) => qc_str_acc(p, st)) in
+  # Effect parameters travel in the type-parameter list as `!name` entries.
+  let heads = f.tparams ++ map(f.eparams, fn(e: Str) => "!" ++ e) in
+  let a1 = qc_varint_acc(len(heads), qc_str_acc(f.name, acc)) in
+  let a2 = fold(heads, a1, fn(st: Accum[Int], p: Str) => qc_str_acc(p, st)) in
   let a3 = qc_varint_acc(len(f.params), a2) in
   let a4 = fold(f.params, a3, fn(st: Accum[Int], p: QcFieldType) => qc_tform_type_acc(p.ty, qc_str_acc(p.name, st))) in
   let a5 = qc_tform_type_acc(f.ret, a4) in
@@ -492,6 +494,7 @@ fn qc_tform_dec_typedef(r: QcReader) -> QcReadRes[QcTypeDef] =
 
 fn qc_tform_dec_fndef(r: QcReader) -> QcReadRes[QcFnDef] =
   let n_res = qc_reader_str(r) in
+  # Effect parameters are the `!name` entries of the type-parameter list.
   let tps_res = qc_reader_strs(n_res.r) in
   let pc_res = qc_reader_varint(tps_res.r) in
   let ps_res = qc_tform_dec_params_loop(pc_res.r, pc_res.val, AccEnd) in
@@ -503,7 +506,8 @@ fn qc_tform_dec_fndef(r: QcReader) -> QcReadRes[QcFnDef] =
   QcReadRes {
     val: QcFnDef {
       name: n_res.val,
-      tparams: tps_res.val,
+      tparams: filter(tps_res.val, fn(h: Str) => !starts_with(h, "!")),
+      eparams: map(filter(tps_res.val, fn(h: Str) => starts_with(h, "!")), fn(h: Str) => slice(h, 1, len(h))),
       params: ps_res.val,
       ret: ret_res.val,
       effects: effs_res.val,

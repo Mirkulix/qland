@@ -22,7 +22,9 @@ fn print_def(d: &Def) -> String {
         }
         Def::Fn(f) => {
             let params: Vec<String> = f.params.iter().map(|p| format!("{}: {}", p.name, p.ty)).collect();
-            let name = format!("{}{}", f.name, tparams(&f.tparams));
+            let mut heads = f.tparams.clone();
+            heads.extend(f.eparams.iter().map(|e| format!("!{e}")));
+            let name = format!("{}{}", f.name, tparams(&heads));
             let mut s = match f.ret {
                 // `fn f() -> fn() -> Int !io` would give `!io` to the result type; parenthesize it.
                 Type::Fn(..) => format!("fn {name}({}) -> ({})", params.join(", "), f.ret),

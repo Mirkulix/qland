@@ -114,7 +114,7 @@ fn with_req_checks(tp: &TProgram, fns: &[usize]) -> TProgram {
         let f = &tp.fns[i];
         let truth = TExpr { ty: Type::Bool, kind: TKind::Bool(true) };
         let body = f.req.iter().cloned().reduce(|a, b| TExpr { ty: Type::Bool, kind: TKind::Bin(BinOp::And, Box::new(a), Box::new(b), "req".into()) }).unwrap_or(truth);
-        let def = FnDef { name: req_name(&f.def.name), tparams: vec![], params: f.def.params.clone(), ret: Type::Bool, effects: vec![], req: vec![], ens: vec![], body: f.def.body.clone() };
+        let def = FnDef { name: req_name(&f.def.name), tparams: vec![], eparams: vec![], params: f.def.params.clone(), ret: Type::Bool, effects: vec![], req: vec![], ens: vec![], body: f.def.body.clone() };
         out.fns.push(TFn { def, locals: f.locals.clone(), req: vec![], ens: vec![], result_local: None, body, instance: None });
     }
     out

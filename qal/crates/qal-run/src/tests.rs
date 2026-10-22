@@ -259,6 +259,22 @@ fn pure_programs_import_no_effects() {
     assert_eq!(r.run_main(&["a".into()]).result, Ok(Value::Int(1)));
 }
 
+/// A function with an effect parameter imports what its callers pass in, nothing by itself.
+#[test]
+fn effect_parameters_import_only_what_the_call_needs() {
+    let each = "fn each[T, !e](xs: List[T], f: fn(T) -> Unit !e) -> Unit !e = each_from(xs, 0, f)\n\
+                fn each_from[T, !e](xs: List[T], i: Int, f: fn(T) -> Unit !e) -> Unit !e = match get(xs, i) { None => (), Some(x) => { f(x); each_from(xs, i + 1, f) } }\n";
+    let pure = compile(&format!("{each}fn main(args: List[Str]) -> Int = {{ each(args, fn(_) => ()); len(args) }}"), Entry::Fn("main".into()));
+    assert_eq!(pure.imports, vec![qal_compiler::host::FAIL]);
+    assert_eq!(Runner::new(pure).unwrap().run_main(&["a".into(), "b".into()]).result, Ok(Value::Int(2)));
+    let io = compile(&format!("{each}fn main(args: List[Str]) -> Int !io = {{ each(args, fn(a) => print(a)); 0 }}"), Entry::Fn("main".into()));
+    assert!(io.imports.contains(&"io.print"), "{:?}", io.imports);
+    let r = Runner::new(io).unwrap().with_permissions(Permissions::parse("io").unwrap());
+    let out = r.run_main(&["a".into(), "b".into()]);
+    assert_eq!(out.result, Ok(Value::Int(0)));
+    assert_eq!(out.stdout, "a\nb\n");
+}
+
 #[test]
 fn fs_is_confined_to_granted_directories() {
     let root = std::env::temp_dir().join(format!("qal-run-fs-{}", std::process::id()));

@@ -1,0 +1,1 @@
+fn bad3[T, !e](xs: List[T], f: fn(T) -> Unit !e) -> Unit = each(xs, f)

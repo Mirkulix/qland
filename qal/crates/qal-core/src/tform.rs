@@ -462,7 +462,11 @@ impl Writer {
 
     pub fn fndef(&mut self, f: &FnDef) {
         self.str(&f.name);
-        self.strs(&f.tparams);
+        // Effect parameters travel in the type-parameter list as `!name` entries, so a function
+        // without them keeps its version 1 bytes.
+        let mut heads = f.tparams.clone();
+        heads.extend(f.eparams.iter().map(|e| format!("!{e}")));
+        self.strs(&heads);
         self.len(f.params.len());
         for p in &f.params {
             self.str(&p.name);
@@ -1080,7 +1084,9 @@ impl<'b> Reader<'b> {
 
     pub fn fndef(&mut self) -> R<FnDef> {
         let name = self.str()?;
-        let tparams = self.strs()?;
+        let heads = self.strs()?;
+        let (eparams, tparams): (Vec<String>, Vec<String>) = heads.into_iter().partition(|h| h.starts_with('!'));
+        let eparams: Vec<String> = eparams.into_iter().map(|e| e[1..].to_string()).collect();
         let k = self.count()?;
         let mut params = Vec::new();
         for _ in 0..k {
@@ -1091,7 +1097,7 @@ impl<'b> Reader<'b> {
         let effects = self.strs()?;
         let req = self.exprs()?;
         let ens = self.exprs()?;
-        Ok(FnDef { name, tparams, params, ret, effects, req, ens, body: self.expr()? })
+        Ok(FnDef { name, tparams, eparams, params, ret, effects, req, ens, body: self.expr()? })
     }
 
     pub fn texpr(&mut self) -> R<TExpr> {
@@ -1510,6 +1516,7 @@ mod tests {
         let def = FnDef {
             name: "f".into(),
             tparams: vec![],
+            eparams: vec![],
             params: vec![Param { name: "x".into(), ty: Type::Int }],
             ret: Type::Int,
             effects: vec!["io".into()],

@@ -1,0 +1,1 @@
+fn retry[T, !e](n: Int, op: fn() -> Result[T, Str] !e) -> Result[T, Str] !e !time req n >= 1 = op()

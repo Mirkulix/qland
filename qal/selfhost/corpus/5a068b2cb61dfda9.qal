@@ -1,0 +1,1 @@
+fn bad1[!e, !f](a: fn() -> Unit !e, b: fn() -> Unit !f) -> Unit !e !f = { a(); b() }

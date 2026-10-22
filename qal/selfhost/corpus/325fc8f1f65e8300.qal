@@ -1,0 +1,1 @@
+fn bad(f: fn() -> Unit) -> Unit !e = f()

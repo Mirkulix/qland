@@ -64,6 +64,30 @@ impl Type {
         }
     }
 
+    /// Replaces the effect list of every function type in `self` by `f(list)`.
+    pub fn map_effects(&self, f: &dyn Fn(&[String]) -> Vec<String>) -> Type {
+        match self {
+            Type::List(x) => Type::list(x.map_effects(f)),
+            Type::Option(x) => Type::option(x.map_effects(f)),
+            Type::Result(a, b) => Type::result(a.map_effects(f), b.map_effects(f)),
+            Type::Map(a, b) => Type::map(a.map_effects(f), b.map_effects(f)),
+            Type::App(n, args) => Type::App(n.clone(), args.iter().map(|a| a.map_effects(f)).collect()),
+            Type::Fn(ps, r, e) => Type::Fn(ps.iter().map(|p| p.map_effects(f)).collect(), Box::new(r.map_effects(f)), f(e)),
+            t => t.clone(),
+        }
+    }
+
+    /// True if the effect `e` occurs in a function type inside `self`.
+    pub fn mentions_effect(&self, e: &str) -> bool {
+        match self {
+            Type::List(x) | Type::Option(x) => x.mentions_effect(e),
+            Type::Result(a, b) | Type::Map(a, b) => a.mentions_effect(e) || b.mentions_effect(e),
+            Type::App(_, args) => args.iter().any(|a| a.mentions_effect(e)),
+            Type::Fn(ps, r, effs) => effs.iter().any(|x| x == e) || ps.iter().any(|p| p.mentions_effect(e)) || r.mentions_effect(e),
+            _ => false,
+        }
+    }
+
     /// Substitutes the parameters `params` by `args` (positionally).
     pub fn instantiate(&self, params: &[String], args: &[Type]) -> Type {
         self.subst(&|p| params.iter().position(|q| q == p).and_then(|i| args.get(i).cloned()))
@@ -275,6 +299,9 @@ pub struct FnDef {
     pub name: String,
     /// Type parameters `fn f[T, U](...)`; empty for a monomorphic function.
     pub tparams: Vec<String>,
+    /// Effect parameters `fn f[T, !e](...)`: at most one; it stands for an effect set that each
+    /// call determines from its arguments (effect polymorphism, spec 2026-10-22). Empty otherwise.
+    pub eparams: Vec<String>,
     pub params: Vec<Param>,
     pub ret: Type,
     pub effects: Vec<String>,

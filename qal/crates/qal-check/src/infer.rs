@@ -25,6 +25,8 @@ pub(crate) struct Cx<'a> {
     pub effects: &'a [String],
     /// Type parameters of the definition (rigid inside it).
     pub tps: &'a [String],
+    /// Effect parameters of the definition (a constant effect inside it).
+    pub eps: &'a [String],
     /// Effects used by the bodies of the closures being checked, innermost last: inside a closure,
     /// effects are collected into its type instead of being checked against `effects`.
     frames: Vec<BTreeSet<String>>,
@@ -44,7 +46,7 @@ pub(crate) struct Cx<'a> {
 impl<'a> Cx<'a> {
     pub fn new(g: &'a Globals, def: &'a str, effects: &'a [String], diags: &'a mut Vec<Diagnostic>) -> Self {
         let start = diags.len();
-        Cx { g, def, effects, tps: &[], frames: Vec::new(), ret: None, diags, start, sub: Subst::default(), locals: Vec::new(), scope: Vec::new(), deferred: Vec::new() }
+        Cx { g, def, effects, tps: &[], eps: &[], frames: Vec::new(), ret: None, diags, start, sub: Subst::default(), locals: Vec::new(), scope: Vec::new(), deferred: Vec::new() }
     }
 
     pub fn bind(&mut self, name: &str, ty: Type) -> u32 {
@@ -170,7 +172,11 @@ impl<'a> Cx<'a> {
             frame.extend(needed.iter().cloned());
             return;
         }
-        let missing: Vec<String> = needed.iter().filter(|e| !self.effects.contains(e)).cloned().collect();
+        // A top-level call settles its effect variables: the arguments have been checked, so what
+        // they carry is what the call needs, and nothing may grow it afterwards.
+        let (names, _) = self.sub.resolve_effects(needed);
+        self.sub.freeze_effects(needed);
+        let missing: Vec<String> = names.into_iter().filter(|e| !self.effects.contains(e)).collect();
         if missing.is_empty() {
             return;
         }
@@ -219,7 +225,7 @@ impl<'a> Cx<'a> {
                 (ty, TKind::If(Box::new(c), Box::new(t), Box::new(f)))
             }
             Expr::Let(name, ann, v, body) => {
-                let ann = ann.as_ref().and_then(|t| resolve_type(self.g, t, self.tps, self.def, &format!("{path}.type"), self.diags));
+                let ann = ann.as_ref().and_then(|t| resolve_type(self.g, t, self.tps, self.eps, self.def, &format!("{path}.type"), self.diags));
                 let v = match ann {
                     Some(t) => self.expect(v, &t, &format!("{path}.value")),
                     None => self.infer(v, &format!("{path}.value")),
@@ -288,7 +294,7 @@ impl<'a> Cx<'a> {
                 self.diags.push(Diagnostic::duplicate_name(self.def, &pp, n));
             }
             let t = match (ann, expected) {
-                (Some(a), _) => resolve_type(self.g, a, self.tps, self.def, &pp, self.diags).unwrap_or_else(|| self.sub.fresh()),
+                (Some(a), _) => resolve_type(self.g, a, self.tps, self.eps, self.def, &pp, self.diags).unwrap_or_else(|| self.sub.fresh()),
                 // The closure's parameter takes the expected parameter type; effect subtyping is
                 // still checked when the closure's type is unified with the expected one.
                 (None, Some(ps)) => ps[i].clone(),
@@ -307,12 +313,18 @@ impl<'a> Cx<'a> {
         TExpr { ty, kind: TKind::Lambda(Box::new(TLambda { params: ids, captures: Vec::new(), body })) }
     }
 
-    /// Fresh type arguments for a generic signature: (type arguments, parameter types, result type).
-    fn instantiate(&mut self, sig: &Sig) -> (Vec<Type>, Vec<Type>, Type) {
+    /// Fresh type arguments for a generic signature: (type arguments, parameter types, result type,
+    /// effects of the call). An effect parameter becomes a fresh effect variable in all three.
+    fn instantiate(&mut self, sig: &Sig) -> (Vec<Type>, Vec<Type>, Type, Vec<String>) {
         let targs: Vec<Type> = sig.tparams.iter().map(|_| self.sub.fresh()).collect();
-        let params = sig.params.iter().map(|p| self.sub.wrap(p.instantiate(&sig.tparams, &targs))).collect();
-        let ret = self.sub.wrap(sig.ret.instantiate(&sig.tparams, &targs));
-        (targs, params, ret)
+        let evars: Vec<(String, String)> = sig.eparams.iter().map(|e| (e.clone(), self.sub.fresh_effect())).collect();
+        let effs = |effs: &[String]| -> Vec<String> {
+            effs.iter().map(|e| evars.iter().find(|(n, _)| n == e).map_or_else(|| e.clone(), |(_, v)| v.clone())).collect()
+        };
+        let params = sig.params.iter().map(|p| self.sub.wrap(p.instantiate(&sig.tparams, &targs).map_effects(&effs))).collect();
+        let ret = self.sub.wrap(sig.ret.instantiate(&sig.tparams, &targs).map_effects(&effs));
+        let effects = effs(&sig.effects);
+        (targs, params, ret, effects)
     }
 
     /// The type of a declared type applied to fresh arguments, with its body instantiated.
@@ -400,12 +412,14 @@ impl<'a> Cx<'a> {
         }
         if let Some((idx, sig)) = self.g.fns.get(v) {
             let (idx, sig) = (*idx, sig.clone());
-            if sig.tparams.is_empty() {
+            if sig.tparams.is_empty() && sig.eparams.is_empty() {
                 return TExpr { ty: sig.fn_type(), kind: TKind::FnRef(idx) };
             }
-            let (targs, params, ret) = self.instantiate(&sig);
-            let ty = self.sub.wrap(Type::Fn(params, Box::new(ret), sig.effects.clone()));
-            return TExpr { ty, kind: TKind::FnRefG(idx, targs) };
+            let (targs, params, ret, effects) = self.instantiate(&sig);
+            let ty = self.sub.wrap(Type::Fn(params, Box::new(ret), effects));
+            // Effect parameters alone make no instances: the function stays monomorphic.
+            let kind = if sig.tparams.is_empty() { TKind::FnRef(idx) } else { TKind::FnRefG(idx, targs) };
+            return TExpr { ty, kind };
         }
         if let Some((ty, tag, fields)) = self.variant(v) {
             if !fields.is_empty() {
@@ -464,11 +478,13 @@ impl<'a> Cx<'a> {
         }
         if let Some((idx, sig)) = self.g.fns.get(name) {
             let (idx, sig) = (*idx, sig.clone());
-            if !sig.tparams.is_empty() {
-                let (targs, params, ret) = self.instantiate(&sig);
+            if !sig.tparams.is_empty() || !sig.eparams.is_empty() {
+                let (targs, params, ret, effects) = self.instantiate(&sig);
                 let args = self.args(name, args, &params, path);
-                self.effect_check(path, name, &sig.effects);
-                return TExpr { ty: ret, kind: TKind::CallG(idx, targs, args) };
+                // The arguments have bound the effect variable; the call needs its effects.
+                self.effect_check(path, name, &effects);
+                let kind = if sig.tparams.is_empty() { TKind::Call(idx, args) } else { TKind::CallG(idx, targs, args) };
+                return TExpr { ty: ret, kind };
             }
             let args = self.args(name, args, &sig.params, path);
             self.effect_check(path, name, &sig.effects);
