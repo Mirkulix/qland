@@ -8,9 +8,11 @@
 
 ## 1. Ziel und These
 
-**These:** Programmiersprachen sind für Menschen gebaut. Eine Sprache, die für KI-Agenten gebaut ist, macht Agenten beim Bauen von Software messbar effektiver.
+**These (ursprünglich, 2026-10-15):** Programmiersprachen sind für Menschen gebaut. Eine Sprache, die für KI-Agenten gebaut ist, macht Agenten beim Bauen von Software messbar effektiver.
 
 **Effektivität wird gemessen** als *Tokens und Iterationen pro verifiziert korrekter Lösung*, verglichen mit demselben Agenten in einer bestehenden Sprache. Menschliche Lesbarkeit ist kein Ziel.
+
+**Stand der These (2026-10-22):** Zwei Messungen mit je 80 Läufen (Phase 1e am 15.10. und die Wiederholung am 22.10. nach Phase 5, `bench/report.md`, `bench/rerun-2026-10-22/report.md`) stützen die These in dieser Form **nicht**: Ein Agent löst in QAL dieselben Aufgaben so zuverlässig wie in Rust (40/40 gegen 40/40), aber mit etwa 1,9× den verarbeiteten Tokens, und ein Team aus sechs Agenten braucht 6× die Tokens eines einzelnen (`bench/team/real/report.md`). Was QAL nachweislich liefert, ist nicht Geschwindigkeit, sondern **Sicherheit**: Nur typ- und effektkorrekter Code wird gespeichert, Int/Bool-Verträge werden bewiesen, Effekte sind physisch begrenzt, HTTP-Anfragen rollen bei Fehlern zurück, jede Änderung ist signiert und nachprüfbar. Das Projekt richtet sich deshalb an **Dienste, in denen ein Fehler teuer ist und ein Agent sie schreibt** (Zahlungslogik, Freigaben, Audit-Pflichten; Pilot: `pilot/escrow/`). Die Effizienz-These bleibt offen, bis eine Messung mit Aufgaben, die nicht in ein Kontextfenster passen, oder mit nativen MCP-Werkzeugen statt eines Shell-Clients vorliegt.
 
 **Was an QAL neu ist** (in keiner existierenden Sprache in dieser Kombination):
 

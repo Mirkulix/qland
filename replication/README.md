@@ -1,7 +1,7 @@
-# QAL Independent Replication Package
+# QAL Replication Package
 
-> **Für externe Prüfer, Wissenschaftler und Auditoren (Third-Party Replication)**  
-> Dieses Paket ermöglicht die unabhängige, lückenlose Replikation aller formalen und kryptographischen Kern-Behauptungen von **QAL (QLANG Agent Language)** auf beliebigen Linux- oder macOS-Systemen.
+> **Für externe Prüfer, Wissenschaftler und Auditoren**  
+> Dieses Paket ermöglicht die Replikation der formalen und kryptographischen Kern-Behauptungen von **QAL (QLANG Agent Language)** auf Linux- oder macOS-Systemen. Der beiliegende `replication_report.md` stammt von der Entwicklungsmaschine und ist damit eine Selbstprüfung; eine **unabhängige** Replikation liegt erst vor, wenn jemand anderes dieses Paket auf einer anderen Maschine ausführt und seinen Bericht beilegt.
 
 ---
 

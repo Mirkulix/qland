@@ -10,7 +10,7 @@ services:
     environment:
       - DATA_DIR=/data
       - GATEWAY_PORT=8080
-      - ESCROW_API_KEY=escrow-prod-secret-key-2026
+      - ESCROW_API_KEY=${ESCROW_API_KEY:?set ESCROW_API_KEY in the environment before starting}
       - REQUIRE_AUTH=true
       - RATE_LIMIT_RPS=50.0
       - RATE_LIMIT_BURST=100.0

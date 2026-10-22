@@ -22,8 +22,11 @@ from typing import Dict, Tuple
 BACKEND_URL = os.getenv("BACKEND_URL", "http://127.0.0.1:8290")
 GATEWAY_PORT = int(os.getenv("GATEWAY_PORT", "8080"))
 GATEWAY_HOST = os.getenv("GATEWAY_HOST", "0.0.0.0")
-API_KEY = os.getenv("ESCROW_API_KEY", "escrow-prod-secret-key-2026")
+API_KEY = os.getenv("ESCROW_API_KEY", "")
 REQUIRE_AUTH = os.getenv("REQUIRE_AUTH", "true").lower() in ("true", "1", "yes")
+# No built-in key: a gateway that requires authentication refuses to start without one.
+if REQUIRE_AUTH and not API_KEY:
+    sys.exit("gateway: ESCROW_API_KEY is not set; refusing to start with authentication enabled (set it, or REQUIRE_AUTH=false for a local test)")
 
 OPS_DIR = os.path.dirname(os.path.abspath(__file__))
 PILOT_DIR = os.path.abspath(os.path.join(OPS_DIR, ".."))

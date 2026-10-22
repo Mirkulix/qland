@@ -9,7 +9,9 @@
 
 ## 1. Einleitung und Zielsetzung
 
-Dieses Dokument liefert den formalen mathematischen Nachweis für die Sicherheits- und Korrektheitsansprüche der Sprache **QAL** (Quantum & Agent Logic). Untersucht und bewiesen werden zwei zentrale Eigenschaften:
+**Einordnung (2026-10-22):** Dieses Dokument ist eine handgeschriebene formale Skizze: Die Beweise sind Beweisskizzen über ein vereinfachtes Kalkül (ohne `time`/`rand`, ohne Generics, Closures-Capture, Records als Felder, Typinferenz), nicht maschinengeprüft und nicht gegen die Implementierung abgeglichen. Es begründet die *Absicht* der Regeln in `qal-check` und `qal-prove`; der tatsächliche Nachweis der Implementierung sind die Tests in Roadmap §6. Eine mechanisierte Fassung (etwa in Lean oder Coq) existiert nicht.
+
+Dieses Dokument skizziert den formalen Nachweis für die Sicherheits- und Korrektheitsansprüche der Sprache **QAL** (QLANG Agent Language). Untersucht werden zwei zentrale Eigenschaften:
 1. **Typ- und Effekt-Sicherheit (Type and Effect Soundness):** Ein wohlgetyptes QAL-Programm gerät niemals in undefinierte Zustände (Progress) und emittiert zu keinem Ausführungszeitpunkt Effekte außerhalb der statisch deklarierten Effektmenge (Effekt-Erhaltung).
 2. **Partielle Korrektheit statischer Verträge (Contract Soundness):** Jede durch den Z3-Prover als `proven` verifizierte Funktion verletzt unter Erfüllung ihrer Vorbedingungen niemals ihre Nachbedingungen.
 

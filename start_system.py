@@ -22,7 +22,8 @@ GATEWAY_SCRIPT = os.path.join(REPO_ROOT, "pilot", "escrow", "ops", "gateway.py")
 
 BACKEND_PORT = 8290
 GATEWAY_PORT = 8080
-API_KEY = "escrow-prod-secret-key-2026"
+# A fresh key per start unless the operator provides one; it is printed once below.
+API_KEY = os.environ.get("ESCROW_API_KEY") or __import__("secrets").token_urlsafe(32)
 
 processes = []
 

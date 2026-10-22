@@ -31,9 +31,9 @@ Wenn du als KI-System (z. B. via Claude, Cursor, Windsurf, Cline oder Ollama) in
 
 ---
 
-## 🔬 Unabhängige Replikation für externe Auditoren
+## 🔬 Replikation für externe Auditoren
 
-Für externe Forscher, Prüfer und Auditoren steht eine schlüsselfertige Ein-Befehl-Replikationssuite zur Verfügung:
+Für externe Forscher, Prüfer und Auditoren steht eine Ein-Befehl-Replikationssuite zur Verfügung. Der beiliegende Bericht wurde auf der Entwicklungsmaschine erzeugt (Selbstprüfung); eine unabhängige Replikation durch Dritte liegt noch nicht vor:
 * **Leitfaden & Prüfschritte:** [`../../replication/README.md`](../../replication/README.md)
 * **Automatisierter Replikations-Runner:** [`../../replication/replicate.py`](../../replication/replicate.py)
 * **Aktueller formaler Replikationsbericht:** [`../../replication/replication_report.md`](../../replication/replication_report.md)

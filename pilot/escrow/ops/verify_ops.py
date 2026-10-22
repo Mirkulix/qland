@@ -34,7 +34,7 @@ BACKUP_DIR = os.path.join(RUNTIME_DIR, "backups")
 
 GATEWAY_PORT = 8280
 BACKEND_PORT = 8290
-API_KEY = "escrow-prod-secret-key-2026"
+API_KEY = __import__("os").environ.get("ESCROW_API_KEY") or __import__("secrets").token_urlsafe(32)
 
 GATEWAY_URL = f"http://127.0.0.1:{GATEWAY_PORT}"
 BACKEND_URL = f"http://127.0.0.1:{BACKEND_PORT}"
