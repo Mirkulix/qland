@@ -151,7 +151,13 @@ fn main() -> ExitCode {
     let needs_seed = !cfg!(feature = "reference")
         || compiler_opt.as_deref().is_some_and(wants_qal)
         || std::env::var("QAL_COMPILER").is_ok_and(|c| wants_qal(&c));
-    let fast_cmd = matches!(cmd.as_str(), "mcp" | "lsp" | "team" | "verify" | "help" | "--help" | "-h" | "version" | "--version" | "-v");
+    let fast_cmd = match cmd.as_str() {
+        "mcp" | "lsp" | "verify" | "help" | "--help" | "-h" | "version" | "--version" | "-v" => true,
+        // `qal team sync-std` imports the standard library, which checks it; the other team
+        // commands never compile.
+        "team" => args.get(1).map(String::as_str) != Some("sync-std"),
+        _ => false,
+    };
     if needs_seed && !fast_cmd && !qal_compiler::has_qal_driver() {
         let _ = qal_run::selfhost::init_seed_backend(qal_run::selfhost::default_jobs());
     }
