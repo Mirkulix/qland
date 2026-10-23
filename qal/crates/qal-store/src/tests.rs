@@ -1648,6 +1648,8 @@ fn recall_of_an_unknown_code_is_empty_not_an_error() {
     let mut s = store();
     let r = s.recall(&RecallQuery { code: Some("E9999".into()), ..RecallQuery::default() }).unwrap();
     assert!(r.corrections.is_empty() && r.definitions.is_empty());
+    // A blank message is no filter (SQLite's instr(x, '') matches every row): refused like no filter.
+    assert_eq!(s.recall(&RecallQuery { message: Some("  ".into()), ..RecallQuery::default() }).unwrap_err()[0].code, "E0701");
 }
 
 #[test]

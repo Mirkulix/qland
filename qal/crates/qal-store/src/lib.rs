@@ -308,6 +308,8 @@ impl Store {
     /// matching `q.name` and `q.type_pattern` (at most 20). Without any filter it is refused (E0701);
     /// an unknown code gives empty lists.
     pub fn recall(&mut self, q: &RecallQuery) -> Result<Recall, Vec<Diagnostic>> {
+        // A blank message is no filter: SQLite's instr(x, '') is 1 for every row.
+        let q = &RecallQuery { message: q.message.clone().filter(|m| !m.trim().is_empty()), ..q.clone() };
         if q.code.is_none() && q.message.is_none() && q.name.is_none() && q.type_pattern.is_none() {
             return Err(vec![Diagnostic::new("E0701", "bad_arguments", "", "", "`recall` needs at least one of `code`, `message`, `name`, `type`")
                 .hint("recall {\"code\": \"E0201\", \"message\": \"unknown name `x`\"} lists earlier fixes of a diagnostic; {\"name\": \"prefix\"} or {\"type\": \"fn(Str) -> _\"} lists definitions")]);
