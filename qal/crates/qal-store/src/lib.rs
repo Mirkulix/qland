@@ -20,7 +20,7 @@ pub mod team;
 
 pub use define::{last_lock_held, Release, StdNames};
 pub use space::Space;
-pub use memory::{Attempt, Correction};
+pub use memory::{Attempt, Correction, CorrectionInput};
 pub use ops::{Deleted, DepView, Entry, HistoryEntry, Query, Recall, RecallQuery, Renamed, View};
 pub use package::{Exported, Imported};
 pub use pattern::matches as signature_matches;
@@ -292,6 +292,15 @@ impl Store {
         })();
         let _ = schema::configure(&self.conn);
         result
+    }
+
+    /// Imports corrections made elsewhere (the seed corpus) as `corpus` corrections, all or nothing;
+    /// returns how many were stored.
+    pub fn import_corrections(&mut self, records: &[CorrectionInput]) -> Result<usize, Vec<Diagnostic>> {
+        let tx = self.conn.transaction().map_err(sql)?;
+        let n = memory::import(&tx, records)?;
+        tx.commit().map_err(sql)?;
+        Ok(n)
     }
 
     /// Earlier corrections for `q.code` (at most 5) and the stored definitions matching `q.name` and

@@ -12,7 +12,7 @@ use crate::{now_ms, sql, Defined};
 use qal_core::ast::{Program, Def};
 use qal_core::diag::Diagnostic;
 use rusqlite::{params, Transaction};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// Attempts kept per name and agent.
 pub const MAX_ATTEMPTS: i64 = 20;
@@ -54,6 +54,38 @@ pub struct Correction {
     pub at: i64,
     /// How many corrections with this (before, after) pair there are among the newest 500 of the code (a `recall` collapses them).
     pub count: i64,
+}
+
+/// A correction from outside (the seed corpus): what a failed text looked like and what fixed it.
+/// Extra fields of a record (the extractor's `agent`) are ignored.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct CorrectionInput {
+    pub code: String,
+    #[serde(default)]
+    pub path: String,
+    #[serde(default)]
+    pub message: String,
+    pub before: String,
+    pub after: String,
+}
+
+/// Inserts the records as corrections (hash empty, agent `corpus`, texts cut like recorded ones), all
+/// or nothing. A record without a code, a `before` or an `after` is refused (E0701) and nothing is stored.
+pub fn import(tx: &Transaction, records: &[CorrectionInput]) -> Result<usize, Vec<Diagnostic>> {
+    for (i, r) in records.iter().enumerate() {
+        if r.code.trim().is_empty() || r.before.trim().is_empty() || r.after.trim().is_empty() {
+            return Err(vec![Diagnostic::new("E0701", "bad_arguments", "", "", format!("correction record {i} needs a `code`, a `before` and an `after`"))]);
+        }
+    }
+    let now = now_ms();
+    for r in records {
+        tx.execute(
+            "INSERT INTO corrections (code, path, message, before, after, after_hash, agent, at) VALUES (?1, ?2, ?3, ?4, ?5, '', 'corpus', ?6)",
+            params![r.code, r.path, r.message, excerpt(&r.before), excerpt(&r.after), now],
+        )
+        .map_err(sql)?;
+    }
+    Ok(records.len())
 }
 
 /// The text cut to [`EXCERPT_BYTES`] (the `…` included) at a line boundary, `…` appended when something was cut.

@@ -1696,3 +1696,35 @@ fn excerpts_are_at_most_600_bytes() {
     assert!(memory::excerpt(&edge).len() <= 600);
     assert_eq!(memory::excerpt("short\n"), "short");
 }
+
+fn input(code: &str, before: &str, after: &str) -> CorrectionInput {
+    CorrectionInput { code: code.into(), path: "body".into(), message: "m".into(), before: before.into(), after: after.into() }
+}
+
+#[test]
+fn imported_corrections_answer_recall() {
+    let mut s = store();
+    let fix = input("E0201", "fn f(n: Int) -> Int = { let x = n + 1; x }", "fn f(n: Int) -> Int = let x = n + 1 in x");
+    let other = input("E0201", "fn g() -> Int = { let y = 1; y }", "fn g() -> Int = let y = 1 in y");
+    assert_eq!(s.import_corrections(&[fix.clone(), fix.clone(), other]).unwrap(), 3);
+    let r = s.recall(&RecallQuery { code: Some("E0201".into()), ..RecallQuery::default() }).unwrap();
+    assert_eq!(r.corrections.len(), 2);
+    let c = r.corrections.iter().find(|c| c.before == fix.before).unwrap();
+    assert_eq!((c.count, c.agent.as_str(), c.after_hash.as_str()), (2, "corpus", ""));
+    assert_eq!(c.after, fix.after);
+    // The imported memory decorates later diagnostics like a recorded one.
+    let d = err(&mut s, "fn q() -> Int = zz()"); // an unknown name: E0201
+    assert!(d[0].hints.iter().any(|h| h.starts_with("earlier fix of E0201 (2x):")), "{d:#?}");
+}
+
+#[test]
+fn an_import_with_a_bad_record_stores_nothing_and_long_texts_are_cut() {
+    let mut s = store();
+    let e = s.import_corrections(&[input("E0201", "a", "b"), input("", "a", "b")]).unwrap_err();
+    assert_eq!(e[0].code, "E0701");
+    assert_eq!(count(&s, "corrections"), 0);
+    let long = format!("fn f() -> Int =\n{}", "  1 +\n".repeat(200));
+    assert_eq!(s.import_corrections(&[input("E0201", &long, "fn f() -> Int = 1")]).unwrap(), 1);
+    let r = s.recall(&RecallQuery { code: Some("E0201".into()), ..RecallQuery::default() }).unwrap();
+    assert!(r.corrections[0].before.len() <= 600 && r.corrections[0].before.ends_with('…'));
+}

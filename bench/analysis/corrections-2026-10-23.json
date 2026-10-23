@@ -1,0 +1,138 @@
+[
+ {
+  "code": "E0201",
+  "path": "body.body.then.args[0].args[1]",
+  "message": "built-in `len` is not a value",
+  "before": "fn wrap_par(piece: Str, w: Int) -> Unit !io = let ws = filter(split(piece, \" \"), nonempty) in if w > 1000 then go(map(ws, len), join(ws, \" \"), 0, 0, 0, w) else let r = fold(ws, St { line: \"\", n: 0, w: w }, step) in if r.n > 0 then print(r.line) else ()",
+  "after": "fn wrap_par(piece: Str, w: Int) -> Unit !io = let ws = filter(split(piece, \" \"), nonempty) in if w > 1000 then go(map(ws, slen), join(ws, \" \"), 0, 0, 0, w) else let r = fold(ws, St { line: \"\", n: 0, w: w }, step) in if r.n > 0 then print(r.line) else ()",
+  "agent": "a076887fc0c75986b"
+ },
+ {
+  "code": "E0201",
+  "path": "body.items[0].body.value.args[0].args[1]",
+  "message": "built-in `trim` is not a value",
+  "before": "fn main(args: List[Str]) -> Int !io = {\n  let txt = replace(read_all(), \"\\r\", \"\") in\n  let ws = filter(map(split(txt, \"\\n\"), trim), nonempty) in\n  let items = sort_str(map(ws, keyed)) in\n  let groups = sort_str(grp(items, 0, [], \"#\", \"\", [])) in\n  let _ = fold(groups, 0, pr) in 0\n}",
+  "after": "fn main(args: List[Str]) -> Int !io = {\n  let txt = replace(read_all(), \"\\r\", \"\") in\n  let ws = filter(map(split(txt, \"\\n\"), tr), nonempty) in\n  let items = sort_str(map(ws, keyed)) in\n  let groups = sort_str(grp(items, 0, [], \"#\", \"\", [])) in\n  let _ = fold(groups, 0, pr) in 0\n}",
+  "agent": "a0bb8148eac1b935e"
+ },
+ {
+  "code": "E0201",
+  "path": "body.args[0].args[1]",
+  "message": "unknown name `fn_unused_placeholder`",
+  "before": "fn rep(c: Str, n: Int) -> Str = join(map(range(0, n), fn_unused_placeholder), \"\")",
+  "after": "fn rep(c: Str, n: Int, acc: Str) -> Str = if n <= 0 then acc else rep(c, n - 1, acc ++ c)",
+  "agent": "a23db08b8b9aa4d97"
+ },
+ {
+  "code": "E0203",
+  "path": "body.then.body.items[0]",
+  "message": "expected Unit, found Int",
+  "before": "fn main(args: List[Str]) -> Int !io =\n  if args == [\"encode\"] then let s = read_all() in { fold(get_lines(s), 0, enc_step); 0 }\n  else if args == [\"decode\"] then let s = read_all() in { fold(get_lines(s), 0, dec_step); 0 }\n  else { print(\"usage: rle encode|decode\"); 2 }",
+  "after": "fn main(args: List[Str]) -> Int !io =\n  if args == [\"encode\"] then let s = read_all() in let r = fold(get_lines(s), 0, enc_step) in 0\n  else if args == [\"decode\"] then let s = read_all() in let r = fold(get_lines(s), 0, dec_step) in 0\n  else { print(\"usage: rle encode|decode\"); 2 }",
+  "agent": "a23db08b8b9aa4d97"
+ },
+ {
+  "code": "E0203",
+  "path": "body.body.body.body.items[0]",
+  "message": "expected Unit, found Int",
+  "before": "fn main(args: List[Str]) -> Int !io = let s = read_all() in let t = join(map(chars(s), norm), \"\") in let ws = sort_str(filter(split(t, \" \"), nonempty)) in { fold(fold(ws, [], dd), 0, pr); 0 }",
+  "after": "fn main(args: List[Str]) -> Int !io = let s = read_all() in let t = join(map(chars(s), norm), \"\") in let ws = sort_str(filter(split(t, \" \"), nonempty)) in let n = fold(fold(ws, [], dd), 0, pr) in 0",
+  "agent": "a2e44bcc35738dfaf"
+ },
+ {
+  "code": "E0201",
+  "path": "body.body.body.value.then.args[1]",
+  "message": "unknown name `fn_nonlast`",
+  "before": "fn main(args: List[Str]) -> Int !io =\n  let ls = split(read_all(), \"\\n\") in\n  let n = len(ls) in\n  let ls2 = if n > 0 && get(ls, n - 1) == Some(\"\") then filter(ls, fn_nonlast) else ls in\n  0",
+  "after": "fn main(args: List[Str]) -> Int !io =\n  let ls = split(read_all(), \"\\n\") in\n  go(ls, 0, len(ls), St { sec: \"\", es: [], inq: false })",
+  "agent": "a32ef5239060dc813"
+ },
+ {
+  "code": "E0201",
+  "path": "body.items[0].body.body.body.body.value.args[0].args[1]",
+  "message": "built-in `to_lower` is not a value",
+  "before": "fn report(t: Str) -> Int !io = {\n  let parts = split(t, \"\\n\") in\n  let n = len(parts) in\n  let lines = if t == \"\" then 0 else if get(parts, n - 1) == Some(\"\") then n - 1 else n in\n  let ws = filter(split(replace(replace(replace(t, \"\\n\", \" \"), \"\\t\", \" \"), \"\\r\", \" \"), \" \"), nonempty) in\n  let low = sort_str(map(ws, to_lower)) in\n  print(\"lines \" ++ from_int(lines));\n  print(\"words \" ++ from_int(len(ws)));\n  print(\"chars \" ++ from_int(len(t)));\n  print(\"longest \" ++ from_int(fold(parts, 0, maxlen)));\n  if len(low) > 0 then print(\"top \" ++ scan(low, 0, \"\", 0, \"\", 0)) else ();\n  0\n}",
+  "after": "fn report(t: Str) -> Int !io =\n  let parts = split(t, \"\\n\") in\n  let n = len(parts) in\n  let lines = if t == \"\" then 0 else if get(parts, n - 1) == Some(\"\") then n - 1 else n in\n  let ws = filter(split(replace(replace(replace(t, \"\\n\", \" \"), \"\\t\", \" \"), \"\\r\", \" \"), \" \"), nonempty) in\n  let low = sort_str(map(ws, lower)) in\n  {\n    print(\"lines \" ++ from_int(lines));\n    print(\"words \" ++ from_int(len(ws)));\n    print(\"chars \" ++ from_int(len(t)));\n    print(\"longest \" ++ from_int(fold(parts, 0, maxlen)));\n    if len(low) > 0 then print(\"top \" ++ scan(low, 0, \"\", 0, \"\", 0)) else ();\n    0\n  }",
+  "agent": "a34d23ae9a8ce756a"
+ },
+ {
+  "code": "E0203",
+  "path": "body.body.body.body.body.items[0]",
+  "message": "expected Unit, found Int",
+  "before": "fn main(args: List[Str]) -> Int !io =\n  let t = read_all() in\n  let ls = split(t, \"\\n\") in\n  let n = len(ls) in\n  let ls2 = if n > 0 && get(ls, n - 1) == Some(\"\") then slice_l(ls, n - 1) else ls in\n  { fold(ls2, 0, pr); 0 }",
+  "after": "fn main(args: List[Str]) -> Int !io =\n  let t = read_all() in\n  let n = len(t) in\n  let t2 = if n > 0 && slice(t, n - 1, n) == \"\\n\" then slice(t, 0, n - 1) else t in\n  if n == 0 then 0 else fold(split(t2, \"\\n\"), 0, pr)",
+  "agent": "a4febfff107ff31ea"
+ },
+ {
+  "code": "E0201",
+  "path": "body.arms[1].body.items[0].args[0].args[0].args[1]",
+  "message": "unknown name `fn_shift`",
+  "before": "fn loop_lines(k: Int) -> Int !io = match read_line() { None => 0, Some(l) => { print(join(map(chars(l), fn_shift(k)), \"\")); loop_lines(k) } }",
+  "after": "fn loop_lines(k: Int) -> Int !io = match read_line() { None => 0, Some(l) => { print(shift_line(chars(l), 0, k, \"\")); loop_lines(k) } }",
+  "agent": "a88f7f4dec4407e19"
+ },
+ {
+  "code": "E0201",
+  "path": "body.items[1].args[0].right.args[0].args[0]",
+  "message": "unknown name `t`",
+  "before": "fn main(args: List[Str]) -> Int !io = {\n  let txt = read_all() in\n  let norm = replace(replace(replace(txt, \"\\t\", \" \"), \"\\r\", \" \"), \"\\n\", \" \") in\n  let toks = filter(split(norm, \" \"), nonempty) in\n  let nums = fold(toks, [], addtok) in\n  let t = fold(nums, Leaf, ins) in\n  print(\"size \" ++ from_int(size(t)));\n  print(\"height \" ++ from_int(height(t)));\n  print(fmt(\"inorder\", inord(t)));\n  print(fmt(\"preorder\", preord(t)));\n  print(fmt(\"postorder\", postord(t)));\n  0\n}",
+  "after": "fn main(args: List[Str]) -> Int !io = {\n  let t = build(read_all()) in\n  {\n  print(\"size \" ++ from_int(size(t)));\n  print(\"height \" ++ from_int(height(t)));\n  print(fmt(\"inorder\", inord(t)));\n  print(fmt(\"preorder\", preord(t)));\n  print(fmt(\"postorder\", postord(t)));\n  0 }\n}",
+  "agent": "a8e2190c51a99bbd4"
+ },
+ {
+  "code": "E0201",
+  "path": "body.body.body.body.else.items[0].args[0].args[0].args[1]",
+  "message": "unknown name `fn_pick`",
+  "before": "fn run(k: Int, text: Str) -> Int !io =\n  let words = filter(split(join(map(chars(text), lc), \"\"), \" \"), nonempty) in\n  let keys = sort_str(runs(sort_str(words), 0, \"\", 0, [])) in\n  let m = if k < len(keys) then k else len(keys) in\n  if m == 0 then 0 else { print(join(map(range(0, m), fn_pick(keys)), \"\\n\")); 0 }",
+  "after": "fn run(k: Int, text: Str) -> Int !io =\n  let words = filter(split(join(map(chars(text), lc), \"\"), \" \"), nonempty) in\n  let keys = sort_str(runs(sort_str(words), 0, \"\", 0, [])) in\n  let m = if k < len(keys) then k else len(keys) in\n  if m == 0 then 0 else { print(join(map(take(keys, 0, m, []), fmt), \"\\n\")); 0 }",
+  "agent": "ab25879eda301abc9"
+ },
+ {
+  "code": "E0201",
+  "path": "params[0]",
+  "message": "unknown name `String`",
+  "before": "fn line(name: String, xs: List[Int]) -> Str = if len(xs) == 0 then name else name ++ \" \" ++ join(map(xs, show), \" \")",
+  "after": "fn line(name: Str, xs: List[Int]) -> Str = if len(xs) == 0 then name else name ++ \" \" ++ join(map(xs, show), \" \")",
+  "agent": "ab56677ecd8d3553b"
+ },
+ {
+  "code": "E0203",
+  "path": "body.body.body.else.args[0].args[1]",
+  "message": "expected fn(Int) -> Unit, found Str",
+  "before": "fn is_int(s: Str) -> Bool = let cs = chars(s) in let st = (if starts_with(s, \"+\") || starts_with(s, \"-\") then 1 else 0) in if len(cs) <= st then false else fold(map(range(st, len(cs)), fn_get(cs)), true, dig)",
+  "after": "fn is_int(s: Str) -> Bool = let rest = (if starts_with(s, \"+\") || starts_with(s, \"-\") then slice(s, 1, len(s)) else s) in if len(rest) == 0 then false else fold(chars(rest), true, dig)",
+  "agent": "ac52e3051ba330995"
+ },
+ {
+  "code": "E0201",
+  "path": "body.body.arms[1].body.body.else.body.value.args[1]",
+  "message": "unknown name `fn_unused`",
+  "before": "fn run(name: Str) -> Int !io = let lines = filter(map(split(read_all(), \"\\n\"), nocr), nonblank) in match get(lines, 0) { None => { print(\"error: no column \" ++ name); 1 }, Some(h) => let idx = findcol(fields(h), name, 0) in if idx < 0 then { print(\"error: no column \" ++ name); 1 } else let rows = filter(lines, nonblank) in let vals = map(range(1, len(rows)), fn_unused) in 0 }",
+  "after": "fn run(name: Str) -> Int !io = let lines = filter(map(split(read_all(), \"\\n\"), nocr), nonblank) in match get(lines, 0) { None => { print(\"error: no column \" ++ name); 1 }, Some(h) => let idx = findcol(fields(h), name, 0) in if idx < 0 then { print(\"error: no column \" ++ name); 1 } else { print(tally(lines, 1, idx, 0, 0)); 0 } }",
+  "agent": "ac52e3051ba330995"
+ },
+ {
+  "code": "E0203",
+  "path": "body.body.body.else.items[0]",
+  "message": "expected Unit, found Int",
+  "before": "fn main(args: List[Str]) -> Int !io =\n  let text = read_all() in\n  let t2 = if len(text) > 0 && slice(text, len(text) - 1, len(text)) == \"\\n\" then slice(text, 0, len(text) - 1) else text in\n  if text == \"\" then 0 else { fold(split(t2, \"\\n\"), 0, emit); 0 }",
+  "after": "fn main(args: List[Str]) -> Int !io =\n  let text = read_all() in\n  let t2 = if len(text) > 0 && slice(text, len(text) - 1, len(text)) == \"\\n\" then slice(text, 0, len(text) - 1) else text in\n  if text == \"\" then 0 else fold(split(t2, \"\\n\"), 0, emit)",
+  "agent": "acc39ae9345e25283"
+ },
+ {
+  "code": "E0201",
+  "path": "body.items[0].body.body.body.body.body.body.value.args[1]",
+  "message": "unknown name `fn_dummy`",
+  "before": "fn run(k: Int) -> Int !io = {\n  let txt = to_lower(read_all()) in\n  let ws = sort_str(filter(split(join(map(chars(txt), lt), \"\"), \" \"), nonempty)) in\n  let keys = sort_str(cnt(ws, 0, \"\", 0, [])) in\n  let m = if k < len(keys) then k else len(keys) in\n  let top = filter(keys, nonempty) in\n  let idx = range(0, m) in\n  let sel = map(idx, fn_dummy) in\n  0\n}",
+  "after": "fn run(k: Int) -> Int !io = {\n  let txt = to_lower(read_all()) in\n  let ws = sort_str(filter(split(join(map(chars(txt), lt), \"\"), \" \"), nonempty)) in\n  let keys = sort_str(cnt(ws, 0, \"\", 0, [])) in\n  pr(keys, 0, k)\n}",
+  "agent": "af44e8402943e78b5"
+ },
+ {
+  "code": "E0203",
+  "path": "body.body.body.body.else.args[0].args[0]",
+  "message": "expected Str, found List[Str]",
+  "before": "fn strip(s: Str) -> Str = let cs = chars(s) in let a = lstart(cs, 0) in let b = rend(cs, len(cs)) in if a >= b then \"\" else join(slice(cs, a, b), \"\")",
+  "after": "fn strip(s: Str) -> Str = let cs = chars(s) in let a = lstart(cs, 0) in let b = rend(cs, len(cs)) in if a >= b then \"\" else slice(s, a, b)",
+  "agent": "afb3cc70c3d02fc80"
+ }
+]

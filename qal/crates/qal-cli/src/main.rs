@@ -24,6 +24,7 @@
 //!                                                    -> {"results":[{name,kind,hash,signature,effects}]}
 //!   qal recall [--code <E...>] [--name <prefix>] [--type <pattern>]
 //!                                                    -> {"recall":{corrections:[{code,path,message,before,after,count,...}],definitions:[...]}}
+//!   qal corrections import <file.json>               -> {"corrections_imported":n} (the seed corpus of bench/corrections.py; stored with agent `corpus`)
 //!   qal rename <old> <new> [--agent <name>] [--breaking] -> {"renamed":{name,kind,hash}}
 //!   qal delete <name>... [--agent <name>] [--breaking] -> {"deleted":[{name,kind,hash}]} | {"diagnostics":[...]} (E0406 has_dependents:
 //!                                                       names other stored definitions refer to; all or nothing)
@@ -85,6 +86,7 @@ const USAGE: &str = "usage: qal <check|fmt> <file>\n       \
                      qal export <prefix> --out <file> [--name <pkg>] | import <file|url> | install <file|url>\n       \
                      qal query [--name <prefix>] [--type <pattern>] [--uses <name>] [--outline]\n       \
                      qal recall [--code <E...>] [--name <prefix>] [--type <pattern>]\n       \
+                     qal corrections import <file.json>\n       \
                      qal call <file> [--allow <spec>] <fn> [args...] | call <fn> [--allow <spec>] [args...]\n       \
                      qal test [--allow <spec>] [--seed <n>] [<file> | <name>...] | prove [<file> | <name>...]\n       \
                      qal run <file|name> [--allow <spec>] [--] [args...]\n       \
@@ -184,6 +186,7 @@ fn main() -> ExitCode {
         "init" | "define" | "view" | "query" | "recall" | "rename" | "delete" | "history" | "build" | "export" | "import" | "install" => store_command(cmd, rest),
         "call" | "test" | "run" => run_command(cmd, rest),
         "prove" => prove_command(rest),
+        "corrections" => corrections(rest),
         "mcp" => mcp(rest),
         "lsp" => lsp(rest),
         "team" => team(rest),
@@ -438,6 +441,16 @@ fn lsp(_args: &[String]) -> ExitCode {
 
 const TEAM_USAGE: &str = "usage: qal team init [--owner <id>] | add <id> --role <architect|implementer|verifier|reviewer> | rekey <id> | revoke <id>\n       \
                           qal team session <id> [--ttl 24h] --out <file> | export-trust --out <file> | status | stats [--json] | sync-std";
+
+fn corrections(args: &[String]) -> ExitCode {
+    match args {
+        [sub, file] if sub == "import" => match read(file) {
+            Ok(text) => with_ctx(|c| ops::import_corrections(c, &text)),
+            Err(code) => code,
+        },
+        _ => bad_usage("usage: qal corrections import <file.json>"),
+    }
+}
 
 fn team(args: &[String]) -> ExitCode {
     let Some(sub) = args.first() else {
