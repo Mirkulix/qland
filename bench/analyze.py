@@ -189,8 +189,30 @@ def group_of(cat):
     return cat.split(".")[0]
 
 
-def summarize(rows):
+def per_task(rows):
+    """Per task and arm: mean processed tokens, mean rounds, the biggest category; `ratio` is
+    QAL over Rust of the processed means when both arms are present."""
     out = {}
+    for task in sorted({r.get("task", "?") for r in rows}):
+        entry = {}
+        for arm in sorted({r["arm"] for r in rows}):
+            rs = [r for r in rows if r.get("task", "?") == task and r["arm"] == arm]
+            if not rs:
+                continue
+            totals = collections.Counter()
+            for r in rs:
+                for cat, m in r["by_category"].items():
+                    totals[cat] += m["processed"]
+            entry[arm] = {"processed": sum(totals.values()) / len(rs), "rounds": statistics.mean(r["api_calls"] for r in rs),
+                          "top": totals.most_common(1)[0][0] if totals else "-", "runs": len(rs)}
+        if "qal" in entry and "rust" in entry and entry["rust"]["processed"]:
+            entry["ratio"] = entry["qal"]["processed"] / entry["rust"]["processed"]
+        out[task] = entry
+    return out
+
+
+def summarize(rows):
+    out = {"per_task": per_task(rows)}
     for arm in sorted({r["arm"] for r in rows}):
         rs = [r for r in rows if r["arm"] == arm]
         totals = collections.defaultdict(empty_category)
@@ -325,8 +347,24 @@ def apply_cache(a, path, arm, cache):
 
 
 def report(summary):
+    arms = {k: v for k, v in summary.items() if k != "per_task"}
     lines = ["# Token attribution", ""]
-    for arm, s in summary.items():
+    if "qal" in arms and "rust" in arms:
+        q, r = arms["qal"], arms["rust"]
+        qp = sum(m["processed"] for m in q["totals"].values()) / q["runs"]
+        rp = sum(m["processed"] for m in r["totals"].values()) / r["runs"]
+        lines += ["## QAL against Rust (per run)", "", "| measure | QAL | Rust | factor |", "|---|---|---|---|",
+                  f"| processed per run | {qp:.0f} | {rp:.0f} | {qp / rp if rp else 0:.2f} |",
+                  f"| rounds per run | {q['rounds']['mean']:.2f} | {r['rounds']['mean']:.2f} | {q['rounds']['mean'] / r['rounds']['mean'] if r['rounds']['mean'] else 0:.2f} |",
+                  f"| processed per round | {qp / q['rounds']['mean'] if q['rounds']['mean'] else 0:.0f} | {rp / r['rounds']['mean'] if r['rounds']['mean'] else 0:.0f} | |",
+                  f"| dispatch tokens per run | {q['dispatch_tokens'] / q['runs']:.0f} | {r['dispatch_tokens'] / r['runs']:.0f} | {(q['dispatch_tokens'] / q['runs']) / (r['dispatch_tokens'] / r['runs']) if r['dispatch_tokens'] else 0:.2f} |", ""]
+        for group in ("env", "lang", "ok", "prompt"):
+            # the first round is one round even though its tokens are split over two prompt categories
+            count = (lambda s: max(m["calls"] for cat, m in s["totals"].items() if group_of(cat) == group) if group == "prompt"
+                     else sum(m["calls"] for cat, m in s["totals"].items() if group_of(cat) == group))
+            lines.append(f"| rounds `{group}.*` per run | {count(q) / q['runs']:.2f} | {count(r) / r['runs']:.2f} | |")
+        lines.append("")
+    for arm, s in arms.items():
         lines += [f"## {arm} ({s['runs']} runs)", "", "| category | processed | new | output | calls | processed/run |", "|---|---|---|---|---|---|"]
         for cat, m in sorted(s["totals"].items(), key=lambda x: -x[1]["processed"]):
             lines.append(f"| {cat} | {m['processed']:.0f} | {m['new']:.0f} | {m['output']:.0f} | {m['calls']:.0f} | {s['means'][cat]['processed']:.0f} |")
@@ -336,6 +374,14 @@ def report(summary):
                   "", f"Rounds per run: mean {s['rounds']['mean']:.1f}, median {s['rounds']['median']}, max {s['rounds']['max']}; retries {s['retries']}",
                   "", "Processed tokens of round " + ", ".join(f"{k}: {v:.0f}" if v is not None else f"{k}: –" for k, v in s["round_cost"].items()),
                   "", "Diagnostic codes of failed calls: " + (", ".join(f"{c} {n}" for c, n in s["diag_codes"].items()) or "none"), ""]
+    pt = summary.get("per_task") or {}
+    if pt:
+        lines += ["## Per task (means per run)", "", "| task | QAL processed | QAL rounds | QAL biggest | Rust processed | Rust rounds | Rust biggest | factor |", "|---|---|---|---|---|---|---|---|"]
+        for task, e in pt.items():
+            q, r = e.get("qal"), e.get("rust")
+            cell = lambda a: (f"{a['processed']:.0f} | {a['rounds']:.1f} | {a['top']}" if a else "– | – | –")
+            lines.append(f"| {task} | {cell(q)} | {cell(r)} | {e.get('ratio', 0):.2f} |")
+        lines.append("")
     return "\n".join(lines)
 
 

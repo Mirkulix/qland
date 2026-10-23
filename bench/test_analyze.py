@@ -154,9 +154,9 @@ class Attribute(unittest.TestCase):
         self.assertEqual(a["retries"], 1)
 
 
-def row(arm, processed_by_cat, rounds):
+def row(arm, processed_by_cat, rounds, task="01-x"):
     by = {cat: {"processed": p, "new": p // 10, "output": 1, "calls": 1} for cat, p in processed_by_cat.items()}
-    return {"arm": arm, "by_category": by, "api_calls": rounds, "processed_per_round": [100 * (k + 1) for k in range(rounds)], "retries": 0, "dispatch_tokens": 1000, "diag_codes": {"E0203": 1}}
+    return {"arm": arm, "task": task, "by_category": by, "api_calls": rounds, "processed_per_round": [100 * (k + 1) for k in range(rounds)], "retries": 0, "dispatch_tokens": 1000, "diag_codes": {"E0203": 1}}
 
 
 class Summarize(unittest.TestCase):
@@ -189,6 +189,40 @@ class Summarize(unittest.TestCase):
         self.assertEqual(s["qal"]["round_cost"]["1"], 100.0)
         self.assertEqual(s["qal"]["round_cost"]["5"], 500.0)
         self.assertIsNone(s["qal"]["round_cost"]["10"])
+
+
+class Report(unittest.TestCase):
+    def rows(self):
+        return [
+            row("qal", {"prompt.task": 100, "lang.type": 200, "ok.define": 400}, 3, task="01-x"),
+            row("qal", {"prompt.task": 100, "env.guard": 500, "ok.define": 100}, 4, task="02-y"),
+            row("rust", {"prompt.task": 100, "ok.other": 300}, 2, task="01-x"),
+            row("rust", {"prompt.task": 100, "ok.other": 100}, 2, task="02-y"),
+        ]
+
+    def test_summary_has_per_task_figures(self):
+        s = analyze.summarize(self.rows())
+        t = s["per_task"]["02-y"]
+        self.assertEqual(t["qal"]["processed"], 700)
+        self.assertEqual(t["qal"]["rounds"], 4)
+        self.assertEqual(t["qal"]["top"], "env.guard")
+        self.assertEqual(t["rust"]["processed"], 200)
+        self.assertAlmostEqual(t["ratio"], 3.5, places=6)
+
+    def test_report_names_top3_shares_tasks_and_the_comparison(self):
+        s = analyze.summarize(self.rows())
+        text = analyze.report(s)
+        for cat, _ in s["qal"]["top3"] + s["rust"]["top3"]:
+            self.assertIn(cat, text)
+        self.assertIn("Umgebung (env)", text)
+        self.assertIn("| 02-y |", text)
+        self.assertIn("env.guard", text.split("| 02-y |")[1].split("\n")[0])
+        # the comparison: processed per run and rounds per run, QAL against Rust, with the factor
+        self.assertIn("| processed per run |", text)
+        self.assertIn("| rounds per run |", text)
+        self.assertIn("2.33", text.split("| processed per run |")[1].split("\n")[0])  # 1400/2 vs 600/2 -> factor 2.33
+        # the first round is one round, although its tokens are split between prompt.reference and prompt.task
+        self.assertIn(" 1.00 | 1.00 |", text.split("| rounds `prompt.*` per run |")[1].split("\n")[0])
 
 
 if __name__ == "__main__":

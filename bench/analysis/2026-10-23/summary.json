@@ -1,4 +1,306 @@
 {
+ "per_task": {
+  "01-word-count": {
+   "qal": {
+    "processed": 257775.0,
+    "rounds": 4.75,
+    "top": "ok.run",
+    "runs": 4
+   },
+   "rust": {
+    "processed": 125332.25,
+    "rounds": 2.5,
+    "top": "ok.other",
+    "runs": 4
+   },
+   "ratio": 2.0567332031460377
+  },
+  "02-roman": {
+   "qal": {
+    "processed": 218579.75,
+    "rounds": 3.75,
+    "top": "ok.define",
+    "runs": 4
+   },
+   "rust": {
+    "processed": 146064.5,
+    "rounds": 3,
+    "top": "ok.other",
+    "runs": 4
+   },
+   "ratio": 1.4964604678070303
+  },
+  "03-csv-sum": {
+   "qal": {
+    "processed": 257495.75,
+    "rounds": 4.5,
+    "top": "ok.define",
+    "runs": 4
+   },
+   "rust": {
+    "processed": 169563.75,
+    "rounds": 3.5,
+    "top": "ok.other",
+    "runs": 4
+   },
+   "ratio": 1.5185778210260152
+  },
+  "04-binary-search": {
+   "qal": {
+    "processed": 235538.0,
+    "rounds": 4.25,
+    "top": "ok.define",
+    "runs": 4
+   },
+   "rust": {
+    "processed": 144358.25,
+    "rounds": 3,
+    "top": "ok.other",
+    "runs": 4
+   },
+   "ratio": 1.6316213309596093
+  },
+  "05-brackets": {
+   "qal": {
+    "processed": 209755.5,
+    "rounds": 3.75,
+    "top": "ok.define",
+    "runs": 4
+   },
+   "rust": {
+    "processed": 99636.25,
+    "rounds": 2,
+    "top": "ok.other",
+    "runs": 4
+   },
+   "ratio": 2.105212711237125
+  },
+  "06-bank": {
+   "qal": {
+    "processed": 265719.25,
+    "rounds": 4.5,
+    "top": "ok.define",
+    "runs": 4
+   },
+   "rust": {
+    "processed": 184661.0,
+    "rounds": 3.75,
+    "top": "ok.other",
+    "runs": 4
+   },
+   "ratio": 1.4389570618592988
+  },
+  "07-tokenizer": {
+   "qal": {
+    "processed": 155209.5,
+    "rounds": 2.75,
+    "top": "ok.define",
+    "runs": 4
+   },
+   "rust": {
+    "processed": 100196.5,
+    "rounds": 2,
+    "top": "ok.other",
+    "runs": 4
+   },
+   "ratio": 1.5490511145598898
+  },
+  "08-expr-eval": {
+   "qal": {
+    "processed": 843351.0,
+    "rounds": 11.666666666666666,
+    "top": "ok.run",
+    "runs": 6
+   },
+   "rust": {
+    "processed": 178457.75,
+    "rounds": 3.5,
+    "top": "ok.other",
+    "runs": 4
+   },
+   "ratio": 4.725774027746063
+  },
+  "09-rle": {
+   "qal": {
+    "processed": 258796.75,
+    "rounds": 4.5,
+    "top": "ok.define",
+    "runs": 4
+   },
+   "rust": {
+    "processed": 180267.4,
+    "rounds": 3.8,
+    "top": "ok.other",
+    "runs": 5
+   },
+   "ratio": 1.4356270185291407
+  },
+  "10-file-stats": {
+   "qal": {
+    "processed": 244206.75,
+    "rounds": 4.25,
+    "top": "prompt.task",
+    "runs": 4
+   },
+   "rust": {
+    "processed": 111907.25,
+    "rounds": 2.25,
+    "top": "ok.other",
+    "runs": 4
+   },
+   "ratio": 2.1822245654325347
+  },
+  "11-prime-factors": {
+   "qal": {
+    "processed": 241249.0,
+    "rounds": 4.25,
+    "top": "ok.define",
+    "runs": 4
+   },
+   "rust": {
+    "processed": 122434.75,
+    "rounds": 2.5,
+    "top": "ok.other",
+    "runs": 4
+   },
+   "ratio": 1.9704291469537856
+  },
+  "12-sort-words": {
+   "qal": {
+    "processed": 295603.0,
+    "rounds": 5.25,
+    "top": "ok.run",
+    "runs": 4
+   },
+   "rust": {
+    "processed": 121367.25,
+    "rounds": 2.5,
+    "top": "ok.other",
+    "runs": 4
+   },
+   "ratio": 2.435607628911424
+  },
+  "13-word-freq": {
+   "qal": {
+    "processed": 368671.25,
+    "rounds": 6.25,
+    "top": "ok.run",
+    "runs": 4
+   },
+   "rust": {
+    "processed": 156517.5,
+    "rounds": 3.25,
+    "top": "ok.other",
+    "runs": 4
+   },
+   "ratio": 2.355463446579456
+  },
+  "14-bst": {
+   "qal": {
+    "processed": 365603.5,
+    "rounds": 6.25,
+    "top": "ok.run",
+    "runs": 4
+   },
+   "rust": {
+    "processed": 122712.25,
+    "rounds": 2.5,
+    "top": "prompt.task",
+    "runs": 4
+   },
+   "ratio": 2.9793561767468204
+  },
+  "15-caesar": {
+   "qal": {
+    "processed": 268307.25,
+    "rounds": 4.75,
+    "top": "ok.define",
+    "runs": 4
+   },
+   "rust": {
+    "processed": 174608.5,
+    "rounds": 3.5,
+    "top": "ok.other",
+    "runs": 4
+   },
+   "ratio": 1.5366219284857265
+  },
+  "16-anagrams": {
+   "qal": {
+    "processed": 140424.0,
+    "rounds": 2.5,
+    "top": "ok.define",
+    "runs": 4
+   },
+   "rust": {
+    "processed": 121651.25,
+    "rounds": 2.5,
+    "top": "ok.other",
+    "runs": 4
+   },
+   "ratio": 1.1543161290985502
+  },
+  "17-word-wrap": {
+   "qal": {
+    "processed": 348317.5,
+    "rounds": 5.75,
+    "top": "ok.define",
+    "runs": 4
+   },
+   "rust": {
+    "processed": 169814.0,
+    "rounds": 3.5,
+    "top": "ok.other",
+    "runs": 4
+   },
+   "ratio": 2.051170692640183
+  },
+  "18-date-diff": {
+   "qal": {
+    "processed": 245640.75,
+    "rounds": 4.25,
+    "top": "ok.define",
+    "runs": 4
+   },
+   "rust": {
+    "processed": 133868.0,
+    "rounds": 2.75,
+    "top": "ok.other",
+    "runs": 4
+   },
+   "ratio": 1.834947485582813
+  },
+  "19-base-convert": {
+   "qal": {
+    "processed": 237089.25,
+    "rounds": 4.25,
+    "top": "ok.define",
+    "runs": 4
+   },
+   "rust": {
+    "processed": 169353.4,
+    "rounds": 3.2,
+    "top": "ok.other",
+    "runs": 5
+   },
+   "ratio": 1.3999674644855078
+  },
+  "20-ini-query": {
+   "qal": {
+    "processed": 258209.25,
+    "rounds": 4.5,
+    "top": "ok.define",
+    "runs": 4
+   },
+   "rust": {
+    "processed": 156917.5,
+    "rounds": 3.25,
+    "top": "ok.other",
+    "runs": 4
+   },
+   "ratio": 1.6455095830611628
+  }
+ },
  "qal": {
   "runs": 82,
   "totals": {
