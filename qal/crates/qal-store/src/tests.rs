@@ -1595,15 +1595,104 @@ fn attempts_match_by_name_and_agent_and_are_bounded() {
     for i in 0..25 {
         assert!(s.define(&format!("fn k() -> Int = x{i}"), "a1").is_err());
     }
-    assert_eq!(count(&s, "attempts"), 20); // last 20 per name
+    assert_eq!(count_where(&s, "attempts", "name = 'k'"), 20); // last 20 per name
+}
+
+fn count_where(s: &Store, table: &str, cond: &str) -> i64 {
+    raw(s).query_row(&format!("SELECT count(*) FROM {table} WHERE {cond}"), [], |r| r.get(0)).unwrap()
+}
+
+const BAD_F: &str = "fn f(n: Int) -> Int = { let x = n + 1 in x; x }"; // E0201
+const GOOD_F: &str = "fn f(n: Int) -> Int = let x = n + 1 in { x; x }";
+
+fn e0201(s: &mut Store) -> Vec<Correction> {
+    s.recall(&RecallQuery { code: Some("E0201".into()), ..RecallQuery::default() }).unwrap().corrections
 }
 
 #[test]
-fn recall_needs_a_filter_and_hints_carry_the_memory() {
+fn a_parse_error_records_nothing_and_gets_no_hint() {
     let mut s = store();
-    assert_eq!(s.recall(&RecallQuery::default()).unwrap_err()[0].code, "E0701");
-    err(&mut s, "fn f(n: Int) -> Int = { let x = n + 1 in x; x }");
-    ok(&mut s, "fn f(n: Int) -> Int = let x = n + 1 in { x; x }");
-    let d = err(&mut s, "fn q(n: Int) -> Int = { let y = n in y; y }");
-    assert!(d[0].hints.iter().any(|h| h.starts_with("earlier fix of E0201 (1x):")), "{d:#?}");
+    err(&mut s, BAD_F);
+    ok(&mut s, GOOD_F); // the memory now has a correction of E0201
+    let d = err(&mut s, "fn broken( = ");
+    assert!(d.iter().all(|d| d.def.is_empty() && d.hints.iter().all(|h| !h.starts_with("earlier fix"))), "{d:#?}");
+    assert_eq!(count(&s, "attempts"), 0);
+}
+
+#[test]
+fn several_names_in_one_define_make_one_correction_for_the_failed_one() {
+    let mut s = store();
+    err(&mut s, &format!("{BAD_F}\nfn b() -> Int = 2"));
+    ok(&mut s, &format!("{GOOD_F}\nfn b() -> Int = 2"));
+    assert_eq!(count(&s, "corrections"), 1);
+    assert_eq!(e0201(&mut s).len(), 1);
+}
+
+#[test]
+fn old_attempts_are_dropped_and_never_matched() {
+    let mut s = store();
+    err(&mut s, BAD_F);
+    raw(&s).execute("UPDATE attempts SET at = at - 7300000", []).unwrap();
+    ok(&mut s, GOOD_F);
+    assert!(e0201(&mut s).is_empty(), "an attempt past the retention window is no correction");
+    // A later failure deletes the stale rows of other names.
+    err(&mut s, BAD_F);
+    raw(&s).execute("UPDATE attempts SET at = at - 7300000", []).unwrap();
+    err(&mut s, "fn z() -> Int = nope()");
+    assert_eq!(count_where(&s, "attempts", "name = 'f'"), 0);
+    assert_eq!(count_where(&s, "attempts", "name = 'z'"), 1);
+}
+
+#[test]
+fn recall_of_an_unknown_code_is_empty_not_an_error() {
+    let mut s = store();
+    let r = s.recall(&RecallQuery { code: Some("E9999".into()), ..RecallQuery::default() }).unwrap();
+    assert!(r.corrections.is_empty() && r.definitions.is_empty());
+}
+
+#[test]
+fn the_same_agent_gets_the_correction_even_after_another_agent_defined_the_name() {
+    let mut s = store();
+    assert!(s.define(BAD_F, "a1").is_err());
+    ok_as(&mut s, GOOD_F, "a1");
+    assert_eq!(e0201(&mut s).len(), 1);
+    assert_eq!(e0201(&mut s)[0].agent, "a1");
+    // a1 fails, a2 defines the name, a1 then fixes its own attempt: still a correction.
+    let mut s = store();
+    assert!(s.define(BAD_F, "a1").is_err());
+    ok_as(&mut s, "fn f(n: Int) -> Int = n", "a2");
+    assert!(e0201(&mut s).is_empty());
+    ok_as(&mut s, GOOD_F, "a1");
+    assert_eq!(e0201(&mut s).len(), 1);
+}
+
+#[test]
+fn a_store_of_version_6_gets_the_memory_tables() {
+    let dir = project();
+    let mut s = Store::init(&dir).unwrap();
+    ok(&mut s, "fn one() -> Int = 1");
+    drop(s);
+    let db = dir.join(".qal").join("store.db");
+    let c = Connection::open(&db).unwrap();
+    c.execute_batch("DROP TABLE attempts; DROP TABLE corrections; PRAGMA user_version = 6;").unwrap();
+    drop(c);
+    let mut s = Store::open(&db).unwrap();
+    assert_eq!(count(&s, "attempts") + count(&s, "corrections"), 0);
+    assert_eq!(raw(&s).query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), 7);
+    err(&mut s, BAD_F);
+    ok(&mut s, GOOD_F);
+    assert_eq!(e0201(&mut s).len(), 1);
+    assert_eq!(text(&mut s, "one"), "fn one() -> Int\n= 1");
+}
+
+#[test]
+fn excerpts_are_at_most_600_bytes() {
+    let long_line = "é".repeat(400);
+    assert!(memory::excerpt(&long_line).len() <= 600);
+    let lines = (0..100).map(|i| format!("line number {i} xxxxxxxx")).collect::<Vec<_>>().join("\n");
+    let e = memory::excerpt(&lines);
+    assert!(e.len() <= 600 && e.ends_with('…'), "{}", e.len());
+    let edge = format!("{}\n{}", "a".repeat(598), "b".repeat(50));
+    assert!(memory::excerpt(&edge).len() <= 600);
+    assert_eq!(memory::excerpt("short\n"), "short");
 }

@@ -249,7 +249,7 @@ impl Store {
             return diags;
         }
         if let Ok(input) = qal_compiler::parse_program(src) {
-            let _ = self.side_write(|tx| memory::record_attempts(tx, &diags, &input, src, agent));
+            let _ = self.side_write(|tx| memory::record_attempts(tx, &diags, &input, agent));
         }
         let mut seen: Vec<&'static str> = Vec::new();
         for d in diags.iter_mut().filter(|d| !d.def.is_empty()) {
@@ -268,11 +268,13 @@ impl Store {
     /// A successful `define`: turns the agent's earlier failed attempts of the defined names into
     /// corrections. Ignored if it fails.
     fn remember_corrections(&mut self, defined: &[Defined], agent: &str) {
+        let names: Vec<&str> = defined.iter().filter(|d| d.status == "added" || d.status == "replaced").map(|d| d.name.as_str()).collect();
+        // One cheap read first: most defines have no earlier attempt and open no write transaction.
+        if !matches!(memory::has_attempts_for(&self.conn, &names, agent), Ok(true)) {
+            return;
+        }
         let space = self.space.clone();
         let _ = self.side_write(|tx| {
-            if !memory::has_attempts(tx)? {
-                return Ok(());
-            }
             let snap = Snapshot::load(tx, &space)?;
             let after = |n: &str| snap.decode_name(tx, n).ok().map(|d| ops::text(&d));
             memory::record_corrections(tx, defined, &after, agent).map(|_| ())

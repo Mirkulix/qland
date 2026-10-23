@@ -52,41 +52,41 @@ pub struct Correction {
     pub after_hash: String,
     pub agent: String,
     pub at: i64,
-    /// How many corrections with this (before, after) pair the store holds (a `recall` collapses them).
+    /// How many corrections with this (before, after) pair there are among the newest 500 of the code (a `recall` collapses them).
     pub count: i64,
 }
 
-/// The text cut to [`EXCERPT_BYTES`] at a line boundary, `…` appended when something was cut.
+/// The text cut to [`EXCERPT_BYTES`] (the `…` included) at a line boundary, `…` appended when something was cut.
 pub fn excerpt(text: &str) -> String {
     let text = text.trim_end();
     if text.len() <= EXCERPT_BYTES {
         return text.to_string();
     }
+    let limit = EXCERPT_BYTES - '…'.len_utf8();
     let mut end = 0;
     for (i, c) in text.char_indices() {
-        if c == '\n' && i <= EXCERPT_BYTES {
+        if c == '\n' && i <= limit {
             end = i;
         }
     }
     if end == 0 {
         // One long line: cut at a character boundary.
-        end = (0..=EXCERPT_BYTES).rev().find(|i| text.is_char_boundary(*i)).unwrap_or(0);
+        end = (0..=limit).rev().find(|i| text.is_char_boundary(*i)).unwrap_or(0);
     }
     format!("{}…", &text[..end])
 }
 
 /// Records one attempt per diagnostic that names a definition (`def` non-empty; parse and store
-/// errors have none and record nothing). The text is that definition of `input` printed alone, or the
-/// raw `src` if `input` has no such definition. Drops attempts past the retention window and keeps
+/// errors have none and record nothing; neither do diagnostics about a definition not in `input`).
+/// The text is that definition of `input` printed alone. Drops attempts past the retention window and keeps
 /// the last [`MAX_ATTEMPTS`] per (name, agent).
-pub fn record_attempts(tx: &Transaction, diags: &[Diagnostic], input: &Program, src: &str, agent: &str) -> Result<(), Vec<Diagnostic>> {
+pub fn record_attempts(tx: &Transaction, diags: &[Diagnostic], input: &Program, agent: &str) -> Result<(), Vec<Diagnostic>> {
     let now = now_ms();
     let mut names: Vec<&str> = Vec::new();
     for d in diags.iter().filter(|d| !d.def.is_empty()) {
-        let text = match input.defs.iter().find(|x| x.name() == d.def) {
-            Some(def) => print_one(def),
-            None => src.to_string(),
-        };
+        // A diagnostic about a definition the input does not contain (a dependent, a lease) is no mistake of this text.
+        let Some(def) = input.defs.iter().find(|x| x.name() == d.def) else { continue };
+        let text = print_one(def);
         tx.execute(
             "INSERT INTO attempts (name, agent, code, path, message, text, at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             params![d.def, agent, d.code, d.path, d.message, excerpt(&text), now],
@@ -115,14 +115,22 @@ fn print_one(def: &Def) -> String {
     qal_compiler::print_program(&Program { defs: vec![def.clone()] }).trim_end().to_string()
 }
 
-/// True if there is any attempt (a cheap test before a `define` looks for corrections).
-pub fn has_attempts(tx: &Transaction) -> Result<bool, Vec<Diagnostic>> {
-    tx.query_row("SELECT EXISTS (SELECT 1 FROM attempts)", [], |r| r.get(0)).map_err(sql)
+/// True if `agent` has a live attempt for one of `names` (a cheap read before a `define` looks for
+/// corrections; uses the (name, agent) index).
+pub fn has_attempts_for(conn: &rusqlite::Connection, names: &[&str], agent: &str) -> Result<bool, Vec<Diagnostic>> {
+    let since = now_ms() - RETENTION_MS;
+    let mut stmt = conn.prepare_cached("SELECT 1 FROM attempts WHERE name = ?1 AND agent = ?2 AND at >= ?3 LIMIT 1").map_err(sql)?;
+    for name in names {
+        if stmt.exists(params![name, agent, since]).map_err(sql)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// For each added or replaced name with an attempt by `agent`: one correction from the first
-/// diagnostic of its newest failed `define` (`after` = `after_text(name)`), then all attempts of that
-/// name (of any agent) are deleted. A fix that reads the same as the attempt records nothing. Returns the
+/// diagnostic of its newest failed `define` (`after` = `after_text(name)`), then that agent's attempts
+/// of the name are deleted. A fix that reads the same as the attempt records nothing. Returns the
 /// number of corrections recorded.
 pub fn record_corrections(tx: &Transaction, defined: &[Defined], after_text: &dyn Fn(&str) -> Option<String>, agent: &str) -> Result<usize, Vec<Diagnostic>> {
     let now = now_ms();
@@ -151,8 +159,7 @@ pub fn record_corrections(tx: &Transaction, defined: &[Defined], after_text: &dy
                 }
             }
         }
-        // The name exists now: failures of it by any agent are history, only this agent's became a correction.
-        tx.execute("DELETE FROM attempts WHERE name = ?1", params![d.name]).map_err(sql)?;
+        tx.execute("DELETE FROM attempts WHERE name = ?1 AND agent = ?2", params![d.name, agent]).map_err(sql)?;
     }
     Ok(recorded)
 }
