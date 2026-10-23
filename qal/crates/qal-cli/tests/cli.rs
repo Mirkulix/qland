@@ -982,10 +982,15 @@ fn corrections_import_fills_the_memory_that_recall_reads() {
     // The same file again stores nothing new.
     let (code, v) = qal_in(&dir, &["corrections", "import", &file]);
     assert_eq!((code, v["corrections_imported"].as_u64()), (0, Some(0)), "{v}");
-    let (code, v) = qal_in(&dir, &["recall", "--code", "E0201", "--message", "unknown name `x`"]);
+    // The two records share the shape "unknown name `_T`" (a capitalised name), so a diagnostic of
+    // that shape recalls them as one correction seen twice; an unknown lowercase local (`x`) is
+    // another shape and gets nothing.
+    let (code, v) = qal_in(&dir, &["recall", "--code", "E0201", "--message", "unknown name `Strin`"]);
     assert_eq!(code, 0, "{v}");
     let c = &v["recall"]["corrections"][0];
     assert_eq!((c["count"].as_u64(), c["agent"].as_str(), c["after"].as_str()), (Some(2), Some("corpus"), Some("fn f(a: Str) -> Str = a")), "{v}");
+    let (code, v) = qal_in(&dir, &["recall", "--code", "E0201", "--message", "unknown name `x`"]);
+    assert_eq!((code, v["recall"]["corrections"].as_array().map(Vec::len)), (0, Some(0)), "{v}");
     let (code, v) = qal_in(&dir, &["recall", "--message", "is not a value"]);
     assert_eq!((code, v["recall"]["corrections"].as_array().map(Vec::len)), (0, Some(0)), "{v}");
     // A record without a code is refused and nothing else changes; a missing file is a usage error.
