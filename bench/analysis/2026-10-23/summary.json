@@ -1,0 +1,345 @@
+{
+ "qal": {
+  "runs": 82,
+  "totals": {
+   "prompt.reference": {
+    "processed": 690254.5120743217,
+    "new": 246464.75,
+    "output": 5340.728317466147,
+    "calls": 82
+   },
+   "prompt.task": {
+    "processed": 3602377.4879256776,
+    "new": 1490327.25,
+    "output": 1615.2716825338537,
+    "calls": 81
+   },
+   "lang.type": {
+    "processed": 718475,
+    "new": 49375,
+    "output": 142,
+    "calls": 11
+   },
+   "ok.define": {
+    "processed": 5605733,
+    "new": 225340,
+    "output": 3045,
+    "calls": 90
+   },
+   "lang.name": {
+    "processed": 1239113,
+    "new": 61641,
+    "output": 327,
+    "calls": 19
+   },
+   "ok.run": {
+    "processed": 5769576,
+    "new": 59301,
+    "output": 4673,
+    "calls": 88
+   },
+   "lang.parse": {
+    "processed": 173859,
+    "new": 2639,
+    "output": 114,
+    "calls": 3
+   },
+   "ok.other": {
+    "processed": 2271839,
+    "new": 33821,
+    "output": 2300,
+    "calls": 38
+   },
+   "lang.other_diag": {
+    "processed": 867634,
+    "new": 23196,
+    "output": 83,
+    "calls": 12
+   },
+   "lang.args": {
+    "processed": 65996,
+    "new": 5382,
+    "output": 3,
+    "calls": 1
+   },
+   "final": {
+    "processed": 60486,
+    "new": 21991,
+    "output": 6,
+    "calls": 1
+   },
+   "env.guard": {
+    "processed": 2379125,
+    "new": 133666,
+    "output": 604,
+    "calls": 44
+   },
+   "env.read_task": {
+    "processed": 1044641,
+    "new": 255076,
+    "output": 104,
+    "calls": 20
+   },
+   "env.tool_error": {
+    "processed": 59761,
+    "new": 188,
+    "output": 8,
+    "calls": 1
+   }
+  },
+  "means": {
+   "prompt.reference": {
+    "processed": 8417.737952125875,
+    "new": 3005.6676829268295,
+    "output": 65.13083313983105,
+    "calls": 1.0
+   },
+   "prompt.task": {
+    "processed": 43931.43277958143,
+    "new": 18174.72256097561,
+    "output": 19.698435152851875,
+    "calls": 0.9878048780487805
+   },
+   "lang.type": {
+    "processed": 8761.890243902439,
+    "new": 602.1341463414634,
+    "output": 1.7317073170731707,
+    "calls": 0.13414634146341464
+   },
+   "ok.define": {
+    "processed": 68362.59756097561,
+    "new": 2748.048780487805,
+    "output": 37.13414634146341,
+    "calls": 1.0975609756097562
+   },
+   "lang.name": {
+    "processed": 15111.134146341463,
+    "new": 751.719512195122,
+    "output": 3.9878048780487805,
+    "calls": 0.23170731707317074
+   },
+   "ok.run": {
+    "processed": 70360.68292682926,
+    "new": 723.1829268292682,
+    "output": 56.98780487804878,
+    "calls": 1.0731707317073171
+   },
+   "lang.parse": {
+    "processed": 2120.231707317073,
+    "new": 32.18292682926829,
+    "output": 1.3902439024390243,
+    "calls": 0.036585365853658534
+   },
+   "ok.other": {
+    "processed": 27705.353658536584,
+    "new": 412.4512195121951,
+    "output": 28.048780487804876,
+    "calls": 0.4634146341463415
+   },
+   "lang.other_diag": {
+    "processed": 10580.90243902439,
+    "new": 282.8780487804878,
+    "output": 1.0121951219512195,
+    "calls": 0.14634146341463414
+   },
+   "lang.args": {
+    "processed": 804.829268292683,
+    "new": 65.63414634146342,
+    "output": 0.036585365853658534,
+    "calls": 0.012195121951219513
+   },
+   "final": {
+    "processed": 737.6341463414634,
+    "new": 268.1829268292683,
+    "output": 0.07317073170731707,
+    "calls": 0.012195121951219513
+   },
+   "env.guard": {
+    "processed": 29013.719512195123,
+    "new": 1630.0731707317073,
+    "output": 7.365853658536586,
+    "calls": 0.5365853658536586
+   },
+   "env.read_task": {
+    "processed": 12739.524390243903,
+    "new": 3110.682926829268,
+    "output": 1.2682926829268293,
+    "calls": 0.24390243902439024
+   },
+   "env.tool_error": {
+    "processed": 728.7926829268292,
+    "new": 2.292682926829268,
+    "output": 0.0975609756097561,
+    "calls": 0.012195121951219513
+   }
+  },
+  "shares": {
+   "prompt": 0.17486067586817639,
+   "lang": 0.1248561339075892,
+   "ok": 0.5559175636190179,
+   "final": 0.002463901597099989,
+   "env": 0.14190172500811646
+  },
+  "top3": [
+   [
+    "ok.run",
+    5769576
+   ],
+   [
+    "ok.define",
+    5605733
+   ],
+   [
+    "prompt.task",
+    3602377.4879256776
+   ]
+  ],
+  "rounds": {
+   "mean": 5,
+   "median": 5.0,
+   "max": 18
+  },
+  "round_cost": {
+   "1": 52349.170731707316,
+   "5": 59320.19047619047,
+   "10": 76703
+  },
+  "retries": 0,
+  "dispatch_tokens": 4318978,
+  "diag_codes": {
+   "E0201": 34,
+   "E0510": 25,
+   "E0203": 19,
+   "E0502": 7,
+   "E0701": 4,
+   "E0100": 3,
+   "E0601": 3,
+   "E0504": 2
+  }
+ },
+ "rust": {
+  "runs": 82,
+  "totals": {
+   "prompt.reference": {
+    "processed": 0.0,
+    "new": 0.0,
+    "output": 0.0,
+    "calls": 0
+   },
+   "prompt.task": {
+    "processed": 3927051.0,
+    "new": 1376700.0,
+    "output": 7782.0,
+    "calls": 82
+   },
+   "ok.other": {
+    "processed": 6049362,
+    "new": 258135,
+    "output": 6291,
+    "calls": 117
+   },
+   "final": {
+    "processed": 59858,
+    "new": 3906,
+    "output": 4,
+    "calls": 1
+   },
+   "env.guard": {
+    "processed": 768486,
+    "new": 36670,
+    "output": 265,
+    "calls": 17
+   },
+   "env.read_task": {
+    "processed": 1057756,
+    "new": 111012,
+    "output": 1080,
+    "calls": 24
+   },
+   "rust.panic": {
+    "processed": 45865,
+    "new": 1617,
+    "output": 64,
+    "calls": 1
+   }
+  },
+  "means": {
+   "prompt.reference": {
+    "processed": 0.0,
+    "new": 0.0,
+    "output": 0.0,
+    "calls": 0.0
+   },
+   "prompt.task": {
+    "processed": 47890.865853658535,
+    "new": 16789.024390243903,
+    "output": 94.90243902439025,
+    "calls": 1.0
+   },
+   "ok.other": {
+    "processed": 73772.70731707317,
+    "new": 3147.987804878049,
+    "output": 76.71951219512195,
+    "calls": 1.4268292682926829
+   },
+   "final": {
+    "processed": 729.9756097560976,
+    "new": 47.63414634146341,
+    "output": 0.04878048780487805,
+    "calls": 0.012195121951219513
+   },
+   "env.guard": {
+    "processed": 9371.780487804877,
+    "new": 447.1951219512195,
+    "output": 3.231707317073171,
+    "calls": 0.2073170731707317
+   },
+   "env.read_task": {
+    "processed": 12899.463414634147,
+    "new": 1353.8048780487804,
+    "output": 13.170731707317072,
+    "calls": 0.2926829268292683
+   },
+   "rust.panic": {
+    "processed": 559.329268292683,
+    "new": 19.71951219512195,
+    "output": 0.7804878048780488,
+    "calls": 0.012195121951219513
+   }
+  },
+  "shares": {
+   "prompt": 0.32977211506050613,
+   "ok": 0.5079921043823097,
+   "final": 0.005026545176849442,
+   "env": 0.15335774527815627,
+   "rust": 0.003851490102178483
+  },
+  "top3": [
+   [
+    "ok.other",
+    6049362
+   ],
+   [
+    "prompt.task",
+    3927051.0
+   ],
+   [
+    "env.read_task",
+    1057756
+   ]
+  ],
+  "rounds": {
+   "mean": 2.951219512195122,
+   "median": 2.0,
+   "max": 6
+  },
+  "round_cost": {
+   "1": 47890.865853658535,
+   "5": 47274.46153846154,
+   "10": null
+  },
+  "retries": 0,
+  "dispatch_tokens": 3379041,
+  "diag_codes": {}
+ }
+}
