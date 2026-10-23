@@ -226,6 +226,20 @@ fn qc_diag_unused_type_param(def: Str, path: Str, param: Str) -> QcDiag =
     "remove `" ++ param ++ "` or use it in a parameter type"
   )
 
+# E0310: more than one effect parameter.
+fn qc_diag_effect_params(def: Str, path: Str, names: List[Str]) -> QcDiag =
+  qc_diag_hint(
+    qc_diag_new("E0310", "effect_params", def, path, "`" ++ def ++ "` declares " ++ from_int(len(names)) ++ " effect parameters (" ++ join(names, ", ") ++ "); a function has at most one"),
+    "use one effect parameter for every callback: `fn both[!e](a: fn() -> Unit !e, b: fn() -> Unit !e) -> Unit !e`; a call binds it to the union of the arguments' effects"
+  )
+
+# E0311: an effect parameter that occurs in no parameter type.
+fn qc_diag_effect_param_unused(def: Str, path: Str, param: Str) -> QcDiag =
+  qc_diag_hint(
+    qc_diag_new("E0311", "effect_param_unused", def, path, "effect parameter `" ++ param ++ "` occurs in no parameter type"),
+    "give a parameter a function type with it, e.g. `f: fn(T) -> Unit !" ++ param ++ "`; a call determines `" ++ param ++ "` from that argument"
+  )
+
 fn qc_diag_irregular_recursion(def: Str, path: Str, used: Str) -> QcDiag =
   qc_diag_hint(
     qc_diag_new("E0212", "irregular_recursion", def, path, "recursive use `" ++ used ++ "` must pass plain type parameters"),

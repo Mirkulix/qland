@@ -1,0 +1,1 @@
+type Sink[T, !e] = { put: fn(T) -> Unit !e }

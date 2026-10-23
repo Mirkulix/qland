@@ -105,6 +105,18 @@ impl Diagnostic {
         .hint(format!("add `!{}` to the signature of `{def}`", missing.join(" !")))
     }
 
+    /// E0310: more than one effect parameter.
+    pub fn effect_params(def: &str, path: &str, names: &[String]) -> Self {
+        Diagnostic::new("E0310", "effect_params", def, path, format!("`{def}` declares {} effect parameters ({}); a function has at most one", names.len(), names.join(", ")))
+            .hint("use one effect parameter for every callback: `fn both[!e](a: fn() -> Unit !e, b: fn() -> Unit !e) -> Unit !e`; a call binds it to the union of the arguments' effects")
+    }
+
+    /// E0311: an effect parameter that occurs in no parameter type (a call could not determine it).
+    pub fn effect_param_unused(def: &str, path: &str, param: &str) -> Self {
+        Diagnostic::new("E0311", "effect_param_unused", def, path, format!("effect parameter `{param}` occurs in no parameter type"))
+            .hint(format!("give a parameter a function type with it, e.g. `f: fn(T) -> Unit !{param}`; a call determines `{param}` from that argument"))
+    }
+
     pub fn non_exhaustive(def: &str, path: &str, missing: &str) -> Self {
         Diagnostic::new("E0205", "non_exhaustive_match", def, path, format!("match does not cover `{missing}`"))
             .hint(format!("add an arm `{missing} => ...` or a final `_ => ...` arm"))
@@ -359,6 +371,8 @@ pub const KNOWN: &[(&str, &str)] = &[
     ("E0243", "package_mismatch"),
     ("E0244", "std_signature_change"),
     ("E0301", "effect_violation"),
+    ("E0310", "effect_params"),
+    ("E0311", "effect_param_unused"),
     ("E0401", "signature_change"),
     ("E0402", "missing_dep"),
     ("E0404", "alias_reference"),

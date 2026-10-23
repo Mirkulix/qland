@@ -961,32 +961,68 @@ fn qc_parse_pat_record_fields(s: QcPState, name: Str, acc: Accum[QcFieldPat]) ->
 # -----------------------------------------------------------------------------
 # Definitions and Program
 
+# `[A, B]` after a type name (none: empty).
 fn qc_parse_tparams(s: QcPState) -> QcPRes[List[Str]] =
+  let r = qc_parse_params_lists(s, false) in
+  QcPRes { val: match r.val { Some(h) => Some(h.tps), None => None }, err: r.err, state: r.state }
+
+# `[A, B, !e]` after a definition name: type parameters and effect parameters. Effect parameters
+# (`!name`) are accepted only when `effects` is set (functions, not types).
+type QcParamsLists = {
+  tps: List[Str],
+  eps: List[Str]
+}
+
+type QcParamItem = {
+  is_effect: Bool,
+  name: Str
+}
+
+fn qc_parse_params_lists(s: QcPState, effects: Bool) -> QcPRes[QcParamsLists] =
   if qc_check_sym(s, "[") then
     let s1 = qc_next(s) in
     if qc_check_sym(s1, "]") then
       qc_err_here(s1, "`[]` needs at least one type parameter")
     else
-      qc_parse_tparams_loop(s1, AccEnd)
+      qc_parse_params_lists_loop(s1, effects, AccEnd, AccEnd)
   else
-    qc_pres_ok([], s)
+    qc_pres_ok(QcParamsLists { tps: [], eps: [] }, s)
 
-fn qc_parse_tparams_loop(s: QcPState, acc: Accum[Str]) -> QcPRes[List[Str]] =
-  if qc_check_sym(s, "]") then
-    qc_pres_ok(acc_list(acc), qc_next(s))
+fn qc_parse_params_item(s: QcPState, effects: Bool) -> QcPRes[QcParamItem] =
+  if qc_check_sym(s, "!") then
+    if !effects then
+      qc_err_here(s, "a type has no effect parameters; `!e` belongs to a function: `fn f[T, !e](...)`")
+    else
+      let id_r = qc_expect_local(qc_next(s), "effect parameter") in
+      match id_r.err {
+        Some(d) => qc_pres_err(d, id_r.state),
+        None => qc_pres_ok(QcParamItem { is_effect: true, name: match id_r.val { Some(x) => x, None => "" } }, id_r.state)
+      }
   else
     let id_r = qc_expect_upper_what(s, "type parameter", false) in
     match id_r.err {
       Some(d) => qc_pres_err(d, id_r.state),
+      None => qc_pres_ok(QcParamItem { is_effect: false, name: match id_r.val { Some(x) => x, None => "" } }, id_r.state)
+    }
+
+fn qc_parse_params_lists_loop(s: QcPState, effects: Bool, tps: Accum[Str], eps: Accum[Str]) -> QcPRes[QcParamsLists] =
+  if qc_check_sym(s, "]") then
+    qc_pres_ok(QcParamsLists { tps: acc_list(tps), eps: acc_list(eps) }, qc_next(s))
+  else
+    let item_r = qc_parse_params_item(s, effects) in
+    match item_r.err {
+      Some(d) => qc_pres_err(d, item_r.state),
       None =>
-        let p = match id_r.val { Some(x) => x, None => "" } in
-        let s1 = id_r.state in
+        let item = match item_r.val { Some(x) => x, None => QcParamItem { is_effect: false, name: "" } } in
+        let next_tps = if item.is_effect then tps else AccPush(tps, item.name) in
+        let next_eps = if item.is_effect then AccPush(eps, item.name) else eps in
+        let s1 = item_r.state in
         if qc_check_sym(s1, ",") then
           let s2 = qc_next(s1) in
-          if qc_check_sym(s2, "]") then qc_pres_ok(acc_list(AccPush(acc, p)), qc_next(s2))
-          else qc_parse_tparams_loop(s2, AccPush(acc, p))
+          if qc_check_sym(s2, "]") then qc_pres_ok(QcParamsLists { tps: acc_list(next_tps), eps: acc_list(next_eps) }, qc_next(s2))
+          else qc_parse_params_lists_loop(s2, effects, next_tps, next_eps)
         else if qc_check_sym(s1, "]") then
-          qc_pres_ok(acc_list(AccPush(acc, p)), qc_next(s1))
+          qc_pres_ok(QcParamsLists { tps: acc_list(next_tps), eps: acc_list(next_eps) }, qc_next(s1))
         else
           qc_err_here(s1, "expected `,` or `]`")
     }
@@ -997,11 +1033,11 @@ fn qc_parse_fn_def(s: QcPState) -> QcPRes[QcDef] =
     Some(d) => qc_pres_err(d, name_r.state),
     None =>
       let name = match name_r.val { Some(n) => n, None => "" } in
-      let tp_r = qc_parse_tparams(name_r.state) in
+      let tp_r = qc_parse_params_lists(name_r.state, true) in
       match tp_r.err {
         Some(d) => qc_pres_err(d, tp_r.state),
         None =>
-          let tparams = match tp_r.val { Some(l) => l, None => [] } in
+          let heads = match tp_r.val { Some(l) => l, None => QcParamsLists { tps: [], eps: [] } } in
           match qc_expect_sym(tp_r.state, "(") {
             Err(d) => qc_pres_err(d, tp_r.state),
             Ok(s1) =>
@@ -1033,7 +1069,8 @@ fn qc_parse_fn_def(s: QcPState) -> QcPRes[QcDef] =
                                         None =>
                                           let fn_def = QcFnDef {
                                             name: name,
-                                            tparams: tparams,
+                                            tparams: heads.tps,
+                                            eparams: heads.eps,
                                             params: match params_r.val { Some(p) => p, None => [] },
                                             ret: match ret_r.val { Some(r) => r, None => QcTUnit },
                                             effects: match eff_r.val { Some(e) => e, None => [] },

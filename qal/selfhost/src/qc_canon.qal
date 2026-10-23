@@ -195,8 +195,9 @@ fn qc_signature_text_mapped(d: QcDef, refs_map: Map[Str, Bytes]) -> Str =
       let fn_ty = QcTFn(map(f.params, fn(p: QcFieldType) => p.ty), f.ret, f.effects) in
       let mapped_ty = qc_map_type_named(fn_ty, f.tparams, refs_map) in
       let base = qc_print_type(mapped_ty) in
-      if len(f.tparams) == 0 then base
-      else "fn[" ++ join(qc_fn_tparams(f), ", ") ++ "]" ++ slice(base, 2, len(base))
+      let heads = qc_fn_tparams(f) ++ map(f.eparams, fn(e: Str) => "!" ++ e) in
+      if len(heads) == 0 then base
+      else "fn[" ++ join(heads, ", ") ++ "]" ++ slice(base, 2, len(base))
   }
 
 fn qc_signature_text(d: QcDef) -> Str =
@@ -214,6 +215,7 @@ type QcEncState = {
   scope: List[Str],
   locals: Accum[Str],
   tparams: List[Str],
+  eparams: List[Str],
   refs_map: Map[Str, Bytes],
   group_map: Map[Str, Int],
   ref_names: Accum[Str],
@@ -232,6 +234,7 @@ fn qc_enc_fail(s: QcEncState, msg: Str) -> QcEncState =
         scope: s.scope,
         locals: s.locals,
         tparams: s.tparams,
+        eparams: s.eparams,
         refs_map: s.refs_map,
         group_map: s.group_map,
         ref_names: s.ref_names,
@@ -248,6 +251,7 @@ fn qc_enc_set_v2(s: QcEncState) -> QcEncState =
     scope: s.scope,
     locals: s.locals,
     tparams: s.tparams,
+    eparams: s.eparams,
     refs_map: s.refs_map,
     group_map: s.group_map,
     ref_names: s.ref_names,
@@ -263,6 +267,7 @@ fn qc_enc_set_scope(s: QcEncState, scope: List[Str]) -> QcEncState =
     scope: scope,
     locals: s.locals,
     tparams: s.tparams,
+    eparams: s.eparams,
     refs_map: s.refs_map,
     group_map: s.group_map,
     ref_names: s.ref_names,
@@ -279,6 +284,7 @@ fn qc_enc_set_tparams(s: QcEncState, tps: List[Str]) -> QcEncState =
     scope: s.scope,
     locals: next_locals,
     tparams: tps,
+    eparams: [],
     refs_map: s.refs_map,
     group_map: s.group_map,
     ref_names: s.ref_names,
@@ -294,6 +300,7 @@ fn qc_enc_byte(s: QcEncState, b: Int) -> QcEncState =
     scope: s.scope,
     locals: s.locals,
     tparams: s.tparams,
+    eparams: s.eparams,
     refs_map: s.refs_map,
     group_map: s.group_map,
     ref_names: s.ref_names,
@@ -309,6 +316,7 @@ fn qc_enc_varint(s: QcEncState, n: Int) -> QcEncState =
     scope: s.scope,
     locals: s.locals,
     tparams: s.tparams,
+    eparams: s.eparams,
     refs_map: s.refs_map,
     group_map: s.group_map,
     ref_names: s.ref_names,
@@ -324,6 +332,7 @@ fn qc_enc_i64(s: QcEncState, n: Int) -> QcEncState =
     scope: s.scope,
     locals: s.locals,
     tparams: s.tparams,
+    eparams: s.eparams,
     refs_map: s.refs_map,
     group_map: s.group_map,
     ref_names: s.ref_names,
@@ -339,6 +348,7 @@ fn qc_enc_float(s: QcEncState, x: Float) -> QcEncState =
     scope: s.scope,
     locals: s.locals,
     tparams: s.tparams,
+    eparams: s.eparams,
     refs_map: s.refs_map,
     group_map: s.group_map,
     ref_names: s.ref_names,
@@ -354,6 +364,7 @@ fn qc_enc_str(s: QcEncState, str_val: Str) -> QcEncState =
     scope: s.scope,
     locals: s.locals,
     tparams: s.tparams,
+    eparams: s.eparams,
     refs_map: s.refs_map,
     group_map: s.group_map,
     ref_names: s.ref_names,
@@ -363,12 +374,60 @@ fn qc_enc_str(s: QcEncState, str_val: Str) -> QcEncState =
     bytes: qc_str_acc(str_val, s.bytes)
   }
 
+# An effect parameter is written `#<index>` (only `#0`: one per function), so the hash does not
+# depend on its name; `#` is not a letter, so it never clashes with an effect.
+fn qc_enc_map_eparams(s: QcEncState, effs: List[Str]) -> List[Str] =
+  map(effs, fn(e: Str) =>
+    match qc_list_find_idx_str(s.eparams, e) {
+      Some(i) => "#" ++ from_int(i),
+      None => e
+    })
+
+# The effect parameter's name is a local name (after the type parameters, before the parameters);
+# the decoder reads it when it meets `#0` in the types.
+fn qc_enc_set_eparams(s: QcEncState, f: QcFnDef) -> QcEncState =
+  let s1 = if len(f.eparams) > 1 then qc_enc_fail(s, "a function has at most one effect parameter") else s in
+  let s2 = if len(f.eparams) == 0 then s1
+  else
+    let e = list_at(f.eparams, 0) in
+    let s_checked = if fold(f.params, false, fn(acc: Bool, p: QcFieldType) => acc || qc_type_mentions_effect(p.ty, e)) then s1
+      else qc_enc_fail(s1, "the effect parameter `" ++ e ++ "` occurs in no parameter type (not canonical)") in
+    QcEncState {
+      env: s_checked.env,
+      scope: s_checked.scope,
+      locals: AccPush(s_checked.locals, e),
+      tparams: s_checked.tparams,
+      eparams: s_checked.eparams,
+      refs_map: s_checked.refs_map,
+      group_map: s_checked.group_map,
+      ref_names: s_checked.ref_names,
+      resolve_refs: s_checked.resolve_refs,
+      v2: true,
+      err: s_checked.err,
+      bytes: s_checked.bytes
+    } in
+  QcEncState {
+    env: s2.env,
+    scope: s2.scope,
+    locals: s2.locals,
+    tparams: s2.tparams,
+    eparams: f.eparams,
+    refs_map: s2.refs_map,
+    group_map: s2.group_map,
+    ref_names: s2.ref_names,
+    resolve_refs: s2.resolve_refs,
+    v2: s2.v2,
+    err: s2.err,
+    bytes: s2.bytes
+  }
+
 fn qc_enc_bind(s: QcEncState, name: Str) -> QcEncState =
   QcEncState {
     env: s.env,
     scope: [name] ++ s.scope,
     locals: AccPush(s.locals, name),
     tparams: s.tparams,
+    eparams: s.eparams,
     refs_map: s.refs_map,
     group_map: s.group_map,
     ref_names: s.ref_names,
@@ -395,6 +454,7 @@ fn qc_enc_ref(s: QcEncState, name: Str) -> QcEncState =
       scope: s.scope,
       locals: s.locals,
       tparams: s.tparams,
+      eparams: s.eparams,
       refs_map: s.refs_map,
       group_map: s.group_map,
       ref_names: AccPush(s.ref_names, name),
@@ -418,6 +478,7 @@ fn qc_enc_ref(s: QcEncState, name: Str) -> QcEncState =
                 scope: s1.scope,
                 locals: s1.locals,
                 tparams: s1.tparams,
+                eparams: s1.eparams,
                 refs_map: s1.refs_map,
                 group_map: s1.group_map,
                 ref_names: s1.ref_names,
@@ -461,7 +522,7 @@ fn qc_enc_type(s: QcEncState, t: QcType) -> QcEncState =
           qc_enc_fail(s, "unknown type parameter `" ++ n ++ "`")
       },
     QcTFn(ps, ret, effs) =>
-      let sorted_effs = qc_sort_dedup_strs(effs) in
+      let sorted_effs = qc_sort_dedup_strs(qc_enc_map_eparams(s, effs)) in
       let s1 = qc_enc_varint(qc_enc_byte(s, 9), len(ps)) in
       let s2 = fold(ps, s1, fn(st: QcEncState, param_ty: QcType) => qc_enc_type(st, param_ty)) in
       let s3 = qc_enc_type(s2, ret) in
@@ -657,12 +718,13 @@ fn qc_def_kind(d: QcDef) -> Int =
 
 fn qc_def_effects(d: QcDef) -> List[Str] =
   match d {
-    QcDefFn(f) => qc_sort_dedup_strs(f.effects),
+    # The store's effect column holds concrete effects only: an effect parameter is bound per call.
+    QcDefFn(f) => filter(qc_sort_dedup_strs(f.effects), fn(e: Str) => !qc_str_list_contains(f.eparams, e)),
     _ => []
   }
 
 fn qc_encode_member_ext(d: QcDef, env: QcCanonEnv, refs_map: Map[Str, Bytes], group_map: Map[Str, Int], resolve_refs: Bool) -> QcEncodedMember =
-  let init_st = QcEncState { env: env, scope: [], locals: AccEnd, tparams: [], refs_map: refs_map, group_map: group_map, ref_names: AccEnd, resolve_refs: resolve_refs, v2: false, err: None, bytes: AccEnd } in
+  let init_st = QcEncState { env: env, scope: [], locals: AccEnd, tparams: [], eparams: [], refs_map: refs_map, group_map: group_map, ref_names: AccEnd, resolve_refs: resolve_refs, v2: false, err: None, bytes: AccEnd } in
   let final_st = match d {
     QcDefType(t) =>
       let is_gen = len(t.params) > 0 in
@@ -686,10 +748,11 @@ fn qc_encode_member_ext(d: QcDef, env: QcCanonEnv, refs_map: Map[Str, Bytes], gr
       let s0 = if is_gen then
         qc_enc_varint(qc_enc_byte(qc_enc_set_tparams(qc_enc_set_v2(init_st), tps), 4), len(tps))
       else qc_enc_byte(init_st, 1) in
-      let s1 = qc_enc_varint(s0, len(f.params)) in
+      let s_ep = qc_enc_set_eparams(s0, f) in
+      let s1 = qc_enc_varint(s_ep, len(f.params)) in
       let s2 = fold(f.params, s1, fn(st: QcEncState, p: QcFieldType) => qc_enc_type(st, p.ty)) in
       let s3 = qc_enc_type(s2, f.ret) in
-      let sorted_effs = qc_sort_dedup_strs(f.effects) in
+      let sorted_effs = qc_sort_dedup_strs(qc_enc_map_eparams(s3, f.effects)) in
       let s4 = qc_enc_varint(s3, len(sorted_effs)) in
       let s5 = fold(sorted_effs, s4, fn(st: QcEncState, e: Str) => qc_enc_str(st, e)) in
       # Bind parameters in order
@@ -1281,6 +1344,7 @@ type QcDecState = {
   local_names: List[Str],
   next_name: Int,
   tparams: List[Str],
+  saw_eparam: Bool,
   def_name: Str,
   hash_to_name: Map[Str, Str],
   group_names: List[Str],
@@ -1304,6 +1368,7 @@ fn qc_dec_byte(s: QcDecState) -> QcDecRes[Int] =
       local_names: s.local_names,
       next_name: s.next_name,
       tparams: s.tparams,
+      saw_eparam: s.saw_eparam,
       def_name: s.def_name,
       hash_to_name: s.hash_to_name,
       group_names: s.group_names,
@@ -1321,6 +1386,7 @@ fn qc_dec_varint_loop(s: QcDecState, shift: Int, acc: Int) -> QcDecRes[Int] =
     local_names: s.local_names,
     next_name: s.next_name,
     tparams: s.tparams,
+    saw_eparam: s.saw_eparam,
     def_name: s.def_name,
     hash_to_name: s.hash_to_name,
     group_names: s.group_names,
@@ -1353,6 +1419,7 @@ fn qc_dec_i64(s: QcDecState) -> QcDecRes[Int] =
       local_names: s.local_names,
       next_name: s.next_name,
       tparams: s.tparams,
+      saw_eparam: s.saw_eparam,
       def_name: s.def_name,
       hash_to_name: s.hash_to_name,
       group_names: s.group_names,
@@ -1380,6 +1447,7 @@ fn qc_dec_str(s: QcDecState) -> QcDecRes[Str] =
       local_names: len_res.s.local_names,
       next_name: len_res.s.next_name,
       tparams: len_res.s.tparams,
+      saw_eparam: len_res.s.saw_eparam,
       def_name: len_res.s.def_name,
       hash_to_name: len_res.s.hash_to_name,
       group_names: len_res.s.group_names,
@@ -1398,6 +1466,7 @@ fn qc_dec_bind(s: QcDecState) -> QcDecRes[Str] =
       local_names: s.local_names,
       next_name: s.next_name + 1,
       tparams: s.tparams,
+      saw_eparam: s.saw_eparam,
       def_name: s.def_name,
       hash_to_name: s.hash_to_name,
       group_names: s.group_names,
@@ -1422,6 +1491,7 @@ fn qc_dec_ref(s: QcDecState) -> QcDecRes[Str] =
       local_names: tag_res.s.local_names,
       next_name: tag_res.s.next_name,
       tparams: tag_res.s.tparams,
+      saw_eparam: tag_res.s.saw_eparam,
       def_name: tag_res.s.def_name,
       hash_to_name: tag_res.s.hash_to_name,
       group_names: tag_res.s.group_names,
@@ -1445,11 +1515,53 @@ fn qc_dec_ref(s: QcDecState) -> QcDecRes[Str] =
     # R_PRELUDE = 2
     qc_dec_str(tag_res.s)
 
+fn qc_dec_set_saw_eparam(s: QcDecState, saw: Bool) -> QcDecState =
+  QcDecState {
+    bytes: s.bytes,
+    pos: s.pos,
+    scope: s.scope,
+    local_names: s.local_names,
+    next_name: s.next_name,
+    tparams: s.tparams,
+    saw_eparam: saw,
+    def_name: s.def_name,
+    hash_to_name: s.hash_to_name,
+    group_names: s.group_names,
+    self_index: s.self_index
+  }
+
+# `#0` names the effect parameter; its name is substituted once the function's signature is read.
 fn qc_dec_effects_loop(s: QcDecState, count: Int, acc: Accum[Str]) -> QcDecRes[List[Str]] =
   if count <= 0 then QcDecRes { val: acc_list(acc), s: s }
   else
     let str_res = qc_dec_str(s) in
-    qc_dec_effects_loop(str_res.s, count - 1, AccPush(acc, str_res.val))
+    let s2 = if str_res.val == "#0" then qc_dec_set_saw_eparam(str_res.s, true) else str_res.s in
+    qc_dec_effects_loop(s2, count - 1, AccPush(acc, str_res.val))
+
+type QcDecEparam = {
+  eparams: List[Str],
+  s: QcDecState
+}
+
+# The effect parameter's name follows the type parameters among the local names.
+fn qc_dec_eparam(s: QcDecState) -> QcDecEparam =
+  if s.saw_eparam then
+    let b_res = qc_dec_bind(qc_dec_set_saw_eparam(s, false)) in
+    let popped_s = QcDecState {
+      bytes: b_res.s.bytes,
+      pos: b_res.s.pos,
+      scope: s.scope,
+      local_names: b_res.s.local_names,
+      next_name: b_res.s.next_name,
+      tparams: b_res.s.tparams,
+      saw_eparam: b_res.s.saw_eparam,
+      def_name: b_res.s.def_name,
+      hash_to_name: b_res.s.hash_to_name,
+      group_names: b_res.s.group_names,
+      self_index: b_res.s.self_index
+    } in
+    QcDecEparam { eparams: [b_res.val], s: popped_s }
+  else QcDecEparam { eparams: [], s: s }
 
 fn qc_dec_effects(s: QcDecState) -> QcDecRes[List[Str]] =
   let n_res = qc_dec_varint(s) in
@@ -1615,6 +1727,7 @@ fn qc_dec_arms_loop(s: QcDecState, count: Int, acc: Accum[QcArm]) -> QcDecRes[Li
       local_names: body_res.s.local_names,
       next_name: body_res.s.next_name,
       tparams: body_res.s.tparams,
+      saw_eparam: body_res.s.saw_eparam,
       def_name: body_res.s.def_name,
       hash_to_name: body_res.s.hash_to_name,
       group_names: body_res.s.group_names,
@@ -1711,6 +1824,7 @@ fn qc_dec_expr(s: QcDecState) -> QcDecRes[QcExpr] =
       local_names: body_res.s.local_names,
       next_name: body_res.s.next_name,
       tparams: body_res.s.tparams,
+      saw_eparam: body_res.s.saw_eparam,
       def_name: body_res.s.def_name,
       hash_to_name: body_res.s.hash_to_name,
       group_names: body_res.s.group_names,
@@ -1752,6 +1866,7 @@ fn qc_dec_expr(s: QcDecState) -> QcDecRes[QcExpr] =
       local_names: body_res.s.local_names,
       next_name: body_res.s.next_name,
       tparams: body_res.s.tparams,
+      saw_eparam: body_res.s.saw_eparam,
       def_name: body_res.s.def_name,
       hash_to_name: body_res.s.hash_to_name,
       group_names: body_res.s.group_names,
@@ -1772,6 +1887,7 @@ fn qc_dec_tparams_loop(s: QcDecState, count: Int, acc: Accum[Str]) -> QcDecRes[L
       local_names: b_res.s.local_names,
       next_name: b_res.s.next_name,
       tparams: b_res.s.tparams,
+      saw_eparam: b_res.s.saw_eparam,
       def_name: b_res.s.def_name,
       hash_to_name: b_res.s.hash_to_name,
       group_names: b_res.s.group_names,
@@ -1820,6 +1936,7 @@ fn qc_dec_member(s: QcDecState) -> QcDecRes[QcDef] =
     local_names: tparams_res.s.local_names,
     next_name: tparams_res.s.next_name,
     tparams: tparams_res.val,
+    saw_eparam: tparams_res.s.saw_eparam,
     def_name: tparams_res.s.def_name,
     hash_to_name: tparams_res.s.hash_to_name,
     group_names: tparams_res.s.group_names,
@@ -1846,7 +1963,12 @@ fn qc_dec_member(s: QcDecState) -> QcDecRes[QcDef] =
     let param_tys_res = qc_dec_types_loop(n_res.s, n_res.val, AccEnd) in
     let ret_res = qc_dec_type(param_tys_res.s) in
     let effs_res = qc_dec_effects(ret_res.s) in
-    let params_res = qc_dec_bind_params_loop(effs_res.s, param_tys_res.val, 0, AccEnd) in
+    let ep = qc_dec_eparam(effs_res.s) in
+    let ep_from = ["#0"] in
+    let param_tys = map(param_tys_res.val, fn(t: QcType) => qc_type_map_effects(t, ep_from, ep.eparams)) in
+    let ret_ty = qc_type_map_effects(ret_res.val, ep_from, ep.eparams) in
+    let effects = qc_rename_effects(effs_res.val, ep_from, ep.eparams) in
+    let params_res = qc_dec_bind_params_loop(ep.s, param_tys, 0, AccEnd) in
     let params_scope = params_res.s.scope in
     let reqs_res = qc_dec_exprs(params_res.s) in
     let s_with_r = QcDecState {
@@ -1856,6 +1978,7 @@ fn qc_dec_member(s: QcDecState) -> QcDecRes[QcDef] =
       local_names: reqs_res.s.local_names,
       next_name: reqs_res.s.next_name,
       tparams: reqs_res.s.tparams,
+      saw_eparam: reqs_res.s.saw_eparam,
       def_name: reqs_res.s.def_name,
       hash_to_name: reqs_res.s.hash_to_name,
       group_names: reqs_res.s.group_names,
@@ -1869,6 +1992,7 @@ fn qc_dec_member(s: QcDecState) -> QcDecRes[QcDef] =
       local_names: enss_res.s.local_names,
       next_name: enss_res.s.next_name,
       tparams: enss_res.s.tparams,
+      saw_eparam: enss_res.s.saw_eparam,
       def_name: enss_res.s.def_name,
       hash_to_name: enss_res.s.hash_to_name,
       group_names: enss_res.s.group_names,
@@ -1879,9 +2003,10 @@ fn qc_dec_member(s: QcDecState) -> QcDecRes[QcDef] =
       val: QcDefFn(QcFnDef {
         name: s.def_name,
         tparams: tparams_res.val,
+        eparams: ep.eparams,
         params: params_res.val,
-        ret: ret_res.val,
-        effects: effs_res.val,
+        ret: ret_ty,
+        effects: effects,
         reqs: reqs_res.val,
         enss: enss_res.val,
         body: body_res.val
@@ -1911,6 +2036,7 @@ fn qc_decode_canonical(canonical: Bytes, local_names: List[Str], def_name: Str, 
       local_names: local_names,
       next_name: 0,
       tparams: [],
+      saw_eparam: false,
       def_name: def_name,
       hash_to_name: hash_to_name,
       group_names: group_names,
@@ -1926,6 +2052,7 @@ fn qc_decode_canonical(canonical: Bytes, local_names: List[Str], def_name: Str, 
         local_names: local_names,
         next_name: 0,
         tparams: [],
+        saw_eparam: false,
         def_name: def_name,
         hash_to_name: hash_to_name,
         group_names: group_names,
@@ -1943,6 +2070,7 @@ fn qc_decode_canonical(canonical: Bytes, local_names: List[Str], def_name: Str, 
             local_names: local_names,
             next_name: 0,
             tparams: [],
+            saw_eparam: false,
             def_name: def_name,
             hash_to_name: hash_to_name,
             group_names: group_names,
@@ -1958,6 +2086,7 @@ fn qc_decode_canonical(canonical: Bytes, local_names: List[Str], def_name: Str, 
             local_names: local_names,
             next_name: 0,
             tparams: [],
+            saw_eparam: false,
             def_name: def_name,
             hash_to_name: hash_to_name,
             group_names: group_names,
@@ -1991,7 +2120,7 @@ fn qc_find_member_name_at_idx(entries: List[QcStateEntry], target_gh: Bytes, tar
       let gh = bytes_slice(e.canonical, bytes_len(e.canonical) - 32, bytes_len(e.canonical)) in
       if gh != target_gh then qc_find_member_name_at_idx(entries, target_gh, target_idx, idx + 1)
       else
-        let dummy_s = QcDecState { bytes: e.canonical, pos: 5, scope: [], local_names: [], next_name: 0, tparams: [], def_name: "", hash_to_name: map_new(), group_names: [], self_index: 0 } in
+        let dummy_s = QcDecState { bytes: e.canonical, pos: 5, scope: [], local_names: [], next_name: 0, tparams: [], saw_eparam: false, def_name: "", hash_to_name: map_new(), group_names: [], self_index: 0 } in
         let size_res = qc_dec_varint(dummy_s) in
         let idx_res = qc_dec_varint(size_res.s) in
         if idx_res.val == target_idx then e.name
@@ -2006,7 +2135,7 @@ fn qc_build_group_names_loop(entries: List[QcStateEntry], target_gh: Bytes, cur_
 fn qc_find_group_names(canonical: Bytes, entries: List[QcStateEntry]) -> List[Str] =
   if bytes_len(canonical) < 37 then []
   else
-    let dummy_s = QcDecState { bytes: canonical, pos: 5, scope: [], local_names: [], next_name: 0, tparams: [], def_name: "", hash_to_name: map_new(), group_names: [], self_index: 0 } in
+    let dummy_s = QcDecState { bytes: canonical, pos: 5, scope: [], local_names: [], next_name: 0, tparams: [], saw_eparam: false, def_name: "", hash_to_name: map_new(), group_names: [], self_index: 0 } in
     let size_res = qc_dec_varint(dummy_s) in
     if size_res.val <= 1 then []
     else

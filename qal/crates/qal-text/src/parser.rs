@@ -307,18 +307,41 @@ impl Parser {
 
     /// `[A, B]` after a definition name (none: empty).
     fn tparams(&mut self) -> Result<Vec<String>, Diagnostic> {
+        let (tps, eps) = self.params_lists(false)?;
+        debug_assert!(eps.is_empty());
+        Ok(tps)
+    }
+
+    /// `[A, B, !e]` after a definition name: (type parameters, effect parameters). Effect
+    /// parameters (`!name`) are accepted only when `effects` is set (functions, not types).
+    fn params_lists(&mut self, effects: bool) -> Result<(Vec<String>, Vec<String>), Diagnostic> {
         if !self.is_sym("[") {
-            return Ok(Vec::new());
+            return Ok((Vec::new(), Vec::new()));
         }
         self.next();
-        let ps = self.list_of("]", |p| {
+        let (mut tps, mut eps) = (Vec::new(), Vec::new());
+        let items = self.list_of("]", |p| {
+            if p.is_sym("!") {
+                if !effects {
+                    return Err(p.err_here("a type has no effect parameters; `!e` belongs to a function: `fn f[T, !e](...)`"));
+                }
+                p.next();
+                return Ok((true, p.local("effect parameter")?));
+            }
             p.unqualified("type parameter")?;
-            p.upper("type parameter")
+            Ok((false, p.upper("type parameter")?))
         })?;
-        if ps.is_empty() {
+        for (is_effect, name) in items {
+            if is_effect {
+                eps.push(name);
+            } else {
+                tps.push(name);
+            }
+        }
+        if tps.is_empty() && eps.is_empty() {
             return Err(self.err_here("`[]` needs at least one type parameter"));
         }
-        Ok(ps)
+        Ok((tps, eps))
     }
 
     fn type_def(&mut self) -> Result<TypeDef, Diagnostic> {
@@ -361,7 +384,7 @@ impl Parser {
 
     fn fn_def(&mut self) -> Result<FnDef, Diagnostic> {
         let name = self.lower("function")?;
-        let tparams = self.tparams()?;
+        let (tparams, eparams) = self.params_lists(true)?;
         self.expect_sym("(")?;
         let params = self.list_of(")", |p| {
             let pname = p.local("parameter")?;
@@ -385,7 +408,7 @@ impl Parser {
         }
         self.expect_sym("=")?;
         let body = self.expr()?;
-        Ok(FnDef { name, tparams, params, ret, effects, req, ens, body })
+        Ok(FnDef { name, tparams, eparams, params, ret, effects, req, ens, body })
     }
 
     fn expr(&mut self) -> Result<Expr, Diagnostic> {

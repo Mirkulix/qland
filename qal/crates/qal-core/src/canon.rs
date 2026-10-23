@@ -403,6 +403,9 @@ struct Enc<'a, 'r> {
     locals: Vec<String>,
     /// Type parameters of the encoded definition.
     tparams: Vec<String>,
+    /// Effect parameters of the encoded definition (at most one): written as `#0` wherever the
+    /// name occurs in an effect set; the name itself is a stored local name, not part of the hash.
+    eparams: Vec<String>,
     /// A version 2 construct was written.
     v2: bool,
     err: Option<String>,
@@ -467,10 +470,18 @@ impl Enc<'_, '_> {
     }
 
     fn effects(&mut self, effs: &[String]) {
-        let set: BTreeSet<&String> = effs.iter().collect();
+        // An effect parameter is written `#<index>` (only `#0`: one per function), so the hash
+        // does not depend on its name; `#` is not a letter, so it never clashes with an effect.
+        let set: BTreeSet<String> = effs
+            .iter()
+            .map(|e| match self.eparams.iter().position(|p| p == e) {
+                Some(i) => format!("#{i}"),
+                None => e.clone(),
+            })
+            .collect();
         self.len(set.len());
         for e in set {
-            self.str(e);
+            self.str(&e);
         }
     }
 
@@ -825,6 +836,19 @@ impl Enc<'_, '_> {
                 }
             },
             Def::Fn(f) => {
+                // The effect parameter's name is a local name (after the type parameters, before
+                // the parameters); the decoder reads it when it meets `#0` in the types.
+                if f.eparams.len() > 1 {
+                    self.fail("a function has at most one effect parameter".into());
+                }
+                if let Some(e) = f.eparams.first() {
+                    if !f.params.iter().any(|p| p.ty.mentions_effect(e)) {
+                        self.fail(format!("the effect parameter `{e}` occurs in no parameter type (not canonical)"));
+                    }
+                    self.locals.push(e.clone());
+                }
+                self.eparams = f.eparams.clone();
+                self.v2 |= !f.eparams.is_empty();
                 self.len(f.params.len());
                 for p in &f.params {
                     self.ty(&p.ty);
@@ -858,7 +882,7 @@ fn encode_member(env: &Env, d: &Def, refs: &mut dyn FnMut(&str) -> Option<Ref>) 
 
 /// Like [`encode_member`], also returning the format version the member needs.
 fn encode_versioned(env: &Env, d: &Def, refs: &mut dyn FnMut(&str) -> Option<Ref>) -> Result<(Vec<u8>, Vec<String>, u8), String> {
-    let mut enc = Enc { env, refs, out: Vec::new(), scope: Vec::new(), locals: Vec::new(), tparams: Vec::new(), v2: false, err: None };
+    let mut enc = Enc { env, refs, out: Vec::new(), scope: Vec::new(), locals: Vec::new(), tparams: Vec::new(), eparams: Vec::new(), v2: false, err: None };
     enc.member(d);
     match enc.err {
         Some(e) => Err(format!("`{}`: {e}", d.name())),
@@ -1011,8 +1035,10 @@ pub fn hash_program(p: &Program) -> Result<Hashed, HashError> {
                 deps,
                 refs: std::mem::take(&mut ref_names[d]),
                 signature: signature_text(def, &sig_name),
+                // The store's effect column holds concrete effects only: an effect parameter is
+                // bound per call, so it is not an effect the function has.
                 effects: match def {
-                    Def::Fn(f) => sorted_effects(&f.effects),
+                    Def::Fn(f) => sorted_effects(&f.effects).into_iter().filter(|e| !f.eparams.contains(e)).collect(),
                     _ => Vec::new(),
                 },
             });
@@ -1221,11 +1247,13 @@ pub fn signature_text(d: &Def, f: &dyn Fn(&str) -> String) -> String {
             let keep = |n: &str| if fd.tparams.iter().any(|p| p == n) { n.to_string() } else { f(n) };
             let t = Type::Fn(fd.params.iter().map(|p| p.ty.clone()).collect(), Box::new(fd.ret.clone()), fd.effects.clone());
             let s = map_named(&t, &keep).to_string();
-            if fd.tparams.is_empty() {
+            let mut heads = fn_tparams(fd);
+            heads.extend(fd.eparams.iter().map(|e| format!("!{e}")));
+            if heads.is_empty() {
                 s
             } else {
-                // `fn[T](T) -> T`
-                format!("fn[{}]{}", fn_tparams(fd).join(", "), &s[2..])
+                // `fn[T](T) -> T`, `fn[T, !e](fn(T) -> Unit !e) -> Unit !e`
+                format!("fn[{}]{}", heads.join(", "), &s[2..])
             }
         }
         Def::Type(t) if !t.params.is_empty() => {
@@ -1470,6 +1498,8 @@ struct Dec<'b> {
     /// Indices of the type parameters read so far, in order (checked for a generic function's
     /// parameter and result types).
     tparam_uses: Vec<usize>,
+    /// An effect set named the effect parameter `#0` (its name is read after the signature).
+    saw_eparam: bool,
     /// Format version of the form (1 or 2), and whether a version 2 construct was read.
     version: u8,
     saw_v2: bool,
@@ -1501,6 +1531,7 @@ impl<'b> Dec<'b> {
             scope: Vec::new(),
             tparams: Vec::new(),
             tparam_uses: Vec::new(),
+            saw_eparam: false,
             version: 1,
             saw_v2: false,
         }
@@ -1680,7 +1711,8 @@ impl<'b> Dec<'b> {
         }
     }
 
-    /// Effects must be sorted and without duplicates (the canonical set).
+    /// Effects must be sorted and without duplicates (the canonical set). `#0` names the effect
+    /// parameter; its name is substituted once the function's signature is read.
     fn effects(&mut self) -> R<Vec<String>> {
         let n = self.count()?;
         let mut out: Vec<String> = Vec::new();
@@ -1688,6 +1720,13 @@ impl<'b> Dec<'b> {
             let e = self.str()?;
             if out.last().is_some_and(|prev| *prev >= e) {
                 return Err("effects are not a sorted set".into());
+            }
+            if e.starts_with('#') {
+                if e != "#0" {
+                    return Err(format!("effect parameter `{e}`: a function has one effect parameter, `#0`"));
+                }
+                self.v2()?;
+                self.saw_eparam = true;
             }
             out.push(e);
         }
@@ -2077,6 +2116,19 @@ impl<'b> Dec<'b> {
                     }
                 }
                 let effects = self.effects()?;
+                // The effect parameter's name follows the type parameters among the local names;
+                // `#0` in the signature becomes that name.
+                let (eparams, tys, ret, effects) = if std::mem::take(&mut self.saw_eparam) {
+                    let e = self.bind()?;
+                    self.scope.pop();
+                    let rename = |effs: &[String]| effs.iter().map(|x| if x == "#0" { e.clone() } else { x.clone() }).collect::<Vec<_>>();
+                    let tys: Vec<Type> = tys.iter().map(|t| t.map_effects(&rename)).collect();
+                    let ret = ret.map_effects(&rename);
+                    let effects = rename(&effects);
+                    (vec![e], tys, ret, effects)
+                } else {
+                    (Vec::new(), tys, ret, effects)
+                };
                 let mut params = Vec::with_capacity(n.min(16));
                 for ty in tys {
                     params.push(Param { name: self.bind()?, ty });
@@ -2087,7 +2139,7 @@ impl<'b> Dec<'b> {
                 let ens = (0..m).map(|_| self.expr(name, name_of)).collect::<R<Vec<_>>>()?;
                 self.scope.pop();
                 let body = self.expr(name, name_of)?;
-                Def::Fn(FnDef { name: name.to_string(), tparams, params, ret, effects, req, ens, body })
+                Def::Fn(FnDef { name: name.to_string(), tparams, eparams, params, ret, effects, req, ens, body })
             }
             2 if tparams.is_empty() => Def::Test(TestDef { name: name.to_string(), body: self.expr(name, name_of)? }),
             t => return Err(bad_tag("definition kind", t)),
@@ -2105,7 +2157,7 @@ mod tests {
     }
 
     fn func(name: &str, param: &str, body: Expr) -> Def {
-        Def::Fn(FnDef { name: name.into(), tparams: vec![], params: vec![Param { name: param.into(), ty: Type::Int }], ret: Type::Int, effects: vec![], req: vec![], ens: vec![], body })
+        Def::Fn(FnDef { name: name.into(), tparams: vec![], eparams: vec![], params: vec![Param { name: param.into(), ty: Type::Int }], ret: Type::Int, effects: vec![], req: vec![], ens: vec![], body })
     }
 
     fn by_name(p: &Program) -> HashMap<String, Canon> {
@@ -2139,6 +2191,7 @@ mod tests {
         let r = Def::Fn(FnDef {
             name: "f".into(),
             tparams: vec![],
+            eparams: vec![],
             params: vec![Param { name: "req".into(), ty: Type::Named("HttpRequest".into()) }],
             ret: Type::Named("SqlValue".into()),
             effects: vec![],
@@ -2149,6 +2202,7 @@ mod tests {
         let h = Def::Fn(FnDef {
             name: "h".into(),
             tparams: vec![],
+            eparams: vec![],
             params: vec![],
             ret: Type::Named("HttpHeader".into()),
             effects: vec![],
@@ -2160,6 +2214,7 @@ mod tests {
         let g = Def::Fn(FnDef {
             name: "g".into(),
             tparams: vec!["T".into()],
+            eparams: vec![],
             params: vec![Param { name: "x".into(), ty: Type::Named("T".into()) }, Param { name: "q".into(), ty: Type::Named("HttpRequest".into()) }],
             ret: Type::Named("T".into()),
             effects: vec![],
@@ -2198,6 +2253,7 @@ mod tests {
         let f = Def::Fn(FnDef {
             name: "f".into(),
             tparams: vec![],
+            eparams: vec![],
             params: vec![Param { name: "a".into(), ty: acc(Type::Int) }, Param { name: "x".into(), ty: Type::Int }],
             ret: Type::list(Type::Int),
             effects: vec![],
@@ -2208,6 +2264,7 @@ mod tests {
         let g = Def::Fn(FnDef {
             name: "g".into(),
             tparams: vec![],
+            eparams: vec![],
             params: vec![],
             ret: acc(Type::Str),
             effects: vec![],
@@ -2236,7 +2293,7 @@ mod tests {
         bare.splice(at..at + 10, [&[T_NAMED, R_PRELUDE, 5][..], b"Accum"].concat());
         assert!(decode(Form::new(&bare, None), "f", &c["f"].local_names, &mut |_| "?".into()).unwrap_err().contains("needs type arguments"));
         // A service prelude type is not generic.
-        let p = Program { defs: vec![Def::Fn(FnDef { name: "h".into(), tparams: vec![], params: vec![Param { name: "x".into(), ty: Type::App("DbRows".into(), vec![Type::Int]) }], ret: Type::Int, effects: vec![], req: vec![], ens: vec![], body: Expr::Int(0) })] };
+        let p = Program { defs: vec![Def::Fn(FnDef { name: "h".into(), tparams: vec![], eparams: vec![], params: vec![Param { name: "x".into(), ty: Type::App("DbRows".into(), vec![Type::Int]) }], ret: Type::Int, effects: vec![], req: vec![], ens: vec![], body: Expr::Int(0) })] };
         assert!(hash_program(&p).is_err());
     }
 
@@ -2347,7 +2404,7 @@ mod tests {
 
     fn generic_id(tp: &str, x: &str) -> Def {
         let t = Type::Named(tp.into());
-        Def::Fn(FnDef { name: "id".into(), tparams: vec![tp.into()], params: vec![Param { name: x.into(), ty: t.clone() }], ret: t, effects: vec![], req: vec![], ens: vec![], body: Expr::Var(x.into()) })
+        Def::Fn(FnDef { name: "id".into(), tparams: vec![tp.into()], eparams: vec![], params: vec![Param { name: x.into(), ty: t.clone() }], ret: t, effects: vec![], req: vec![], ens: vec![], body: Expr::Var(x.into()) })
     }
 
     #[test]
@@ -2371,11 +2428,41 @@ mod tests {
         // Function type parameters are inferred, never written: their order does not matter.
         let k = |tps: [&str; 2]| {
             let (a, b) = (Type::Named("A".into()), Type::Named("B".into()));
-            Def::Fn(FnDef { name: "k".into(), tparams: tps.iter().map(|s| s.to_string()).collect(), params: vec![Param { name: "a".into(), ty: a.clone() }, Param { name: "b".into(), ty: b }], ret: a, effects: vec![], req: vec![], ens: vec![], body: Expr::Var("a".into()) })
+            Def::Fn(FnDef { name: "k".into(), tparams: tps.iter().map(|s| s.to_string()).collect(), eparams: vec![], params: vec![Param { name: "a".into(), ty: a.clone() }, Param { name: "b".into(), ty: b }], ret: a, effects: vec![], req: vec![], ens: vec![], body: Expr::Var("a".into()) })
         };
         let (k1, k2) = (&by_name(&Program { defs: vec![k(["A", "B"])] })["k"], &by_name(&Program { defs: vec![k(["B", "A"])] })["k"]);
         assert_eq!(k1.hash, k2.hash);
         assert_eq!(k1.signature, k2.signature);
+    }
+
+    /// Spec 2026-10-22 §5: an effect parameter is `#0` in the form; its name is a local name.
+    #[test]
+    fn effect_parameters_hash_by_position() {
+        let twice = |e: &str, p: &str| {
+            let cb = Type::Fn(vec![], Box::new(Type::Unit), vec![e.to_string()]);
+            Def::Fn(FnDef { name: "twice".into(), tparams: vec![], eparams: vec![e.to_string()], params: vec![Param { name: p.into(), ty: cb }], ret: Type::Unit, effects: vec![e.to_string()], req: vec![], ens: vec![], body: Expr::Seq(vec![Expr::Call(p.into(), vec![]), Expr::Call(p.into(), vec![])]) })
+        };
+        let a = &by_name(&Program { defs: vec![twice("e", "op")] })["twice"];
+        let b = &by_name(&Program { defs: vec![twice("eff", "f")] })["twice"];
+        assert_eq!(a.hash, b.hash);
+        assert_eq!(a.canonical[4], 2, "effect parameters need version 2");
+        assert_eq!(a.local_names, vec!["e".to_string(), "op".to_string()]);
+        assert_eq!(a.signature, "fn[!e](fn() -> Unit !e) -> Unit !e");
+        assert_eq!(a.effects, Vec::<String>::new(), "the store's effect column holds concrete effects only");
+        assert!(a.canonical.windows(2).any(|w| w == b"#0"), "the parameter is written as #0");
+        let back = decode(single(a), "twice", &a.local_names, &mut |_| String::new()).unwrap();
+        assert_eq!(back, twice("e", "op"));
+        // Two parameters, or one that no parameter type mentions, have no canonical form.
+        let mut two = twice("e", "op");
+        if let Def::Fn(f) = &mut two {
+            f.eparams.push("f".into());
+        }
+        assert!(hash_program(&Program { defs: vec![two] }).is_err());
+        let mut unused = twice("e", "op");
+        if let Def::Fn(f) = &mut unused {
+            f.params[0].ty = Type::Fn(vec![], Box::new(Type::Unit), vec![]);
+        }
+        assert!(hash_program(&Program { defs: vec![unused] }).is_err());
     }
 
     #[test]
@@ -2385,6 +2472,7 @@ mod tests {
         let user = Def::Fn(FnDef {
             name: "mk".into(),
             tparams: vec![],
+            eparams: vec![],
             params: vec![Param { name: "n".into(), ty: Type::Int }, Param { name: "p".into(), ty: Type::App("Pair".into(), vec![Type::Int, Type::Str]) }],
             ret: Type::Fn(vec![Type::Int, Type::Bool], Box::new(Type::Int), vec![]),
             effects: vec![],
@@ -2431,6 +2519,7 @@ mod tests {
         let k = Def::Fn(FnDef {
             name: "k".into(),
             tparams: vec!["A".into(), "B".into()],
+            eparams: vec![],
             params: vec![Param { name: "a".into(), ty: ty("A") }, Param { name: "b".into(), ty: ty("B") }],
             ret: ty("A"),
             effects: vec![],

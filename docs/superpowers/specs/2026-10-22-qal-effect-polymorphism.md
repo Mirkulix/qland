@@ -200,3 +200,12 @@ Gesamt etwa eine Woche. Schritt 2 ist vor Schritt 3 vollständig zu reviewen, we
 - **Eine Variable je Funktion.** §4.3.
 - **`#0` in der kanonischen Form** statt neuer Version: Hashes bleiben, Decoder alter Stände lesen neue Definitionen nicht (sie kennen `#` nicht) – das ist das gewünschte Verhalten für ein neues Sprachmittel.
 - **Kein Effektparameter an Typen.** Hält Typargumente invariant und die Unifikation linear; Felder mit effektbehafteten Funktionen werden konkret annotiert.
+
+## 13. Umsetzungsstand (2026-10-22)
+
+Umgesetzt wie spezifiziert, mit einer Abweichung von §4.2: Effektvariablen sind nicht „einmal gebunden“, sondern **wachsen** (untere Schranke), solange sie auf der Erwartungsseite einer Prüfung stehen, und werden **eingefroren**, sobald eine Prüfung von ihrem Wert abhängt (Gefundenseite, Effektprüfung eines Aufrufs). Grund: `both(fn() => print(..), fn() => now_ms())` bindet `e` beim ersten Argument an `{io}`; mit einer einmaligen Bindung scheiterte das zweite Argument. Die Vereinigung über alle Argumente ist die in §3.2 gewünschte Bedeutung; das Einfrieren stellt sicher, dass ein späteres Wachstum keine frühere Prüfung ungültig macht (`generic_type_arguments_stay_invariant_with_effect_variables` prüft beides).
+
+- Rust: `ast.rs` (`FnDef.eparams`, `Type::map_effects`, `mentions_effect`), `parser.rs`/beide Printer (`[T, !e]`), `tform.rs` (`!e` in der Typparameterliste, byte-identisch ohne Effektparameter), `canon.rs` (`#0`, Name als lokaler Name, Effektspalte ohne Parameter), `diag.rs` (E0310, E0311), `qal-check` (`Subst.evars`, `unify_effects`, `instantiate`, `effect_check`).
+- QAL-Spiegel: `qc_ast`, `qc_parse`, `qc_print`, `qc_tform`, `qc_canon`, `qc_prelude`, `qc_unify`, `qc_check`, `qc_mono`; `qalc.qal` neu gebündelt, Seed `qalc.wasm` neu (Stage 1 == 2 == 3), `qalc.wasm.sha256` aktualisiert.
+- Tests nach §10: 1–5 in `qal-check/src/tests.rs`, 6 `effect_parameters_hash_by_position`, 7 `prints_effect_parameters`, 8 `effect_parameters_import_only_what_the_call_needs`, 9: 23 neue Korpusfälle (793 extrahierte Programme), `full_selfhosted_fixpoint`, `seed_module_is_the_fixpoint`.
+- MCP-Referenz (`reference.md`) um den Absatz zu Effektparametern ergänzt. `std` unverändert (§8).

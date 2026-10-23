@@ -134,6 +134,16 @@ impl Client {
         assert!(!err, "{v}");
         v["change"].as_str().unwrap().to_string()
     }
+
+    /// `open`, or `None` at the limit of live change sets per member (E0914).
+    fn try_open(&mut self, title: &str) -> Option<String> {
+        let (err, v) = self.call("qal_change", json!({"action": "open", "title": title}));
+        if err {
+            assert_eq!(code(&v), "E0914", "{v}");
+            return None;
+        }
+        Some(v["change"].as_str().unwrap().to_string())
+    }
 }
 
 impl Drop for Client {
@@ -219,7 +229,13 @@ fn eight_processes_with_random_operations_lose_nothing() {
                         let op = rng.below(100);
                         let (err, v) = if !writes {
                             match pick(&mut c, &mut rng) {
-                                None => c.call("qal_view", json!({"names": ["base"]})),
+                                // Nothing submitted yet: a reviewer's operations are quick list calls, the
+                                // writers' are compiles. Without a pause the reviewers would use up their
+                                // 200 operations before the first submission and no merge could happen.
+                                None => {
+                                    std::thread::sleep(Duration::from_millis(400));
+                                    c.call("qal_view", json!({"names": ["base"]}))
+                                }
                                 Some(x) if role == Role::Verifier => c.call("qal_review", json!({"change": x, "verdict": "verified"})),
                                 Some(x) if op < 50 => c.call("qal_review", json!({"change": x, "verdict": "approve"})),
                                 Some(x) => {
@@ -248,7 +264,18 @@ fn eight_processes_with_random_operations_lose_nothing() {
                         } else if op < 80 {
                             c.call("qal_view", json!({"names": [name]}))
                         } else if op < 90 {
-                            c.call("qal_change", json!({"action": if rng.below(3) == 0 { "show" } else { "submit" }, "change": change}))
+                            let show = rng.below(3) == 0;
+                            let r = c.call("qal_change", json!({"action": if show { "show" } else { "submit" }, "change": change}));
+                            // Submitted: like a real owner, go on in a new change set and leave this one to
+                            // its reviewers (a write by the owner would reopen it, §6.2, and no merge could
+                            // ever pass the gate while the owner keeps writing). At the limit of live change
+                            // sets the owner works on in the submitted one, which reopens it.
+                            if !show && !r.0 {
+                                if let Some(next) = c.try_open(&format!("more work of {member}")) {
+                                    change = next;
+                                }
+                            }
+                            r
                         } else if role == Role::Architect && op < 95 {
                             match pick(&mut c, &mut rng) {
                                 Some(x) => {

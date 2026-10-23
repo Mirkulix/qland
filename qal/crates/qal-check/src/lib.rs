@@ -27,6 +27,9 @@ const BUILTIN_VARIANTS: &[&str] = &["None", "Some", "Ok", "Err"];
 pub struct Sig {
     /// Type parameters (empty: monomorphic). `params` and `ret` use `Type::Param` for them.
     pub tparams: Vec<String>,
+    /// Effect parameters (at most one): `params`, `ret` and `effects` name it like an effect; a
+    /// call replaces it by a fresh effect variable (`Subst::fresh_effect`).
+    pub eparams: Vec<String>,
     pub params: Vec<Type>,
     pub ret: Type,
     pub effects: Vec<String>,
@@ -225,7 +228,7 @@ fn globals(p: &Program, diags: &mut Vec<Diagnostic>, is_new: &dyn Fn(&str) -> bo
             TypeBody::Record(fields) => TypeBody::Record(
                 fields
                     .iter()
-                    .map(|(f, ty)| (f.clone(), resolve_type(&g, ty, &t.params, &t.name, &format!("fields.{f}"), diags).unwrap_or(Type::Unit)))
+                    .map(|(f, ty)| (f.clone(), resolve_type(&g, ty, &t.params, &[], &t.name, &format!("fields.{f}"), diags).unwrap_or(Type::Unit)))
                     .collect(),
             ),
             TypeBody::Enum(vs) => TypeBody::Enum(
@@ -237,7 +240,7 @@ fn globals(p: &Program, diags: &mut Vec<Diagnostic>, is_new: &dyn Fn(&str) -> bo
                             .fields
                             .iter()
                             .enumerate()
-                            .map(|(i, ty)| resolve_type(&g, ty, &t.params, &t.name, &format!("variants[{tag}].fields[{i}]"), diags).unwrap_or(Type::Unit))
+                            .map(|(i, ty)| resolve_type(&g, ty, &t.params, &[], &t.name, &format!("variants[{tag}].fields[{i}]"), diags).unwrap_or(Type::Unit))
                             .collect(),
                     })
                     .collect(),
@@ -273,8 +276,8 @@ fn globals(p: &Program, diags: &mut Vec<Diagnostic>, is_new: &dyn Fn(&str) -> bo
         }
         if let Def::Fn(f) = d {
             // Signatures are resolved again (with diagnostics) when the function is checked.
-            let resolve = |t: &Type| resolve_type(&g, t, &f.tparams, &f.name, "", &mut Vec::new()).unwrap_or(Type::Unit);
-            let sig = Sig { tparams: f.tparams.clone(), params: f.params.iter().map(|p| resolve(&p.ty)).collect(), ret: resolve(&f.ret), effects: f.effects.clone() };
+            let resolve = |t: &Type| resolve_type(&g, t, &f.tparams, &f.eparams, &f.name, "", &mut Vec::new()).unwrap_or(Type::Unit);
+            let sig = Sig { tparams: f.tparams.clone(), eparams: f.eparams.clone(), params: f.params.iter().map(|p| resolve(&p.ty)).collect(), ret: resolve(&f.ret), effects: f.effects.clone() };
             let slot = if f.tparams.is_empty() { &mut index } else { &mut generic_index };
             let i = *slot;
             *slot += 1;
@@ -396,14 +399,14 @@ pub(crate) fn scc(succ: &[Vec<usize>]) -> Vec<usize> {
 /// Resolves a written type: type parameters (`tps`) become `Type::Param`, declared types must exist
 /// with the right number of type arguments, effects must be known, and map keys comparable.
 /// Reports every problem; None if there was one.
-pub(crate) fn resolve_type(g: &Globals, t: &Type, tps: &[String], def: &str, path: &str, diags: &mut Vec<Diagnostic>) -> Option<Type> {
+pub(crate) fn resolve_type(g: &Globals, t: &Type, tps: &[String], eps: &[String], def: &str, path: &str, diags: &mut Vec<Diagnostic>) -> Option<Type> {
     let before = diags.len();
-    let out = resolve_inner(g, t, tps, def, path, diags);
+    let out = resolve_inner(g, t, tps, eps, def, path, diags);
     (diags.len() == before).then_some(out)
 }
 
-fn resolve_inner(g: &Globals, t: &Type, tps: &[String], def: &str, path: &str, diags: &mut Vec<Diagnostic>) -> Type {
-    let r = |t: &Type, diags: &mut Vec<Diagnostic>| resolve_inner(g, t, tps, def, path, diags);
+fn resolve_inner(g: &Globals, t: &Type, tps: &[String], eps: &[String], def: &str, path: &str, diags: &mut Vec<Diagnostic>) -> Type {
+    let r = |t: &Type, diags: &mut Vec<Diagnostic>| resolve_inner(g, t, tps, eps, def, path, diags);
     match t {
         Type::Named(n) | Type::Param(n) if tps.contains(n) => Type::Param(n.clone()),
         Type::Named(n) => match g.type_def(n) {
@@ -463,8 +466,8 @@ fn resolve_inner(g: &Globals, t: &Type, tps: &[String], def: &str, path: &str, d
             let ret = r(ret, diags);
             let ps: Vec<Type> = ps.iter().map(|p| r(p, diags)).collect();
             for e in effs {
-                if !KNOWN_EFFECTS.contains(&e.as_str()) {
-                    diags.push(Diagnostic::unknown_name(def, path, e).hint(format!("known effects: {}", KNOWN_EFFECTS.join(", "))));
+                if !KNOWN_EFFECTS.contains(&e.as_str()) && !eps.contains(e) {
+                    diags.push(Diagnostic::unknown_name(def, path, e).hint(format!("known effects: {}; an effect parameter is declared in the function's brackets: `fn f[!{e}](...)`", KNOWN_EFFECTS.join(", "))));
                 }
             }
             Type::Fn(ps, Box::new(ret), effs.clone())
@@ -489,20 +492,32 @@ fn check_fn(f: &FnDef, g: &Globals, diags: &mut Vec<Diagnostic>) -> Option<TFn> 
                     .hint("inside `ens`, `r` is the result; rename the parameter".to_string()),
             );
         }
-        ptypes.push(resolve_type(g, &p.ty, &f.tparams, &f.name, &path, diags).unwrap_or(Type::Unit));
+        ptypes.push(resolve_type(g, &p.ty, &f.tparams, &f.eparams, &f.name, &path, diags).unwrap_or(Type::Unit));
     }
-    let ret = resolve_type(g, &f.ret, &f.tparams, &f.name, "ret", diags).unwrap_or(Type::Unit);
+    let ret = resolve_type(g, &f.ret, &f.tparams, &f.eparams, &f.name, "ret", diags).unwrap_or(Type::Unit);
     for (i, tp) in f.tparams.iter().enumerate() {
         let p = Type::Param(tp.clone());
         if !ptypes.iter().chain([&ret]).any(|t| mentions(t, &p)) {
             diags.push(Diagnostic::unused_type_param(&f.name, &format!("tparams[{i}]"), tp));
         }
     }
+    // Effect parameters: at most one, not an effect's name, and determinable from a parameter.
+    if f.eparams.len() > 1 {
+        diags.push(Diagnostic::effect_params(&f.name, "eparams", &f.eparams));
+    }
+    for (i, e) in f.eparams.iter().enumerate() {
+        let path = format!("eparams[{i}]");
+        if KNOWN_EFFECTS.contains(&e.as_str()) {
+            diags.push(Diagnostic::duplicate_name(&f.name, &path, e).hint(format!("`{e}` is an effect; an effect parameter needs another name, e.g. `!eff`")));
+        } else if !ptypes.iter().any(|t| t.mentions_effect(e)) {
+            diags.push(Diagnostic::effect_param_unused(&f.name, &path, e));
+        }
+    }
     for (i, e) in f.effects.iter().enumerate() {
-        if !KNOWN_EFFECTS.contains(&e.as_str()) {
+        if !KNOWN_EFFECTS.contains(&e.as_str()) && !f.eparams.contains(e) {
             diags.push(
                 Diagnostic::unknown_name(&f.name, &format!("effects[{i}]"), e)
-                    .hint(format!("known effects: {}", KNOWN_EFFECTS.join(", "))),
+                    .hint(format!("known effects: {}; an effect parameter is declared in the brackets: `fn {}[!{e}](...)`", KNOWN_EFFECTS.join(", "), f.name)),
             );
         }
     }
@@ -523,6 +538,7 @@ fn check_fn(f: &FnDef, g: &Globals, diags: &mut Vec<Diagnostic>) -> Option<TFn> 
     let mut cx = Cx::new(g, &f.name, &[], diags);
     cx.start = before;
     cx.tps = &f.tparams;
+    cx.eps = &f.eparams;
     for (p, t) in f.params.iter().zip(&ptypes) {
         cx.bind(&p.name, t.clone());
     }

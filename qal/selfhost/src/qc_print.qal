@@ -245,7 +245,7 @@ fn qc_join_clauses(prefix: Str, exprs: List[QcExpr]) -> Str =
 
 fn qc_print_fn_def(f: QcFnDef) -> Str =
   let params_s = join(map(f.params, fn(p: QcFieldType) => p.name ++ ": " ++ qc_print_type(p.ty)), ", ") in
-  let name_s = f.name ++ qc_tparams(f.tparams) in
+  let name_s = f.name ++ qc_tparams(f.tparams ++ map(f.eparams, fn(e: Str) => "!" ++ e)) in
   let ret_s = qc_print_type(f.ret) in
   let mut_s = match f.ret {
     QcTFn(_, _, _) => "fn " ++ name_s ++ "(" ++ params_s ++ ") -> (" ++ ret_s ++ ")",

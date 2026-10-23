@@ -27,6 +27,7 @@ Expressions (everything is an expression, there are no statements):
   / truncates toward zero; % has the sign of the left operand. Str order compares Unicode code points ("B" < "a" < "é").
 Effects: a fn that uses the system declares it after the result type and callers declare the union:
   !io print, read_line, read_all   !fs read_file, write_file   !time now_ms   !rand rand_int   !net http   !db db_exec, db_query.  Several: `-> Int !io !fs`. Tests and contracts are pure.
+  Effect parameter (one per fn): `fn each[T, !e](xs: List[T], f: fn(T) -> Unit !e) -> Unit !e`; a call needs its callbacks' effects, a pure callback none.
 Contracts: fn sqrt_floor(n: Int) -> Int req n >= 0 ens r * r <= n = ...   (`r` is the result inside `ens`; `r` cannot be a definition name, nor a parameter of a fn with `ens`; elsewhere parameters and locals named `r` are fine; always checked at run time)
   qal_define proves them with Z3: each `ens`, and the `req` of every function at each call. A function whose contract
   is refuted is not stored; the diagnostic (E0801) has a counterexample. Proofs are exact for Int and Bool (overflow

@@ -90,6 +90,7 @@ type QcExpr =
 type QcFnDef = {
   name: Str,
   tparams: List[Str],
+  eparams: List[Str],
   params: List[QcFieldType],
   ret: QcType,
   effects: List[Str],
@@ -244,6 +245,41 @@ fn qc_list_find_idx_str_loop(xs: List[Str], s: Str, cur: Int) -> Option[Int] =
 
 fn qc_list_find_idx_str(xs: List[Str], s: Str) -> Option[Int] =
   qc_list_find_idx_str_loop(xs, s, 0)
+
+# Effect parameters (spec 2026-10-22): the effect lists inside a type (Type::map_effects and
+# Type::mentions_effect in ast.rs). `from[i]` becomes `to[i]`.
+fn qc_rename_effects(effs: List[Str], from: List[Str], to: List[Str]) -> List[Str] =
+  map(effs, fn(e: Str) =>
+    match qc_list_find_idx_str(from, e) {
+      Some(i) => if i < len(to) then list_at(to, i) else e,
+      None => e
+    })
+
+fn qc_type_map_effects(t: QcType, from: List[Str], to: List[Str]) -> QcType =
+  match t {
+    QcTList(x) => QcTList(qc_type_map_effects(x, from, to)),
+    QcTOption(x) => QcTOption(qc_type_map_effects(x, from, to)),
+    QcTResult(a, b) => QcTResult(qc_type_map_effects(a, from, to), qc_type_map_effects(b, from, to)),
+    QcTMap(a, b) => QcTMap(qc_type_map_effects(a, from, to), qc_type_map_effects(b, from, to)),
+    QcTApp(n, args) => QcTApp(n, map(args, fn(a: QcType) => qc_type_map_effects(a, from, to))),
+    QcTFn(ps, r, effs) =>
+      QcTFn(map(ps, fn(p: QcType) => qc_type_map_effects(p, from, to)), qc_type_map_effects(r, from, to), qc_rename_effects(effs, from, to)),
+    _ => t
+  }
+
+fn qc_type_mentions_effect(t: QcType, e: Str) -> Bool =
+  match t {
+    QcTList(x) => qc_type_mentions_effect(x, e),
+    QcTOption(x) => qc_type_mentions_effect(x, e),
+    QcTResult(a, b) => qc_type_mentions_effect(a, e) || qc_type_mentions_effect(b, e),
+    QcTMap(a, b) => qc_type_mentions_effect(a, e) || qc_type_mentions_effect(b, e),
+    QcTApp(_, args) => fold(args, false, fn(acc: Bool, a: QcType) => acc || qc_type_mentions_effect(a, e)),
+    QcTFn(ps, r, effs) =>
+      fold(effs, false, fn(acc: Bool, x: Str) => acc || x == e)
+        || fold(ps, false, fn(acc: Bool, p: QcType) => acc || qc_type_mentions_effect(p, e))
+        || qc_type_mentions_effect(r, e),
+    _ => false
+  }
 
 test qc_ast_test =
   qc_binop_symbol(QcOpAdd) == "+" &&

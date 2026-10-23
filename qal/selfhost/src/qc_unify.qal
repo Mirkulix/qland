@@ -1,12 +1,33 @@
 # Type variables and unification for local type inference (spec §7: qc_unify, matching qal-check/src/unify.rs)
 
+# An effect variable (spec 2026-10-22 §4): the effects it must at least carry (names, or `?M` for
+# other variables), and whether it may still grow. It grows while it stands on the expected side
+# of a check; it is frozen as soon as a check depends on its value staying as it is.
+type QcEvar = {
+  lower: List[Str],
+  frozen: Bool
+}
+
 type QcSubst = {
   vars: List[Option[QcType]],
   depth: List[Int],
   size: List[Int],
   users: List[List[Int]],
+  evars: List[QcEvar],
   too_deep: Bool,
   too_large: Bool
+}
+
+type QcFreshEffRes = {
+  subst: QcSubst,
+  name: Str
+}
+
+# The effects an effect list carries (following variables, a sorted set) and the variables in it
+# that may still grow (sorted).
+type QcEffRes = {
+  names: List[Str],
+  open: List[Int]
 }
 
 type QcSubstRes = {
@@ -31,6 +52,7 @@ fn qc_subst_new() -> QcSubst =
     depth: [],
     size: [],
     users: [],
+    evars: [],
     too_deep: false,
     too_large: false
   }
@@ -50,6 +72,7 @@ fn qc_subst_fresh(s: QcSubst) -> QcFreshRes =
     depth: push(s.depth, 1),
     size: push(s.size, 1),
     users: push(s.users, []),
+    evars: s.evars,
     too_deep: s.too_deep,
     too_large: s.too_large
   } in
@@ -78,7 +101,7 @@ fn qc_subst_finish(s: QcSubst, t: QcType) -> QcType =
     QcTResult(a, b) => QcTResult(qc_subst_finish(s, a), qc_subst_finish(s, b)),
     QcTMap(a, b) => QcTMap(qc_subst_finish(s, a), qc_subst_finish(s, b)),
     QcTApp(n, args) => QcTApp(n, map(args, fn(arg: QcType) => qc_subst_finish(s, arg))),
-    QcTFn(ps, r, effs) => QcTFn(map(ps, fn(p: QcType) => qc_subst_finish(s, p)), qc_subst_finish(s, r), effs),
+    QcTFn(ps, r, effs) => QcTFn(map(ps, fn(p: QcType) => qc_subst_finish(s, p)), qc_subst_finish(s, r), (qc_subst_resolve_effects(s, effs)).names),
     other => other
   }
 
@@ -126,12 +149,12 @@ fn qc_subst_size_of(s: QcSubst, t: QcType) -> Int =
 fn qc_subst_within_limits(s: QcSubst, depth: Int, size: Int) -> QcSubstRes =
   if depth > 256 then
     QcSubstRes {
-      subst: QcSubst { vars: s.vars, depth: s.depth, size: s.size, users: s.users, too_deep: true, too_large: s.too_large },
+      subst: QcSubst { vars: s.vars, depth: s.depth, size: s.size, users: s.users, evars: s.evars, too_deep: true, too_large: s.too_large },
       ok: false
     }
   else if size > 4096 then
     QcSubstRes {
-      subst: QcSubst { vars: s.vars, depth: s.depth, size: s.size, users: s.users, too_deep: s.too_deep, too_large: true },
+      subst: QcSubst { vars: s.vars, depth: s.depth, size: s.size, users: s.users, evars: s.evars, too_deep: s.too_deep, too_large: true },
       ok: false
     }
   else
@@ -213,7 +236,7 @@ fn qc_subst_add_user(s: QcSubst, target_var: Int, user_var: Int) -> QcSubst =
   if target_var < len(s.users) then
     let cur_users = list_at(s.users, target_var) in
     let next_users = qc_list_set(s.users, target_var, push(cur_users, user_var)) in
-    QcSubst { vars: s.vars, depth: s.depth, size: s.size, users: next_users, too_deep: s.too_deep, too_large: s.too_large }
+    QcSubst { vars: s.vars, depth: s.depth, size: s.size, users: next_users, evars: s.evars, too_deep: s.too_deep, too_large: s.too_large }
   else s
 
 fn qc_subst_propagate_loop(s: QcSubst, changed: List[Int]) -> QcSubstRes =
@@ -254,7 +277,7 @@ fn qc_subst_propagate_users_loop(s: QcSubst, users: List[Int], k: Int, changed: 
               let s1 = lim_res.subst in
               let next_depth = qc_list_set(s1.depth, u, nd) in
               let next_size = qc_list_set(s1.size, u, nn) in
-              let s2 = QcSubst { vars: s1.vars, depth: next_depth, size: next_size, users: s1.users, too_deep: s1.too_deep, too_large: s1.too_large } in
+              let s2 = QcSubst { vars: s1.vars, depth: next_depth, size: next_size, users: s1.users, evars: s1.evars, too_deep: s1.too_deep, too_large: s1.too_large } in
               qc_subst_propagate_users_loop(s2, users, k + 1, push(changed, u))
           else
             qc_subst_propagate_users_loop(s, users, k + 1, changed)
@@ -273,7 +296,7 @@ fn qc_subst_bind(s: QcSubst, x: Int, t: QcType) -> QcSubstRes =
     let next_vars = qc_list_set(s1.vars, x, Some(t)) in
     let next_depth = qc_list_set(s1.depth, x, d) in
     let next_size = qc_list_set(s1.size, x, n) in
-    let s2 = QcSubst { vars: next_vars, depth: next_depth, size: next_size, users: s1.users, too_deep: s1.too_deep, too_large: s1.too_large } in
+    let s2 = QcSubst { vars: next_vars, depth: next_depth, size: next_size, users: s1.users, evars: s1.evars, too_deep: s1.too_deep, too_large: s1.too_large } in
     qc_subst_propagate_loop(s2, [x])
 
 fn qc_subst_wrap(s: QcSubst, t: QcType) -> QcFreshRes =
@@ -287,6 +310,69 @@ fn qc_subst_unify(s: QcSubst, expected: QcType, found: QcType) -> QcSubstRes =
 
 fn qc_subst_unify_exact(s: QcSubst, a: QcType, b: QcType) -> QcSubstRes =
   qc_subst_unify_in(s, a, b, true)
+
+# Effect variables (unify.rs: fresh_effect, resolve_effects, freeze_effects, unify_effects).
+fn qc_subst_fresh_effect(s: QcSubst) -> QcFreshEffRes =
+  let id = len(s.evars) in
+  let next_s = QcSubst { vars: s.vars, depth: s.depth, size: s.size, users: s.users, evars: push(s.evars, QcEvar { lower: [], frozen: false }), too_deep: s.too_deep, too_large: s.too_large } in
+  QcFreshEffRes { subst: next_s, name: "?" ++ from_int(id) }
+
+fn qc_evar_of(e: Str) -> Option[Int] =
+  if starts_with(e, "?") then
+    match to_int(slice(e, 1, len(e))) {
+      Some(n) => if n >= 0 then Some(n) else None,
+      None => None
+    }
+  else None
+
+fn qc_subst_set_evar(s: QcSubst, v: Int, ev: QcEvar) -> QcSubst =
+  QcSubst { vars: s.vars, depth: s.depth, size: s.size, users: s.users, evars: qc_list_set(s.evars, v, ev), too_deep: s.too_deep, too_large: s.too_large }
+
+fn qc_subst_freeze_evar(s: QcSubst, v: Int) -> QcSubst =
+  if v < len(s.evars) then qc_subst_set_evar(s, v, QcEvar { lower: (list_at(s.evars, v)).lower, frozen: true })
+  else s
+
+fn qc_subst_resolve_effects(s: QcSubst, effs: List[Str]) -> QcEffRes =
+  qc_resolve_effects_loop(s, effs, [], AccEnd, AccEnd)
+
+fn qc_resolve_effects_loop(s: QcSubst, stack: List[Str], seen: List[Int], names: Accum[Str], open: Accum[Int]) -> QcEffRes =
+  if len(stack) == 0 then QcEffRes { names: qc_sort_dedup_strs(acc_list(names)), open: qc_sort_dedup_ints(acc_list(open)) }
+  else
+    let e = list_at(stack, len(stack) - 1) in
+    let rest = match qc_list_pop(stack) { Some(xs) => xs, None => [] } in
+    match qc_evar_of(e) {
+      Some(v) =>
+        if qc_int_list_contains(seen, v) || v >= len(s.evars) then qc_resolve_effects_loop(s, rest, push(seen, v), names, open)
+        else
+          let ev = list_at(s.evars, v) in
+          let next_open = if ev.frozen then open else AccPush(open, v) in
+          qc_resolve_effects_loop(s, rest ++ ev.lower, push(seen, v), names, next_open),
+      None => qc_resolve_effects_loop(s, rest, seen, AccPush(names, e), open)
+    }
+
+fn qc_subst_freeze_effects(s: QcSubst, effs: List[Str]) -> QcSubst =
+  fold((qc_subst_resolve_effects(s, effs)).open, s, fn(st: QcSubst, v: Int) => qc_subst_freeze_evar(st, v))
+
+# `found ⊆ expected` as effect sets (`exact`: equal). A growable variable on the expected side
+# takes what `found` has beyond `expected`; without one, the check is on the effects as they are,
+# and the variables of `found` are frozen.
+fn qc_subst_unify_effects(s: QcSubst, expected: List[Str], found: List[Str], exact: Bool) -> QcSubstRes =
+  let r1 = qc_effects_sub(s, expected, found) in
+  if !r1.ok || !exact then r1
+  else qc_effects_sub(r1.subst, found, expected)
+
+fn qc_effects_sub(s: QcSubst, expected: List[Str], found: List[Str]) -> QcSubstRes =
+  let r1 = qc_subst_resolve_effects(s, expected) in
+  let r2 = qc_subst_resolve_effects(s, found) in
+  if len(r1.open) > 0 then
+    let v = list_at(r1.open, 0) in
+    let extra_names = filter(r2.names, fn(e: Str) => !qc_contains_str_loop(r1.names, e, 0)) in
+    let extra_vars = map(filter(r2.open, fn(w: Int) => !qc_int_list_contains(r1.open, w)), fn(w: Int) => "?" ++ from_int(w)) in
+    let ev = list_at(s.evars, v) in
+    let next_lower = fold(extra_names ++ extra_vars, ev.lower, fn(acc: List[Str], e: Str) => if qc_contains_str_loop(acc, e, 0) then acc else push(acc, e)) in
+    QcSubstRes { subst: qc_subst_set_evar(s, v, QcEvar { lower: next_lower, frozen: ev.frozen }), ok: true }
+  else if !qc_all_contained_loop(r2.names, r1.names, 0) then QcSubstRes { subst: s, ok: false }
+  else QcSubstRes { subst: fold(r2.open, s, fn(st: QcSubst, w: Int) => qc_subst_freeze_evar(st, w)), ok: true }
 
 fn qc_contains_str_loop(xs: List[Str], s: Str, idx: Int) -> Bool =
   if idx >= len(xs) then false
@@ -371,8 +457,7 @@ fn qc_subst_unify_resolved(s: QcSubst, expected: QcType, found: QcType, exact: B
                   let res_r = qc_subst_unify_in(res_ps.subst, r1, r2, exact) in
                   if !res_r.ok then res_r
                   else
-                    let eff_ok = qc_all_contained_loop(e2, e1, 0) && (!exact || qc_all_contained_loop(e1, e2, 0)) in
-                    QcSubstRes { subst: res_r.subst, ok: eff_ok },
+                    qc_subst_unify_effects(res_r.subst, e1, e2, exact),
             _ => QcSubstRes { subst: s, ok: false }
           },
           _ => QcSubstRes { subst: s, ok: a == b }
@@ -526,9 +611,13 @@ fn qc_subst_join_resolved(s: QcSubst, a: QcType, b: QcType, covariant: Bool) -> 
             match r_res.res {
               None => QcJoinRes { subst: r_res.subst, res: None, changed: false },
               Some(r) =>
+                # Open effect variables stay in a union (the join may still grow) and leave an
+                # intersection.
+                let r1e = qc_subst_resolve_effects(r_res.subst, e1) in
+                let r2e = qc_subst_resolve_effects(r_res.subst, e2) in
                 let effs =
-                  if covariant then qc_sort_dedup_strs(e1 ++ e2)
-                  else qc_eff_intersect(e1, e2) in
+                  if covariant then qc_sort_dedup_strs(r1e.names ++ r2e.names) ++ map(qc_sort_dedup_ints(r1e.open ++ r2e.open), fn(v: Int) => "?" ++ from_int(v))
+                  else qc_eff_intersect(r1e.names, r2e.names) in
                 let eff_changed = len(effs) != len(e1) || !qc_all_contained_loop(effs, e1, 0) in
                 let changed = ps_res.changed || r_res.changed || eff_changed in
                 if changed then
