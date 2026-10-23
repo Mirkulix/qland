@@ -27,6 +27,10 @@ fn err(s: &mut Store, src: &str) -> Vec<Diagnostic> {
     }
 }
 
+fn ok_as(s: &mut Store, src: &str, agent: &str) -> Vec<Defined> {
+    s.define(src, agent).unwrap_or_else(|d| panic!("unexpected diagnostics: {d:#?}"))
+}
+
 fn statuses(d: &[Defined]) -> Vec<(&str, &str)> {
     d.iter().map(|d| (d.name.as_str(), d.status)).collect()
 }
@@ -1568,4 +1572,38 @@ fn project_groups_identical_to_std_groups_coexist() {
     // `view #hash` shows the definition as one of its own names wrote it (re-review N2).
     let v = s.view(&[format!("#{h}")]).unwrap();
     assert!(v[0].text.contains("std.a.ev(n - 1)"), "{}", v[0].text);
+}
+
+#[test]
+fn a_failed_define_followed_by_a_successful_one_is_a_correction() {
+    let mut s = store();
+    err(&mut s, "fn f(n: Int) -> Int = { let x = n + 1 in x; x }"); // E0201 (unknown name after `;`)
+    ok(&mut s, "fn f(n: Int) -> Int = let x = n + 1 in { x; x }");
+    let r = s.recall(&RecallQuery { code: Some("E0201".into()), ..RecallQuery::default() }).unwrap();
+    assert_eq!(r.corrections.len(), 1);
+    let c = &r.corrections[0];
+    assert!(c.before.contains("in x;") && c.after.contains("in {") && c.count == 1, "{c:?}");
+    assert_eq!(c.after_hash, hash(&mut s, "f"));
+}
+
+#[test]
+fn attempts_match_by_name_and_agent_and_are_bounded() {
+    let mut s = store();
+    assert!(s.define("fn g() -> Int = h()", "a1").is_err()); // unknown name
+    ok_as(&mut s, "fn g() -> Int = 1", "a2"); // another agent: no correction
+    assert!(s.recall(&RecallQuery { code: Some("E0201".into()), ..RecallQuery::default() }).unwrap().corrections.is_empty());
+    for i in 0..25 {
+        assert!(s.define(&format!("fn k() -> Int = x{i}"), "a1").is_err());
+    }
+    assert_eq!(count(&s, "attempts"), 20); // last 20 per name
+}
+
+#[test]
+fn recall_needs_a_filter_and_hints_carry_the_memory() {
+    let mut s = store();
+    assert_eq!(s.recall(&RecallQuery::default()).unwrap_err()[0].code, "E0701");
+    err(&mut s, "fn f(n: Int) -> Int = { let x = n + 1 in x; x }");
+    ok(&mut s, "fn f(n: Int) -> Int = let x = n + 1 in { x; x }");
+    let d = err(&mut s, "fn q(n: Int) -> Int = { let y = n in y; y }");
+    assert!(d[0].hints.iter().any(|h| h.starts_with("earlier fix of E0201 (1x):")), "{d:#?}");
 }

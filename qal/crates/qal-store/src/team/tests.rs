@@ -582,7 +582,7 @@ fn version_5_stores_are_upgraded_to_6() {
     let path = s.path().to_path_buf();
     drop(s);
     let mut s = Store::open(&path).unwrap();
-    assert_eq!(raw(&s).query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), 6);
+    assert_eq!(raw(&s).query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), crate::schema::SCHEMA_VERSION);
     assert_eq!(s.query(&crate::Query::default()).unwrap(), before, "same names and hashes");
     assert_eq!(count(&s, "records"), 0);
     let space: String = raw(&s).query_row("SELECT space FROM history WHERE name = 'f'", [], |r| r.get(0)).unwrap();
