@@ -898,3 +898,67 @@ fn recall_answers_with_the_earlier_fix_in(c: &mut Client) {
     let (err, v) = c.call("qal_recall", json!({}));
     assert!(err && v["diagnostics"][0]["code"] == "E0701", "{v}");
 }
+
+/// Phase 6b acceptance: the corpus of the token analysis (`bench/analysis/corrections-2026-10-23.json`)
+/// answers for its three error classes. Each class is imported into a fresh project on its own and
+/// recalled by its code, because `qal_recall` returns at most five corrections and E0201 alone has
+/// eleven records. The classes are picked by the content of the records, not by position.
+#[test]
+fn recall_knows_the_three_error_classes_of_the_token_analysis() {
+    use qal_store::{CorrectionInput, Store};
+    let corpus: Vec<CorrectionInput> = serde_json::from_str(
+        &std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../../bench/analysis/corrections-2026-10-23.json")).unwrap(),
+    )
+    .unwrap();
+
+    // Recalls the corrections of `code` on a project holding exactly `records`.
+    let recall = |records: Vec<&CorrectionInput>, code: &str| -> Vec<Value> {
+        let root = Client::fresh_root();
+        let mut store = Store::init(&root).unwrap();
+        let owned: Vec<CorrectionInput> = records
+            .into_iter()
+            .map(|r| CorrectionInput { code: r.code.clone(), path: r.path.clone(), message: r.message.clone(), before: r.before.clone(), after: r.after.clone() })
+            .collect();
+        assert_eq!(store.import_corrections(&owned).unwrap(), owned.len());
+        drop(store);
+        let mut c = Client::start_at(root);
+        c.initialize();
+        let (err, v) = c.call("qal_recall", json!({"code": code}));
+        assert!(!err, "{v}");
+        assert_eq!(c.finish(), Some(0));
+        v["recall"]["corrections"].as_array().unwrap().clone()
+    };
+
+    // Class 1: a local name used after `;` is out of scope (E0201 unknown name). The fix binds it with `let … in`.
+    let unknown: Vec<&CorrectionInput> = corpus.iter().filter(|r| r.code == "E0201" && r.message.starts_with("unknown name") && !r.message.contains("`String`") && r.before.contains(';')).collect();
+    assert!(!unknown.is_empty(), "the corpus has no unknown-name record after `;`");
+    let found = recall(unknown, "E0201");
+    assert!(found.iter().any(|c| c["after"].as_str().is_some_and(|a| a.contains(" in "))), "{found:?}");
+
+    // Class 2: `String` where `Str` is meant. The fix writes `Str`.
+    let string: Vec<&CorrectionInput> = corpus.iter().filter(|r| r.message.contains("`String`")).collect();
+    if string.is_empty() {
+        eprintln!("the corpus has no record of the `String` vs `Str` class: assertion skipped");
+    } else {
+        let code = string[0].code.clone();
+        let found = recall(string, &code);
+        assert!(found.iter().any(|c| c["before"].as_str().is_some_and(|b| b.contains("String")) && c["after"].as_str().is_some_and(|a| a.contains("Str") && !a.contains("String"))), "{found:?}");
+    }
+
+    // Class 3: a built-in used as a value (E0201 "is not a value"). The fix replaces the bare built-in
+    // by a helper or closure, so `after` differs from `before` where the built-in stood.
+    let builtin: Vec<&CorrectionInput> = corpus.iter().filter(|r| r.code == "E0201" && r.message.ends_with("is not a value")).collect();
+    if builtin.is_empty() {
+        eprintln!("the corpus has no record of a built-in used as a value: assertion skipped");
+    } else {
+        let names: Vec<String> = builtin.iter().map(|r| r.message.split('`').nth(1).unwrap().to_string()).collect();
+        let found = recall(builtin, "E0201");
+        assert!(
+            found.iter().any(|c| {
+                let (b, a) = (c["before"].as_str().unwrap(), c["after"].as_str().unwrap());
+                b != a && names.iter().any(|n| b.contains(&format!(", {n})")) && !a.contains(&format!(", {n})")))
+            }),
+            "{found:?}"
+        );
+    }
+}
