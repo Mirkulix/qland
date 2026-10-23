@@ -3,7 +3,8 @@
 
 A correction is a failed `qal_define` diagnostic followed, later in the same transcript, by a
 successful `qal_define` that defines the diagnostic's definition. The record carries the failing
-and the fixed text of that definition only:
+and the fixed text of that definition only. Placeholders (`fn_*` names) and rewrites (less than
+half of the text shared, see `kept`) are skipped:
 
   python3 bench/corrections.py <transcript.jsonl>... [--results <results.jsonl>]... --out corrections.json
 
@@ -81,6 +82,26 @@ def outcome(text):
     return ("ok", defined) if isinstance(defined, list) else None
 
 
+def shared(before, after):
+    """The part of the longer text that the other one also has: lines without their indentation, or
+    words when either text is a single line (a one-line definition shares no line with its fix)."""
+    b = [l.strip() for l in before.split("\n")]
+    a = [l.strip() for l in after.split("\n")]
+    if min(len(b), len(a)) == 1:
+        b, a = before.split(), after.split()
+    common = collections.Counter(b) & collections.Counter(a)
+    return sum(common.values()) / max(len(b), len(a), 1)
+
+
+def kept(df, message, before, after):
+    """False for records that teach nothing: a placeholder the agent invented (`fn_*`, as the
+    definition or as the name the diagnostic names) and rewrites (less than half of the text shared)."""
+    named = re.findall(r"`([^`]*)`", message)
+    if df.startswith("fn_") or any(n.startswith("fn_") for n in named):
+        return False
+    return shared(before, after) >= 0.5
+
+
 def extract(path):
     """The correction records of one transcript, in the order they were fixed."""
     agent = re.sub(r"^agent-|\.jsonl$", "", os.path.basename(path))
@@ -116,7 +137,7 @@ def extract(path):
                         continue
                     code, p, message, before = pending.pop(df)
                     after = cut(source, df)
-                    if code and after and after != before:
+                    if code and after and after != before and kept(df, message, before, after):
                         records.append({"code": code, "path": p, "message": message, "before": before, "after": after, "agent": agent})
     return records
 

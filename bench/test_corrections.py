@@ -89,6 +89,34 @@ class Extract(unittest.TestCase):
         ])
         self.assertEqual(r, [])
 
+    def test_placeholders_and_rewrites_are_skipped(self):
+        long_bad = "fn r(n: Int) -> Int = {\n  let a = n in\n  let b = a in\n  print(a);\n  b\n}"
+        rewrite = "fn r(n: Int) -> Int =\n  if n > 0\n  then 1\n  else 0"
+        reindented = "fn r(n: Int) -> Int = {\n    let a = n in\n    let b = a in\n    print(a);\n    b + 0\n}"
+        r = self.extract([
+            # A placeholder the agent invented (`fn_*`), named by the diagnostic or as the definition.
+            ("Bash", define("fn f() -> Int = fn_dummy(1)"), fail("E0201", "f", message="unknown name `fn_dummy`"), False),
+            ("Bash", define("fn f() -> Int = 1"), done("f"), False),
+            ("Bash", define("fn fn_x() -> Int = y"), fail("E0201", "fn_x"), False),
+            ("Bash", define("fn fn_x() -> Int = 1"), done("fn_x"), False),
+            # A rewrite: before and after share fewer than half of their lines.
+            ("Bash", define(long_bad), fail("E0201", "r", message="unknown name `a`"), False),
+            ("Bash", define(rewrite), done("r"), False),
+            # Indentation does not count, and one-line texts are compared by their words.
+            ("Bash", define(long_bad), fail("E0201", "r", message="unknown name `a`"), False),
+            ("Bash", define(reindented), done("r"), False),
+            ("Bash", define("fn g(xs: List[Str]) -> List[Int] = map(xs, len)"), fail("E0201", "g", message="built-in `len` is not a value"), False),
+            ("Bash", define("fn g(xs: List[Str]) -> List[Int] = map(xs, slen)"), done("g"), False),
+        ])
+        self.assertEqual([(x["before"].split("\n")[0], x["after"].split("\n")[0]) for x in r], [
+            ("fn r(n: Int) -> Int = {", "fn r(n: Int) -> Int = {"),
+            ("fn g(xs: List[Str]) -> List[Int] = map(xs, len)", "fn g(xs: List[Str]) -> List[Int] = map(xs, slen)"),
+        ])
+
+    def test_shared_part(self):
+        self.assertEqual(corrections.shared("a\n b\nc", "a\nb\nd"), 2 / 3)
+        self.assertEqual(corrections.shared("f(x, len)", "f(x, slen)"), 1 / 2)
+
 
 class Main(unittest.TestCase):
     def test_results_file_with_blank_and_non_json_lines_is_read(self):
