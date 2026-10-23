@@ -789,8 +789,9 @@ fn run_takes_a_list_of_cases_in(c: &mut Client) {
     let (err, v) = c.call("qal_run", json!({"cases": [{"args": ["a"], "stdin": "x"}, {"stdin": "y"}], "allow": ["io"]}));
     assert_eq!(v["results"][0], json!({"args": ["a"], "exit_code": 0, "stdout": "xa\n"}), "{v}");
     assert_eq!(v["results"][1], json!({"args": [], "exit_code": 1, "stdout": "y\n"}), "{v}");
-    // A case that does not exit with 0 fails the call.
-    assert!(err, "{v}");
+    // An exit code is data, not an error: a program whose exit code is part of its specification
+    // (1 for "something was rejected") must not turn its own correct run into an error reply.
+    assert!(!err, "{v}");
     let (err, v) = c.call("qal_run", json!({"cases": [{"args": ["a", "b"]}, {"args": ["c"], "stdin": ""}], "allow": ["io"]}));
     assert_eq!((err, v["results"][0]["stdout"].as_str(), v["results"][0].get("stdin")), (false, Some("a,b\n"), None), "{v}");
     // A case's runtime error is its result; the other cases still run.

@@ -103,7 +103,7 @@ pub struct Output {
     #[serde(flatten)]
     pub extra: serde_json::Map<String, serde_json::Value>,
     /// The operation failed without diagnostics (a failed `qal verify`, a case of `run` with
-    /// `cases` that did not exit with 0).
+    /// `cases` that ended in a runtime error).
     #[serde(skip)]
     pub failure: bool,
     /// Failed `tests` do not fail the operation (`define` reports the tests of what it defined).
@@ -1159,7 +1159,9 @@ pub fn run(ctx: &Ctx, source: &Source, perms: Permissions, name: &str, args: &[S
 
 /// Runs an entry point once per case, each with its own arguments and input (a case without
 /// `stdin` reads the context's, or nothing); the program is loaded and compiled once. `results`
-/// are in the order of the cases; the call fails (exit 1) unless every case exited with 0.
+/// are in the order of the cases; the call fails (exit 1) only if a case ended in a runtime
+/// error. An exit code is data: a program whose specification says "1 when something was
+/// rejected" ran correctly when it exits with 1.
 pub fn run_cases(ctx: &Ctx, source: &Source, perms: Permissions, name: &str, cases: &[RunCase]) -> Reply {
     if cases.is_empty() || cases.len() > MAX_CASES {
         let d = Diagnostic::new("E0701", "bad_arguments", "", "", format!("{} cases; 1 to {MAX_CASES} per call", cases.len()));
@@ -1181,7 +1183,7 @@ pub fn run_cases(ctx: &Ctx, source: &Source, perms: Permissions, name: &str, cas
         };
         results.push(RunResult { args: case.args.clone(), exit_code, stdout: Some(stdout), stdout_truncated, error });
     }
-    let failed = results.iter().any(|r| r.exit_code != Some(0));
+    let failed = results.iter().any(|r| r.error.is_some());
     let out = Output { results: Some(Results::Run(results)), failure: failed, ..Output::default() };
     Reply::new(out, u8::from(failed))
 }
