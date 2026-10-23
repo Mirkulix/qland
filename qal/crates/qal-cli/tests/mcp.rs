@@ -546,7 +546,11 @@ fn a_committed_define_is_never_reported_as_too_large_in(c: &mut Client) {
     let (err, v) = c.call("qal_define", json!({"source": src}));
     assert!(!err, "{}", v.to_string().chars().take(500).collect::<String>());
     assert_eq!(v["defined"].as_array().map(Vec::len), Some(2));
-    assert!(v["warnings_omitted"].as_u64().unwrap() > 0, "{}", v.to_string().chars().take(500).collect::<String>());
+    // The reply was cut somewhere: since the prover models Str, the first call site's `req` is
+    // the only unproven one (the later ones follow from it), so the proof reports are what
+    // overflows now, not the warnings.
+    let omitted = v["warnings_omitted"].as_u64().unwrap_or(0) + v["proofs_omitted"].as_u64().unwrap_or(0);
+    assert!(omitted > 0, "{}", v.to_string().chars().take(500).collect::<String>());
     assert!(v.to_string().len() < 3 << 20);
     assert!(!c.call("qal_view", json!({"names": ["f"]})).0);
 

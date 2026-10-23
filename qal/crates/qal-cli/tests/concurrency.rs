@@ -268,11 +268,17 @@ fn eight_processes_with_random_operations_lose_nothing() {
                             let r = c.call("qal_change", json!({"action": if show { "show" } else { "submit" }, "change": change}));
                             // Submitted: like a real owner, go on in a new change set and leave this one to
                             // its reviewers (a write by the owner would reopen it, §6.2, and no merge could
-                            // ever pass the gate while the owner keeps writing). At the limit of live change
-                            // sets the owner works on in the submitted one, which reopens it.
+                            // ever pass the gate while the owner keeps writing). With another submission still
+                            // pending (or at the limit of live change sets) the owner works on in the
+                            // submitted one, which reopens it: a submitted change set keeps its leases, and
+                            // many pending ones would lease away the 20 names from everyone.
                             if !show && !r.0 {
-                                if let Some(next) = c.try_open(&format!("more work of {member}")) {
-                                    change = next;
+                                let (_, mine) = c.call("qal_change", json!({"action": "list", "status": ["submitted"], "mine": true}));
+                                let pending = mine["changes"].as_array().map_or(0, Vec::len);
+                                if pending <= 1 {
+                                    if let Some(next) = c.try_open(&format!("more work of {member}")) {
+                                        change = next;
+                                    }
                                 }
                             }
                             r
