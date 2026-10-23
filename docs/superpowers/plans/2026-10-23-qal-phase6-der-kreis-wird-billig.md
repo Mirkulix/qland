@@ -197,56 +197,47 @@ Expected: auf stderr `spent: <x> EUR, open: 0` (oder die Zahl der offenen Reste 
 - [ ] **Step 3: `python3 bench/test_bench.py` komplett grün**
 - [ ] **Step 4: Commit** — `git commit -m "bench(p6): audit counts guard refusals and retries; report shows them"`
 
-### Task 5: Antwort statt Dialog (`qal_define` liefert alles in einem Ergebnis)
+### Task 5: Weniger Runden (`qal_run` mit Fällen, `qal_define` mit Tests, Korrekturhinweis)
 
-Nur wenn Task 3 Sprach- oder Dialogkosten (Kategorien `lang.*` plus `ok.test`/`ok.run` als Folge-Aufrufe) ≥ 5 % ergibt.
+Gate-Entscheidung (`bench/analysis/2026-10-23/decision.md`): nützliche Arbeit in Einzelrunden ist mit 54,0 % der größte Posten (QAL 2,57 `ok.*`-Runden je Lauf gegen Rust 1,43; `qal_run` im Mittel 2,3-mal je Lauf, je Beispieleingabe eine Runde); Sprachfehler 11,8 %, davon 27 von 34 E0201 ein lokaler Name, der nach dem `;` einer Sequenz nicht mehr gilt. Ziel: `ok.*`-Runden auf etwa 1,6 je Lauf, `lang.name`-Runden halbiert.
 
 **Files:**
-- Modify: `qal/crates/qal-cli/src/ops.rs:492-512` (`define`), `ops.rs:50-70` (`Output`: neue Felder `tests: Option<Vec<TestResult>>`, `signatures_changed: Option<Vec<SignatureChange>>`, `omitted_summary: Option<String>`)
-- Modify: `qal/crates/qal-core/src/diag.rs` (Hinweise der fünf häufigsten Codes aus Task 3 bekommen einen konkreten Korrekturvorschlag `fix: Option<String>` mit dem korrigierten Textstück, wo es aus Erwartung und Befund folgt: `E0203` bei `expected Int, found Str` → `fix: "to_int(<ausdruck>)"`-Vorschlag nur, wenn der Befund ein Literal oder ein Name ist)
-- Modify: `qal/crates/qal-cli/src/mcp.rs` (Beschreibung von `qal_define`: ein Satz zu `tests`, `signatures_changed`, `omitted_summary`), `qal/crates/qal-cli/src/reference.md` (eine Zeile)
-- Test: `qal/crates/qal-cli/tests/mcp.rs` (neu: `define_runs_the_tests_of_the_defined_names`, `define_reports_changed_signatures`, `define_summarizes_what_it_cut`), `qal/crates/qal-core/src/diag.rs` Tests für `fix`
+- Modify: `qal/crates/qal-cli/src/ops.rs:1054-1091` (`run`), `ops.rs:492-512` (`define`), `ops.rs:40-75` (`Output`: neue Felder `results: Option<Vec<RunResult>>`)
+- Modify: `qal/crates/qal-cli/src/mcp.rs:662-666` (`qal_run`: Argument `cases`), `mcp.rs:1169` (erlaubte Argumente), `mcp.rs:1211` (Schema und Beschreibung von `qal_run`), Beschreibung von `qal_define` (ein Satz zu `tests`)
+- Modify: `qal/crates/qal-check/src/infer.rs:255-275` (`Expr::Seq`), `infer.rs:438-445` und `infer.rs:500` (E0201-Hinweis), `qal/crates/qal-check/src/infer.rs:42` (`Cx`: neues Feld `seq_lets: Vec<String>`)
+- Modify (Spiegel, sonst bricht `differential_check_corpus`): `qal/selfhost/src/qc_check.qal` (`QcCx` Feld `seq_lets`, Stelle `QcESeq` ~1146, Hinweisstellen 555 und 771; alle `QcCx { … }`-Konstruktionen mit dem Skript aus der Effekt-Polymorphie: `seq_lets: cx.seq_lets`), danach `qalc.qal` neu bündeln (Verkettung der 17 Module in der Reihenfolge ast, lex, parse, print, canon, tform, prelude, builtin, unify, exhaust, sql, mono, check, enc, rt, wasm, proto), Seed `qalc.wasm` neu (`cargo run --release -p qal-cli --features reference -- selfhost bootstrap --out selfhost/qalc.wasm`), Korpus neu extrahieren (`python3 qal/selfhost/tools/extract_corpus.py`) und Zähler in `selfhost/tools/gen/tests/corpus.rs` anpassen
+- Modify: `qal/crates/qal-cli/src/reference.md` (eine Zeile zu `cases`, eine zu Tests nach `define`; Grenze 73 Zeilen / 9 700 Bytes in `tests/mcp.rs` beachten, sonst mit Begründung anheben)
+- Test: `qal/crates/qal-cli/tests/mcp.rs` (neu: `run_takes_a_list_of_cases`, `define_runs_the_tests_of_the_defined_names`), `qal/crates/qal-check/src/tests.rs` (neu: `unknown_name_after_a_sequence_let_names_the_cause`), Differential- und Fixpunkttests `cargo test -p qal-gen`
 
 **Interfaces:**
-- `TestResult { name: String, passed: bool, message: Option<String> }` — die Tests, die eine der definierten Funktionen direkt referenzieren, laufen mit dem Testlauf von `ops::test` (gleiche Budgets, Seed 0) nur bei erfolgreichem `define`.
-- `SignatureChange { name: String, before: String, after: String }` — aus dem bestehenden Vergleich alter/neuer Signaturtexte der ersetzten Definitionen.
-- `omitted_summary`: ein Satz je gekürzter Liste: „<n> proof reports omitted: <k> proven, <m> unknown, <r> refuted“ (Zahlen aus den vollständigen Listen vor dem Kürzen).
+- `RunResult { args: Vec<String>, stdin: Option<String>, exit_code: Option<i64>, stdout: Option<String>, stdout_truncated: Option<usize>, error: Option<RunError> }` (serde, `skip_serializing_if` wie `Output`).
+- `pub fn run_cases(ctx: &Ctx, source: &Source, perms: Permissions, name: &str, cases: &[RunCase]) -> Reply` mit `RunCase { args: Vec<String>, stdin: Option<String> }`: lädt und kompiliert einmal, führt jeden Fall mit eigenem `stdin` (Kopie von `ctx` mit `stdin` des Falls) aus, `Output.results` in Reihenfolge; `Reply.code` = 0, wenn jeder Fall `exit_code == 0` hatte, sonst 1. `qal_run` ohne `cases` bleibt unverändert (`run`); mit `cases` werden `args`/`stdin` der obersten Ebene abgelehnt (E0701 `bad_arguments`). Höchstens 64 Fälle; `stdout` je Fall wie bisher begrenzt.
+- `define`: nach erfolgreichem Schreiben werden die Tests ausgeführt, die eine der definierten Funktionen *direkt* referenzieren (`loaded.typed.tests` deren `refs` einen definierten Namen enthalten; die Referenzen liefert der Store wie für `qal_query uses`), mit `ops::test`-Logik (gleiche Budgets, Seed 0, keine Property-Tests); Ergebnis in `Output.tests`, `passed`, `failed`. Fehlgeschlagene Tests machen das `define` **nicht** rückgängig und ändern `Reply.code` nicht (die Definition ist gespeichert; der Agent sieht den Fehlschlag in derselben Antwort).
+- Checker: `Cx.seq_lets: Vec<String>` sammelt die Namen der `let`-Bindungen, die *nicht-letzte* Items einer Sequenz einleiten (`Expr::Let` als Item `i + 1 < n`), für die Dauer der Sequenz (am Ende der Sequenz auf die Länge vor ihr zurückschneiden). Trifft E0201 einen Namen aus `seq_lets`, lautet der Hinweis genau: ``the `let {name}` in an earlier item of this sequence ends at its `;`; bind it before the sequence: `let {name} = ... in { ...; ... }` `` statt des allgemeinen Hinweises. Beide Stellen (`var`, `call`); die QAL-Fassung erzeugt denselben Text.
 
-- [ ] **Step 1: Failing tests** (Beispiel `define_runs_the_tests_of_the_defined_names`: `fn f(x: Int) -> Int = x + 1` plus `test t_f = f(1) == 2` in einem Aufruf → `tests == [{"name": "t_f", "passed": true}]`; zweiter Aufruf, der `f` so ändert, dass `t_f` fehlschlägt → `passed: false` mit `message`)
-- [ ] **Step 2: `cargo test -p qal-cli --test mcp define_` → FAIL**
-- [ ] **Step 3: Implementieren** (`define` ruft nach erfolgreichem Schreiben die Testauswahl `tests_referencing(defined) -> Vec<String>` auf und `ops::test` mit diesen Namen; Signaturen vor dem Schreiben lesen)
-- [ ] **Step 4: PASS; `cargo test -p qal-cli --test mcp` und `-p qal-core` komplett grün; Clippy-Gate-Kommando sauber**
-- [ ] **Step 5: Commit** — `git commit -m "feat(p6): qal_define answers with tests, changed signatures and a summary of what it cut"`
+- [ ] **Step 1: Failing tests** — `run_takes_a_list_of_cases`: `fn main(args: List[Str]) -> Int !io = { print(read_all() ++ join(args, ",")); if len(args) == 0 then 1 else 0 }`; `qal_run {"cases": [{"args": ["a"], "stdin": "x"}, {"stdin": "y"}]}` → `results[0] == {args: ["a"], stdin: "x", exit_code: 0, stdout: "xa\n"}`, `results[1].exit_code == 1`, Antwort `isError: true` (ein Fall ≠ 0); `{"cases": [...], "args": ["z"]}` → E0701. `define_runs_the_tests_of_the_defined_names`: `fn f(x: Int) -> Int = x + 1` plus `test t_f = f(1) == 2` in einem Aufruf → `tests == [{"name": "t_f", "passed": true}]`, `passed == 1`; zweiter Aufruf `fn f(x: Int) -> Int = x + 2` → `tests[0].passed == false`, Antwort trotzdem `isError: false`, `defined` enthält `f`. `unknown_name_after_a_sequence_let_names_the_cause`: `fn g() -> Int = { let x = 1; x + 1 }` → E0201 mit dem genauen Hinweistext; `fn h() -> Int = let x = 1 in { print_n(x); x }` ohne E0201 für `x`.
+- [ ] **Step 2: `cargo test -p qal-cli --test mcp run_takes define_runs` und `cargo test -p qal-check unknown_name_after` → FAIL**
+- [ ] **Step 3: Rust implementieren** (`RunCase`/`RunResult`/`run_cases`; `define` mit Testauswahl; `seq_lets` und Hinweis)
+- [ ] **Step 4: QAL-Spiegel** (`qc_check.qal`), bündeln, `cargo test -p qal-gen --test checker_diff --test full_fixpoint` grün, Seed neu, `seed_module_is_the_fixpoint` grün, Korpus neu
+- [ ] **Step 5: `cargo test -p qal-cli --test mcp`, `-p qal-check`, `-p qal-gen` grün; Clippy-Gate-Kommando sauber; Referenzgrenze eingehalten**
+- [ ] **Step 6: Commit** — `git commit -m "feat(p6): qal_run takes cases, qal_define runs the tests of its names, E0201 names a let that ended at its ;"`
 
-### Task 6: Referenz nach Fehlerhäufigkeit und zweite Seite
+### Task 6: Referenz nach Fehlerklassen
 
-Nur wenn Task 3 `prompt.reference` oder `lang.parse`+`lang.name`+`lang.type` ≥ 5 % ergibt.
-
-**Files:**
-- Modify: `qal/crates/qal-cli/src/reference.md` (Erstseite: die fünf häufigsten Fehlerklassen aus Task 3 bekommen je ein Beispiel „falsch → richtig“ in einer Zeile; Konstrukte, die in keinem der 40 QAL-Läufe vorkamen, wandern auf die zweite Seite)
-- Create: `qal/crates/qal-cli/src/reference2.md` (zweite Seite, Abschnitte mit Überschriften `## <thema>`)
-- Modify: `qal/crates/qal-cli/src/mcp.rs` (neues Werkzeug `qal_reference {"topic": "<thema>" | fehlt}`: ohne `topic` die Liste der Themen, mit `topic` den Abschnitt; `TOOL_NAMES` 13 Einträge; Rolle: lesend für alle)
-- Modify: `qal/crates/qal-cli/tests/mcp.rs` (`handshake_lists_the_tools_with_the_language_reference`: 13 Namen, Erstseite ≤ 73 Zeilen / ≤ 9 700 Bytes **oder** die neue, kleinere Grenze; neu `reference_topics_are_served`)
-- Modify: `bench/prompts/qal.md` (ein Satz: „`qal_reference` liefert Details zu einem Thema“)
-
-- [ ] **Step 1: Failing test `reference_topics_are_served`** (`qal_reference` ohne Argument → `topics` enthält `generics`; mit `{"topic": "generics"}` → Text enthält `type Pair[A, B]`)
-- [ ] **Step 2: FAIL sehen; Werkzeug, Seiten und Beschreibung implementieren; PASS; Zeilen- und Byte-Grenze prüfen**
-- [ ] **Step 3: Commit** — `git commit -m "feat(p6): reference cut by error frequency; qal_reference serves the second page"`
-
-### Task 7: Rezepte im Store
-
-Nur wenn Task 3 `lang.*` ≥ 5 % ergibt oder die Entscheidung Muster als Ursache nennt.
+Gate-Entscheidung: die Referenz kostet 2,1 % (nicht kürzen, keine zweite Seite, kein `qal_reference`); die Fehlerklassen `lang.name` + `lang.type` kosten 8,2 %.
 
 **Files:**
-- Create: `qal/recipes/recipes.qalpkg` (Paket, von Agenten über MCP geschrieben; Namen `recipe.lines` (stdin in Zeilen, `\r` entfernen), `recipe.ints` (Zeile in Ganzzahlen mit Fehlerfall), `recipe.table` (Spalten ausrichten, `join`), `recipe.state_machine` (Enum + `fold` über Ereignisse); jedes mit `test`s)
-- Modify: `bench/run.py:106-144` (`prepare`: importiert `recipes.qalpkg` nach `std` in das frische Projekt, so dass `qal_query` sie findet)
-- Modify: `bench/prompts/qal.md` (ein Satz: „Die Namen `recipe.*` sind geprüfte Muster; `qal_view` zeigt sie“)
-- Test: `bench/test_bench.py` (`test_prepare_imports_recipes`: nach `prepare` liefert `qal_query {"name": "recipe.lines"}` einen Treffer); `qal` selbst: `qal test qal/recipes/recipes.qalpkg` grün
+- Modify: `qal/crates/qal-cli/src/reference.md`: in der Zeile zu Sequenzen (`{ a; b; c }`) der Satz, dass ein `let` innerhalb einer Sequenz am `;` endet, mit dem Muster `let x = f(y) in { print(x); x }` (steht sinngemäß schon dort: schärfen, nicht verlängern); bei `Str` der Zusatz „(not String)“; bei den Built-ins der Satz „a built-in is not a value: `map(xs, fn(s) => trim(s))`, not `map(xs, trim)`“; bei `Int` der Satz „64-bit: products of large inputs overflow and trap; check bounds or use Float“. Gesamtlänge nicht über die Grenze (Zeilen/Bytes in `tests/mcp.rs`); dafür an anderer Stelle gleich viel streichen (Konstrukte, die in keinem der 82 QAL-Läufe vorkamen: Prüfung mit `grep` über die Transkripte, z. B. `Bytes`, `Map`-Details).
+- Modify: `bench/prompts/qal.md` bleibt unverändert (die Referenz kommt über `{tools}`).
+- Test: `qal/crates/qal-cli/tests/mcp.rs` `reference_and_launcher_are_precise`: die vier neuen Formulierungen als `needle`s; Grenzentest unverändert grün.
 
-- [ ] **Step 1: Test schreiben, FAIL sehen**
-- [ ] **Step 2: Rezepte von einem Agenten über MCP schreiben lassen** (Auftrag: die vier Namen, Signaturen, je zwei Tests; Abnahme `qal test`), exportieren mit `qal export`
-- [ ] **Step 3: `prepare` erweitern, PASS, `python3 bench/test_bench.py` grün**
-- [ ] **Step 4: Commit** — `git commit -m "feat(p6): recipes package, imported into every benchmark project"`
+- [ ] **Step 1: Needles in den Test, FAIL sehen**
+- [ ] **Step 2: Referenz ändern, Streichungen belegen (Liste der gestrichenen Konstrukte und die Transkript-Treffer 0 im Commit-Text)**
+- [ ] **Step 3: `cargo test -p qal-cli --test mcp reference_` grün; Commit** — `git commit -m "docs(p6): reference sharpened at the four error classes of the token analysis"`
+
+### Task 7: Rezepte im Store — entfällt
+
+Gate-Entscheidung vom 23.10.: kein Posten der Analyse zeigt fehlende Muster; die Fehler sind Sprachverständnis, ein Rezept kostet eine Suchrunde, bevor es spart. Nach dem Rerun (Task 8) neu bewerten. In der Roadmap als „entfällt (Entscheidung 23.10.)“ geführt.
 
 ### Task 8: Benchmark wiederholen
 
