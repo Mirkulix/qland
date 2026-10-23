@@ -8,7 +8,7 @@ Definitions (any order, any number per call; `#` starts a comment):
   fn main(args: List[Str]) -> Int !io = { print("hi"); 0 }   entry point; result = exit code
 Every parameter and result is typed. fn/test names start lowercase, type and variant names uppercase. Built-in names (below) are reserved.
 
-Types: Int (64-bit; overflow and division by zero are runtime errors), Float, Bool, Unit (value `()`), Str, Bytes, List[T], Map[K, V] (ordered by key), Option[T] = Some(x) | None, Result[T, E] = Ok(x) | Err(e), fn(A) -> B !e. No null, exceptions, implicit conversions or loops: recurse (a call in tail position is a loop; a fn with `ens` makes no tail calls). Built-ins are not values: wrap them in a closure (map(xs, fn(n) => from_int(n))).
+Types: Int (64-bit: products of large inputs overflow and trap, so check bounds or use Float; division by zero traps too), Float, Bool, Unit (value `()`), Str (not String), Bytes, List[T], Map[K, V] (ordered by key), Option[T] = Some(x) | None, Result[T, E] = Ok(x) | Err(e), fn(A) -> B !e. No null, exceptions, implicit conversions or loops: recurse (a call in tail position is a loop; a fn with `ens` makes no tail calls). A built-in is not a value: map(xs, fn(s) => trim(s)), not `map(xs, trim)`.
 Generics: type Pair[A, B] = { fst: A, snd: B }   type Tree[T] = Leaf | Node(Tree[T], T, Tree[T])
   fn swap[A, B](p: Pair[A, B]) -> Pair[B, A] = Pair { fst: p.snd, snd: p.fst }   type arguments are inferred at calls
   A recursive generic calls itself only at its own parameters (`size[T]` calls `size(l)` on a Tree[T]).
@@ -20,8 +20,8 @@ Expressions (everything is an expression, there are no statements):
   let x = e in body     let x: T = e in body     if c then a else b   (else is required)
   match e { Some(n) if n > 0 => n, Some(_) => 0, None => -1 }   arms separated by `,`; must be exhaustive
     patterns: _  x  42  "s"  true  Variant(p, ..)  Point { x: p, y }  plus guards `if cond`
-  { a; b; c }   sequence: the values of a and b are discarded (a Result, also in a List/Option/record, must be handled with match); the value is c. A `let` inside one item ends at
-    its `;`, so bind first: let x = f(y) in { print(x); x }
+  { a; b; c }   sequence: the values of a and b are discarded (a Result, also in a List/Option/record, must be handled with match); the value is c. Note: a `let` in a sequence item ends at its `;`,
+    so bind first: let x = f(y) in { print(x); x }   (not { let x = f(y); print(x); x })
   "text"  escapes \n \t \r \0 \\ \" \u{1F600}
   [1, 2]  f(x)  p.x  -x  !b  * / %  + -  ++ (Str or List concatenation)  == != (any type)  < <= > >= (Int, Float, Str)  && ||
   / truncates toward zero; % has the sign of the left operand. Str order compares Unicode code points ("B" < "a" < "é").
@@ -48,7 +48,7 @@ Built-ins (indices count characters; slice and range are half-open: the end is e
        range(from, to) -> List[Int]  reverse(xs)  sort_int(xs)  sort_str(xs)  todo(): a stub of any type; traps E0540
   Map  map_new() map_put(m, k, v) map_get(m, k) -> Option[V] map_del(m, k) map_has(m, k) map_size(m) map_keys(m) map_values(m)
   Bytes to_bytes(s) bytes_len(b) bytes_get(b, i) -> Option[Int] bytes_slice(b, from, to) bytes_from(xs) (0..=255) bytes_to_list(b) bytes_to_str(b) -> Option[Str]  b1 ++ b2
-  Bits bit_and bit_or bit_xor bit_not shl shr ushr(a, n) (0 <= n < 64) float_bits float_of_bits  list_at(xs, i) bytes_at(b, i) (no Option; index error)  bytes_join(bs) sha256(b)  Accum[T] = AccEnd | AccPush(a, x): acc_list(a) (O(1) appends)
+  List list_at(xs, i) (no Option; index error)  Accum[T] = AccEnd | AccPush(a, x): acc_list(a) (O(1) appends)
   Num  int_to_float(n)  float_to_int(x) -> Option[Int]   compare(a, b) -> Int: -1, 0 or 1 for any two values without functions
        (Str bytewise, lists/records/variants in order): build your own sort with it
   Sys  print(s) !io (writes s and a newline)  read_line() -> Option[Str] !io (next line without its `\n` or `\r\n`; None at end)
