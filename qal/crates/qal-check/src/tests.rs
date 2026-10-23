@@ -950,3 +950,23 @@ fn generic_type_arguments_stay_invariant_with_effect_variables() {
     let d = check_src(more);
     assert!(d.iter().any(|d| d.kind == "type_mismatch" && d.def == "main"), "{d:#?}");
 }
+
+#[test]
+fn unknown_name_after_a_sequence_let_names_the_cause() {
+    let hint = |n: &str| format!("the `let {n}` in an earlier item of this sequence ends at its `;`; bind it before the sequence: `let {n} = ... in {{ ...; ... }}`");
+    // A `let` that starts a non-last item scopes only that item: its body ends at the `;`.
+    let d = one("fn g() -> Int !io = { let x = 1 in print(from_int(x)); x + 1 }");
+    assert_eq!((d.code, d.hints.clone()), ("E0201", vec![hint("x")]));
+    assert!(d.path.contains("items[1]"), "{}", d.path);
+    // The same when the name is called.
+    let d = one("fn k() -> Int !io = { let f = fn(y: Int) => y in print(from_int(f(1))); f(2) }");
+    assert_eq!((d.code, d.hints.clone()), ("E0201", vec![hint("f")]));
+    // Bound before the sequence, it is visible in all items.
+    assert_eq!(check_src("fn h() -> Int !io = let x = 1 in { print(from_int(x)); x }"), vec![]);
+    // Other unknown names keep the general hint, also once the sequence has ended.
+    let general = "not a built-in or stored definition; built-ins are listed in the qal_define description; define it in the same call or check qal_query";
+    assert_eq!(one("fn m() -> Int !io = { let x = 1 in print(from_int(x)); y }").hints, vec![general.to_string()]);
+    assert_eq!(one("fn n() -> Int !io = { { let x = 1 in print(from_int(x)); 0 }; x }").hints, vec![general.to_string()]);
+    // A name used in the value of the item's own `let` is not yet the cause.
+    assert_eq!(one("fn p() -> Int !io = { let x = x in print(from_int(x)); 0 }").hints, vec![general.to_string()]);
+}

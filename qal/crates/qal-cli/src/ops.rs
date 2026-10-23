@@ -27,8 +27,9 @@ pub struct Output {
     pub defined: Option<Vec<Defined>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub views: Option<Vec<View>>,
+    /// The entries of `query`, or the cases of `run` with `cases`.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub results: Option<Vec<QueryEntry>>,
+    pub results: Option<Results>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub renamed: Option<Renamed>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -101,9 +102,48 @@ pub struct Output {
     /// Fields of the team commands and of team mode (`notices`, `space`, `qal verify`'s result, ...).
     #[serde(flatten)]
     pub extra: serde_json::Map<String, serde_json::Value>,
-    /// The operation failed without diagnostics (a failed `qal verify`).
+    /// The operation failed without diagnostics (a failed `qal verify`, a case of `run` with
+    /// `cases` that did not exit with 0).
     #[serde(skip)]
     pub failure: bool,
+    /// Failed `tests` do not fail the operation (`define` reports the tests of what it defined).
+    #[serde(skip)]
+    pub tests_informative: bool,
+}
+
+/// The `results` of an operation.
+#[derive(Debug, Serialize)]
+#[serde(untagged)]
+pub enum Results {
+    Query(Vec<QueryEntry>),
+    Run(Vec<RunResult>),
+}
+
+/// One case of `run` with `cases`: the program's arguments and its input (default: none).
+#[derive(Debug, Clone, PartialEq)]
+pub struct RunCase {
+    pub args: Vec<String>,
+    pub stdin: Option<String>,
+}
+
+/// Most cases per `run` call.
+pub const MAX_CASES: usize = 64;
+
+/// The result of one [`RunCase`]: the case, then what `run` reports for it.
+#[derive(Debug, Clone, Serialize)]
+pub struct RunResult {
+    pub args: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stdin: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exit_code: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stdout: Option<String>,
+    /// Total size in bytes of a captured stdout that was cut to `Ctx::max_stdout`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stdout_truncated: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<RunError>,
 }
 
 /// One request of `request` / `qal_request` (spec Phase 3 §7.2).
@@ -254,9 +294,11 @@ impl Reply {
     }
 
     /// True if the operation failed: diagnostics, a runtime error, or failed tests (a program
-    /// that runs and returns a non-zero exit code did not fail).
+    /// that runs and returns a non-zero exit code did not fail, but a case of `run` with `cases`
+    /// that does fails the call; the failed tests of a `define` do not fail it).
     pub fn is_error(&self) -> bool {
-        self.out.failure || self.out.diagnostics.is_some() || self.out.error.is_some() || self.out.failed.is_some_and(|n| n > 0) || self.out.failed_properties.is_some() || self.out.refuted.is_some_and(|n| n > 0)
+        let failed_tests = !self.out.tests_informative && self.out.failed.is_some_and(|n| n > 0);
+        self.out.failure || self.out.diagnostics.is_some() || self.out.error.is_some() || failed_tests || self.out.failed_properties.is_some() || self.out.refuted.is_some_and(|n| n > 0)
     }
 }
 
@@ -370,18 +412,22 @@ impl Ctx {
     /// Sets `stdout` (cut to `max_stdout` at a character boundary) on `out`; `total` is the
     /// number of bytes the program printed.
     fn stdout(&self, out: &mut Output, stdout: String, total: usize) {
+        let (stdout, truncated) = self.cut_stdout(stdout, total);
+        out.stdout = Some(stdout);
+        out.stdout_truncated = truncated;
+    }
+
+    /// `stdout` cut to `max_stdout` at a character boundary, and the total size if it was cut.
+    fn cut_stdout(&self, stdout: String, total: usize) -> (String, Option<usize>) {
         let Some(max) = self.max_stdout else {
-            out.stdout = Some(stdout);
-            return;
+            return (stdout, None);
         };
         let mut end = stdout.len().min(max);
         while !stdout.is_char_boundary(end) {
             end -= 1;
         }
-        if end < stdout.len() || total > max {
-            out.stdout_truncated = Some(total.max(stdout.len()));
-        }
-        out.stdout = Some(stdout[..end].to_string());
+        let truncated = (end < stdout.len() || total > max).then(|| total.max(stdout.len()));
+        (stdout[..end].to_string(), truncated)
     }
 
     /// True for the MCP server's context (hints then name tools, not CLI commands).
@@ -499,14 +545,50 @@ pub fn define(ctx: &Ctx, src: &str, agent: &str, breaking: bool) -> Reply {
     match result {
         Ok(d) => {
             let reports = current_reports(&d, reports);
+            let tests = tests_of(&mut store, &d);
             let mut out = Output { defined: Some(d), ..Output::default() };
             out.set_proofs(reports);
             std.report(&mut out);
             team_report(store.last_write(), &mut out);
+            drop(store);
+            run_tests_of_define(ctx, &tests, &mut out);
             Reply::new(out, 0)
         }
         Err(d) => std.failed(d),
     }
+}
+
+/// The stored tests that refer directly to a function this `define` wrote (as `query` with
+/// `uses` finds them); a dependent it only relinked does not count.
+fn tests_of(store: &mut Store, defined: &[Defined]) -> Vec<String> {
+    let mut tests = Vec::new();
+    for f in defined.iter().filter(|d| d.kind == "fn" && d.status != "relinked") {
+        let Ok(users) = store.query(&Query { uses: Some(f.name.clone()), ..Query::default() }) else { continue };
+        for u in users.into_iter().filter(|u| u.kind == "test") {
+            if !tests.contains(&u.name) {
+                tests.push(u.name);
+            }
+        }
+    }
+    tests
+}
+
+/// Runs `tests` as `test` does (same budgets, no property tests) and reports them in `out`.
+/// Their failures do not undo or fail the `define`: the definitions are stored either way. If the
+/// tests cannot run at all, `qal_test` reports why; the `define` stays as it is.
+fn run_tests_of_define(ctx: &Ctx, tests: &[String], out: &mut Output) {
+    if tests.is_empty() {
+        return;
+    }
+    let r = test(ctx, &Source::Store, Permissions::default(), tests, 0);
+    if r.out.tests.is_none() {
+        return;
+    }
+    out.tests = r.out.tests;
+    out.passed = r.out.passed;
+    out.failed = r.out.failed;
+    out.skipped = r.out.skipped;
+    out.tests_informative = true;
 }
 
 /// What a write reports besides its result (Phase 4 §10.2): the leases it took (team mode) and the
@@ -862,7 +944,7 @@ pub fn view(ctx: &Ctx, names: &[String]) -> Reply {
 
 pub fn query(ctx: &Ctx, q: &Query) -> Reply {
     match ctx.open().and_then(|mut s| s.query(q)) {
-        Ok(r) => Reply::new(Output { results: Some(r), ..Output::default() }, 0),
+        Ok(r) => Reply::new(Output { results: Some(Results::Query(r)), ..Output::default() }, 0),
         Err(d) => Reply::diagnostics(d),
     }
 }
@@ -1052,41 +1134,77 @@ pub fn call(ctx: &Ctx, source: &Source, perms: Permissions, name: &str, args: Ca
 
 /// Runs an entry point `fn(List[Str]) -> Int`; the exit code is the program's (1 if outside 0..=255).
 pub fn run(ctx: &Ctx, source: &Source, perms: Permissions, name: &str, args: &[String]) -> Reply {
-    let loaded = match ctx.load(source) {
-        Ok(l) => l,
-        Err(d) => return Reply::diagnostics(d),
-    };
-    if let Err(mut e) = find_fn(ctx, source, &loaded, name) {
-        if e.message.starts_with("no function") {
-            e.message = format!("no entry point `{name}`");
-        }
-        return Reply::error(e);
-    }
-    if !is_entry_point(&loaded.typed, name) {
-        let mut e = RunError::new("bad_args", name, format!("`{name}` is not an entry point"));
-        e.hints.push("`run` needs a function `fn(List[Str]) -> Int`; use `call` for others".into());
-        return Reply::error(e);
-    }
-    let runner = match ctx.runner(&loaded, &Entry::Fn(name.to_string()), perms) {
+    let runner = match entry_runner(ctx, source, perms, name) {
         Ok(r) => r,
-        Err(e) => return Reply::error(e),
+        Err(reply) => return reply,
     };
     let outcome = runner.run_entry(name, args);
     let mut out = Output { db: db_label(outcome.db), ..Output::default() };
     ctx.stdout(&mut out, outcome.stdout, outcome.stdout_bytes);
-    match outcome.result {
-        Ok(Value::Int(code)) => {
+    match exit_of(name, outcome.result) {
+        Ok(code) => {
             out.exit_code = Some(code);
             Reply::new(out, u8::try_from(code).unwrap_or(1))
         }
-        Ok(other) => {
-            out.error = Some(RunError::new("trap", name, format!("entry point returned {other:?} instead of Int")));
-            Reply::new(out, 1)
-        }
         Err(e) => {
-            out.error = Some(capped(e));
+            out.error = Some(e);
             Reply::new(out, 1)
         }
+    }
+}
+
+/// Runs an entry point once per case, each with its own arguments and input (a case without
+/// `stdin` reads the context's, or nothing); the program is loaded and compiled once. `results`
+/// are in the order of the cases; the call fails (exit 1) unless every case exited with 0.
+pub fn run_cases(ctx: &Ctx, source: &Source, perms: Permissions, name: &str, cases: &[RunCase]) -> Reply {
+    if cases.is_empty() || cases.len() > MAX_CASES {
+        let d = Diagnostic::new("E0701", "bad_arguments", "", "", format!("{} cases; 1 to {MAX_CASES} per call", cases.len()));
+        return Reply::diagnostics(vec![d]);
+    }
+    let mut runner = match entry_runner(ctx, source, perms, name) {
+        Ok(r) => r,
+        Err(reply) => return reply,
+    };
+    let mut results = Vec::with_capacity(cases.len());
+    for case in cases {
+        let input = case.stdin.as_ref().map(|s| s.as_bytes().to_vec()).or_else(|| ctx.stdin.clone()).unwrap_or_default();
+        runner = runner.with_stdin(input);
+        let outcome = runner.run_entry(name, &case.args);
+        let (stdout, stdout_truncated) = ctx.cut_stdout(outcome.stdout, outcome.stdout_bytes);
+        let (exit_code, error) = match exit_of(name, outcome.result) {
+            Ok(code) => (Some(code), None),
+            Err(e) => (None, Some(e)),
+        };
+        results.push(RunResult { args: case.args.clone(), stdin: case.stdin.clone(), exit_code, stdout: Some(stdout), stdout_truncated, error });
+    }
+    let failed = results.iter().any(|r| r.exit_code != Some(0));
+    let out = Output { results: Some(Results::Run(results)), failure: failed, ..Output::default() };
+    Reply::new(out, u8::from(failed))
+}
+
+/// The runner of the entry point `name` (`fn(List[Str]) -> Int`), or the reply why there is none.
+fn entry_runner(ctx: &Ctx, source: &Source, perms: Permissions, name: &str) -> Result<qal_run::Runner, Reply> {
+    let loaded = ctx.load(source).map_err(Reply::diagnostics)?;
+    if let Err(mut e) = find_fn(ctx, source, &loaded, name) {
+        if e.message.starts_with("no function") {
+            e.message = format!("no entry point `{name}`");
+        }
+        return Err(Reply::error(e));
+    }
+    if !is_entry_point(&loaded.typed, name) {
+        let mut e = RunError::new("bad_args", name, format!("`{name}` is not an entry point"));
+        e.hints.push("`run` needs a function `fn(List[Str]) -> Int`; use `call` for others".into());
+        return Err(Reply::error(e));
+    }
+    ctx.runner(&loaded, &Entry::Fn(name.to_string()), perms).map_err(Reply::error)
+}
+
+/// The exit code of an entry point's result, or its runtime error.
+fn exit_of(name: &str, result: Result<Value, RunError>) -> Result<i64, RunError> {
+    match result {
+        Ok(Value::Int(code)) => Ok(code),
+        Ok(other) => Err(RunError::new("trap", name, format!("entry point returned {other:?} instead of Int"))),
+        Err(e) => Err(capped(e)),
     }
 }
 

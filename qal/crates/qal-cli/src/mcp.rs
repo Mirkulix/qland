@@ -662,7 +662,11 @@ impl Server {
             "qal_run" => {
                 let entry = a.string("entry")?.unwrap_or_else(|| "main".into());
                 let perms = perms(&a)?;
-                ops::run(&ctx, &Source::Store, perms, &entry, &a.strings("args")?.unwrap_or_default())
+                match a.cases()? {
+                    Some(_) if a.get("args").is_some() || a.get("stdin").is_some() => return Err("with `cases`, give `args` and `stdin` in each case, not beside them".into()),
+                    Some(cases) => ops::run_cases(&ctx, &Source::Store, perms, &entry, &cases),
+                    None => ops::run(&ctx, &Source::Store, perms, &entry, &a.strings("args")?.unwrap_or_default()),
+                }
             }
             "qal_call" => {
                 let f = a.required("fn")?;
@@ -806,6 +810,27 @@ impl<'a> Args<'a> {
             Some(J::Array(xs)) => xs.iter().map(|x| x.as_str().map(str::to_string).ok_or_else(|| format!("`{key}` must be an array of strings"))).collect::<Result<_, _>>().map(Some),
             Some(_) => Err(format!("`{key}` must be an array of strings")),
         }
+    }
+
+    /// The `cases` of `qal_run`: 1 to [`ops::MAX_CASES`] objects `{args?, stdin?}`.
+    fn cases(&self) -> Result<Option<Vec<ops::RunCase>>, String> {
+        let list = match self.get("cases") {
+            None => return Ok(None),
+            Some(J::Array(xs)) => xs,
+            Some(_) => return Err("`cases` must be an array of cases `{args, stdin}`".into()),
+        };
+        if list.is_empty() || list.len() > ops::MAX_CASES {
+            return Err(format!("`cases` lists {} cases; 1 to {} per call", list.len(), ops::MAX_CASES));
+        }
+        let case = |i: usize, c: &J| -> Result<ops::RunCase, String> {
+            let J::Object(m) = c else { return Err(format!("case {i} must be an object `{{args, stdin}}`")) };
+            if let Some(k) = m.keys().find(|k| !["args", "stdin"].contains(&k.as_str())) {
+                return Err(format!("case {i}: unknown field `{k}` (fields: args, stdin)"));
+            }
+            let a = Args { map: m };
+            Ok(ops::RunCase { args: a.strings("args").map_err(|e| format!("case {i}: {e}"))?.unwrap_or_default(), stdin: a.string("stdin").map_err(|e| format!("case {i}: {e}"))? })
+        };
+        list.iter().enumerate().map(|(i, c)| case(i, c)).collect::<Result<Vec<_>, _>>().map(Some)
     }
 }
 
@@ -1166,7 +1191,7 @@ fn tool_params(tool: &str) -> &'static [&'static str] {
         "qal_query" => &["name", "type", "uses", "change"],
         "qal_test" => &["names", "seed", "change"],
         "qal_prove" => &["names", "change"],
-        "qal_run" => &["entry", "args", "stdin", "allow", "change"],
+        "qal_run" => &["entry", "args", "stdin", "cases", "allow", "change"],
         "qal_call" => &["fn", "args", "stdin", "allow", "change"],
         "qal_build" => &["entry", "change"],
         "qal_rename" => &["old", "new", "agent", "change"],
@@ -1195,7 +1220,7 @@ pub fn tools() -> J {
     let read_only = json!({"readOnlyHint": true, "openWorldHint": false});
     let writes = json!({"readOnlyHint": false, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false});
     let define = format!(
-        "Add or replace QAL definitions (types, functions, tests) in the project's store. Nothing is stored unless all of them parse and type-check together with the stored code; then the result lists each name with its hash and status (added, replaced, unchanged, relinked). Otherwise `diagnostics` say what to fix. Contracts are proven on the way (`proofs`): a function whose contract is refuted is not stored (the diagnostic has a counterexample).\n\n{REFERENCE}"
+        "Add or replace QAL definitions (types, functions, tests) in the project's store. Nothing is stored unless all of them parse and type-check together with the stored code; then the result lists each name with its hash and status (added, replaced, unchanged, relinked). Otherwise `diagnostics` say what to fix. Contracts are proven on the way (`proofs`): a function whose contract is refuted is not stored (the diagnostic has a counterexample). Then the stored tests that use a function it defined run (`tests`, `passed`, `failed`): a failing test does not undo the definition.\n\n{REFERENCE}"
     );
     json!([
         {"name": "qal_define", "title": "Define QAL code", "description": define, "annotations": writes,
@@ -1207,8 +1232,11 @@ pub fn tools() -> J {
          "description": "Prove the `req`/`ens` contracts of stored functions and tests with Z3 (all, or the named ones; in a project, all means its own: `std.` ones when named): every `ens`, and the `req` of every called function at its call site. Status per obligation: proven, refuted (with a counterexample that really violates it), or unknown (with the reason: Int and Bool facts are modelled exactly, other values only approximately; the contract stays checked at runtime). Results are stored per definition hash.",
          "inputSchema": {"type": "object", "properties": {"names": list("Function or test names (default: all).")}, "additionalProperties": false}},
         {"name": "qal_run", "title": "Run a QAL program", "annotations": {"readOnlyHint": false, "destructiveHint": false, "openWorldHint": true},
-         "description": "Run a stored entry point `fn(List[Str]) -> Int` (default `main`) with string arguments. Result: exit_code and stdout, or a runtime `error` (contract violation, overflow, timeout after 10 s, ...). Effects the program declares must be granted with `allow`.",
-         "inputSchema": {"type": "object", "properties": {"entry": s("Entry point name (default main)."), "args": list("Program arguments."), "stdin": stdin.clone(), "allow": allow.clone()}, "additionalProperties": false}},
+         "description": "Run a stored entry point `fn(List[Str]) -> Int` (default `main`) with string arguments. Result: exit_code and stdout, or a runtime `error` (contract violation, overflow, timeout after 10 s, ...). Effects the program declares must be granted with `allow`. To try several inputs in one call, pass `cases` instead of `args`/`stdin`: `results` has one {args, stdin, exit_code, stdout, error} per case, in order, and the call fails unless every case exits with 0.",
+         "inputSchema": {"type": "object", "properties": {"entry": s("Entry point name (default main)."), "args": list("Program arguments."), "stdin": stdin.clone(),
+             "cases": {"type": "array", "minItems": 1, "maxItems": ops::MAX_CASES, "description": "Runs, one per case, instead of `args`/`stdin`: {args (default []), stdin (default empty)}.",
+                       "items": {"type": "object", "properties": {"args": list("Program arguments."), "stdin": s("Text that read_line() and read_all() read.")}, "additionalProperties": false}},
+             "allow": allow.clone()}, "additionalProperties": false}},
         {"name": "qal_call", "title": "Call a QAL function", "annotations": {"readOnlyHint": false, "destructiveHint": false, "openWorldHint": true},
          "description": "Call any stored function with JSON arguments and get its result as JSON, both in the same form: numbers, strings, true/false, null for Unit, arrays for List and Bytes, [[key, value], ...] for Map, objects for records, `None` is \"None\", `Some(3)` is {\"Some\":[3]}. Function values cannot be passed.",
          "inputSchema": {"type": "object", "properties": {"fn": s("Function name."), "args": {"type": "array", "description": "Arguments in parameter order."}, "stdin": stdin, "allow": allow}, "required": ["fn"], "additionalProperties": false}},

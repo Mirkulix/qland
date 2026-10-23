@@ -41,12 +41,25 @@ pub(crate) struct Cx<'a> {
     /// Visible names, innermost last.
     scope: Vec<(String, u32)>,
     deferred: Vec<Deferred>,
+    /// Names bound by a `let` that starts a non-last item of an enclosing sequence `{ a; b }`:
+    /// its scope ended at the item's `;`, so a later use is unknown (E0201 names that cause).
+    seq_lets: Vec<String>,
 }
 
 impl<'a> Cx<'a> {
     pub fn new(g: &'a Globals, def: &'a str, effects: &'a [String], diags: &'a mut Vec<Diagnostic>) -> Self {
         let start = diags.len();
-        Cx { g, def, effects, tps: &[], eps: &[], frames: Vec::new(), ret: None, diags, start, sub: Subst::default(), locals: Vec::new(), scope: Vec::new(), deferred: Vec::new() }
+        Cx { g, def, effects, tps: &[], eps: &[], frames: Vec::new(), ret: None, diags, start, sub: Subst::default(), locals: Vec::new(), scope: Vec::new(), deferred: Vec::new(), seq_lets: Vec::new() }
+    }
+
+    /// E0201 for `name`: the hint names a sequence `let` whose scope ended, if there is one.
+    fn unknown_name(&self, path: &str, name: &str) -> Diagnostic {
+        let d = Diagnostic::unknown_name(self.def, path, name);
+        if self.seq_lets.iter().any(|n| n == name) {
+            d.hint(format!("the `let {name}` in an earlier item of this sequence ends at its `;`; bind it before the sequence: `let {name} = ... in {{ ...; ... }}`"))
+        } else {
+            d.hint("not a built-in or stored definition; built-ins are listed in the qal_define description; define it in the same call or check qal_query")
+        }
     }
 
     pub fn bind(&mut self, name: &str, ty: Type) -> u32 {
@@ -256,9 +269,14 @@ impl<'a> Cx<'a> {
             Expr::Seq(items) => {
                 let n = items.len();
                 let mut out = Vec::new();
+                let outer = self.seq_lets.len();
                 for (i, x) in items.iter().enumerate() {
                     let p = format!("{path}.items[{i}]");
                     let t = self.infer(x, &p);
+                    // The `let` of a non-last item ends at its `;` (named by E0201 in later items).
+                    if let (Expr::Let(name, ..), true) = (x, i + 1 < n) {
+                        self.seq_lets.push(name.clone());
+                    }
                     // A non-last item's value is discarded, except a Result: errors must be handled.
                     // A type not known yet becomes Unit (as for `print(..)`).
                     if i + 1 < n {
@@ -273,6 +291,7 @@ impl<'a> Cx<'a> {
                     }
                     out.push(t);
                 }
+                self.seq_lets.truncate(outer);
                 (out.last().map_or(Type::Unit, |t| t.ty.clone()), TKind::Seq(out))
             }
             Expr::Record(name, fields) => return self.record(name, fields, path),
@@ -440,7 +459,7 @@ impl<'a> Cx<'a> {
                 format!("built-in `{v}` cannot be used as a value; wrap it in a closure: `fn({ps}) => {v}({ps})`")
             });
         } else {
-            d = d.hint("not a built-in or stored definition; built-ins are listed in the qal_define description; define it in the same call or check qal_query");
+            d = self.unknown_name(path, v);
         }
         self.diags.push(d);
         self.poison()
@@ -497,7 +516,8 @@ impl<'a> Cx<'a> {
         if let Some(e) = self.builtin(name, args, path) {
             return e;
         }
-        self.diags.push(Diagnostic::unknown_name(self.def, path, name).hint("not a built-in or stored definition; built-ins are listed in the qal_define description; define it in the same call or check qal_query"));
+        let d = self.unknown_name(path, name);
+        self.diags.push(d);
         self.infer_all(args, path);
         self.poison()
     }

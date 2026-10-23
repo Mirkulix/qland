@@ -82,7 +82,8 @@ type QcCx = {
   sub: QcSubst,
   locals: List[QcType],
   scope: List[QcScopeEntry],
-  deferred: List[QcDeferred]
+  deferred: List[QcDeferred],
+  seq_lets: List[Str]
 }
 
 type QcInferRes = {
@@ -141,8 +142,17 @@ fn qc_cx_new(g: QcGlobals, def_name: Str, effs: List[Str], cur_diags: List[QcDia
     sub: qc_subst_new(),
     locals: [],
     scope: [],
-    deferred: []
+    deferred: [],
+    seq_lets: []
   }
+
+# E0201 for `name`: the hint names a sequence `let` whose scope ended, if there is one.
+fn qc_cx_unknown_name(cx: QcCx, path: Str, name: Str) -> QcDiag =
+  let d = qc_diag_unknown_name(cx.def, path, name) in
+  if qc_str_list_contains(cx.seq_lets, name) then
+    qc_diag_hint(d, "the `let " ++ name ++ "` in an earlier item of this sequence ends at its `;`; bind it before the sequence: `let " ++ name ++ " = ... in { ...; ... }`")
+  else
+    qc_diag_hint(d, "not a built-in or stored definition; built-ins are listed in the qal_define description; define it in the same call or check qal_query")
 
 fn qc_cx_bind(cx: QcCx, name: Str, ty: QcType) -> QcCxIntRes =
   let id = len(cx.locals) in
@@ -159,7 +169,8 @@ fn qc_cx_bind(cx: QcCx, name: Str, ty: QcType) -> QcCxIntRes =
     sub: cx.sub,
     locals: push(cx.locals, ty),
     scope: push(cx.scope, QcScopeEntry { name: name, id: id }),
-    deferred: cx.deferred
+    deferred: cx.deferred,
+    seq_lets: cx.seq_lets
   } in
   QcCxIntRes { cx: next_cx, id: id }
 
@@ -178,7 +189,8 @@ fn qc_cx_unbind(cx: QcCx) -> QcCx =
     sub: cx.sub,
     locals: cx.locals,
     scope: next_scope,
-    deferred: cx.deferred
+    deferred: cx.deferred,
+    seq_lets: cx.seq_lets
   }
 
 fn qc_cx_lookup_loop(scope: List[QcScopeEntry], name: Str, idx: Int) -> Option[Int] =
@@ -209,7 +221,8 @@ fn qc_cx_poison(cx: QcCx) -> QcInferRes =
     sub: fresh_res.subst,
     locals: cx.locals,
     scope: cx.scope,
-    deferred: cx.deferred
+    deferred: cx.deferred,
+    seq_lets: cx.seq_lets
   } in
   QcInferRes { cx: next_cx, expr: QcTExpr { ty: fresh_res.ty, kind: QcTKUnit } }
 
@@ -217,11 +230,11 @@ fn qc_cx_mismatch(cx: QcCx, path: Str, expected: QcType, found: QcType) -> QcCx 
   if cx.sub.too_deep then
     let s_reset = QcSubst { vars: cx.sub.vars, depth: cx.sub.depth, size: cx.sub.size, users: cx.sub.users, evars: cx.sub.evars, too_deep: false, too_large: cx.sub.too_large } in
     let d = qc_diag_type_too_deep(cx.def, path, 256) in
-    QcCx { g: cx.g, def: cx.def, effects: cx.effects, tps: cx.tps, eps: cx.eps, frames: cx.frames, ret: cx.ret, diags: push(cx.diags, d), start: cx.start, sub: s_reset, locals: cx.locals, scope: cx.scope, deferred: cx.deferred }
+    QcCx { g: cx.g, def: cx.def, effects: cx.effects, tps: cx.tps, eps: cx.eps, frames: cx.frames, ret: cx.ret, diags: push(cx.diags, d), start: cx.start, sub: s_reset, locals: cx.locals, scope: cx.scope, deferred: cx.deferred, seq_lets: cx.seq_lets }
   else if cx.sub.too_large then
     let s_reset = QcSubst { vars: cx.sub.vars, depth: cx.sub.depth, size: cx.sub.size, users: cx.sub.users, evars: cx.sub.evars, too_deep: cx.sub.too_deep, too_large: false } in
     let d = qc_diag_type_too_large(cx.def, path, 4096) in
-    QcCx { g: cx.g, def: cx.def, effects: cx.effects, tps: cx.tps, eps: cx.eps, frames: cx.frames, ret: cx.ret, diags: push(cx.diags, d), start: cx.start, sub: s_reset, locals: cx.locals, scope: cx.scope, deferred: cx.deferred }
+    QcCx { g: cx.g, def: cx.def, effects: cx.effects, tps: cx.tps, eps: cx.eps, frames: cx.frames, ret: cx.ret, diags: push(cx.diags, d), start: cx.start, sub: s_reset, locals: cx.locals, scope: cx.scope, deferred: cx.deferred, seq_lets: cx.seq_lets }
   else
     let e_fin = qc_subst_finish(cx.sub, expected) in
     let f_fin = qc_subst_finish(cx.sub, found) in
@@ -240,7 +253,7 @@ fn qc_cx_mismatch(cx: QcCx, path: Str, expected: QcType, found: QcType) -> QcCx 
         _ => d0
       }
     } in
-    QcCx { g: cx.g, def: cx.def, effects: cx.effects, tps: cx.tps, eps: cx.eps, frames: cx.frames, ret: cx.ret, diags: push(cx.diags, d), start: cx.start, sub: cx.sub, locals: cx.locals, scope: cx.scope, deferred: cx.deferred }
+    QcCx { g: cx.g, def: cx.def, effects: cx.effects, tps: cx.tps, eps: cx.eps, frames: cx.frames, ret: cx.ret, diags: push(cx.diags, d), start: cx.start, sub: cx.sub, locals: cx.locals, scope: cx.scope, deferred: cx.deferred, seq_lets: cx.seq_lets }
 
 fn qc_cx_unify_at(cx: QcCx, path: Str, expected: QcType, found: QcType) -> QcCxBoolRes =
   let un_res = qc_subst_unify(cx.sub, expected, found) in
@@ -257,7 +270,8 @@ fn qc_cx_unify_at(cx: QcCx, path: Str, expected: QcType, found: QcType) -> QcCxB
     sub: un_res.subst,
     locals: cx.locals,
     scope: cx.scope,
-    deferred: cx.deferred
+    deferred: cx.deferred,
+    seq_lets: cx.seq_lets
   } in
   if un_res.ok then QcCxBoolRes { cx: next_cx, ok: true }
   else QcCxBoolRes { cx: qc_cx_mismatch(next_cx, path, expected, found), ok: false }
@@ -290,18 +304,18 @@ fn qc_cx_branch(cx: QcCx, e: QcExpr, acc: QcType, path: Str) -> QcBranchRes =
         let un1 = qc_subst_unify(sub_after_join, j, acc) in
         let un2 = if un1.ok then qc_subst_unify(un1.subst, j, t.ty) else un1 in
         if !limits && un2.ok then
-          let wrap_res = qc_cx_wrap_at(QcCx { g: cur_cx.g, def: cur_cx.def, effects: cur_cx.effects, tps: cur_cx.tps, eps: cur_cx.eps, frames: cur_cx.frames, ret: cur_cx.ret, diags: cur_cx.diags, start: cur_cx.start, sub: un2.subst, locals: cur_cx.locals, scope: cur_cx.scope, deferred: cur_cx.deferred }, path, j) in
+          let wrap_res = qc_cx_wrap_at(QcCx { g: cur_cx.g, def: cur_cx.def, effects: cur_cx.effects, tps: cur_cx.tps, eps: cur_cx.eps, frames: cur_cx.frames, ret: cur_cx.ret, diags: cur_cx.diags, start: cur_cx.start, sub: un2.subst, locals: cur_cx.locals, scope: cur_cx.scope, deferred: cur_cx.deferred, seq_lets: cur_cx.seq_lets }, path, j) in
           QcBranchRes { cx: wrap_res.cx, expr: t, ty: wrap_res.ty }
         else
           let un_fallback = qc_subst_unify(cur_cx.sub, acc, t.ty) in
-          let cx_fb = QcCx { g: cur_cx.g, def: cur_cx.def, effects: cur_cx.effects, tps: cur_cx.tps, eps: cur_cx.eps, frames: cur_cx.frames, ret: cur_cx.ret, diags: cur_cx.diags, start: cur_cx.start, sub: un_fallback.subst, locals: cur_cx.locals, scope: cur_cx.scope, deferred: cur_cx.deferred } in
+          let cx_fb = QcCx { g: cur_cx.g, def: cur_cx.def, effects: cur_cx.effects, tps: cur_cx.tps, eps: cur_cx.eps, frames: cur_cx.frames, ret: cur_cx.ret, diags: cur_cx.diags, start: cur_cx.start, sub: un_fallback.subst, locals: cur_cx.locals, scope: cur_cx.scope, deferred: cur_cx.deferred, seq_lets: cur_cx.seq_lets } in
           if limits || !un_fallback.ok || cx_fb.sub.too_deep || cx_fb.sub.too_large then
             QcBranchRes { cx: qc_cx_mismatch(cx_fb, path, acc, t.ty), expr: t, ty: acc }
           else
             QcBranchRes { cx: cx_fb, expr: t, ty: acc },
       None =>
         let un_fallback = qc_subst_unify(cur_cx.sub, acc, t.ty) in
-        let cx_fb = QcCx { g: cur_cx.g, def: cur_cx.def, effects: cur_cx.effects, tps: cur_cx.tps, eps: cur_cx.eps, frames: cur_cx.frames, ret: cur_cx.ret, diags: cur_cx.diags, start: cur_cx.start, sub: un_fallback.subst, locals: cur_cx.locals, scope: cur_cx.scope, deferred: cur_cx.deferred } in
+        let cx_fb = QcCx { g: cur_cx.g, def: cur_cx.def, effects: cur_cx.effects, tps: cur_cx.tps, eps: cur_cx.eps, frames: cur_cx.frames, ret: cur_cx.ret, diags: cur_cx.diags, start: cur_cx.start, sub: un_fallback.subst, locals: cur_cx.locals, scope: cur_cx.scope, deferred: cur_cx.deferred, seq_lets: cur_cx.seq_lets } in
         if limits || !un_fallback.ok || cx_fb.sub.too_deep || cx_fb.sub.too_large then
           QcBranchRes { cx: qc_cx_mismatch(cx_fb, path, acc, t.ty), expr: t, ty: acc }
         else
@@ -325,7 +339,8 @@ fn qc_cx_wrap_at(cx: QcCx, path: Str, t: QcType) -> QcCxTypeRes =
     sub: un_res.subst,
     locals: cx.locals,
     scope: cx.scope,
-    deferred: cx.deferred
+    deferred: cx.deferred,
+    seq_lets: cx.seq_lets
   } in
   if !un_res.ok then
     QcCxTypeRes { cx: qc_cx_mismatch(next_cx, path, v, t), ty: v }
@@ -343,12 +358,12 @@ fn qc_cx_effect_check(cx0: QcCx, path: Str, callee: Str, needed: List[Str]) -> Q
     let cur_frame = list_at(cx0.frames, len(cx0.frames) - 1) in
     let next_frame = qc_sort_dedup_strs(cur_frame ++ needed) in
     let next_frames = qc_list_set(cx0.frames, len(cx0.frames) - 1, next_frame) in
-    QcCx { g: cx0.g, def: cx0.def, effects: cx0.effects, tps: cx0.tps, eps: cx0.eps, frames: next_frames, ret: cx0.ret, diags: cx0.diags, start: cx0.start, sub: cx0.sub, locals: cx0.locals, scope: cx0.scope, deferred: cx0.deferred }
+    QcCx { g: cx0.g, def: cx0.def, effects: cx0.effects, tps: cx0.tps, eps: cx0.eps, frames: next_frames, ret: cx0.ret, diags: cx0.diags, start: cx0.start, sub: cx0.sub, locals: cx0.locals, scope: cx0.scope, deferred: cx0.deferred, seq_lets: cx0.seq_lets }
   else
     # A top-level call settles its effect variables: what the arguments carry is what the call
     # needs, and nothing may grow it afterwards.
     let resolved = qc_subst_resolve_effects(cx0.sub, needed) in
-    let cx = QcCx { g: cx0.g, def: cx0.def, effects: cx0.effects, tps: cx0.tps, eps: cx0.eps, frames: cx0.frames, ret: cx0.ret, diags: cx0.diags, start: cx0.start, sub: qc_subst_freeze_effects(cx0.sub, needed), locals: cx0.locals, scope: cx0.scope, deferred: cx0.deferred } in
+    let cx = QcCx { g: cx0.g, def: cx0.def, effects: cx0.effects, tps: cx0.tps, eps: cx0.eps, frames: cx0.frames, ret: cx0.ret, diags: cx0.diags, start: cx0.start, sub: qc_subst_freeze_effects(cx0.sub, needed), locals: cx0.locals, scope: cx0.scope, deferred: cx0.deferred, seq_lets: cx0.seq_lets } in
     let missing = filter(resolved.names, fn(e: Str) => !qc_contains_str_loop(cx.effects, e, 0)) in
     if len(missing) == 0 then cx
     else
@@ -370,7 +385,7 @@ fn qc_cx_effect_check(cx0: QcCx, path: Str, callee: Str, needed: List[Str]) -> Q
           },
         _ => d0
       } in
-      QcCx { g: cx.g, def: cx.def, effects: cx.effects, tps: cx.tps, eps: cx.eps, frames: cx.frames, ret: cx.ret, diags: push(cx.diags, d), start: cx.start, sub: cx.sub, locals: cx.locals, scope: cx.scope, deferred: cx.deferred }
+      QcCx { g: cx.g, def: cx.def, effects: cx.effects, tps: cx.tps, eps: cx.eps, frames: cx.frames, ret: cx.ret, diags: push(cx.diags, d), start: cx.start, sub: cx.sub, locals: cx.locals, scope: cx.scope, deferred: cx.deferred, seq_lets: cx.seq_lets }
 
 fn qc_cx_infer_all_loop(cx: QcCx, args: List[QcExpr], path: Str, idx: Int, acc: Accum[QcTExpr]) -> QcCxExprsRes =
   if idx >= len(args) then QcCxExprsRes { cx: cx, exprs: acc_list(acc) }
@@ -381,7 +396,7 @@ fn qc_cx_infer_all_loop(cx: QcCx, args: List[QcExpr], path: Str, idx: Int, acc: 
 fn qc_cx_args(cx: QcCx, callee: Str, args: List[QcExpr], params: List[QcType], path: Str) -> QcCxExprsRes =
   if len(args) != len(params) then
     let d = qc_diag_arity(cx.def, path, callee, len(params), len(args)) in
-    let cx_with_d = QcCx { g: cx.g, def: cx.def, effects: cx.effects, tps: cx.tps, eps: cx.eps, frames: cx.frames, ret: cx.ret, diags: push(cx.diags, d), start: cx.start, sub: cx.sub, locals: cx.locals, scope: cx.scope, deferred: cx.deferred } in
+    let cx_with_d = QcCx { g: cx.g, def: cx.def, effects: cx.effects, tps: cx.tps, eps: cx.eps, frames: cx.frames, ret: cx.ret, diags: push(cx.diags, d), start: cx.start, sub: cx.sub, locals: cx.locals, scope: cx.scope, deferred: cx.deferred, seq_lets: cx.seq_lets } in
     qc_cx_infer_all_loop(cx_with_d, args, path, 0, AccEnd)
   else
     qc_cx_args_loop(cx, args, params, path, 0, AccEnd)
@@ -417,20 +432,20 @@ fn qc_cx_fresh_evars_loop(cx: QcCx, count: Int, acc: Accum[Str]) -> QcCxNamesRes
   if count <= 0 then QcCxNamesRes { cx: cx, names: acc_list(acc) }
   else
     let fresh_res = qc_subst_fresh_effect(cx.sub) in
-    let next_cx = QcCx { g: cx.g, def: cx.def, effects: cx.effects, tps: cx.tps, eps: cx.eps, frames: cx.frames, ret: cx.ret, diags: cx.diags, start: cx.start, sub: fresh_res.subst, locals: cx.locals, scope: cx.scope, deferred: cx.deferred } in
+    let next_cx = QcCx { g: cx.g, def: cx.def, effects: cx.effects, tps: cx.tps, eps: cx.eps, frames: cx.frames, ret: cx.ret, diags: cx.diags, start: cx.start, sub: fresh_res.subst, locals: cx.locals, scope: cx.scope, deferred: cx.deferred, seq_lets: cx.seq_lets } in
     qc_cx_fresh_evars_loop(next_cx, count - 1, AccPush(acc, fresh_res.name))
 
 fn qc_cx_fresh_targs_loop(cx: QcCx, count: Int, acc: Accum[QcType]) -> QcCxTypesRes =
   if count <= 0 then QcCxTypesRes { cx: cx, tys: acc_list(acc) }
   else
     let fresh_res = qc_subst_fresh(cx.sub) in
-    let next_cx = QcCx { g: cx.g, def: cx.def, effects: cx.effects, tps: cx.tps, eps: cx.eps, frames: cx.frames, ret: cx.ret, diags: cx.diags, start: cx.start, sub: fresh_res.subst, locals: cx.locals, scope: cx.scope, deferred: cx.deferred } in
+    let next_cx = QcCx { g: cx.g, def: cx.def, effects: cx.effects, tps: cx.tps, eps: cx.eps, frames: cx.frames, ret: cx.ret, diags: cx.diags, start: cx.start, sub: fresh_res.subst, locals: cx.locals, scope: cx.scope, deferred: cx.deferred, seq_lets: cx.seq_lets } in
     qc_cx_fresh_targs_loop(next_cx, count - 1, AccPush(acc, fresh_res.ty))
 
 fn qc_cx_wrap_type(cx: QcCx, t: QcType) -> QcCxTypeRes =
   let fresh_res = qc_subst_fresh(cx.sub) in
   let un_res = qc_subst_unify(fresh_res.subst, fresh_res.ty, t) in
-  let next_cx = QcCx { g: cx.g, def: cx.def, effects: cx.effects, tps: cx.tps, eps: cx.eps, frames: cx.frames, ret: cx.ret, diags: cx.diags, start: cx.start, sub: un_res.subst, locals: cx.locals, scope: cx.scope, deferred: cx.deferred } in
+  let next_cx = QcCx { g: cx.g, def: cx.def, effects: cx.effects, tps: cx.tps, eps: cx.eps, frames: cx.frames, ret: cx.ret, diags: cx.diags, start: cx.start, sub: un_res.subst, locals: cx.locals, scope: cx.scope, deferred: cx.deferred, seq_lets: cx.seq_lets } in
   QcCxTypeRes { cx: next_cx, ty: fresh_res.ty }
 
 fn qc_cx_wrap_types_loop(cx: QcCx, params: List[QcType], tparams: List[Str], targs: List[QcType], eparams: List[Str], evars: List[Str], idx: Int, acc: Accum[QcType]) -> QcCxTypesRes =
@@ -473,7 +488,7 @@ type QcVariantLookup = {
 fn qc_cx_variant(cx: QcCx, name: Str) -> Option[QcVariantLookup] =
   let a_res = qc_subst_fresh(cx.sub) in
   let b_res = qc_subst_fresh(a_res.subst) in
-  let cx_ab = QcCx { g: cx.g, def: cx.def, effects: cx.effects, tps: cx.tps, eps: cx.eps, frames: cx.frames, ret: cx.ret, diags: cx.diags, start: cx.start, sub: b_res.subst, locals: cx.locals, scope: cx.scope, deferred: cx.deferred } in
+  let cx_ab = QcCx { g: cx.g, def: cx.def, effects: cx.effects, tps: cx.tps, eps: cx.eps, frames: cx.frames, ret: cx.ret, diags: cx.diags, start: cx.start, sub: b_res.subst, locals: cx.locals, scope: cx.scope, deferred: cx.deferred, seq_lets: cx.seq_lets } in
   let a = a_res.ty in
   let b = b_res.ty in
   if name == "None" then
@@ -526,7 +541,7 @@ fn qc_cx_var(cx: QcCx, v: Str, path: Str) -> QcInferRes =
             Some(vlookup) =>
               if len(vlookup.fields) != 0 then
                 let d = qc_diag_arity(cx.def, path, v, len(vlookup.fields), 0) in
-                let cx_err = QcCx { g: cx.g, def: cx.def, effects: cx.effects, tps: cx.tps, eps: cx.eps, frames: cx.frames, ret: cx.ret, diags: push(cx.diags, d), start: cx.start, sub: cx.sub, locals: cx.locals, scope: cx.scope, deferred: cx.deferred } in
+                let cx_err = QcCx { g: cx.g, def: cx.def, effects: cx.effects, tps: cx.tps, eps: cx.eps, frames: cx.frames, ret: cx.ret, diags: push(cx.diags, d), start: cx.start, sub: cx.sub, locals: cx.locals, scope: cx.scope, deferred: cx.deferred, seq_lets: cx.seq_lets } in
                 qc_cx_poison(cx_err)
               else
                 QcInferRes { cx: vlookup.cx, expr: QcTExpr { ty: vlookup.ty, kind: QcTKVariant(vlookup.tag, []) } },
@@ -552,8 +567,8 @@ fn qc_cx_var(cx: QcCx, v: Str, path: Str) -> QcInferRes =
                   counterexample: d0.counterexample
                 }
               else
-                qc_diag_hint(d0, "not a built-in or stored definition; built-ins are listed in the qal_define description; define it in the same call or check qal_query") in
-              let cx_err = QcCx { g: cx.g, def: cx.def, effects: cx.effects, tps: cx.tps, eps: cx.eps, frames: cx.frames, ret: cx.ret, diags: push(cx.diags, d), start: cx.start, sub: cx.sub, locals: cx.locals, scope: cx.scope, deferred: cx.deferred } in
+                qc_cx_unknown_name(cx, path, v) in
+              let cx_err = QcCx { g: cx.g, def: cx.def, effects: cx.effects, tps: cx.tps, eps: cx.eps, frames: cx.frames, ret: cx.ret, diags: push(cx.diags, d), start: cx.start, sub: cx.sub, locals: cx.locals, scope: cx.scope, deferred: cx.deferred, seq_lets: cx.seq_lets } in
               qc_cx_poison(cx_err)
           }
       }
@@ -573,12 +588,12 @@ fn qc_cx_numeric(cx: QcCx, path: Str, t: QcType) -> QcCxTypeRes =
     QcTFloat => QcCxTypeRes { cx: cx, ty: QcTFloat },
     QcTVar(_) =>
       let un_res = qc_subst_unify(cx.sub, QcTInt, t) in
-      let next_cx = QcCx { g: cx.g, def: cx.def, effects: cx.effects, tps: cx.tps, eps: cx.eps, frames: cx.frames, ret: cx.ret, diags: cx.diags, start: cx.start, sub: un_res.subst, locals: cx.locals, scope: cx.scope, deferred: cx.deferred } in
+      let next_cx = QcCx { g: cx.g, def: cx.def, effects: cx.effects, tps: cx.tps, eps: cx.eps, frames: cx.frames, ret: cx.ret, diags: cx.diags, start: cx.start, sub: un_res.subst, locals: cx.locals, scope: cx.scope, deferred: cx.deferred, seq_lets: cx.seq_lets } in
       QcCxTypeRes { cx: next_cx, ty: QcTInt },
     other =>
       let d = qc_diag_type_mismatch(cx.def, path, "Int or Float", qc_print_type(qc_subst_finish(cx.sub, other))) in
       let fresh_res = qc_subst_fresh(cx.sub) in
-      let next_cx = QcCx { g: cx.g, def: cx.def, effects: cx.effects, tps: cx.tps, eps: cx.eps, frames: cx.frames, ret: cx.ret, diags: push(cx.diags, d), start: cx.start, sub: fresh_res.subst, locals: cx.locals, scope: cx.scope, deferred: cx.deferred } in
+      let next_cx = QcCx { g: cx.g, def: cx.def, effects: cx.effects, tps: cx.tps, eps: cx.eps, frames: cx.frames, ret: cx.ret, diags: push(cx.diags, d), start: cx.start, sub: fresh_res.subst, locals: cx.locals, scope: cx.scope, deferred: cx.deferred, seq_lets: cx.seq_lets } in
       QcCxTypeRes { cx: next_cx, ty: fresh_res.ty }
   }
 
@@ -591,7 +606,7 @@ fn qc_cx_ordered(cx: QcCx, path: Str, t: QcType) -> QcCxTypeRes =
     other =>
       let d = qc_diag_type_mismatch(cx.def, path, "Int, Float or Str", qc_print_type(qc_subst_finish(cx.sub, other))) in
       let fresh_res = qc_subst_fresh(cx.sub) in
-      let next_cx = QcCx { g: cx.g, def: cx.def, effects: cx.effects, tps: cx.tps, eps: cx.eps, frames: cx.frames, ret: cx.ret, diags: push(cx.diags, d), start: cx.start, sub: fresh_res.subst, locals: cx.locals, scope: cx.scope, deferred: cx.deferred } in
+      let next_cx = QcCx { g: cx.g, def: cx.def, effects: cx.effects, tps: cx.tps, eps: cx.eps, frames: cx.frames, ret: cx.ret, diags: push(cx.diags, d), start: cx.start, sub: fresh_res.subst, locals: cx.locals, scope: cx.scope, deferred: cx.deferred, seq_lets: cx.seq_lets } in
       QcCxTypeRes { cx: next_cx, ty: fresh_res.ty }
   }
 
@@ -627,13 +642,13 @@ fn qc_cx_binary(cx: QcCx, op: QcBinOp, l: QcExpr, r: QcExpr, path: Str) -> QcInf
     let l_res = qc_cx_infer(cx, l, lp) in
     let r_res = qc_cx_expect(l_res.cx, r, l_res.expr.ty, rp) in
     let next_def = push(r_res.cx.deferred, QcDefEq(path, l_res.expr.ty)) in
-    let cx_def = QcCx { g: r_res.cx.g, def: r_res.cx.def, effects: r_res.cx.effects, tps: r_res.cx.tps, eps: r_res.cx.eps, frames: r_res.cx.frames, ret: r_res.cx.ret, diags: r_res.cx.diags, start: r_res.cx.start, sub: r_res.cx.sub, locals: r_res.cx.locals, scope: r_res.cx.scope, deferred: next_def } in
+    let cx_def = QcCx { g: r_res.cx.g, def: r_res.cx.def, effects: r_res.cx.effects, tps: r_res.cx.tps, eps: r_res.cx.eps, frames: r_res.cx.frames, ret: r_res.cx.ret, diags: r_res.cx.diags, start: r_res.cx.start, sub: r_res.cx.sub, locals: r_res.cx.locals, scope: r_res.cx.scope, deferred: next_def, seq_lets: r_res.cx.seq_lets } in
     QcInferRes { cx: cx_def, expr: QcTExpr { ty: QcTBool, kind: QcTKBin(op, l_res.expr, r_res.expr, path) } }
   else if op == QcOpConcat then
     let l_res = qc_cx_infer(cx, l, lp) in
     let r_res = qc_cx_expect(l_res.cx, r, l_res.expr.ty, rp) in
     let next_def = push(r_res.cx.deferred, QcDefConcat(lp, l_res.expr.ty)) in
-    let cx_def = QcCx { g: r_res.cx.g, def: r_res.cx.def, effects: r_res.cx.effects, tps: r_res.cx.tps, eps: r_res.cx.eps, frames: r_res.cx.frames, ret: r_res.cx.ret, diags: r_res.cx.diags, start: r_res.cx.start, sub: r_res.cx.sub, locals: r_res.cx.locals, scope: r_res.cx.scope, deferred: next_def } in
+    let cx_def = QcCx { g: r_res.cx.g, def: r_res.cx.def, effects: r_res.cx.effects, tps: r_res.cx.tps, eps: r_res.cx.eps, frames: r_res.cx.frames, ret: r_res.cx.ret, diags: r_res.cx.diags, start: r_res.cx.start, sub: r_res.cx.sub, locals: r_res.cx.locals, scope: r_res.cx.scope, deferred: next_def, seq_lets: r_res.cx.seq_lets } in
     QcInferRes { cx: cx_def, expr: QcTExpr { ty: l_res.expr.ty, kind: QcTKBin(op, l_res.expr, r_res.expr, path) } }
   else
     qc_cx_poison(cx)
@@ -657,7 +672,8 @@ fn qc_cx_lambda(cx: QcCx, params: List[QcLambdaParam], body: QcExpr, path: Str, 
     sub: cx1.sub,
     locals: cx1.locals,
     scope: cx1.scope,
-    deferred: cx1.deferred
+    deferred: cx1.deferred,
+    seq_lets: cx1.seq_lets
   } in
   let body_res = qc_cx_infer(cx2, body, path ++ ".body") in
   let cur_cx = body_res.cx in
@@ -681,7 +697,8 @@ fn qc_cx_lambda(cx: QcCx, params: List[QcLambdaParam], body: QcExpr, path: Str, 
     sub: cur_cx.sub,
     locals: cur_cx.locals,
     scope: scope_truncated,
-    deferred: cur_cx.deferred
+    deferred: cur_cx.deferred,
+    seq_lets: cur_cx.seq_lets
   }, fn_ty) in
   let lambda_kind = QcTKLambda(QcTLambda {
     params: ids,
@@ -704,12 +721,12 @@ fn qc_cx_bind_lambda_params_loop(cx: QcCx, params: List[QcLambdaParam], path: St
     let is_dup = fold(match qc_list_slice(params, 0, idx) { Some(xs) => xs, None => [] }, false, fn(acc: Bool, prev: QcLambdaParam) => acc || prev.name == p.name) in
     let cx_dup = if is_dup then
       let d = qc_diag_duplicate_name(cx.def, pp, p.name) in
-      QcCx { g: cx.g, def: cx.def, effects: cx.effects, tps: cx.tps, eps: cx.eps, frames: cx.frames, ret: cx.ret, diags: push(cx.diags, d), start: cx.start, sub: cx.sub, locals: cx.locals, scope: cx.scope, deferred: cx.deferred }
+      QcCx { g: cx.g, def: cx.def, effects: cx.effects, tps: cx.tps, eps: cx.eps, frames: cx.frames, ret: cx.ret, diags: push(cx.diags, d), start: cx.start, sub: cx.sub, locals: cx.locals, scope: cx.scope, deferred: cx.deferred, seq_lets: cx.seq_lets }
     else cx in
     let param_res = match p.ty {
       Some(ann) =>
         let opt_t = qc_resolve_type(cx_dup.g, ann, cx_dup.tps, cx_dup.eps, cx_dup.def, pp, cx_dup.diags) in
-        let next_cx = QcCx { g: cx_dup.g, def: cx_dup.def, effects: cx_dup.effects, tps: cx_dup.tps, eps: cx_dup.eps, frames: cx_dup.frames, ret: cx_dup.ret, diags: opt_t.diags, start: cx_dup.start, sub: cx_dup.sub, locals: cx_dup.locals, scope: cx_dup.scope, deferred: cx_dup.deferred } in
+        let next_cx = QcCx { g: cx_dup.g, def: cx_dup.def, effects: cx_dup.effects, tps: cx_dup.tps, eps: cx_dup.eps, frames: cx_dup.frames, ret: cx_dup.ret, diags: opt_t.diags, start: cx_dup.start, sub: cx_dup.sub, locals: cx_dup.locals, scope: cx_dup.scope, deferred: cx_dup.deferred, seq_lets: cx_dup.seq_lets } in
         QcCxTypeRes { cx: next_cx, ty: match opt_t.ty { Some(t) => t, None => QcTUnit } },
       None =>
         match expected {
@@ -717,11 +734,11 @@ fn qc_cx_bind_lambda_params_loop(cx: QcCx, params: List[QcLambdaParam], path: St
             if idx < len(ps) then QcCxTypeRes { cx: cx_dup, ty: list_at(ps, idx) }
             else
               let f_res = qc_subst_fresh(cx_dup.sub) in
-              let next_cx = QcCx { g: cx_dup.g, def: cx_dup.def, effects: cx_dup.effects, tps: cx_dup.tps, eps: cx_dup.eps, frames: cx_dup.frames, ret: cx_dup.ret, diags: cx_dup.diags, start: cx_dup.start, sub: f_res.subst, locals: cx_dup.locals, scope: cx_dup.scope, deferred: cx_dup.deferred } in
+              let next_cx = QcCx { g: cx_dup.g, def: cx_dup.def, effects: cx_dup.effects, tps: cx_dup.tps, eps: cx_dup.eps, frames: cx_dup.frames, ret: cx_dup.ret, diags: cx_dup.diags, start: cx_dup.start, sub: f_res.subst, locals: cx_dup.locals, scope: cx_dup.scope, deferred: cx_dup.deferred, seq_lets: cx_dup.seq_lets } in
               QcCxTypeRes { cx: next_cx, ty: f_res.ty },
           None =>
             let f_res = qc_subst_fresh(cx_dup.sub) in
-            let next_cx = QcCx { g: cx_dup.g, def: cx_dup.def, effects: cx_dup.effects, tps: cx_dup.tps, eps: cx_dup.eps, frames: cx_dup.frames, ret: cx_dup.ret, diags: cx_dup.diags, start: cx_dup.start, sub: f_res.subst, locals: cx_dup.locals, scope: cx_dup.scope, deferred: cx_dup.deferred } in
+            let next_cx = QcCx { g: cx_dup.g, def: cx_dup.def, effects: cx_dup.effects, tps: cx_dup.tps, eps: cx_dup.eps, frames: cx_dup.frames, ret: cx_dup.ret, diags: cx_dup.diags, start: cx_dup.start, sub: f_res.subst, locals: cx_dup.locals, scope: cx_dup.scope, deferred: cx_dup.deferred, seq_lets: cx_dup.seq_lets } in
             QcCxTypeRes { cx: next_cx, ty: f_res.ty }
         }
     } in
@@ -741,7 +758,7 @@ fn qc_cx_call(cx: QcCx, name: Str, args: List[QcExpr], path: Str) -> QcInferRes 
         _ =>
           let found_s = qc_print_type(qc_subst_finish(cx.sub, callee_ty)) in
           let d = qc_diag_hint(qc_diag_type_mismatch(cx.def, path, "a function", found_s), "`" ++ name ++ "` is a local value of type " ++ found_s) in
-          let cx_err = QcCx { g: cx.g, def: cx.def, effects: cx.effects, tps: cx.tps, eps: cx.eps, frames: cx.frames, ret: cx.ret, diags: push(cx.diags, d), start: cx.start, sub: cx.sub, locals: cx.locals, scope: cx.scope, deferred: cx.deferred } in
+          let cx_err = QcCx { g: cx.g, def: cx.def, effects: cx.effects, tps: cx.tps, eps: cx.eps, frames: cx.frames, ret: cx.ret, diags: push(cx.diags, d), start: cx.start, sub: cx.sub, locals: cx.locals, scope: cx.scope, deferred: cx.deferred, seq_lets: cx.seq_lets } in
           let all_res = qc_cx_infer_all_loop(cx_err, args, path, 0, AccEnd) in
           qc_cx_poison(all_res.cx)
       },
@@ -768,8 +785,8 @@ fn qc_cx_call(cx: QcCx, name: Str, args: List[QcExpr], path: Str) -> QcInferRes 
               match qc_cx_builtin(cx, name, args, path) {
                 Some(res) => res,
                 None =>
-                  let d = qc_diag_hint(qc_diag_unknown_name(cx.def, path, name), "not a built-in or stored definition; built-ins are listed in the qal_define description; define it in the same call or check qal_query") in
-                  let cx_err = QcCx { g: cx.g, def: cx.def, effects: cx.effects, tps: cx.tps, eps: cx.eps, frames: cx.frames, ret: cx.ret, diags: push(cx.diags, d), start: cx.start, sub: cx.sub, locals: cx.locals, scope: cx.scope, deferred: cx.deferred } in
+                  let d = qc_cx_unknown_name(cx, path, name) in
+                  let cx_err = QcCx { g: cx.g, def: cx.def, effects: cx.effects, tps: cx.tps, eps: cx.eps, frames: cx.frames, ret: cx.ret, diags: push(cx.diags, d), start: cx.start, sub: cx.sub, locals: cx.locals, scope: cx.scope, deferred: cx.deferred, seq_lets: cx.seq_lets } in
                   let all_res = qc_cx_infer_all_loop(cx_err, args, path, 0, AccEnd) in
                   qc_cx_poison(all_res.cx)
               }
@@ -782,13 +799,13 @@ fn qc_cx_builtin(cx: QcCx, name: Str, args: List[QcExpr], path: Str) -> Option[Q
   else
     let a_res = qc_subst_fresh(cx.sub) in
     let b_res = qc_subst_fresh(a_res.subst) in
-    let cx_ab = QcCx { g: cx.g, def: cx.def, effects: cx.effects, tps: cx.tps, eps: cx.eps, frames: cx.frames, ret: cx.ret, diags: cx.diags, start: cx.start, sub: b_res.subst, locals: cx.locals, scope: cx.scope, deferred: cx.deferred } in
+    let cx_ab = QcCx { g: cx.g, def: cx.def, effects: cx.effects, tps: cx.tps, eps: cx.eps, frames: cx.frames, ret: cx.ret, diags: cx.diags, start: cx.start, sub: b_res.subst, locals: cx.locals, scope: cx.scope, deferred: cx.deferred, seq_lets: cx.seq_lets } in
     match qc_builtin_signature(name, a_res.ty, b_res.ty) {
       None => None,
       Some(bsig) =>
         if !cx.g.prelude && qc_builtin_needs_prelude(bsig.builtin) then
           let d = qc_diag_prelude_shadowed(cx.def, path, name) in
-          let cx_err = QcCx { g: cx.g, def: cx.def, effects: cx.effects, tps: cx.tps, eps: cx.eps, frames: cx.frames, ret: cx.ret, diags: push(cx.diags, d), start: cx.start, sub: cx.sub, locals: cx.locals, scope: cx.scope, deferred: cx.deferred } in
+          let cx_err = QcCx { g: cx.g, def: cx.def, effects: cx.effects, tps: cx.tps, eps: cx.eps, frames: cx.frames, ret: cx.ret, diags: push(cx.diags, d), start: cx.start, sub: cx.sub, locals: cx.locals, scope: cx.scope, deferred: cx.deferred, seq_lets: cx.seq_lets } in
           let all_res = qc_cx_infer_all_loop(cx_err, args, path, 0, AccEnd) in
           Some(qc_cx_poison(all_res.cx))
         else
@@ -797,7 +814,7 @@ fn qc_cx_builtin(cx: QcCx, name: Str, args: List[QcExpr], path: Str) -> Option[Q
           let ret_ty = wrap_ret.ty in
           if len(args) != len(bsig.params) then
             let d = qc_diag_arity(cur_cx.def, path, name, len(bsig.params), len(args)) in
-            let cx_err = QcCx { g: cur_cx.g, def: cur_cx.def, effects: cur_cx.effects, tps: cur_cx.tps, eps: cur_cx.eps, frames: cur_cx.frames, ret: cur_cx.ret, diags: push(cur_cx.diags, d), start: cur_cx.start, sub: cur_cx.sub, locals: cur_cx.locals, scope: cur_cx.scope, deferred: cur_cx.deferred } in
+            let cx_err = QcCx { g: cur_cx.g, def: cur_cx.def, effects: cur_cx.effects, tps: cur_cx.tps, eps: cur_cx.eps, frames: cur_cx.frames, ret: cur_cx.ret, diags: push(cur_cx.diags, d), start: cur_cx.start, sub: cur_cx.sub, locals: cur_cx.locals, scope: cur_cx.scope, deferred: cur_cx.deferred, seq_lets: cur_cx.seq_lets } in
             let all_res = qc_cx_infer_all_loop(cx_err, args, path, 0, AccEnd) in
             Some(qc_cx_poison(all_res.cx))
           else
@@ -819,11 +836,11 @@ fn qc_cx_sql_literal(cx: QcCx, callee: Str, arg: QcExpr, path: Str) -> QcCx =
         Ok(_) => cx,
         Err(reason) =>
           let d = qc_diag_sql_invalid(cx.def, path, reason) in
-          QcCx { g: cx.g, def: cx.def, effects: cx.effects, tps: cx.tps, eps: cx.eps, frames: cx.frames, ret: cx.ret, diags: push(cx.diags, d), start: cx.start, sub: cx.sub, locals: cx.locals, scope: cx.scope, deferred: cx.deferred }
+          QcCx { g: cx.g, def: cx.def, effects: cx.effects, tps: cx.tps, eps: cx.eps, frames: cx.frames, ret: cx.ret, diags: push(cx.diags, d), start: cx.start, sub: cx.sub, locals: cx.locals, scope: cx.scope, deferred: cx.deferred, seq_lets: cx.seq_lets }
       },
     _ =>
       let d = qc_diag_sql_not_literal(cx.def, path, callee) in
-      QcCx { g: cx.g, def: cx.def, effects: cx.effects, tps: cx.tps, eps: cx.eps, frames: cx.frames, ret: cx.ret, diags: push(cx.diags, d), start: cx.start, sub: cx.sub, locals: cx.locals, scope: cx.scope, deferred: cx.deferred }
+      QcCx { g: cx.g, def: cx.def, effects: cx.effects, tps: cx.tps, eps: cx.eps, frames: cx.frames, ret: cx.ret, diags: push(cx.diags, d), start: cx.start, sub: cx.sub, locals: cx.locals, scope: cx.scope, deferred: cx.deferred, seq_lets: cx.seq_lets }
   }
 
 fn qc_cx_builtin_args_loop(cx: QcCx, callee: Str, args: List[QcExpr], params: List[QcType], path: Str, idx: Int, acc: Accum[QcTExpr]) -> QcCxExprsRes =
@@ -860,7 +877,7 @@ fn qc_cx_fn_arg(cx: QcCx, callee: Str, arg: QcExpr, params: List[QcType], ret: Q
 fn qc_cx_len(cx: QcCx, args: List[QcExpr], path: Str) -> QcInferRes =
   if len(args) != 1 then
     let d = qc_diag_arity(cx.def, path, "len", 1, len(args)) in
-    let cx_err = QcCx { g: cx.g, def: cx.def, effects: cx.effects, tps: cx.tps, eps: cx.eps, frames: cx.frames, ret: cx.ret, diags: push(cx.diags, d), start: cx.start, sub: cx.sub, locals: cx.locals, scope: cx.scope, deferred: cx.deferred } in
+    let cx_err = QcCx { g: cx.g, def: cx.def, effects: cx.effects, tps: cx.tps, eps: cx.eps, frames: cx.frames, ret: cx.ret, diags: push(cx.diags, d), start: cx.start, sub: cx.sub, locals: cx.locals, scope: cx.scope, deferred: cx.deferred, seq_lets: cx.seq_lets } in
     let all_res = qc_cx_infer_all_loop(cx_err, args, path, 0, AccEnd) in
     qc_cx_poison(all_res.cx)
   else
@@ -875,7 +892,7 @@ fn qc_cx_len(cx: QcCx, args: List[QcExpr], path: Str) -> QcInferRes =
       other =>
         let found_s = qc_print_type(qc_subst_finish(cur_cx.sub, other)) in
         let d = qc_diag_type_mismatch(cur_cx.def, ap, "Str or List[_]", found_s) in
-        let cx_err = QcCx { g: cur_cx.g, def: cur_cx.def, effects: cur_cx.effects, tps: cur_cx.tps, eps: cur_cx.eps, frames: cur_cx.frames, ret: cur_cx.ret, diags: push(cur_cx.diags, d), start: cur_cx.start, sub: cur_cx.sub, locals: cur_cx.locals, scope: cur_cx.scope, deferred: cur_cx.deferred } in
+        let cx_err = QcCx { g: cur_cx.g, def: cur_cx.def, effects: cur_cx.effects, tps: cur_cx.tps, eps: cur_cx.eps, frames: cur_cx.frames, ret: cur_cx.ret, diags: push(cur_cx.diags, d), start: cur_cx.start, sub: cur_cx.sub, locals: cur_cx.locals, scope: cur_cx.scope, deferred: cur_cx.deferred, seq_lets: cur_cx.seq_lets } in
         qc_cx_poison(cx_err)
     }
 
@@ -889,13 +906,13 @@ fn qc_cx_record(cx: QcCx, name: Str, fields: List[QcFieldExpr], path: Str) -> Qc
           QcInferRes { cx: cx3, expr: QcTExpr { ty: decl_res.ty, kind: QcTKRecord(f_res.fields) } },
         _ =>
           let d = qc_diag_hint(qc_diag_type_mismatch(cx.def, path, "a record type", name), "`" ++ name ++ "` is an enum; construct one of its variants instead") in
-          let cx_err = QcCx { g: cx.g, def: cx.def, effects: cx.effects, tps: cx.tps, eps: cx.eps, frames: cx.frames, ret: cx.ret, diags: push(cx.diags, d), start: cx.start, sub: cx.sub, locals: cx.locals, scope: cx.scope, deferred: cx.deferred } in
+          let cx_err = QcCx { g: cx.g, def: cx.def, effects: cx.effects, tps: cx.tps, eps: cx.eps, frames: cx.frames, ret: cx.ret, diags: push(cx.diags, d), start: cx.start, sub: cx.sub, locals: cx.locals, scope: cx.scope, deferred: cx.deferred, seq_lets: cx.seq_lets } in
           let all_res = qc_cx_infer_record_fields_loop(cx_err, fields, path, 0, AccEnd) in
           qc_cx_poison(all_res.cx)
       },
     None =>
       let d = qc_diag_unknown_name(cx.def, path, name) in
-      let cx_err = QcCx { g: cx.g, def: cx.def, effects: cx.effects, tps: cx.tps, eps: cx.eps, frames: cx.frames, ret: cx.ret, diags: push(cx.diags, d), start: cx.start, sub: cx.sub, locals: cx.locals, scope: cx.scope, deferred: cx.deferred } in
+      let cx_err = QcCx { g: cx.g, def: cx.def, effects: cx.effects, tps: cx.tps, eps: cx.eps, frames: cx.frames, ret: cx.ret, diags: push(cx.diags, d), start: cx.start, sub: cx.sub, locals: cx.locals, scope: cx.scope, deferred: cx.deferred, seq_lets: cx.seq_lets } in
       let all_res = qc_cx_infer_record_fields_loop(cx_err, fields, path, 0, AccEnd) in
       qc_cx_poison(all_res.cx)
   }
@@ -917,7 +934,7 @@ fn qc_cx_record_fields_loop(cx: QcCx, record_name: Str, fields: List[QcFieldExpr
       Some(i) =>
         if fold(cur_out, false, fn(st: Bool, item: QcTField) => st || item.idx == i) then
           let d = qc_diag_duplicate_name(cx.def, p, f.name) in
-          let cx_dup = QcCx { g: cx.g, def: cx.def, effects: cx.effects, tps: cx.tps, eps: cx.eps, frames: cx.frames, ret: cx.ret, diags: push(cx.diags, d), start: cx.start, sub: cx.sub, locals: cx.locals, scope: cx.scope, deferred: cx.deferred } in
+          let cx_dup = QcCx { g: cx.g, def: cx.def, effects: cx.effects, tps: cx.tps, eps: cx.eps, frames: cx.frames, ret: cx.ret, diags: push(cx.diags, d), start: cx.start, sub: cx.sub, locals: cx.locals, scope: cx.scope, deferred: cx.deferred, seq_lets: cx.seq_lets } in
           let res = qc_cx_infer(cx_dup, f.expr, p) in
           qc_cx_record_fields_loop(res.cx, record_name, fields, decl, path, idx + 1, acc)
         else
@@ -927,7 +944,7 @@ fn qc_cx_record_fields_loop(cx: QcCx, record_name: Str, fields: List[QcFieldExpr
       None =>
         let decl_names = map(decl, fn(ft: QcFieldType) => ft.name) in
         let d = qc_diag_hint(qc_diag_unknown_name(cx.def, p, f.name), "fields of `" ++ record_name ++ "`: " ++ join(decl_names, ", ")) in
-        let cx_err = QcCx { g: cx.g, def: cx.def, effects: cx.effects, tps: cx.tps, eps: cx.eps, frames: cx.frames, ret: cx.ret, diags: push(cx.diags, d), start: cx.start, sub: cx.sub, locals: cx.locals, scope: cx.scope, deferred: cx.deferred } in
+        let cx_err = QcCx { g: cx.g, def: cx.def, effects: cx.effects, tps: cx.tps, eps: cx.eps, frames: cx.frames, ret: cx.ret, diags: push(cx.diags, d), start: cx.start, sub: cx.sub, locals: cx.locals, scope: cx.scope, deferred: cx.deferred, seq_lets: cx.seq_lets } in
         let res = qc_cx_infer(cx_err, f.expr, p) in
         qc_cx_record_fields_loop(res.cx, record_name, fields, decl, path, idx + 1, acc)
     }
@@ -943,7 +960,7 @@ fn qc_cx_check_missing_fields_loop(cx: QcCx, record_name: Str, decl: List[QcFiel
     let f = list_at(decl, idx) in
     if !fold(out, false, fn(st: Bool, item: QcTField) => st || item.idx == idx) then
       let d = qc_diag_missing_field(cx.def, path, record_name, f.name) in
-      let next_cx = QcCx { g: cx.g, def: cx.def, effects: cx.effects, tps: cx.tps, eps: cx.eps, frames: cx.frames, ret: cx.ret, diags: push(cx.diags, d), start: cx.start, sub: cx.sub, locals: cx.locals, scope: cx.scope, deferred: cx.deferred } in
+      let next_cx = QcCx { g: cx.g, def: cx.def, effects: cx.effects, tps: cx.tps, eps: cx.eps, frames: cx.frames, ret: cx.ret, diags: push(cx.diags, d), start: cx.start, sub: cx.sub, locals: cx.locals, scope: cx.scope, deferred: cx.deferred, seq_lets: cx.seq_lets } in
       qc_cx_check_missing_fields_loop(next_cx, record_name, decl, out, path, idx + 1)
     else
       qc_cx_check_missing_fields_loop(cx, record_name, decl, out, path, idx + 1)
@@ -961,7 +978,7 @@ fn qc_cx_field(cx: QcCx, target: QcExpr, field_name: Str, path: Str) -> QcInferR
         None =>
           let names = map(fs, fn(ft: QcFieldType) => ft.name) in
           let d = qc_diag_hint(qc_diag_unknown_name(cur_cx.def, path, field_name), "fields of `" ++ qc_print_type(ty) ++ "`: " ++ join(names, ", ")) in
-          let cx_err = QcCx { g: cur_cx.g, def: cur_cx.def, effects: cur_cx.effects, tps: cur_cx.tps, eps: cur_cx.eps, frames: cur_cx.frames, ret: cur_cx.ret, diags: push(cur_cx.diags, d), start: cur_cx.start, sub: cur_cx.sub, locals: cur_cx.locals, scope: cur_cx.scope, deferred: cur_cx.deferred } in
+          let cx_err = QcCx { g: cur_cx.g, def: cur_cx.def, effects: cur_cx.effects, tps: cur_cx.tps, eps: cur_cx.eps, frames: cur_cx.frames, ret: cur_cx.ret, diags: push(cur_cx.diags, d), start: cur_cx.start, sub: cur_cx.sub, locals: cur_cx.locals, scope: cur_cx.scope, deferred: cur_cx.deferred, seq_lets: cur_cx.seq_lets } in
           qc_cx_poison(cx_err)
       },
     _ =>
@@ -970,7 +987,7 @@ fn qc_cx_field(cx: QcCx, target: QcExpr, field_name: Str, path: Str) -> QcInferR
         let found_s = qc_print_type(qc_subst_finish(cur_cx.sub, ty)) in
         let d0 = qc_diag_type_mismatch(cur_cx.def, path, "a record", found_s) in
         let d = if is_var then qc_diag_hint(d0, "the type is not known yet here; annotate it, e.g. `let x: User = ... in x.field`") else d0 in
-        let cx_err = QcCx { g: cur_cx.g, def: cur_cx.def, effects: cur_cx.effects, tps: cur_cx.tps, eps: cur_cx.eps, frames: cur_cx.frames, ret: cur_cx.ret, diags: push(cur_cx.diags, d), start: cur_cx.start, sub: cur_cx.sub, locals: cur_cx.locals, scope: cur_cx.scope, deferred: cur_cx.deferred } in
+        let cx_err = QcCx { g: cur_cx.g, def: cur_cx.def, effects: cur_cx.effects, tps: cur_cx.tps, eps: cur_cx.eps, frames: cur_cx.frames, ret: cur_cx.ret, diags: push(cur_cx.diags, d), start: cur_cx.start, sub: cur_cx.sub, locals: cur_cx.locals, scope: cur_cx.scope, deferred: cur_cx.deferred, seq_lets: cur_cx.seq_lets } in
         qc_cx_poison(cx_err)
       else
         qc_cx_poison(cur_cx)
@@ -979,11 +996,11 @@ fn qc_cx_field(cx: QcCx, target: QcExpr, field_name: Str, path: Str) -> QcInferR
 fn qc_cx_match(cx: QcCx, s: QcExpr, arms: List[QcArm], path: Str) -> QcInferRes =
   let s_res = qc_cx_infer(cx, s, path ++ ".scrutinee") in
   let fresh_res = qc_subst_fresh(s_res.cx.sub) in
-  let cx_fresh = QcCx { g: s_res.cx.g, def: s_res.cx.def, effects: s_res.cx.effects, tps: s_res.cx.tps, eps: s_res.cx.eps, frames: s_res.cx.frames, ret: s_res.cx.ret, diags: s_res.cx.diags, start: s_res.cx.start, sub: fresh_res.subst, locals: s_res.cx.locals, scope: s_res.cx.scope, deferred: s_res.cx.deferred } in
+  let cx_fresh = QcCx { g: s_res.cx.g, def: s_res.cx.def, effects: s_res.cx.effects, tps: s_res.cx.tps, eps: s_res.cx.eps, frames: s_res.cx.frames, ret: s_res.cx.ret, diags: s_res.cx.diags, start: s_res.cx.start, sub: fresh_res.subst, locals: s_res.cx.locals, scope: s_res.cx.scope, deferred: s_res.cx.deferred, seq_lets: s_res.cx.seq_lets } in
   let s_expr = s_res.expr in
   let arms_res = qc_cx_match_arms_loop(cx_fresh, arms, s_expr.ty, fresh_res.ty, path, 0, AccEnd, AccEnd) in
   let next_deferred = push(arms_res.cx.deferred, QcDefExhaust(path, s_expr.ty, arms_res.rows)) in
-  let cx_final = QcCx { g: arms_res.cx.g, def: arms_res.cx.def, effects: arms_res.cx.effects, tps: arms_res.cx.tps, eps: arms_res.cx.eps, frames: arms_res.cx.frames, ret: arms_res.cx.ret, diags: arms_res.cx.diags, start: arms_res.cx.start, sub: arms_res.cx.sub, locals: arms_res.cx.locals, scope: arms_res.cx.scope, deferred: next_deferred } in
+  let cx_final = QcCx { g: arms_res.cx.g, def: arms_res.cx.def, effects: arms_res.cx.effects, tps: arms_res.cx.tps, eps: arms_res.cx.eps, frames: arms_res.cx.frames, ret: arms_res.cx.ret, diags: arms_res.cx.diags, start: arms_res.cx.start, sub: arms_res.cx.sub, locals: arms_res.cx.locals, scope: arms_res.cx.scope, deferred: next_deferred, seq_lets: arms_res.cx.seq_lets } in
   QcInferRes { cx: cx_final, expr: QcTExpr { ty: arms_res.ty, kind: QcTKMatch(s_expr, arms_res.arms) } }
 
 fn qc_cx_match_arms_loop(cx: QcCx, arms: List[QcArm], s_ty: QcType, result_ty: QcType, path: Str, idx: Int, acc_tarms: Accum[QcTArm], acc_rows: Accum[QcTPat]) -> QcCxArmsRes =
@@ -1004,7 +1021,7 @@ fn qc_cx_match_arms_loop(cx: QcCx, arms: List[QcArm], s_ty: QcType, result_ty: Q
     let b_res = qc_cx_branch(guard_res.cx, a.body, result_ty, bpath) in
     let cur_cx = b_res.cx in
     let scope_trunc = match qc_list_slice(cur_cx.scope, 0, depth) { Some(sc) => sc, None => [] } in
-    let cx_arm_done = QcCx { g: cur_cx.g, def: cur_cx.def, effects: cur_cx.effects, tps: cur_cx.tps, eps: cur_cx.eps, frames: cur_cx.frames, ret: cur_cx.ret, diags: cur_cx.diags, start: cur_cx.start, sub: cur_cx.sub, locals: cur_cx.locals, scope: scope_trunc, deferred: cur_cx.deferred } in
+    let cx_arm_done = QcCx { g: cur_cx.g, def: cur_cx.def, effects: cur_cx.effects, tps: cur_cx.tps, eps: cur_cx.eps, frames: cur_cx.frames, ret: cur_cx.ret, diags: cur_cx.diags, start: cur_cx.start, sub: cur_cx.sub, locals: cur_cx.locals, scope: scope_trunc, deferred: cur_cx.deferred, seq_lets: cur_cx.seq_lets } in
     let next_rows = if guard_res.expr == None then AccPush(acc_rows, pat_res.pat) else acc_rows in
     let tarm = QcTArm { pat: pat_res.pat, guard: guard_res.expr, body: b_res.expr } in
     qc_cx_match_arms_loop(cx_arm_done, arms, s_ty, b_res.ty, path, idx + 1, AccPush(acc_tarms, tarm), next_rows)
@@ -1015,7 +1032,7 @@ fn qc_cx_pattern(cx: QcCx, p: QcPat, ty: QcType, path: Str, bound: List[Str]) ->
     QcPBind(n) =>
       let cx_dup = if qc_contains_str_loop(bound, n, 0) then
         let d = qc_diag_duplicate_name(cx.def, path, n) in
-        QcCx { g: cx.g, def: cx.def, effects: cx.effects, tps: cx.tps, eps: cx.eps, frames: cx.frames, ret: cx.ret, diags: push(cx.diags, d), start: cx.start, sub: cx.sub, locals: cx.locals, scope: cx.scope, deferred: cx.deferred }
+        QcCx { g: cx.g, def: cx.def, effects: cx.effects, tps: cx.tps, eps: cx.eps, frames: cx.frames, ret: cx.ret, diags: push(cx.diags, d), start: cx.start, sub: cx.sub, locals: cx.locals, scope: cx.scope, deferred: cx.deferred, seq_lets: cx.seq_lets }
       else cx in
       let bind_res = qc_cx_bind(cx_dup, n, ty) in
       QcCxPatRes { cx: bind_res.cx, pat: QcTPBind(bind_res.id), bound: push(bound, n) },
@@ -1035,14 +1052,14 @@ fn qc_cx_pattern(cx: QcCx, p: QcPat, ty: QcType, path: Str, bound: List[Str]) ->
       match qc_cx_variant(cx, name) {
         None =>
           let d = qc_diag_unknown_name(cx.def, path, name) in
-          let cx_err = QcCx { g: cx.g, def: cx.def, effects: cx.effects, tps: cx.tps, eps: cx.eps, frames: cx.frames, ret: cx.ret, diags: push(cx.diags, d), start: cx.start, sub: cx.sub, locals: cx.locals, scope: cx.scope, deferred: cx.deferred } in
+          let cx_err = QcCx { g: cx.g, def: cx.def, effects: cx.effects, tps: cx.tps, eps: cx.eps, frames: cx.frames, ret: cx.ret, diags: push(cx.diags, d), start: cx.start, sub: cx.sub, locals: cx.locals, scope: cx.scope, deferred: cx.deferred, seq_lets: cx.seq_lets } in
           QcCxPatRes { cx: cx_err, pat: QcTPWild, bound: bound },
         Some(vlookup) =>
           let un_res = qc_cx_unify_at(vlookup.cx, path, ty, vlookup.ty) in
           if !un_res.ok then QcCxPatRes { cx: un_res.cx, pat: QcTPWild, bound: bound }
           else if len(ps) != len(vlookup.fields) then
             let d = qc_diag_arity(un_res.cx.def, path, name, len(vlookup.fields), len(ps)) in
-            let cx_err = QcCx { g: un_res.cx.g, def: un_res.cx.def, effects: un_res.cx.effects, tps: un_res.cx.tps, eps: un_res.cx.eps, frames: un_res.cx.frames, ret: un_res.cx.ret, diags: push(un_res.cx.diags, d), start: un_res.cx.start, sub: un_res.cx.sub, locals: un_res.cx.locals, scope: un_res.cx.scope, deferred: un_res.cx.deferred } in
+            let cx_err = QcCx { g: un_res.cx.g, def: un_res.cx.def, effects: un_res.cx.effects, tps: un_res.cx.tps, eps: un_res.cx.eps, frames: un_res.cx.frames, ret: un_res.cx.ret, diags: push(un_res.cx.diags, d), start: un_res.cx.start, sub: un_res.cx.sub, locals: un_res.cx.locals, scope: un_res.cx.scope, deferred: un_res.cx.deferred, seq_lets: un_res.cx.seq_lets } in
             QcCxPatRes { cx: cx_err, pat: QcTPWild, bound: bound }
           else
             let sub_res = qc_cx_sub_patterns_loop(un_res.cx, ps, vlookup.fields, path, bound, 0, AccEnd) in
@@ -1060,12 +1077,12 @@ fn qc_cx_pattern(cx: QcCx, p: QcPat, ty: QcType, path: Str, bound: List[Str]) ->
                 QcCxPatRes { cx: f_res.cx, pat: QcTPRecord(f_res.fields), bound: f_res.bound },
             _ =>
               let d = qc_diag_unknown_name(cx.def, path, name) in
-              let cx_err = QcCx { g: cx.g, def: cx.def, effects: cx.effects, tps: cx.tps, eps: cx.eps, frames: cx.frames, ret: cx.ret, diags: push(cx.diags, d), start: cx.start, sub: cx.sub, locals: cx.locals, scope: cx.scope, deferred: cx.deferred } in
+              let cx_err = QcCx { g: cx.g, def: cx.def, effects: cx.effects, tps: cx.tps, eps: cx.eps, frames: cx.frames, ret: cx.ret, diags: push(cx.diags, d), start: cx.start, sub: cx.sub, locals: cx.locals, scope: cx.scope, deferred: cx.deferred, seq_lets: cx.seq_lets } in
               QcCxPatRes { cx: cx_err, pat: QcTPWild, bound: bound }
           },
         None =>
           let d = qc_diag_unknown_name(cx.def, path, name) in
-          let cx_err = QcCx { g: cx.g, def: cx.def, effects: cx.effects, tps: cx.tps, eps: cx.eps, frames: cx.frames, ret: cx.ret, diags: push(cx.diags, d), start: cx.start, sub: cx.sub, locals: cx.locals, scope: cx.scope, deferred: cx.deferred } in
+          let cx_err = QcCx { g: cx.g, def: cx.def, effects: cx.effects, tps: cx.tps, eps: cx.eps, frames: cx.frames, ret: cx.ret, diags: push(cx.diags, d), start: cx.start, sub: cx.sub, locals: cx.locals, scope: cx.scope, deferred: cx.deferred, seq_lets: cx.seq_lets } in
           QcCxPatRes { cx: cx_err, pat: QcTPWild, bound: bound }
       }
   }
@@ -1084,7 +1101,7 @@ fn qc_cx_pat_record_fields_loop(cx: QcCx, fs: List[QcFieldPat], decl: List[QcFie
     let fpath = path ++ ".fields." ++ fp.name in
     if qc_contains_str_loop(seen, fp.name, 0) then
       let d = qc_diag_duplicate_name(cx.def, fpath, fp.name) in
-      let cx_dup = QcCx { g: cx.g, def: cx.def, effects: cx.effects, tps: cx.tps, eps: cx.eps, frames: cx.frames, ret: cx.ret, diags: push(cx.diags, d), start: cx.start, sub: cx.sub, locals: cx.locals, scope: cx.scope, deferred: cx.deferred } in
+      let cx_dup = QcCx { g: cx.g, def: cx.def, effects: cx.effects, tps: cx.tps, eps: cx.eps, frames: cx.frames, ret: cx.ret, diags: push(cx.diags, d), start: cx.start, sub: cx.sub, locals: cx.locals, scope: cx.scope, deferred: cx.deferred, seq_lets: cx.seq_lets } in
       qc_cx_pat_record_fields_loop(cx_dup, fs, decl, path, bound, idx + 1, acc, seen)
     else
       let next_seen = push(seen, fp.name) in
@@ -1095,7 +1112,7 @@ fn qc_cx_pat_record_fields_loop(cx: QcCx, fs: List[QcFieldPat], decl: List[QcFie
           qc_cx_pat_record_fields_loop(p_res.cx, fs, decl, path, p_res.bound, idx + 1, AccPush(acc, tp_field), next_seen),
         None =>
           let d = qc_diag_unknown_name(cx.def, fpath, fp.name) in
-          let cx_err = QcCx { g: cx.g, def: cx.def, effects: cx.effects, tps: cx.tps, eps: cx.eps, frames: cx.frames, ret: cx.ret, diags: push(cx.diags, d), start: cx.start, sub: cx.sub, locals: cx.locals, scope: cx.scope, deferred: cx.deferred } in
+          let cx_err = QcCx { g: cx.g, def: cx.def, effects: cx.effects, tps: cx.tps, eps: cx.eps, frames: cx.frames, ret: cx.ret, diags: push(cx.diags, d), start: cx.start, sub: cx.sub, locals: cx.locals, scope: cx.scope, deferred: cx.deferred, seq_lets: cx.seq_lets } in
           qc_cx_pat_record_fields_loop(cx_err, fs, decl, path, bound, idx + 1, acc, next_seen)
       }
 
@@ -1125,7 +1142,7 @@ fn qc_cx_infer(cx: QcCx, e: QcExpr, path: Str) -> QcInferRes =
       let ann_res = match ann {
         Some(t) =>
           let res_t = qc_resolve_type(cx.g, t, cx.tps, cx.eps, cx.def, path ++ ".type", cx.diags) in
-          QcOptTypeRes { cx: QcCx { g: cx.g, def: cx.def, effects: cx.effects, tps: cx.tps, eps: cx.eps, frames: cx.frames, ret: cx.ret, diags: res_t.diags, start: cx.start, sub: cx.sub, locals: cx.locals, scope: cx.scope, deferred: cx.deferred }, ty: res_t.ty },
+          QcOptTypeRes { cx: QcCx { g: cx.g, def: cx.def, effects: cx.effects, tps: cx.tps, eps: cx.eps, frames: cx.frames, ret: cx.ret, diags: res_t.diags, start: cx.start, sub: cx.sub, locals: cx.locals, scope: cx.scope, deferred: cx.deferred, seq_lets: cx.seq_lets }, ty: res_t.ty },
         None => QcOptTypeRes { cx: cx, ty: None }
       } in
       let v_res = match ann_res.ty {
@@ -1139,7 +1156,7 @@ fn qc_cx_infer(cx: QcCx, e: QcExpr, path: Str) -> QcInferRes =
     QcEList(items) =>
       let fresh_elem = qc_subst_fresh(cx.sub) in
       let elem = fresh_elem.ty in
-      let fresh_wrap = qc_cx_wrap_type(QcCx { g: cx.g, def: cx.def, effects: cx.effects, tps: cx.tps, eps: cx.eps, frames: cx.frames, ret: cx.ret, diags: cx.diags, start: cx.start, sub: fresh_elem.subst, locals: cx.locals, scope: cx.scope, deferred: cx.deferred }, QcTList(elem)) in
+      let fresh_wrap = qc_cx_wrap_type(QcCx { g: cx.g, def: cx.def, effects: cx.effects, tps: cx.tps, eps: cx.eps, frames: cx.frames, ret: cx.ret, diags: cx.diags, start: cx.start, sub: fresh_elem.subst, locals: cx.locals, scope: cx.scope, deferred: cx.deferred, seq_lets: cx.seq_lets }, QcTList(elem)) in
       let items_res = qc_cx_list_items_loop(fresh_wrap.cx, items, elem, path, 0, AccEnd) in
       let final_ty = if items_res.ty == elem then fresh_wrap.ty else (qc_cx_wrap_at(items_res.cx, path, QcTList(items_res.ty))).ty in
       QcInferRes { cx: items_res.cx, expr: QcTExpr { ty: final_ty, kind: QcTKList(items_res.items) } },
@@ -1148,7 +1165,10 @@ fn qc_cx_infer(cx: QcCx, e: QcExpr, path: Str) -> QcInferRes =
       else
         let seq_res = qc_cx_seq_items_loop(cx, items, path, 0, AccEnd) in
         let last_ty = if len(seq_res.exprs) > 0 then (list_at(seq_res.exprs, len(seq_res.exprs) - 1)).ty else QcTUnit in
-        QcInferRes { cx: seq_res.cx, expr: QcTExpr { ty: last_ty, kind: QcTKSeq(seq_res.exprs) } },
+        # The sequence's `let` names end with it (Rust: `seq_lets.truncate`).
+        let sc = seq_res.cx in
+        let cx_out = QcCx { g: sc.g, def: sc.def, effects: sc.effects, tps: sc.tps, eps: sc.eps, frames: sc.frames, ret: sc.ret, diags: sc.diags, start: sc.start, sub: sc.sub, locals: sc.locals, scope: sc.scope, deferred: sc.deferred, seq_lets: cx.seq_lets } in
+        QcInferRes { cx: cx_out, expr: QcTExpr { ty: last_ty, kind: QcTKSeq(seq_res.exprs) } },
     QcERecord(name, fields) => qc_cx_record(cx, name, fields, path),
     QcEField(target, field_name) => qc_cx_field(cx, target, field_name, path),
     QcEMatch(s, arms) => qc_cx_match(cx, s, arms, path),
@@ -1183,12 +1203,20 @@ fn qc_cx_seq_items_loop(cx: QcCx, items: List[QcExpr], path: Str, idx: Int, acc:
                 let d_last = list_at(cx_m.diags, len(cx_m.diags) - 1) in
                 let d_hinted = qc_diag_hint(d_last, "a Result must be handled with `match` (or bound with `let`), also inside a List, Option, Map or record; only other values can be discarded in `{ a; b }`") in
                 let diags_upd = qc_list_set(cx_m.diags, len(cx_m.diags) - 1, d_hinted) in
-                QcCx { g: cx_m.g, def: cx_m.def, effects: cx_m.effects, tps: cx_m.tps, eps: cx_m.eps, frames: cx_m.frames, ret: cx_m.ret, diags: diags_upd, start: cx_m.start, sub: cx_m.sub, locals: cx_m.locals, scope: cx_m.scope, deferred: cx_m.deferred }
+                QcCx { g: cx_m.g, def: cx_m.def, effects: cx_m.effects, tps: cx_m.tps, eps: cx_m.eps, frames: cx_m.frames, ret: cx_m.ret, diags: diags_upd, start: cx_m.start, sub: cx_m.sub, locals: cx_m.locals, scope: cx_m.scope, deferred: cx_m.deferred, seq_lets: cx_m.seq_lets }
               else cx_m
             else cur_cx
         }
       else cur_cx in
-    qc_cx_seq_items_loop(next_cx, items, path, idx + 1, AccPush(acc, t))
+    # The `let` of a non-last item ends at its `;` (named by E0201 in later items).
+    let lets_cx = match list_at(items, idx) {
+      QcELet(name, _, _, _) =>
+        if idx + 1 < len(items) then
+          QcCx { g: next_cx.g, def: next_cx.def, effects: next_cx.effects, tps: next_cx.tps, eps: next_cx.eps, frames: next_cx.frames, ret: next_cx.ret, diags: next_cx.diags, start: next_cx.start, sub: next_cx.sub, locals: next_cx.locals, scope: next_cx.scope, deferred: next_cx.deferred, seq_lets: push(next_cx.seq_lets, name) }
+        else next_cx,
+      _ => next_cx
+    } in
+    qc_cx_seq_items_loop(lets_cx, items, path, idx + 1, AccPush(acc, t))
 
 fn qc_contains_result(g: QcGlobals, t: QcType, params: List[Str], flags: List[Bool], seen: List[Str]) -> Bool =
   if len(seen) >= 256 then false
@@ -1250,7 +1278,7 @@ fn qc_cx_run_deferred_loop(cx: QcCx, defs: List[QcDeferred], idx: Int) -> QcCx =
         let fin_t = qc_subst_finish(cx.sub, t) in
         if qc_contains_fn(cx.g.tp, fin_t, []) then
           let diag = qc_diag_hint(qc_diag_type_mismatch(cx.def, path, "a comparable type", qc_print_type(fin_t)), "functions cannot be compared") in
-          QcCx { g: cx.g, def: cx.def, effects: cx.effects, tps: cx.tps, eps: cx.eps, frames: cx.frames, ret: cx.ret, diags: push(cx.diags, diag), start: cx.start, sub: cx.sub, locals: cx.locals, scope: cx.scope, deferred: cx.deferred }
+          QcCx { g: cx.g, def: cx.def, effects: cx.effects, tps: cx.tps, eps: cx.eps, frames: cx.frames, ret: cx.ret, diags: push(cx.diags, diag), start: cx.start, sub: cx.sub, locals: cx.locals, scope: cx.scope, deferred: cx.deferred, seq_lets: cx.seq_lets }
         else cx,
       QcDefConcat(path, t) =>
         let res_t = qc_subst_resolve(cx.sub, t) in
@@ -1262,14 +1290,14 @@ fn qc_cx_run_deferred_loop(cx: QcCx, defs: List[QcDeferred], idx: Int) -> QcCx =
         } in
         if !ok then
           let diag = qc_diag_type_mismatch(cx.def, path, "Str, Bytes or List[_]", qc_print_type(qc_subst_finish(cx.sub, res_t))) in
-          QcCx { g: cx.g, def: cx.def, effects: cx.effects, tps: cx.tps, eps: cx.eps, frames: cx.frames, ret: cx.ret, diags: push(cx.diags, diag), start: cx.start, sub: cx.sub, locals: cx.locals, scope: cx.scope, deferred: cx.deferred }
+          QcCx { g: cx.g, def: cx.def, effects: cx.effects, tps: cx.tps, eps: cx.eps, frames: cx.frames, ret: cx.ret, diags: push(cx.diags, diag), start: cx.start, sub: cx.sub, locals: cx.locals, scope: cx.scope, deferred: cx.deferred, seq_lets: cx.seq_lets }
         else cx,
       QcDefExhaust(path, t, rows) =>
         let fin_t = qc_subst_finish(cx.sub, t) in
         match qc_missing_pattern(cx.g.tp, fin_t, rows) {
           Some(w) =>
             let diag = qc_diag_non_exhaustive(cx.def, path, w) in
-            QcCx { g: cx.g, def: cx.def, effects: cx.effects, tps: cx.tps, eps: cx.eps, frames: cx.frames, ret: cx.ret, diags: push(cx.diags, diag), start: cx.start, sub: cx.sub, locals: cx.locals, scope: cx.scope, deferred: cx.deferred },
+            QcCx { g: cx.g, def: cx.def, effects: cx.effects, tps: cx.tps, eps: cx.eps, frames: cx.frames, ret: cx.ret, diags: push(cx.diags, diag), start: cx.start, sub: cx.sub, locals: cx.locals, scope: cx.scope, deferred: cx.deferred, seq_lets: cx.seq_lets },
           None => cx
         }
     } in
@@ -1347,7 +1375,7 @@ fn qc_cx_zonk(cx: QcCx, e: QcTExpr) -> QcInferRes =
             QcTList(_) => QcZonkBuiltinRes { cx: xs_res.cx, b: QcBListLen },
             other =>
               let d = qc_diag_type_mismatch(xs_res.cx.def, path ++ ".args[0]", "Str or List[_]", qc_print_type(other)) in
-              let cx_err = QcCx { g: xs_res.cx.g, def: xs_res.cx.def, effects: xs_res.cx.effects, tps: xs_res.cx.tps, eps: xs_res.cx.eps, frames: xs_res.cx.frames, ret: xs_res.cx.ret, diags: push(xs_res.cx.diags, d), start: xs_res.cx.start, sub: xs_res.cx.sub, locals: xs_res.cx.locals, scope: xs_res.cx.scope, deferred: xs_res.cx.deferred } in
+              let cx_err = QcCx { g: xs_res.cx.g, def: xs_res.cx.def, effects: xs_res.cx.effects, tps: xs_res.cx.tps, eps: xs_res.cx.eps, frames: xs_res.cx.frames, ret: xs_res.cx.ret, diags: push(xs_res.cx.diags, d), start: xs_res.cx.start, sub: xs_res.cx.sub, locals: xs_res.cx.locals, scope: xs_res.cx.scope, deferred: xs_res.cx.deferred, seq_lets: xs_res.cx.seq_lets } in
               QcZonkBuiltinRes { cx: cx_err, b: b }
           }
         else QcZonkBuiltinRes { cx: xs_res.cx, b: b } in
@@ -1552,7 +1580,7 @@ fn qc_check_fn(f: QcFnDef, g: QcGlobals, diags: List[QcDiag]) -> QcCheckFnRes =
   let diags_effs = qc_check_fn_effects_loop(f.name, f.effects, f.eparams, diags_ep, 0) in
   let diags_main = if f.name == "main" then qc_check_main_sig(f, ret_ty, diags_effs) else diags_effs in
   let mut_cx0 = qc_cx_new(g, f.name, [], diags_main) in
-  let mut_cx1 = QcCx { g: mut_cx0.g, def: mut_cx0.def, effects: [], tps: f.tparams, eps: f.eparams, frames: mut_cx0.frames, ret: Some(ret_ty), diags: mut_cx0.diags, start: before, sub: mut_cx0.sub, locals: mut_cx0.locals, scope: mut_cx0.scope, deferred: mut_cx0.deferred } in
+  let mut_cx1 = QcCx { g: mut_cx0.g, def: mut_cx0.def, effects: [], tps: f.tparams, eps: f.eparams, frames: mut_cx0.frames, ret: Some(ret_ty), diags: mut_cx0.diags, start: before, sub: mut_cx0.sub, locals: mut_cx0.locals, scope: mut_cx0.scope, deferred: mut_cx0.deferred, seq_lets: mut_cx0.seq_lets } in
   let mut_cx2 = qc_cx_bind_fn_params_loop(mut_cx1, f.params, ptypes, 0) in
   let reqs_res = qc_cx_expect_list_loop(mut_cx2, f.reqs, QcTBool, "req", 0, AccEnd) in
   let mut_cx3 = reqs_res.cx in
@@ -1565,7 +1593,7 @@ fn qc_check_fn(f: QcFnDef, g: QcGlobals, diags: List[QcDiag]) -> QcCheckFnRes =
   let mut_cx5 = enss_res.cx in
   let ens_exprs = enss_res.exprs in
   let mut_cx6 = if r_local_res.id != None then qc_cx_unbind(mut_cx5) else mut_cx5 in
-  let mut_cx7 = QcCx { g: mut_cx6.g, def: mut_cx6.def, effects: f.effects, tps: mut_cx6.tps, eps: mut_cx6.eps, frames: mut_cx6.frames, ret: mut_cx6.ret, diags: mut_cx6.diags, start: mut_cx6.start, sub: mut_cx6.sub, locals: mut_cx6.locals, scope: mut_cx6.scope, deferred: mut_cx6.deferred } in
+  let mut_cx7 = QcCx { g: mut_cx6.g, def: mut_cx6.def, effects: f.effects, tps: mut_cx6.tps, eps: mut_cx6.eps, frames: mut_cx6.frames, ret: mut_cx6.ret, diags: mut_cx6.diags, start: mut_cx6.start, sub: mut_cx6.sub, locals: mut_cx6.locals, scope: mut_cx6.scope, deferred: mut_cx6.deferred, seq_lets: mut_cx6.seq_lets } in
   let body_res = qc_cx_expect(mut_cx7, f.body, ret_ty, "body") in
   let all_exprs = req_exprs ++ ens_exprs ++ [body_res.expr] in
   let fin = qc_cx_finish(body_res.cx, all_exprs) in

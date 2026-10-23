@@ -1,0 +1,4 @@
+fn f(x: Int) -> Int = x + 1
+test t_f = f(1) == 2
+fn g() -> Int = 7
+test t_g = g() == 7

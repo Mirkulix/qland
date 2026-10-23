@@ -195,8 +195,9 @@ fn handshake_lists_the_tools_with_the_language_reference() {
     assert!(reference.contains("QAL language reference") && reference.contains("alias_reference") && reference.contains("signature_change"));
     // "At most one page": a bounded size.
     // Phase 2 (generics, closures, maps, bytes, proofs), Phase 3a (a "Services" section of 12 lines)
-    // Phase 3b (two lines on `std.` names) and Phase 6a (one line on effect parameters) add to it.
-    assert!(qal_cli::mcp::REFERENCE.lines().count() <= 73 && qal_cli::mcp::REFERENCE.len() <= 9700, "{} lines, {} bytes", qal_cli::mcp::REFERENCE.lines().count(), qal_cli::mcp::REFERENCE.len());
+    // Phase 3b (two lines on `std.` names), Phase 6a (one line on effect parameters) and Phase 6b
+    // (one line on `qal_run` cases, one on the tests `qal_define` runs) add to it.
+    assert!(qal_cli::mcp::REFERENCE.lines().count() <= 75 && qal_cli::mcp::REFERENCE.len() <= 9916, "{} lines, {} bytes", qal_cli::mcp::REFERENCE.lines().count(), qal_cli::mcp::REFERENCE.len());
     // An unknown version gets the newest legacy one.
     let r = c.request("initialize", json!({"protocolVersion": "1999-01-01", "capabilities": {}, "clientInfo": {"name": "x", "version": "1"}}));
     assert_eq!(r["result"]["protocolVersion"], "2025-11-25");
@@ -773,6 +774,57 @@ fn std_agents_cannot_rename_released_names() {
     let (err, v) = c.call("qal_rename", json!({"old": "std.zz.a", "new": "std.zz.b"}));
     assert!(!err, "{v}");
     assert_eq!(c.finish(), Some(0));
+}
+
+#[test]
+fn run_takes_a_list_of_cases() {
+    both(run_takes_a_list_of_cases_in);
+}
+
+fn run_takes_a_list_of_cases_in(c: &mut Client) {
+    let src = "fn main(args: List[Str]) -> Int !io = { print(read_all() ++ join(args, \",\")); if len(args) == 0 then 1 else 0 }";
+    let (err, v) = c.call("qal_define", json!({"source": src}));
+    assert!(!err, "{v}");
+    // One call runs every case with its own arguments and input, in order.
+    let (err, v) = c.call("qal_run", json!({"cases": [{"args": ["a"], "stdin": "x"}, {"stdin": "y"}], "allow": ["io"]}));
+    assert_eq!(v["results"][0], json!({"args": ["a"], "stdin": "x", "exit_code": 0, "stdout": "xa\n"}), "{v}");
+    assert_eq!(v["results"][1], json!({"args": [], "stdin": "y", "exit_code": 1, "stdout": "y\n"}), "{v}");
+    // A case that does not exit with 0 fails the call.
+    assert!(err, "{v}");
+    let (err, v) = c.call("qal_run", json!({"cases": [{"args": ["a", "b"]}, {"args": ["c"], "stdin": ""}], "allow": ["io"]}));
+    assert_eq!((err, v["results"][0]["stdout"].as_str(), v["results"][0].get("stdin")), (false, Some("a,b\n"), None), "{v}");
+    // A case's runtime error is its result; the other cases still run.
+    let (err, v) = c.call("qal_run", json!({"cases": [{"args": ["a"]}, {"args": ["b"]}]}));
+    assert_eq!((err, v["results"][0]["error"]["kind"].as_str(), v["results"].as_array().map(Vec::len)), (true, Some("permission_denied"), Some(2)), "{v}");
+    // With `cases`, the arguments and input belong to the cases.
+    for bad in [json!({"cases": [{"args": ["a"]}], "args": ["z"]}), json!({"cases": [{}], "stdin": "z"}), json!({"cases": []}), json!({"cases": [{"argv": []}]}), json!({"cases": vec![json!({}); 65]})] {
+        let (err, v) = c.call("qal_run", bad.clone());
+        assert_eq!((err, v["diagnostics"][0]["code"].as_str()), (true, Some("E0701")), "{bad}: {v}");
+    }
+    // Without `cases`, `qal_run` is unchanged.
+    let (err, v) = c.call("qal_run", json!({"args": ["q"], "stdin": "p", "allow": ["io"]}));
+    assert_eq!((err, v), (false, json!({"exit_code": 0, "stdout": "pq\n"})));
+}
+
+#[test]
+fn define_runs_the_tests_of_the_defined_names() {
+    both(define_runs_the_tests_of_the_defined_names_in);
+}
+
+fn define_runs_the_tests_of_the_defined_names_in(c: &mut Client) {
+    let (err, v) = c.call("qal_define", json!({"source": "fn f(x: Int) -> Int = x + 1\ntest t_f = f(1) == 2\nfn g() -> Int = 7\ntest t_g = g() == 7"}));
+    assert!(!err, "{v}");
+    assert_eq!((v["tests"].clone(), v["passed"].as_u64(), v["failed"].as_u64()), (json!([{"name": "t_f", "passed": true}, {"name": "t_g", "passed": true}]), Some(2), Some(0)), "{v}");
+    // A new version of `f` runs the tests that use `f` (not `t_g`); a failing test keeps the definition.
+    let (err, v) = c.call("qal_define", json!({"source": "fn f(x: Int) -> Int = x + 2"}));
+    assert!(!err, "{v}");
+    assert_eq!((v["tests"][0]["name"].as_str(), v["tests"][0]["passed"].as_bool(), v["tests"].as_array().map(Vec::len), v["failed"].as_u64()), (Some("t_f"), Some(false), Some(1), Some(1)), "{v}");
+    assert!(v["defined"].as_array().unwrap().iter().any(|d| d["name"] == "f"), "{v}");
+    let (_, v) = c.call("qal_call", json!({"fn": "f", "args": [1]}));
+    assert_eq!(v["ok"], 3, "{v}");
+    // Names no test uses, and types, run nothing.
+    let (err, v) = c.call("qal_define", json!({"source": "fn h() -> Int = 1\ntype P = { x: Int }"}));
+    assert!(!err && v.get("tests").is_none() && v.get("passed").is_none(), "{v}");
 }
 
 /// Runs `body` on a fresh project, and again (Phase 4 §17) as the architect of a team store in its
