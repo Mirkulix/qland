@@ -864,7 +864,7 @@ fn the_author_reads_review_comments_with_show() {
 #[test]
 fn the_team_reference_has_each_roles_rules_in_twelve_lines() {
     use qal_store::team::policy::{Role, ROLES};
-    assert!(!qal_cli::mcp::REFERENCE.contains("## Team") && qal_cli::mcp::REFERENCE.ends_with("qal_query and qal_view.\n"));
+    assert!(!qal_cli::mcp::REFERENCE.contains("## Team") && qal_cli::mcp::REFERENCE.ends_with("then qal_view only what you will edit.\n"));
     assert!(qal_cli::mcp::TEAM_REFERENCE.starts_with("## Team\n"));
     for r in ROLES {
         let t = qal_cli::mcp::team_reference(r);

@@ -649,7 +649,7 @@ impl Server {
                 }
                 ops::view(&ctx, &names)
             }
-            "qal_query" => ops::query(&ctx, &Query { name: a.string("name")?, type_pattern: a.string("type")?, uses: a.string("uses")? }),
+            "qal_query" => ops::query(&ctx, &Query { name: a.string("name")?, type_pattern: a.string("type")?, uses: a.string("uses")?, outline: a.flag("outline")? }),
             "qal_test" => {
                 let seed = match a.get("seed") {
                     None => 0,
@@ -788,6 +788,14 @@ impl<'a> Args<'a> {
             None => Ok(None),
             Some(J::String(s)) => Ok(Some(s.clone())),
             Some(_) => Err(format!("`{key}` must be a string")),
+        }
+    }
+
+    fn flag(&self, key: &str) -> Result<bool, String> {
+        match self.get(key) {
+            None => Ok(false),
+            Some(J::Bool(b)) => Ok(*b),
+            Some(_) => Err(format!("`{key}` must be a boolean")),
         }
     }
 
@@ -1188,7 +1196,7 @@ fn tool_params(tool: &str) -> &'static [&'static str] {
     match tool {
         "qal_define" => &["source", "agent", "change"],
         "qal_view" => &["names", "change"],
-        "qal_query" => &["name", "type", "uses", "change"],
+        "qal_query" => &["name", "type", "uses", "outline", "change"],
         "qal_test" => &["names", "seed", "change"],
         "qal_prove" => &["names", "change"],
         "qal_run" => &["entry", "args", "stdin", "cases", "allow", "change"],
@@ -1253,8 +1261,8 @@ pub fn tools() -> J {
          "description": "Show stored definitions as text with their hash, signature, effects and the signatures of their direct dependencies. Names, or `#<hash>` for old versions from the history.",
          "inputSchema": {"type": "object", "properties": {"names": list("Names or #<hash>.")}, "required": ["names"], "additionalProperties": false}},
         {"name": "qal_query", "title": "Search the QAL codebase", "annotations": read_only,
-         "description": "List stored definitions {name, kind, hash, signature, effects}, filtered by name prefix, signature pattern (`_` = any one type, e.g. `fn(Str) -> _`) and/or direct use of a name or #hash. No filter lists everything.",
-         "inputSchema": {"type": "object", "properties": {"name": s("Name prefix."), "type": s("Signature pattern, e.g. fn(List[Int]) -> Int."), "uses": s("Only definitions that refer to this name or #hash.")}, "additionalProperties": false}},
+         "description": "List stored definitions {name, kind, hash, signature, effects}, filtered by name prefix, signature pattern (`_` = any one type, e.g. `fn(Str) -> _`) and/or direct use of a name or #hash. No filter lists everything. `outline: true` adds each definition's `contracts` (req/ens), `uses`, `used_by` (functions) and `tests`: the view to read before a change, much smaller than qal_view.",
+         "inputSchema": {"type": "object", "properties": {"name": s("Name prefix."), "type": s("Signature pattern, e.g. fn(List[Int]) -> Int."), "uses": s("Only definitions that refer to this name or #hash."), "outline": {"type": "boolean", "description": "Add contracts, uses, used_by and tests to every entry."}}, "additionalProperties": false}},
         {"name": "qal_rename", "title": "Rename a QAL definition", "annotations": writes,
          "description": "Rename a stored definition. No hash changes; everything that refers to it follows the new name; the history moves along.",
          "inputSchema": {"type": "object", "properties": {"old": s("Current name."), "new": s("New name."), "agent": agent.clone()}, "required": ["old", "new"], "additionalProperties": false}},

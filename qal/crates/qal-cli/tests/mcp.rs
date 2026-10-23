@@ -196,8 +196,9 @@ fn handshake_lists_the_tools_with_the_language_reference() {
     // "At most one page": a bounded size.
     // Phase 2 (generics, closures, maps, bytes, proofs), Phase 3a (a "Services" section of 12 lines)
     // Phase 3b (two lines on `std.` names), Phase 6a (one line on effect parameters) and Phase 6b
-    // (one line on `qal_run` cases, one on the tests `qal_define` runs) add to it.
-    assert!(qal_cli::mcp::REFERENCE.lines().count() <= 75 && qal_cli::mcp::REFERENCE.len() <= 9916, "{} lines, {} bytes", qal_cli::mcp::REFERENCE.lines().count(), qal_cli::mcp::REFERENCE.len());
+    // (one line on `qal_run` cases, one on the tests `qal_define` runs) and the deployment tests
+    // of 2026-10-23 (the outline to read before a change) add to it.
+    assert!(qal_cli::mcp::REFERENCE.lines().count() <= 75 && qal_cli::mcp::REFERENCE.len() <= 9973, "{} lines, {} bytes", qal_cli::mcp::REFERENCE.lines().count(), qal_cli::mcp::REFERENCE.len());
     // An unknown version gets the newest legacy one.
     let r = c.request("initialize", json!({"protocolVersion": "1999-01-01", "capabilities": {}, "clientInfo": {"name": "x", "version": "1"}}));
     assert_eq!(r["result"]["protocolVersion"], "2025-11-25");
@@ -774,6 +775,28 @@ fn std_agents_cannot_rename_released_names() {
     let (err, v) = c.call("qal_rename", json!({"old": "std.zz.a", "new": "std.zz.b"}));
     assert!(!err, "{v}");
     assert_eq!(c.finish(), Some(0));
+}
+
+#[test]
+fn query_outline_is_the_compact_view_for_a_change() {
+    both(query_outline_is_the_compact_view_for_a_change_in);
+}
+
+fn query_outline_is_the_compact_view_for_a_change_in(c: &mut Client) {
+    let src = "fn inc(n: Int) -> Int req n >= 0 ens r > n = n + 1\nfn twice(n: Int) -> Int req n >= 0 = inc(inc(n))\ntest t_inc = inc(1) == 2";
+    let (err, v) = c.call("qal_define", json!({"source": src}));
+    assert!(!err, "{v}");
+    // One call tells an agent what `inc` promises, needs, is relied on by and is covered by,
+    // without the text of any body.
+    let (err, v) = c.call("qal_query", json!({"name": "inc", "outline": true}));
+    assert!(!err, "{v}");
+    let e = &v["results"][0];
+    assert_eq!((e["name"].as_str(), &e["contracts"], &e["uses"], &e["used_by"], &e["tests"]), (Some("inc"), &json!(["req n >= 0", "ens r > n"]), &json!([]), &json!(["twice"]), &json!(["t_inc"])), "{v}");
+    // Without the flag the entries stay compact in the other direction: no outline fields.
+    let (_, v) = c.call("qal_query", json!({"name": "inc"}));
+    assert!(v["results"][0].get("contracts").is_none() && v["results"][0].get("used_by").is_none(), "{v}");
+    let (err, v) = c.call("qal_query", json!({"outline": "yes"}));
+    assert!(err && v["diagnostics"][0]["message"].as_str().unwrap().contains("`outline` must be a boolean"), "{v}");
 }
 
 #[test]

@@ -20,7 +20,7 @@
 //!   qal define <file> [--agent <name>] [--breaking]  -> {"defined":[{name,kind,hash,status,old_hash?}],"proofs":[...]?} | {"diagnostics":[...]}
 //!                                                       (a function with a refuted contract is not stored: E0801)
 //!   qal view <name|#hash>...                         -> {"views":[{name,kind,hash,signature,effects,text,deps}]}
-//!   qal query [--name <prefix>] [--type <pattern>] [--uses <name|#hash>]
+//!   qal query [--name <prefix>] [--type <pattern>] [--uses <name|#hash>] [--outline]
 //!                                                    -> {"results":[{name,kind,hash,signature,effects}]}
 //!   qal rename <old> <new> [--agent <name>] [--breaking] -> {"renamed":{name,kind,hash}}
 //!   qal delete <name>... [--agent <name>] [--breaking] -> {"deleted":[{name,kind,hash}]} | {"diagnostics":[...]} (E0406 has_dependents:
@@ -81,7 +81,7 @@ use std::sync::Arc;
 const USAGE: &str = "usage: qal <check|fmt> <file>\n       \
                      qal init [--std] | define <file> [--agent <name>] [--breaking] | view <name>... | rename <old> <new> [--agent <name>] [--breaking] | delete <name>... [--agent <name>] [--breaking] | history <name> | build <name>\n       \
                      qal export <prefix> --out <file> [--name <pkg>] | import <file|url> | install <file|url>\n       \
-                     qal query [--name <prefix>] [--type <pattern>] [--uses <name>]\n       \
+                     qal query [--name <prefix>] [--type <pattern>] [--uses <name>] [--outline]\n       \
                      qal call <file> [--allow <spec>] <fn> [args...] | call <fn> [--allow <spec>] [args...]\n       \
                      qal test [--allow <spec>] [--seed <n>] [<file> | <name>...] | prove [<file> | <name>...]\n       \
                      qal run <file|name> [--allow <spec>] [--] [args...]\n       \
@@ -250,7 +250,8 @@ fn store_command(cmd: &str, args: &[String]) -> ExitCode {
         };
     }
     let breaking = matches!(cmd, "define" | "delete" | "rename") && args.iter().any(|a| a == "--breaking");
-    let without: Vec<String> = args.iter().filter(|a| !(breaking && *a == "--breaking")).cloned().collect();
+    let outline = cmd == "query" && args.iter().any(|a| a == "--outline");
+    let without: Vec<String> = args.iter().filter(|a| !(breaking && *a == "--breaking") && !(outline && *a == "--outline")).cloned().collect();
     let args = without.as_slice();
     let options: &[&str] = match cmd {
         "define" | "rename" | "delete" => &["agent"],
@@ -278,7 +279,7 @@ fn store_command(cmd: &str, args: &[String]) -> ExitCode {
         }
         ("view", names) if !names.is_empty() => with_ctx(|c| ops::view(c, names)),
         ("query", []) => {
-            let q = Query { name: s.one("name").map(str::to_string), type_pattern: s.one("type").map(str::to_string), uses: s.one("uses").map(str::to_string) };
+            let q = Query { name: s.one("name").map(str::to_string), type_pattern: s.one("type").map(str::to_string), uses: s.one("uses").map(str::to_string), outline };
             with_ctx(|c| ops::query(c, &q))
         }
         ("rename", [old, new]) => with_ctx(|c| ops::rename(c, old, new, agent, breaking)),

@@ -287,6 +287,27 @@ fn query_by_name_prefix_signature_and_uses() {
 }
 
 #[test]
+fn query_outline_adds_contracts_uses_users_and_tests() {
+    // The compact view for changes: what a definition promises, what it needs, who depends on it
+    // and which tests cover it, without the text of any body.
+    let mut s = store();
+    ok(&mut s, "fn inc(n: Int) -> Int req n >= 0 ens r > n = n + 1\nfn twice(n: Int) -> Int req n >= 0 = inc(inc(n))\ntest t_inc = inc(1) == 2\ntype P = { a: Int }");
+    let outline = s.query(&Query { outline: true, ..Query::default() }).unwrap();
+    let inc = outline.iter().find(|e| e.name == "inc").unwrap();
+    assert_eq!(inc.contracts.as_deref(), Some(&["req n >= 0".to_string(), "ens r > n".to_string()][..]));
+    assert_eq!((inc.uses.as_deref(), inc.used_by.as_deref(), inc.tests.as_deref()), (Some(&[][..]), Some(&["twice".to_string()][..]), Some(&["t_inc".to_string()][..])));
+    let twice = outline.iter().find(|e| e.name == "twice").unwrap();
+    assert_eq!((twice.contracts.as_deref(), twice.uses.as_deref(), twice.used_by.as_deref(), twice.tests.as_deref()), (Some(&["req n >= 0".to_string()][..]), Some(&["inc".to_string()][..]), Some(&[][..]), Some(&[][..])));
+    // Types and tests carry the fields too (a test uses, nothing uses it; a type has no contracts).
+    let t = outline.iter().find(|e| e.name == "t_inc").unwrap();
+    assert_eq!((t.contracts.as_deref(), t.uses.as_deref()), (Some(&[][..]), Some(&["inc".to_string()][..])));
+    assert_eq!(outline.iter().find(|e| e.name == "P").unwrap().used_by.as_deref(), Some(&[][..]));
+    // Without `outline`, the entries stay as they were.
+    let plain = s.query(&Query::default()).unwrap();
+    assert!(plain.iter().all(|e| e.contracts.is_none() && e.uses.is_none() && e.used_by.is_none() && e.tests.is_none()));
+}
+
+#[test]
 fn stored_codebase_rehashes_to_the_stored_hashes() {
     for src in [MATH, include_str!("../../../examples/age.qal"), include_str!("../../../examples/wordcount.qal")] {
         let mut s = store();

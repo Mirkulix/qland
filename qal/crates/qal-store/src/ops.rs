@@ -59,6 +59,9 @@ pub struct Query {
     pub type_pattern: Option<String>,
     /// A name or `#<hash>`: only definitions that refer to it directly.
     pub uses: Option<String>,
+    /// Add `contracts`, `uses`, `used_by` and `tests` to every entry: the compact view of a
+    /// codebase for a change (what each definition promises, needs and is relied on by).
+    pub outline: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -68,6 +71,18 @@ pub struct Entry {
     pub hash: String,
     pub signature: String,
     pub effects: Vec<String>,
+    /// The function's `req`/`ens` as written (`outline` only; empty for types and tests).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub contracts: Option<Vec<String>>,
+    /// The stored names this definition refers to directly (`outline` only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub uses: Option<Vec<String>>,
+    /// The functions and types that refer to it directly (`outline` only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub used_by: Option<Vec<String>>,
+    /// The tests that refer to it directly (`outline` only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tests: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -402,9 +417,33 @@ pub fn query(conn: &mut Connection, space: &Space, q: &Query) -> Result<Vec<Entr
         if q.type_pattern.as_deref().is_some_and(|p| !pattern::matches(p, &sig)) {
             continue;
         }
-        out.push(Entry { name: name.clone(), kind: Kind::of(&def).as_str(), hash: hash.to_hex(), signature: sig, effects: effects(&def) });
+        let mut e = Entry { name: name.clone(), kind: Kind::of(&def).as_str(), hash: hash.to_hex(), signature: sig, effects: effects(&def), contracts: None, uses: None, used_by: None, tests: None };
+        if q.outline {
+            let mut tests = Vec::new();
+            let mut used_by = Vec::new();
+            for user in snap.dependents(name) {
+                let is_test = match snap.names.get(&user) {
+                    Some(u) => snap.row(&tx, &u.hash)?.ok_or_else(|| missing_row(&u.hash))?.kind == Kind::Test,
+                    None => false,
+                };
+                if is_test { tests.push(user) } else { used_by.push(user) }
+            }
+            e.contracts = Some(contracts(&def));
+            e.uses = Some(entry.refs.clone());
+            e.used_by = Some(used_by);
+            e.tests = Some(tests);
+        }
+        out.push(e);
     }
     Ok(out)
+}
+
+/// A function's contracts as written: `req <expr>` and `ens <expr>`, in order.
+fn contracts(d: &Def) -> Vec<String> {
+    match d {
+        Def::Fn(f) => f.req.iter().map(|e| format!("req {}", qal_compiler::print_expr(e))).chain(f.ens.iter().map(|e| format!("ens {}", qal_compiler::print_expr(e)))).collect(),
+        _ => Vec::new(),
+    }
 }
 
 pub fn history(conn: &mut Connection, space: &Space, name: &str) -> Result<Vec<HistoryEntry>, Vec<Diagnostic>> {
