@@ -22,8 +22,8 @@
 //!   qal view <name|#hash>...                         -> {"views":[{name,kind,hash,signature,effects,text,deps}]}
 //!   qal query [--name <prefix>] [--type <pattern>] [--uses <name|#hash>] [--outline]
 //!                                                    -> {"results":[{name,kind,hash,signature,effects}]}
-//!   qal recall [--code <E...>] [--name <prefix>] [--type <pattern>]
-//!                                                    -> {"recall":{corrections:[{code,path,message,before,after,count,...}],definitions:[...]}}
+//!   qal recall [--code <E...>] [--message <text>] [--name <prefix>] [--type <pattern>]
+//!                                                    -> {"recall":{corrections:[{code,path,message,shape,before,after,count,...}],definitions:[...]}}
 //!   qal corrections import <file.json>               -> {"corrections_imported":n} (the seed corpus of bench/corrections.py; stored with agent `corpus`)
 //!   qal rename <old> <new> [--agent <name>] [--breaking] -> {"renamed":{name,kind,hash}}
 //!   qal delete <name>... [--agent <name>] [--breaking] -> {"deleted":[{name,kind,hash}]} | {"diagnostics":[...]} (E0406 has_dependents:
@@ -85,7 +85,7 @@ const USAGE: &str = "usage: qal <check|fmt> <file>\n       \
                      qal init [--std] | define <file> [--agent <name>] [--breaking] | view <name>... | rename <old> <new> [--agent <name>] [--breaking] | delete <name>... [--agent <name>] [--breaking] | history <name> | build <name>\n       \
                      qal export <prefix> --out <file> [--name <pkg>] | import <file|url> | install <file|url>\n       \
                      qal query [--name <prefix>] [--type <pattern>] [--uses <name>] [--outline]\n       \
-                     qal recall [--code <E...>] [--name <prefix>] [--type <pattern>]\n       \
+                     qal recall [--code <E...>] [--message <text>] [--name <prefix>] [--type <pattern>]\n       \
                      qal corrections import <file.json>\n       \
                      qal call <file> [--allow <spec>] <fn> [args...] | call <fn> [--allow <spec>] [args...]\n       \
                      qal test [--allow <spec>] [--seed <n>] [<file> | <name>...] | prove [<file> | <name>...]\n       \
@@ -262,7 +262,7 @@ fn store_command(cmd: &str, args: &[String]) -> ExitCode {
     let options: &[&str] = match cmd {
         "define" | "rename" | "delete" => &["agent"],
         "query" => &["name", "type", "uses"],
-        "recall" => &["code", "name", "type"],
+        "recall" => &["code", "message", "name", "type"],
         "export" => &["out", "name"],
         _ => &[],
     };
@@ -290,7 +290,7 @@ fn store_command(cmd: &str, args: &[String]) -> ExitCode {
             with_ctx(|c| ops::query(c, &q))
         }
         ("recall", []) => {
-            let q = RecallQuery { code: s.one("code").map(str::to_string), name: s.one("name").map(str::to_string), type_pattern: s.one("type").map(str::to_string) };
+            let q = RecallQuery { code: s.one("code").map(str::to_string), message: s.one("message").map(str::to_string), name: s.one("name").map(str::to_string), type_pattern: s.one("type").map(str::to_string) };
             with_ctx(|c| ops::recall(c, &q))
         }
         ("rename", [old, new]) => with_ctx(|c| ops::rename(c, old, new, agent, breaking)),

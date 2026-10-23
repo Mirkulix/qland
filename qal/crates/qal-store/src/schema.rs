@@ -170,7 +170,10 @@ fn upgrade_v6(tx: &rusqlite::Transaction) -> Result<(), Vec<Diagnostic>> {
 
 /// 6 -> 7 (Phase 6b): the memory of corrections, created empty. `attempts` holds the failed
 /// definitions of a name until its next successful `define` (bounded, see `memory`); `corrections`
-/// holds the pairs (failed text, fixed text) that were made of them. `IF NOT EXISTS`: a store
+/// holds the pairs (failed text, fixed text) that were made of them, with the `shape` of the
+/// diagnostic's message (backticked names replaced by `_`, what hints and `recall` match on) and the
+/// `content` hash of (code, message, before, after, agent); the seed corpus is unique by content, so
+/// importing it twice stores it once, while real corrections keep counting. `IF NOT EXISTS`: a store
 /// downgraded by hand may still have them.
 pub const MEMORY: &str = "
 CREATE TABLE IF NOT EXISTS attempts (
@@ -189,13 +192,16 @@ CREATE TABLE IF NOT EXISTS corrections (
     code       TEXT NOT NULL,
     path       TEXT NOT NULL,
     message    TEXT NOT NULL,
+    shape      TEXT NOT NULL,
     before     TEXT NOT NULL,
     after      TEXT NOT NULL,
     after_hash TEXT NOT NULL,
     agent      TEXT NOT NULL,
-    at         INTEGER NOT NULL
+    at         INTEGER NOT NULL,
+    content    TEXT NOT NULL
 );
-CREATE INDEX IF NOT EXISTS corrections_by_code ON corrections(code);
+CREATE INDEX IF NOT EXISTS corrections_by_code ON corrections(code, shape);
+CREATE UNIQUE INDEX IF NOT EXISTS corrections_corpus ON corrections(content) WHERE agent = 'corpus';
 ";
 
 /// How long a writer waits for another process's `define`/`rename` to finish.

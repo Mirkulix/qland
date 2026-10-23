@@ -87,7 +87,7 @@ Das Erfahrungsgedächtnis ist zugleich der Rohstoff für Phase 8: ein Korpus aus
 
 **Abnahme:** Im Benchmark-Rerun von Phase 6 erhält jede Diagnose eines Codes mit bekannten Korrekturen einen Vorschlag, und die `lang.*`-Runden je Lauf (0,52 am 23.10.) fallen messbar; `qal_recall` beantwortet die drei Fehlerklassen der Analyse (lokaler Name nach `;`, `String`, Built-in als Wert) mit der richtigen Korrektur (Test im MCP-Crate). **Abbruchkriterium:** Bringt das Gedächtnis im Rerun keine messbare Senkung der Sprachrunden, bleibt es als Korpusquelle (Phase 8) und wird nicht weiter ausgebaut.
 
-**Stand 2026-10-23:** 1–3 gebaut (Plan `2026-10-23-qal-phase6b-erfahrungsgedaechtnis.md`: Schema 7, `qal_recall`, Hinweise mit Gedächtnis, Korpus aus den Transkripten mit 17 Paaren, Abnahmetest der drei Fehlerklassen); 4 (projektübergreifend) offen; die Abnahme im Rerun steht aus. Befund aus dem lebenden Programm (`bench/living/results-2026-10-23/report.md`): eine unbewiesene Pflicht wurde zwölf Änderungen lang vererbt, weil kein Agent wusste, wie sie früher geschlossen wurde; genau dafür ist das Gedächtnis da.
+**Stand 2026-10-23:** 1–3 gebaut (Plan `2026-10-23-qal-phase6b-erfahrungsgedaechtnis.md`: Schema 7, `qal_recall`, Hinweise mit Gedächtnis nach Code und Meldungsform, Korpus aus den Transkripten mit 10 Paaren nach dem Filter gegen Platzhalter und Umschriften, Abnahmetest der drei Fehlerklassen); 4 (projektübergreifend) offen; die Abnahme im Rerun steht aus. Befund aus dem lebenden Programm (`bench/living/results-2026-10-23/report.md`): eine unbewiesene Pflicht wurde zwölf Änderungen lang vererbt, weil kein Agent wusste, wie sie früher geschlossen wurde; genau dafür ist das Gedächtnis da.
 
 ### Phase 7 — Software für KI-Systeme, in QAL (8–12 Wochen)
 

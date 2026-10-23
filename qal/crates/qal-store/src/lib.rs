@@ -241,8 +241,8 @@ impl Store {
         }
     }
 
-    /// A failed `define`: records an attempt per diagnostic that names a definition and adds the
-    /// memory's hint to the first diagnostic of each code. Never changes the diagnostics otherwise;
+    /// A failed `define`: records an attempt per name with a diagnostic and adds the memory's hint
+    /// to the first diagnostic of each code and message shape. Never changes the diagnostics otherwise;
     /// a failed memory read or write is ignored (like [`Store::try_save_proofs`]).
     fn remember_attempts(&mut self, mut diags: Vec<Diagnostic>, src: &str, agent: &str) -> Vec<Diagnostic> {
         if diags.iter().all(|d| d.def.is_empty()) {
@@ -251,13 +251,14 @@ impl Store {
         if let Ok(input) = qal_compiler::parse_program(src) {
             let _ = self.side_write(|tx| memory::record_attempts(tx, &diags, &input, agent));
         }
-        let mut seen: Vec<&'static str> = Vec::new();
+        let mut seen: Vec<(&'static str, String)> = Vec::new();
         for d in diags.iter_mut().filter(|d| !d.def.is_empty()) {
-            if seen.contains(&d.code) {
+            let key = (d.code, memory::shape(&d.message));
+            if seen.contains(&key) {
                 continue;
             }
-            seen.push(d.code);
-            let hint = self.conn.transaction().ok().and_then(|tx| memory::hint_for(&tx, d.code).ok().flatten());
+            seen.push(key);
+            let hint = self.conn.transaction().ok().and_then(|tx| memory::hint_for(&tx, d.code, &d.message).ok().flatten());
             if let Some(h) = hint {
                 d.hints.push(h);
             }
@@ -303,13 +304,13 @@ impl Store {
         Ok(n)
     }
 
-    /// Earlier corrections for `q.code` (at most 5) and the stored definitions matching `q.name` and
-    /// `q.type_pattern` (at most 20). Without any filter it is refused (E0701); an unknown code gives
-    /// empty lists.
+    /// Earlier corrections for `q.code` and/or `q.message` (at most 5) and the stored definitions
+    /// matching `q.name` and `q.type_pattern` (at most 20). Without any filter it is refused (E0701);
+    /// an unknown code gives empty lists.
     pub fn recall(&mut self, q: &RecallQuery) -> Result<Recall, Vec<Diagnostic>> {
-        if q.code.is_none() && q.name.is_none() && q.type_pattern.is_none() {
-            return Err(vec![Diagnostic::new("E0701", "bad_arguments", "", "", "`recall` needs at least one of `code`, `name`, `type`")
-                .hint("recall {\"code\": \"E0201\"} lists earlier fixes of a diagnostic; {\"name\": \"prefix\"} or {\"type\": \"fn(Str) -> _\"} lists definitions")]);
+        if q.code.is_none() && q.message.is_none() && q.name.is_none() && q.type_pattern.is_none() {
+            return Err(vec![Diagnostic::new("E0701", "bad_arguments", "", "", "`recall` needs at least one of `code`, `message`, `name`, `type`")
+                .hint("recall {\"code\": \"E0201\", \"message\": \"unknown name `x`\"} lists earlier fixes of a diagnostic; {\"name\": \"prefix\"} or {\"type\": \"fn(Str) -> _\"} lists definitions")]);
         }
         let corrections = {
             let tx = self.conn.transaction().map_err(sql)?;

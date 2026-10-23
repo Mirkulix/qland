@@ -64,12 +64,15 @@ pub struct Query {
     pub outline: bool,
 }
 
-/// Filters of `recall`; at least one must be given. `code` selects corrections; `name` and
-/// `type_pattern` select stored definitions (as in [`Query`]).
+/// Filters of `recall`; at least one must be given. `code` and `message` select corrections; `name`
+/// and `type_pattern` select stored definitions (as in [`Query`]).
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct RecallQuery {
     /// A diagnostic code such as `E0201`: the corrections made for it.
     pub code: Option<String>,
+    /// A diagnostic message, a part of one, or its shape (`unknown name `_``): the corrections whose
+    /// message contains it or whose shape contains its shape.
+    pub message: Option<String>,
     /// Name prefix of the definitions to list.
     pub name: Option<String>,
     /// Signature pattern of the definitions to list.
@@ -79,7 +82,7 @@ pub struct RecallQuery {
 /// The answer of `recall`: earlier fixes and matching definitions, both bounded.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Recall {
-    /// At most 5, newest first.
+    /// At most 5: the most frequent fix of each message shape first, then the next of each.
     pub corrections: Vec<crate::memory::Correction>,
     /// At most 20, sorted by name.
     pub definitions: Vec<Entry>,

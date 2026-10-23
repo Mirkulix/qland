@@ -650,7 +650,7 @@ impl Server {
                 ops::view(&ctx, &names)
             }
             "qal_query" => ops::query(&ctx, &Query { name: a.string("name")?, type_pattern: a.string("type")?, uses: a.string("uses")?, outline: a.flag("outline")? }),
-            "qal_recall" => ops::recall(&ctx, &RecallQuery { code: a.string("code")?, name: a.string("name")?, type_pattern: a.string("type")? }),
+            "qal_recall" => ops::recall(&ctx, &RecallQuery { code: a.string("code")?, message: a.string("message")?, name: a.string("name")?, type_pattern: a.string("type")? }),
             "qal_test" => {
                 let seed = match a.get("seed") {
                     None => 0,
@@ -1205,7 +1205,7 @@ fn tool_params(tool: &str) -> &'static [&'static str] {
         "qal_build" => &["entry", "change"],
         "qal_rename" => &["old", "new", "agent", "change"],
         "qal_history" => &["name", "change"],
-        "qal_recall" => &["code", "name", "type", "change"],
+        "qal_recall" => &["code", "message", "name", "type", "change"],
         "qal_delete" => &["name", "with", "agent", "change"],
         "qal_request" => &["handler", "init", "allow", "requests", "change"],
         "qal_whoami" => &["wait_s"],
@@ -1278,8 +1278,8 @@ pub fn tools() -> J {
          "description": "Compile a stored function into a standalone WebAssembly module `.qal/build/<entry>.wasm` plus `<entry>.manifest.json` (hash, signature, required effects, host imports).",
          "inputSchema": {"type": "object", "properties": {"entry": s("Function to build, usually main.")}, "required": ["entry"], "additionalProperties": false}},
         {"name": "qal_recall", "title": "Recall earlier fixes", "annotations": read_only,
-         "description": "What the store learned from earlier failed definitions: with `code` (e.g. E0201) the corrections made for that diagnostic, newest first (at most 5: code, path, message, `before` and `after` excerpts, `count` of times seen), with `name` (prefix) and/or `type` (signature pattern) the matching definitions (at most 20). At least one of the three is required.",
-         "inputSchema": {"type": "object", "properties": {"code": s("Diagnostic code, e.g. E0201."), "name": s("Name prefix of the definitions to list."), "type": s("Signature pattern of the definitions to list, e.g. fn(Str) -> _.")}, "additionalProperties": false}},
+         "description": "What the store learned from earlier failed definitions: with `code` (e.g. E0201) and/or `message` (the diagnostic's message or a part of it) the corrections made for that diagnostic, the most frequent fix of each message shape first (at most 5: code, path, message, shape, `before` and `after` excerpts, `count` of times seen), with `name` (prefix) and/or `type` (signature pattern) the matching definitions (at most 20). At least one filter is required. Fixes are learned per agent: sessions that pass no `agent` to qal_define share their client's name.",
+         "inputSchema": {"type": "object", "properties": {"code": s("Diagnostic code, e.g. E0201."), "message": s("Diagnostic message, a part of it, or its shape with names as `_`, e.g. unknown name `x`."), "name": s("Name prefix of the definitions to list."), "type": s("Signature pattern of the definitions to list, e.g. fn(Str) -> _.")}, "additionalProperties": false}},
     ])
 }
 
