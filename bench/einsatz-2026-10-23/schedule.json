@@ -1,0 +1,1 @@
+{"seed": "einsatz-2026-10-23", "runs": 1, "model": "sonnet", "entries": [{"task": "21-expense-approval", "arm": "qal", "run": 1}, {"task": "21-expense-approval", "arm": "rust", "run": 1}]}
