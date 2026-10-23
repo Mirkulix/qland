@@ -38,6 +38,7 @@ fn differential_check_corpus() {
     init_qalc();
     let mut ok_count = 0;
     let mut err_count = 0;
+    let mut seq_let_hints = 0;
     for s in qal_gen::corpus() {
         let Ok(p) = Rust.parse(&s.text) else { continue };
         let r_res = Rust.check(&p, &|_| true);
@@ -64,6 +65,17 @@ fn differential_check_corpus() {
                     "{}: diagnostic codes/kinds divergence: Rust={r_codes:?}, Qal={q_codes:?}",
                     s.name
                 );
+                // The production binary runs the QAL checker: the text an agent reads must be the
+                // tested one, so messages and hints match too. Only for E0201 so far: E0203 still
+                // diverges (the Rust checker hints `unpack the Option` where the QAL one gives none,
+                // and the QAL one adds `unpack the Result` to a discarded Result); widen this to
+                // every code once those agree.
+                let text = |ds: &[qal_core::diag::Diagnostic]| -> Vec<(String, Vec<String>)> {
+                    ds.iter().filter(|d| d.code == "E0201").map(|d| (d.message.clone(), d.hints.clone())).collect()
+                };
+                let (r_text, q_text) = (text(&r_ds), text(&q_ds));
+                assert_eq!(r_text, q_text, "{}: E0201 message/hints divergence", s.name);
+                seq_let_hints += r_text.iter().filter(|(_, hs)| hs.iter().any(|h| h.contains("ends at its `;`"))).count();
             }
             (Ok(_), Err(q_ds)) => {
                 panic!("{}: Rust accepted but Qal rejected with {q_ds:?}", s.name);
@@ -75,6 +87,7 @@ fn differential_check_corpus() {
     }
     assert!(ok_count > 400, "expected > 400 checked corpus programs, got {ok_count}");
     assert!(err_count > 100, "expected > 100 rejected corpus programs, got {err_count}");
+    assert!(seq_let_hints > 0, "no corpus program exercises the E0201 hint of a sequence `let`");
 }
 
 #[test]

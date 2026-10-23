@@ -129,12 +129,11 @@ pub struct RunCase {
 /// Most cases per `run` call.
 pub const MAX_CASES: usize = 64;
 
-/// The result of one [`RunCase`]: the case, then what `run` reports for it.
+/// The result of one [`RunCase`]: its arguments, then what `run` reports for it. The input is not
+/// echoed (replies stay small); the position in `results` identifies the case.
 #[derive(Debug, Clone, Serialize)]
 pub struct RunResult {
     pub args: Vec<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub stdin: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub exit_code: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -559,9 +558,14 @@ pub fn define(ctx: &Ctx, src: &str, agent: &str, breaking: bool) -> Reply {
 }
 
 /// The stored tests that refer directly to a function this `define` wrote (as `query` with
-/// `uses` finds them); a dependent it only relinked does not count.
+/// `uses` finds them), and the tests it wrote itself; a dependent it only relinked does not count.
 fn tests_of(store: &mut Store, defined: &[Defined]) -> Vec<String> {
-    let mut tests = Vec::new();
+    let mut tests: Vec<String> = Vec::new();
+    for t in defined.iter().filter(|d| d.kind == "test" && d.status != "relinked") {
+        if !tests.contains(&t.name) {
+            tests.push(t.name.clone());
+        }
+    }
     for f in defined.iter().filter(|d| d.kind == "fn" && d.status != "relinked") {
         let Ok(users) = store.query(&Query { uses: Some(f.name.clone()), ..Query::default() }) else { continue };
         for u in users.into_iter().filter(|u| u.kind == "test") {
@@ -1175,7 +1179,7 @@ pub fn run_cases(ctx: &Ctx, source: &Source, perms: Permissions, name: &str, cas
             Ok(code) => (Some(code), None),
             Err(e) => (None, Some(e)),
         };
-        results.push(RunResult { args: case.args.clone(), stdin: case.stdin.clone(), exit_code, stdout: Some(stdout), stdout_truncated, error });
+        results.push(RunResult { args: case.args.clone(), exit_code, stdout: Some(stdout), stdout_truncated, error });
     }
     let failed = results.iter().any(|r| r.exit_code != Some(0));
     let out = Output { results: Some(Results::Run(results)), failure: failed, ..Output::default() };

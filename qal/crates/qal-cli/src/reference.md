@@ -48,7 +48,7 @@ Built-ins (indices count characters; slice and range are half-open: the end is e
        range(from, to) -> List[Int]  reverse(xs)  sort_int(xs)  sort_str(xs)  todo(): a stub of any type; traps E0540
   Map  map_new() map_put(m, k, v) map_get(m, k) -> Option[V] map_del(m, k) map_has(m, k) map_size(m) map_keys(m) map_values(m)
   Bytes to_bytes(s) bytes_len(b) bytes_get(b, i) -> Option[Int] bytes_slice(b, from, to) bytes_from(xs) (0..=255) bytes_to_list(b) bytes_to_str(b) -> Option[Str]  b1 ++ b2
-  List list_at(xs, i) (no Option; index error)  Accum[T] = AccEnd | AccPush(a, x): acc_list(a) (O(1) appends)
+  Misc list_at(xs, i) (no Option; index error)  Accum[T] = AccEnd | AccPush(a, x): acc_list(a) (O(1) appends)
   Num  int_to_float(n)  float_to_int(x) -> Option[Int]   compare(a, b) -> Int: -1, 0 or 1 for any two values without functions
        (Str bytewise, lists/records/variants in order): build your own sort with it
   Sys  print(s) !io (writes s and a newline)  read_line() -> Option[Str] !io (next line without its `\n` or `\r\n`; None at end)

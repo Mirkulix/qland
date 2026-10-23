@@ -787,8 +787,8 @@ fn run_takes_a_list_of_cases_in(c: &mut Client) {
     assert!(!err, "{v}");
     // One call runs every case with its own arguments and input, in order.
     let (err, v) = c.call("qal_run", json!({"cases": [{"args": ["a"], "stdin": "x"}, {"stdin": "y"}], "allow": ["io"]}));
-    assert_eq!(v["results"][0], json!({"args": ["a"], "stdin": "x", "exit_code": 0, "stdout": "xa\n"}), "{v}");
-    assert_eq!(v["results"][1], json!({"args": [], "stdin": "y", "exit_code": 1, "stdout": "y\n"}), "{v}");
+    assert_eq!(v["results"][0], json!({"args": ["a"], "exit_code": 0, "stdout": "xa\n"}), "{v}");
+    assert_eq!(v["results"][1], json!({"args": [], "exit_code": 1, "stdout": "y\n"}), "{v}");
     // A case that does not exit with 0 fails the call.
     assert!(err, "{v}");
     let (err, v) = c.call("qal_run", json!({"cases": [{"args": ["a", "b"]}, {"args": ["c"], "stdin": ""}], "allow": ["io"]}));
@@ -822,6 +822,10 @@ fn define_runs_the_tests_of_the_defined_names_in(c: &mut Client) {
     assert!(v["defined"].as_array().unwrap().iter().any(|d| d["name"] == "f"), "{v}");
     let (_, v) = c.call("qal_call", json!({"fn": "f", "args": [1]}));
     assert_eq!(v["ok"], 3, "{v}");
+    // A define of only a test runs that test (`f` is `x + 2` by now).
+    let (err, v) = c.call("qal_define", json!({"source": "test t_g = f(1) == 3"}));
+    assert!(!err, "{v}");
+    assert_eq!((v["tests"].clone(), v["passed"].as_u64()), (json!([{"name": "t_g", "passed": true}]), Some(1)), "{v}");
     // Names no test uses, and types, run nothing.
     let (err, v) = c.call("qal_define", json!({"source": "fn h() -> Int = 1\ntype P = { x: Int }"}));
     assert!(!err && v.get("tests").is_none() && v.get("passed").is_none(), "{v}");
