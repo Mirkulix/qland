@@ -103,6 +103,10 @@ def extract(path):
                         firsts.setdefault(d["def"], d)
                 for df, d in firsts.items():
                     before = cut(source, df)
+                    # The newest failure of a name wins. If its definition is not in this source
+                    # (the diagnostic is about a dependency), there is no text to pair: the older
+                    # pending entry is dropped too, since it no longer describes the latest failure.
+                    pending.pop(df, None)
                     if before:
                         pending[df] = (str(d.get("code", "")), str(d.get("path", "")), str(d.get("message", "")), before)
             else:
@@ -126,7 +130,12 @@ def main(argv):
         elif a == "--results" and i + 1 < len(argv):
             with open(argv[i + 1], encoding="utf-8") as f:
                 for line in f:
-                    rec = json.loads(line)
+                    try:
+                        rec = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue  # blank and non-JSON lines are skipped, like analyze.py does
+                    if not isinstance(rec, dict):
+                        continue
                     p = analyze.transcript_path(rec.get("agent_id") or "") if rec.get("agent_id") else None
                     if p:
                         paths.append(p)

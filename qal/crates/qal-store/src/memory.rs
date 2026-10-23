@@ -20,6 +20,8 @@ pub const MAX_ATTEMPTS: i64 = 20;
 pub const RETENTION_MS: i64 = 7_200_000;
 /// Longest `before`/`after` excerpt in bytes.
 pub const EXCERPT_BYTES: usize = 600;
+/// Longest diagnostic code of an imported record in bytes.
+pub const CODE_BYTES: usize = 16;
 /// Most corrections a `recall` returns.
 pub const MAX_CORRECTIONS: usize = 5;
 /// Longest side of a hint, in characters.
@@ -71,6 +73,8 @@ pub struct CorrectionInput {
 
 /// Inserts the records as corrections (hash empty, agent `corpus`, texts cut like recorded ones), all
 /// or nothing. A record without a code, a `before` or an `after` is refused (E0701) and nothing is stored.
+/// `code` is cut to [`CODE_BYTES`], `path` and `message` like the texts, so a recall stays bounded.
+/// The import is not idempotent: importing a file twice doubles the counts.
 pub fn import(tx: &Transaction, records: &[CorrectionInput]) -> Result<usize, Vec<Diagnostic>> {
     for (i, r) in records.iter().enumerate() {
         if r.code.trim().is_empty() || r.before.trim().is_empty() || r.after.trim().is_empty() {
@@ -81,11 +85,17 @@ pub fn import(tx: &Transaction, records: &[CorrectionInput]) -> Result<usize, Ve
     for r in records {
         tx.execute(
             "INSERT INTO corrections (code, path, message, before, after, after_hash, agent, at) VALUES (?1, ?2, ?3, ?4, ?5, '', 'corpus', ?6)",
-            params![r.code, r.path, r.message, excerpt(&r.before), excerpt(&r.after), now],
+            params![cut_bytes(r.code.trim(), CODE_BYTES), excerpt(&r.path), excerpt(&r.message), excerpt(&r.before), excerpt(&r.after), now],
         )
         .map_err(sql)?;
     }
     Ok(records.len())
+}
+
+/// The text cut to at most `max` bytes at a character boundary (no marker).
+fn cut_bytes(text: &str, max: usize) -> &str {
+    let end = (0..=max.min(text.len())).rev().find(|i| text.is_char_boundary(*i)).unwrap_or(0);
+    &text[..end]
 }
 
 /// The text cut to [`EXCERPT_BYTES`] (the `…` included) at a line boundary, `…` appended when something was cut.

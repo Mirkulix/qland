@@ -81,6 +81,26 @@ class Extract(unittest.TestCase):
         ])
         self.assertEqual((r[0]["before"], r[0]["after"]), ("type T = A | B(String)", "type T = A | B(Str)"))
 
+    def test_a_failure_whose_definition_is_not_in_the_source_drops_the_older_pending_one(self):
+        r = self.extract([
+            ("Bash", define("fn f() -> Int = y"), fail("E0201", "f"), False),
+            ("Bash", define("fn g() -> Int = 1"), fail("E0201", "f"), False),  # f is not in this source
+            ("Bash", define("fn f() -> Int = 1"), done("f"), False),
+        ])
+        self.assertEqual(r, [])
+
+
+class Main(unittest.TestCase):
+    def test_results_file_with_blank_and_non_json_lines_is_read(self):
+        d = tempfile.mkdtemp()
+        res = os.path.join(d, "results.jsonl")
+        out = os.path.join(d, "out.json")
+        with open(res, "w") as f:
+            f.write('\n   \nnot json\n{"agent_id": null}\n[1, 2]\n')
+        corrections.main(["--results", res, "--out", out])
+        with open(out) as f:
+            self.assertEqual(json.load(f), [])
+
 
 if __name__ == "__main__":
     unittest.main()

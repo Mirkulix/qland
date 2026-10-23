@@ -1728,3 +1728,20 @@ fn an_import_with_a_bad_record_stores_nothing_and_long_texts_are_cut() {
     let r = s.recall(&RecallQuery { code: Some("E0201".into()), ..RecallQuery::default() }).unwrap();
     assert!(r.corrections[0].before.len() <= 600 && r.corrections[0].before.ends_with('…'));
 }
+
+#[test]
+fn imported_code_path_and_message_are_bounded_too() {
+    let mut s = store();
+    let mut r = input("E0201", "fn f() -> Int = y", "fn f() -> Int = 1");
+    r.message = "m".repeat(10_000);
+    r.path = format!("body{}", ".items[0]".repeat(500));
+    r.code = format!("E0201{}", "x".repeat(100));
+    assert_eq!(s.import_corrections(&[r]).unwrap(), 1);
+    // The code is cut to 16 bytes, so recall by the cut code finds it.
+    let got = s.recall(&RecallQuery { code: Some(format!("E0201{}", "x".repeat(11))), ..RecallQuery::default() }).unwrap();
+    assert_eq!(got.corrections.len(), 1);
+    let c = &got.corrections[0];
+    assert!(c.code.len() <= 16, "{}", c.code.len());
+    assert!(c.message.len() <= 600 && c.message.ends_with('…'), "{}", c.message.len());
+    assert!(c.path.len() <= 600 && c.path.ends_with('…'), "{}", c.path.len());
+}
