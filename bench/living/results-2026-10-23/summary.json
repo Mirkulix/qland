@@ -1,0 +1,1248 @@
+{
+ "qal/haiku": {
+  "0": {
+   "attempts": [
+    {
+     "attempt": 1,
+     "passed": true,
+     "hidden": "16/16",
+     "failed_cases": [],
+     "rounds": 6,
+     "processed": 450904,
+     "output": 27219,
+     "duration_s": 144,
+     "tool_calls": 5,
+     "caught": [],
+     "violations": []
+    }
+   ]
+  },
+  "1": {
+   "attempts": [
+    {
+     "attempt": 1,
+     "passed": true,
+     "hidden": "20/20",
+     "failed_cases": [],
+     "rounds": 13,
+     "processed": 897612,
+     "output": 13001,
+     "duration_s": 86,
+     "tool_calls": 12,
+     "caught": [
+      {
+       "call": 7,
+       "kind": "property_failed",
+       "fns": [
+        "settle"
+       ]
+      }
+     ],
+     "violations": []
+    }
+   ]
+  },
+  "2": {
+   "attempts": [
+    {
+     "attempt": 1,
+     "passed": true,
+     "hidden": "23/23",
+     "failed_cases": [],
+     "rounds": 12,
+     "processed": 994299,
+     "output": 27090,
+     "duration_s": 204,
+     "tool_calls": 11,
+     "caught": [
+      {
+       "call": 6,
+       "kind": "signature_change_refused"
+      }
+     ],
+     "violations": []
+    }
+   ]
+  },
+  "3": {
+   "attempts": [
+    {
+     "attempt": 1,
+     "passed": true,
+     "hidden": "26/26",
+     "failed_cases": [],
+     "rounds": 17,
+     "processed": 1537716,
+     "output": 29227,
+     "duration_s": 261,
+     "tool_calls": 16,
+     "caught": [
+      {
+       "call": 6,
+       "kind": "signature_change_refused"
+      }
+     ],
+     "violations": []
+    }
+   ]
+  },
+  "4": {
+   "attempts": [
+    {
+     "attempt": 1,
+     "passed": true,
+     "hidden": "29/29",
+     "failed_cases": [],
+     "rounds": 12,
+     "processed": 1157809,
+     "output": 30199,
+     "duration_s": 139,
+     "tool_calls": 11,
+     "caught": [
+      {
+       "call": 5,
+       "kind": "signature_change_refused"
+      }
+     ],
+     "violations": []
+    }
+   ]
+  },
+  "5": {
+   "attempts": [
+    {
+     "attempt": 1,
+     "passed": true,
+     "hidden": "33/33",
+     "failed_cases": [],
+     "rounds": 11,
+     "processed": 1004852,
+     "output": 29740,
+     "duration_s": 147,
+     "tool_calls": 10,
+     "caught": [
+      {
+       "call": 6,
+       "kind": "signature_change_refused"
+      }
+     ],
+     "violations": []
+    }
+   ]
+  },
+  "6": {
+   "attempts": [
+    {
+     "attempt": 1,
+     "passed": true,
+     "hidden": "35/35",
+     "failed_cases": [],
+     "rounds": 12,
+     "processed": 923096,
+     "output": 12410,
+     "duration_s": 77,
+     "tool_calls": 11,
+     "caught": [
+      {
+       "call": 7,
+       "kind": "signature_change_refused"
+      }
+     ],
+     "violations": [
+      "call 3: used tool Artifact"
+     ]
+    }
+   ]
+  },
+  "7": {
+   "attempts": [
+    {
+     "attempt": 1,
+     "passed": true,
+     "hidden": "39/39",
+     "failed_cases": [],
+     "rounds": 12,
+     "processed": 1345473,
+     "output": 41533,
+     "duration_s": 196,
+     "tool_calls": 11,
+     "caught": [
+      {
+       "call": 4,
+       "kind": "signature_change_refused"
+      },
+      {
+       "call": 7,
+       "kind": "tests_failed",
+       "tests": [
+        "cancel_rejected_order",
+        "credit_after_stock",
+        "reject_sets_bad",
+        "reject_stock",
+        "restock_adds_stock_reject"
+       ],
+       "new": [],
+       "existing": [
+        "cancel_rejected_order",
+        "credit_after_stock",
+        "reject_sets_bad",
+        "reject_stock",
+        "restock_adds_stock_reject"
+       ]
+      }
+     ],
+     "violations": []
+    }
+   ]
+  },
+  "8": {
+   "attempts": [
+    {
+     "attempt": 1,
+     "passed": true,
+     "hidden": "41/41",
+     "failed_cases": [],
+     "rounds": 12,
+     "processed": 941379,
+     "output": 13688,
+     "duration_s": 105,
+     "tool_calls": 11,
+     "caught": [
+      {
+       "call": 7,
+       "kind": "signature_change_refused"
+      }
+     ],
+     "violations": []
+    }
+   ]
+  },
+  "9": {
+   "attempts": [
+    {
+     "attempt": 1,
+     "passed": true,
+     "hidden": "43/43",
+     "failed_cases": [],
+     "rounds": 10,
+     "processed": 843853,
+     "output": 15238,
+     "duration_s": 100,
+     "tool_calls": 9,
+     "caught": [
+      {
+       "call": 4,
+       "kind": "signature_change_refused"
+      }
+     ],
+     "violations": []
+    }
+   ]
+  },
+  "10": {
+   "attempts": [
+    {
+     "attempt": 1,
+     "passed": true,
+     "hidden": "46/46",
+     "failed_cases": [],
+     "rounds": 13,
+     "processed": 1293090,
+     "output": 38156,
+     "duration_s": 191,
+     "tool_calls": 12,
+     "caught": [
+      {
+       "call": 7,
+       "kind": "signature_change_refused"
+      }
+     ],
+     "violations": []
+    }
+   ]
+  },
+  "11": {
+   "attempts": [
+    {
+     "attempt": 1,
+     "passed": true,
+     "hidden": "48/48",
+     "failed_cases": [],
+     "rounds": 12,
+     "processed": 1106430,
+     "output": 32013,
+     "duration_s": 163,
+     "tool_calls": 11,
+     "caught": [
+      {
+       "call": 6,
+       "kind": "signature_change_refused"
+      }
+     ],
+     "violations": [
+      "call 9: Bash command names a path outside the work dir: /tmp/x"
+     ]
+    }
+   ]
+  },
+  "12": {
+   "attempts": [
+    {
+     "attempt": 1,
+     "passed": true,
+     "hidden": "50/50",
+     "failed_cases": [],
+     "rounds": 19,
+     "processed": 2121713,
+     "output": 57811,
+     "duration_s": 267,
+     "tool_calls": 18,
+     "caught": [
+      {
+       "call": 8,
+       "kind": "signature_change_refused"
+      }
+     ],
+     "violations": []
+    }
+   ]
+  }
+ },
+ "qal/sonnet": {
+  "0": {
+   "attempts": [
+    {
+     "attempt": 1,
+     "passed": true,
+     "hidden": "16/16",
+     "failed_cases": [],
+     "rounds": 4,
+     "processed": 234290,
+     "output": 7240,
+     "duration_s": 61,
+     "tool_calls": 3,
+     "caught": [],
+     "violations": []
+    }
+   ]
+  },
+  "1": {
+   "attempts": [
+    {
+     "attempt": 1,
+     "passed": true,
+     "hidden": "20/20",
+     "failed_cases": [],
+     "rounds": 8,
+     "processed": 489495,
+     "output": 2965,
+     "duration_s": 60,
+     "tool_calls": 7,
+     "caught": [
+      {
+       "call": 5,
+       "kind": "tests_failed",
+       "tests": [
+        "t_disc_big",
+        "t_total"
+       ],
+       "new": [
+        "t_disc_big"
+       ],
+       "existing": [
+        "t_total"
+       ]
+      }
+     ],
+     "violations": []
+    }
+   ]
+  },
+  "2": {
+   "attempts": [
+    {
+     "attempt": 1,
+     "passed": true,
+     "hidden": "23/23",
+     "failed_cases": [],
+     "rounds": 8,
+     "processed": 555474,
+     "output": 6955,
+     "duration_s": 77,
+     "tool_calls": 7,
+     "caught": [
+      {
+       "call": 5,
+       "kind": "signature_change_refused"
+      }
+     ],
+     "violations": []
+    }
+   ]
+  },
+  "3": {
+   "attempts": [
+    {
+     "attempt": 1,
+     "passed": true,
+     "hidden": "26/26",
+     "failed_cases": [],
+     "rounds": 8,
+     "processed": 525566,
+     "output": 6021,
+     "duration_s": 236,
+     "tool_calls": 7,
+     "caught": [
+      {
+       "call": 5,
+       "kind": "tests_failed",
+       "tests": [
+        "t_cancel_restores"
+       ],
+       "new": [
+        "t_cancel_restores"
+       ],
+       "existing": []
+      }
+     ],
+     "violations": []
+    }
+   ]
+  },
+  "4": {
+   "attempts": [
+    {
+     "attempt": 1,
+     "passed": true,
+     "hidden": "29/29",
+     "failed_cases": [],
+     "rounds": 9,
+     "processed": 615689,
+     "output": 6980,
+     "duration_s": 107,
+     "tool_calls": 8,
+     "caught": [
+      {
+       "call": 5,
+       "kind": "signature_change_refused"
+      }
+     ],
+     "violations": []
+    }
+   ]
+  },
+  "5": {
+   "attempts": [
+    {
+     "attempt": 1,
+     "passed": true,
+     "hidden": "33/33",
+     "failed_cases": [],
+     "rounds": 12,
+     "processed": 935519,
+     "output": 15476,
+     "duration_s": 168,
+     "tool_calls": 11,
+     "caught": [
+      {
+       "call": 5,
+       "kind": "signature_change_refused"
+      }
+     ],
+     "violations": []
+    }
+   ]
+  },
+  "6": {
+   "attempts": [
+    {
+     "attempt": 1,
+     "passed": true,
+     "hidden": "35/35",
+     "failed_cases": [],
+     "rounds": 7,
+     "processed": 446452,
+     "output": 3703,
+     "duration_s": 47,
+     "tool_calls": 7,
+     "caught": [],
+     "violations": []
+    }
+   ]
+  },
+  "7": {
+   "attempts": [
+    {
+     "attempt": 1,
+     "passed": true,
+     "hidden": "39/39",
+     "failed_cases": [],
+     "rounds": 15,
+     "processed": 1251097,
+     "output": 17700,
+     "duration_s": 169,
+     "tool_calls": 14,
+     "caught": [],
+     "violations": []
+    }
+   ]
+  },
+  "8": {
+   "attempts": [
+    {
+     "attempt": 1,
+     "passed": true,
+     "hidden": "41/41",
+     "failed_cases": [],
+     "rounds": 6,
+     "processed": 389085,
+     "output": 3022,
+     "duration_s": 65,
+     "tool_calls": 5,
+     "caught": [],
+     "violations": []
+    }
+   ]
+  },
+  "9": {
+   "attempts": [
+    {
+     "attempt": 1,
+     "passed": true,
+     "hidden": "43/43",
+     "failed_cases": [],
+     "rounds": 7,
+     "processed": 451194,
+     "output": 3232,
+     "duration_s": 73,
+     "tool_calls": 6,
+     "caught": [
+      {
+       "call": 4,
+       "kind": "tests_failed",
+       "tests": [
+        "t_top_empty",
+        "t_top_example",
+        "t_top_four_ties",
+        "t_top_second"
+       ],
+       "new": [
+        "t_top_empty",
+        "t_top_example",
+        "t_top_four_ties",
+        "t_top_second"
+       ],
+       "existing": []
+      }
+     ],
+     "violations": []
+    }
+   ]
+  },
+  "10": {
+   "attempts": [
+    {
+     "attempt": 1,
+     "passed": true,
+     "hidden": "46/46",
+     "failed_cases": [],
+     "rounds": 10,
+     "processed": 783041,
+     "output": 7998,
+     "duration_s": 134,
+     "tool_calls": 9,
+     "caught": [
+      {
+       "call": 5,
+       "kind": "tests_failed",
+       "tests": [
+        "t_ret_restock_top"
+       ],
+       "new": [
+        "t_ret_restock_top"
+       ],
+       "existing": []
+      },
+      {
+       "call": 7,
+       "kind": "tests_failed",
+       "tests": [
+        "t_ret_tax_split"
+       ],
+       "new": [],
+       "existing": [
+        "t_ret_tax_split"
+       ]
+      }
+     ],
+     "violations": []
+    }
+   ]
+  },
+  "11": {
+   "attempts": [
+    {
+     "attempt": 1,
+     "passed": true,
+     "hidden": "48/48",
+     "failed_cases": [],
+     "rounds": 8,
+     "processed": 654182,
+     "output": 12441,
+     "duration_s": 149,
+     "tool_calls": 7,
+     "caught": [
+      {
+       "call": 4,
+       "kind": "signature_change_refused"
+      },
+      {
+       "call": 5,
+       "kind": "tests_failed",
+       "tests": [
+        "t_promo_cap"
+       ],
+       "new": [
+        "t_promo_cap"
+       ],
+       "existing": []
+      },
+      {
+       "call": 6,
+       "kind": "tests_failed",
+       "tests": [
+        "t_promo_cap"
+       ],
+       "new": [],
+       "existing": [
+        "t_promo_cap"
+       ]
+      }
+     ],
+     "violations": []
+    }
+   ]
+  },
+  "12": {
+   "attempts": [
+    {
+     "attempt": 1,
+     "passed": true,
+     "hidden": "50/50",
+     "failed_cases": [],
+     "rounds": 12,
+     "processed": 996584,
+     "output": 15885,
+     "duration_s": 170,
+     "tool_calls": 11,
+     "caught": [],
+     "violations": []
+    }
+   ]
+  }
+ },
+ "rust/haiku": {
+  "0": {
+   "attempts": [
+    {
+     "attempt": 1,
+     "passed": true,
+     "hidden": "16/16",
+     "failed_cases": [],
+     "rounds": 5,
+     "processed": 285561,
+     "output": 20695,
+     "duration_s": 106,
+     "tool_calls": 6,
+     "caught": [
+      {
+       "call": 3,
+       "kind": "cargo_test_failed",
+       "tests": [
+        "tests::report_uses_byte_order_for_ids"
+       ],
+       "new": [
+        "report_uses_byte_order_for_ids"
+       ],
+       "existing": []
+      }
+     ],
+     "violations": []
+    }
+   ]
+  },
+  "1": {
+   "attempts": [
+    {
+     "attempt": 1,
+     "passed": true,
+     "hidden": "20/20",
+     "failed_cases": [],
+     "rounds": 6,
+     "processed": 308457,
+     "output": 4621,
+     "duration_s": 38,
+     "tool_calls": 8,
+     "caught": [],
+     "violations": []
+    }
+   ]
+  },
+  "2": {
+   "attempts": [
+    {
+     "attempt": 1,
+     "passed": true,
+     "hidden": "23/23",
+     "failed_cases": [],
+     "rounds": 7,
+     "processed": 406541,
+     "output": 7789,
+     "duration_s": 69,
+     "tool_calls": 11,
+     "caught": [],
+     "violations": []
+    }
+   ]
+  },
+  "3": {
+   "attempts": [
+    {
+     "attempt": 1,
+     "passed": true,
+     "hidden": "26/26",
+     "failed_cases": [],
+     "rounds": 7,
+     "processed": 399876,
+     "output": 10477,
+     "duration_s": 219,
+     "tool_calls": 13,
+     "caught": [],
+     "violations": []
+    }
+   ]
+  },
+  "4": {
+   "attempts": [
+    {
+     "attempt": 1,
+     "passed": true,
+     "hidden": "29/29",
+     "failed_cases": [],
+     "rounds": 5,
+     "processed": 319647,
+     "output": 20070,
+     "duration_s": 108,
+     "tool_calls": 7,
+     "caught": [
+      {
+       "call": 3,
+       "kind": "cargo_test_failed",
+       "tests": [
+        "tests::cancel_reverses_the_tax_as_it_was_at_order_time",
+        "tests::tax_accepts_zero_and_one_hundred_and_rejects_the_rest"
+       ],
+       "new": [
+        "cancel_reverses_the_tax_as_it_was_at_order_time",
+        "tax_accepts_zero_and_one_hundred_and_rejects_the_rest"
+       ],
+       "existing": []
+      }
+     ],
+     "violations": []
+    }
+   ]
+  },
+  "5": {
+   "attempts": [
+    {
+     "attempt": 1,
+     "passed": true,
+     "hidden": "33/33",
+     "failed_cases": [],
+     "rounds": 6,
+     "processed": 408563,
+     "output": 27885,
+     "duration_s": 170,
+     "tool_calls": 7,
+     "caught": [
+      {
+       "call": 4,
+       "kind": "cargo_test_failed",
+       "tests": [
+        "tests::credit_is_freed_by_payment_and_by_cancellation"
+       ],
+       "new": [
+        "credit_is_freed_by_payment_and_by_cancellation"
+       ],
+       "existing": []
+      }
+     ],
+     "violations": []
+    }
+   ]
+  },
+  "6": {
+   "attempts": [
+    {
+     "attempt": 1,
+     "passed": true,
+     "hidden": "35/35",
+     "failed_cases": [],
+     "rounds": 7,
+     "processed": 428164,
+     "output": 5548,
+     "duration_s": 62,
+     "tool_calls": 12,
+     "caught": [
+      {
+       "call": 5,
+       "kind": "cargo_test_failed",
+       "tests": [
+        "tests::restock_does_not_revive_a_rejected_order_id"
+       ],
+       "new": [
+        "restock_does_not_revive_a_rejected_order_id"
+       ],
+       "existing": []
+      }
+     ],
+     "violations": []
+    }
+   ]
+  },
+  "7": {
+   "attempts": [
+    {
+     "attempt": 1,
+     "passed": true,
+     "hidden": "39/39",
+     "failed_cases": [],
+     "rounds": 7,
+     "processed": 609086,
+     "output": 48518,
+     "duration_s": 185,
+     "tool_calls": 6,
+     "caught": [],
+     "violations": []
+    }
+   ]
+  },
+  "8": {
+   "attempts": [
+    {
+     "attempt": 1,
+     "passed": true,
+     "hidden": "41/41",
+     "failed_cases": [],
+     "rounds": 6,
+     "processed": 382080,
+     "output": 8643,
+     "duration_s": 52,
+     "tool_calls": 13,
+     "caught": [],
+     "violations": []
+    }
+   ]
+  },
+  "9": {
+   "attempts": [
+    {
+     "attempt": 1,
+     "passed": true,
+     "hidden": "43/43",
+     "failed_cases": [],
+     "rounds": 9,
+     "processed": 519432,
+     "output": 7578,
+     "duration_s": 57,
+     "tool_calls": 14,
+     "caught": [],
+     "violations": []
+    }
+   ]
+  },
+  "10": {
+   "attempts": [
+    {
+     "attempt": 1,
+     "passed": true,
+     "hidden": "46/46",
+     "failed_cases": [],
+     "rounds": 8,
+     "processed": 641009,
+     "output": 18388,
+     "duration_s": 115,
+     "tool_calls": 15,
+     "caught": [
+      {
+       "call": 6,
+       "kind": "cargo_test_failed",
+       "tests": [
+        "tests::return_qty_above_what_is_left_is_bad_qty"
+       ],
+       "new": [
+        "return_qty_above_what_is_left_is_bad_qty"
+       ],
+       "existing": []
+      }
+     ],
+     "violations": []
+    }
+   ]
+  },
+  "11": {
+   "attempts": [
+    {
+     "attempt": 1,
+     "passed": true,
+     "hidden": "48/48",
+     "failed_cases": [],
+     "rounds": 8,
+     "processed": 572862,
+     "output": 12278,
+     "duration_s": 75,
+     "tool_calls": 14,
+     "caught": [],
+     "violations": []
+    }
+   ]
+  },
+  "12": {
+   "attempts": [
+    {
+     "attempt": 1,
+     "passed": true,
+     "hidden": "50/50",
+     "failed_cases": [],
+     "rounds": 15,
+     "processed": 1430413,
+     "output": 38438,
+     "duration_s": 208,
+     "tool_calls": 14,
+     "caught": [],
+     "violations": []
+    }
+   ]
+  }
+ },
+ "rust/sonnet": {
+  "0": {
+   "attempts": [
+    {
+     "attempt": 1,
+     "passed": true,
+     "hidden": "16/16",
+     "failed_cases": [],
+     "rounds": 5,
+     "processed": 239177,
+     "output": 4369,
+     "duration_s": 46,
+     "tool_calls": 4,
+     "caught": [],
+     "violations": []
+    }
+   ]
+  },
+  "1": {
+   "attempts": [
+    {
+     "attempt": 1,
+     "passed": true,
+     "hidden": "20/20",
+     "failed_cases": [],
+     "rounds": 6,
+     "processed": 289152,
+     "output": 1757,
+     "duration_s": 43,
+     "tool_calls": 5,
+     "caught": [
+      {
+       "call": 3,
+       "kind": "cargo_test_failed",
+       "tests": [
+        "tests::example_one"
+       ],
+       "new": [],
+       "existing": [
+        "example_one"
+       ]
+      }
+     ],
+     "violations": []
+    }
+   ]
+  },
+  "2": {
+   "attempts": [
+    {
+     "attempt": 1,
+     "passed": true,
+     "hidden": "23/23",
+     "failed_cases": [],
+     "rounds": 6,
+     "processed": 293775,
+     "output": 2200,
+     "duration_s": 50,
+     "tool_calls": 5,
+     "caught": [
+      {
+       "call": 3,
+       "kind": "cargo_test_failed",
+       "tests": [
+        "tests::tier_large_no_overflow"
+       ],
+       "new": [
+        "tier_large_no_overflow"
+       ],
+       "existing": []
+      }
+     ],
+     "violations": []
+    }
+   ]
+  },
+  "3": {
+   "attempts": [
+    {
+     "attempt": 1,
+     "passed": true,
+     "hidden": "26/26",
+     "failed_cases": [],
+     "rounds": 4,
+     "processed": 192929,
+     "output": 2114,
+     "duration_s": 35,
+     "tool_calls": 3,
+     "caught": [],
+     "violations": []
+    }
+   ]
+  },
+  "4": {
+   "attempts": [
+    {
+     "attempt": 1,
+     "passed": true,
+     "hidden": "29/29",
+     "failed_cases": [],
+     "rounds": 7,
+     "processed": 371225,
+     "output": 3233,
+     "duration_s": 251,
+     "tool_calls": 6,
+     "caught": [
+      {
+       "call": 3,
+       "kind": "cargo_test_failed",
+       "tests": [],
+       "new": [],
+       "existing": []
+      },
+      {
+       "call": 4,
+       "kind": "cargo_test_failed",
+       "tests": [],
+       "new": [],
+       "existing": []
+      }
+     ],
+     "violations": []
+    }
+   ]
+  },
+  "5": {
+   "attempts": [
+    {
+     "attempt": 1,
+     "passed": true,
+     "hidden": "33/33",
+     "failed_cases": [],
+     "rounds": 8,
+     "processed": 447474,
+     "output": 4395,
+     "duration_s": 89,
+     "tool_calls": 7,
+     "caught": [
+      {
+       "call": 4,
+       "kind": "cargo_test_failed",
+       "tests": [],
+       "new": [],
+       "existing": []
+      },
+      {
+       "call": 5,
+       "kind": "cargo_test_failed",
+       "tests": [],
+       "new": [],
+       "existing": []
+      }
+     ],
+     "violations": []
+    }
+   ]
+  },
+  "6": {
+   "attempts": [
+    {
+     "attempt": 1,
+     "passed": true,
+     "hidden": "35/35",
+     "failed_cases": [],
+     "rounds": 4,
+     "processed": 200981,
+     "output": 1510,
+     "duration_s": 173,
+     "tool_calls": 3,
+     "caught": [],
+     "violations": []
+    }
+   ]
+  },
+  "7": {
+   "attempts": [
+    {
+     "attempt": 1,
+     "passed": true,
+     "hidden": "39/39",
+     "failed_cases": [],
+     "rounds": 10,
+     "processed": 599179,
+     "output": 9181,
+     "duration_s": 344,
+     "tool_calls": 9,
+     "caught": [
+      {
+       "call": 6,
+       "kind": "cargo_test_failed",
+       "tests": [],
+       "new": [],
+       "existing": []
+      },
+      {
+       "call": 7,
+       "kind": "cargo_test_failed",
+       "tests": [],
+       "new": [],
+       "existing": []
+      },
+      {
+       "call": 8,
+       "kind": "cargo_test_failed",
+       "tests": [],
+       "new": [],
+       "existing": []
+      }
+     ],
+     "violations": [
+      "call 3: Bash command names a path outside the work dir: /tmp/x"
+     ]
+    }
+   ]
+  },
+  "8": {
+   "attempts": [
+    {
+     "attempt": 1,
+     "passed": true,
+     "hidden": "41/41",
+     "failed_cases": [],
+     "rounds": 6,
+     "processed": 329691,
+     "output": 1907,
+     "duration_s": 68,
+     "tool_calls": 6,
+     "caught": [],
+     "violations": [
+      "call 3: used tool bash_placeholder"
+     ]
+    }
+   ]
+  },
+  "9": {
+   "attempts": [
+    {
+     "attempt": 1,
+     "passed": true,
+     "hidden": "43/43",
+     "failed_cases": [],
+     "rounds": 5,
+     "processed": 247621,
+     "output": 1537,
+     "duration_s": 69,
+     "tool_calls": 4,
+     "caught": [],
+     "violations": []
+    }
+   ]
+  },
+  "10": {
+   "attempts": [
+    {
+     "attempt": 1,
+     "passed": true,
+     "hidden": "46/46",
+     "failed_cases": [],
+     "rounds": 4,
+     "processed": 214362,
+     "output": 244,
+     "duration_s": 55,
+     "tool_calls": 3,
+     "caught": [],
+     "violations": []
+    }
+   ]
+  },
+  "11": {
+   "attempts": [
+    {
+     "attempt": 1,
+     "passed": true,
+     "hidden": "48/48",
+     "failed_cases": [],
+     "rounds": 6,
+     "processed": 293280,
+     "output": 2131,
+     "duration_s": 42,
+     "tool_calls": 5,
+     "caught": [],
+     "violations": []
+    }
+   ]
+  },
+  "12": {
+   "attempts": [
+    {
+     "attempt": 1,
+     "passed": true,
+     "hidden": "50/50",
+     "failed_cases": [],
+     "rounds": 12,
+     "processed": 761302,
+     "output": 8810,
+     "duration_s": 228,
+     "tool_calls": 12,
+     "caught": [
+      {
+       "call": 8,
+       "kind": "cargo_test_failed",
+       "tests": [
+        "tests::multi_line_total_quantity_discount_and_returns_in_order",
+        "tests::multi_line_invalid_and_all_or_nothing"
+       ],
+       "new": [
+        "multi_line_invalid_and_all_or_nothing",
+        "multi_line_total_quantity_discount_and_returns_in_order"
+       ],
+       "existing": []
+      }
+     ],
+     "violations": [
+      "call 6: Bash command names a path outside the work dir: /tmp/x"
+     ]
+    }
+   ]
+  }
+ }
+}
