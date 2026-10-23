@@ -22,6 +22,8 @@
 //!   qal view <name|#hash>...                         -> {"views":[{name,kind,hash,signature,effects,text,deps}]}
 //!   qal query [--name <prefix>] [--type <pattern>] [--uses <name|#hash>] [--outline]
 //!                                                    -> {"results":[{name,kind,hash,signature,effects}]}
+//!   qal recall [--code <E...>] [--name <prefix>] [--type <pattern>]
+//!                                                    -> {"recall":{corrections:[{code,path,message,before,after,count,...}],definitions:[...]}}
 //!   qal rename <old> <new> [--agent <name>] [--breaking] -> {"renamed":{name,kind,hash}}
 //!   qal delete <name>... [--agent <name>] [--breaking] -> {"deleted":[{name,kind,hash}]} | {"diagnostics":[...]} (E0406 has_dependents:
 //!                                                       names other stored definitions refer to; all or nothing)
@@ -73,7 +75,7 @@
 
 use qal_cli::ops::{self, CallArgs, Ctx, Reply, Source};
 use qal_cli::{is_file, permissions, split_args, Split};
-use qal_store::Query;
+use qal_store::{Query, RecallQuery};
 use std::io::Write;
 use std::process::ExitCode;
 use std::sync::Arc;
@@ -82,6 +84,7 @@ const USAGE: &str = "usage: qal <check|fmt> <file>\n       \
                      qal init [--std] | define <file> [--agent <name>] [--breaking] | view <name>... | rename <old> <new> [--agent <name>] [--breaking] | delete <name>... [--agent <name>] [--breaking] | history <name> | build <name>\n       \
                      qal export <prefix> --out <file> [--name <pkg>] | import <file|url> | install <file|url>\n       \
                      qal query [--name <prefix>] [--type <pattern>] [--uses <name>] [--outline]\n       \
+                     qal recall [--code <E...>] [--name <prefix>] [--type <pattern>]\n       \
                      qal call <file> [--allow <spec>] <fn> [args...] | call <fn> [--allow <spec>] [args...]\n       \
                      qal test [--allow <spec>] [--seed <n>] [<file> | <name>...] | prove [<file> | <name>...]\n       \
                      qal run <file|name> [--allow <spec>] [--] [args...]\n       \
@@ -178,7 +181,7 @@ fn main() -> ExitCode {
     let rest = &args[1..];
     match cmd.as_str() {
         "check" | "fmt" => file_command(cmd, rest),
-        "init" | "define" | "view" | "query" | "rename" | "delete" | "history" | "build" | "export" | "import" | "install" => store_command(cmd, rest),
+        "init" | "define" | "view" | "query" | "recall" | "rename" | "delete" | "history" | "build" | "export" | "import" | "install" => store_command(cmd, rest),
         "call" | "test" | "run" => run_command(cmd, rest),
         "prove" => prove_command(rest),
         "mcp" => mcp(rest),
@@ -256,6 +259,7 @@ fn store_command(cmd: &str, args: &[String]) -> ExitCode {
     let options: &[&str] = match cmd {
         "define" | "rename" | "delete" => &["agent"],
         "query" => &["name", "type", "uses"],
+        "recall" => &["code", "name", "type"],
         "export" => &["out", "name"],
         _ => &[],
     };
@@ -281,6 +285,10 @@ fn store_command(cmd: &str, args: &[String]) -> ExitCode {
         ("query", []) => {
             let q = Query { name: s.one("name").map(str::to_string), type_pattern: s.one("type").map(str::to_string), uses: s.one("uses").map(str::to_string), outline };
             with_ctx(|c| ops::query(c, &q))
+        }
+        ("recall", []) => {
+            let q = RecallQuery { code: s.one("code").map(str::to_string), name: s.one("name").map(str::to_string), type_pattern: s.one("type").map(str::to_string) };
+            with_ctx(|c| ops::recall(c, &q))
         }
         ("rename", [old, new]) => with_ctx(|c| ops::rename(c, old, new, agent, breaking)),
         ("history", [name]) => with_ctx(|c| ops::history(c, name)),

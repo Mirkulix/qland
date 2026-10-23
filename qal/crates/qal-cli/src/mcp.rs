@@ -23,7 +23,7 @@ use qal_run::Permissions;
 use qal_store::team::keys::KeyDir;
 use qal_store::team::policy::{self, Role, Space};
 use qal_store::team::{Identity, Notice, Signer, TeamLog};
-use qal_store::{Query, Store};
+use qal_store::{Query, RecallQuery, Store};
 use std::sync::Arc;
 use std::time::Instant;
 use serde::Serialize;
@@ -150,7 +150,7 @@ const POLL: Duration = Duration::from_millis(200);
 const TEAM_TOOLS: [&str; 7] = ["qal_whoami", "qal_verify", "qal_change", "qal_lease", "qal_review", "qal_merge", "qal_rebase"];
 
 /// The tools that work in a space (`change` argument, Phase 4 §10.2).
-const SPACE_TOOLS: [&str; 12] = ["qal_define", "qal_rename", "qal_delete", "qal_view", "qal_query", "qal_history", "qal_test", "qal_prove", "qal_run", "qal_call", "qal_request", "qal_build"];
+const SPACE_TOOLS: [&str; 13] = ["qal_define", "qal_rename", "qal_delete", "qal_view", "qal_query", "qal_history", "qal_test", "qal_prove", "qal_run", "qal_call", "qal_request", "qal_build", "qal_recall"];
 
 #[derive(Serialize)]
 struct Response<'a, R: Serialize> {
@@ -650,6 +650,7 @@ impl Server {
                 ops::view(&ctx, &names)
             }
             "qal_query" => ops::query(&ctx, &Query { name: a.string("name")?, type_pattern: a.string("type")?, uses: a.string("uses")?, outline: a.flag("outline")? }),
+            "qal_recall" => ops::recall(&ctx, &RecallQuery { code: a.string("code")?, name: a.string("name")?, type_pattern: a.string("type")? }),
             "qal_test" => {
                 let seed = match a.get("seed") {
                     None => 0,
@@ -1190,7 +1191,7 @@ fn tools_with_team() -> Vec<J> {
     all
 }
 
-const TOOL_NAMES: [&str; 12] = ["qal_define", "qal_test", "qal_prove", "qal_run", "qal_call", "qal_request", "qal_view", "qal_query", "qal_rename", "qal_delete", "qal_history", "qal_build"];
+const TOOL_NAMES: [&str; 13] = ["qal_define", "qal_test", "qal_prove", "qal_run", "qal_call", "qal_request", "qal_view", "qal_query", "qal_rename", "qal_delete", "qal_history", "qal_build", "qal_recall"];
 
 fn tool_params(tool: &str) -> &'static [&'static str] {
     match tool {
@@ -1204,6 +1205,7 @@ fn tool_params(tool: &str) -> &'static [&'static str] {
         "qal_build" => &["entry", "change"],
         "qal_rename" => &["old", "new", "agent", "change"],
         "qal_history" => &["name", "change"],
+        "qal_recall" => &["code", "name", "type", "change"],
         "qal_delete" => &["name", "with", "agent", "change"],
         "qal_request" => &["handler", "init", "allow", "requests", "change"],
         "qal_whoami" => &["wait_s"],
@@ -1275,6 +1277,9 @@ pub fn tools() -> J {
         {"name": "qal_build", "title": "Build a QAL module", "annotations": writes,
          "description": "Compile a stored function into a standalone WebAssembly module `.qal/build/<entry>.wasm` plus `<entry>.manifest.json` (hash, signature, required effects, host imports).",
          "inputSchema": {"type": "object", "properties": {"entry": s("Function to build, usually main.")}, "required": ["entry"], "additionalProperties": false}},
+        {"name": "qal_recall", "title": "Recall earlier fixes", "annotations": read_only,
+         "description": "What the store learned from earlier failed definitions: with `code` (e.g. E0201) the corrections made for that diagnostic, newest first (at most 5: code, path, message, `before` and `after` excerpts, `count` of times seen), with `name` (prefix) and/or `type` (signature pattern) the matching definitions (at most 20). At least one of the three is required.",
+         "inputSchema": {"type": "object", "properties": {"code": s("Diagnostic code, e.g. E0201."), "name": s("Name prefix of the definitions to list."), "type": s("Signature pattern of the definitions to list, e.g. fn(Str) -> _.")}, "additionalProperties": false}},
     ])
 }
 

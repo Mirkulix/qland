@@ -186,7 +186,7 @@ fn handshake_lists_the_tools_with_the_language_reference() {
     assert_eq!(c.request("ping", json!({}))["result"], json!({}));
     let tools = c.request("tools/list", json!({}))["result"]["tools"].clone();
     let names: Vec<&str> = tools.as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap()).collect();
-    assert_eq!(names, ["qal_define", "qal_test", "qal_prove", "qal_run", "qal_call", "qal_request", "qal_view", "qal_query", "qal_rename", "qal_delete", "qal_history", "qal_build"]);
+    assert_eq!(names, ["qal_define", "qal_test", "qal_prove", "qal_run", "qal_call", "qal_request", "qal_view", "qal_query", "qal_rename", "qal_delete", "qal_history", "qal_build", "qal_recall"]);
     for t in tools.as_array().unwrap() {
         assert_eq!(t["inputSchema"]["type"], "object", "{t}");
         assert!(!t["description"].as_str().unwrap().is_empty());
@@ -197,8 +197,8 @@ fn handshake_lists_the_tools_with_the_language_reference() {
     // Phase 2 (generics, closures, maps, bytes, proofs), Phase 3a (a "Services" section of 12 lines)
     // Phase 3b (two lines on `std.` names), Phase 6a (one line on effect parameters) and Phase 6b
     // (one line on `qal_run` cases, one on the tests `qal_define` runs) and the deployment tests
-    // of 2026-10-23 (the outline to read before a change) add to it.
-    assert!(qal_cli::mcp::REFERENCE.lines().count() <= 75 && qal_cli::mcp::REFERENCE.len() <= 9973, "{} lines, {} bytes", qal_cli::mcp::REFERENCE.lines().count(), qal_cli::mcp::REFERENCE.len());
+    // of 2026-10-23 (the outline to read before a change) and Phase 6b (one line on `qal_recall`) add to it.
+    assert!(qal_cli::mcp::REFERENCE.lines().count() <= 76 && qal_cli::mcp::REFERENCE.len() <= 10140, "{} lines, {} bytes", qal_cli::mcp::REFERENCE.lines().count(), qal_cli::mcp::REFERENCE.len());
     // An unknown version gets the newest legacy one.
     let r = c.request("initialize", json!({"protocolVersion": "1999-01-01", "capabilities": {}, "clientInfo": {"name": "x", "version": "1"}}));
     assert_eq!(r["result"]["protocolVersion"], "2025-11-25");
@@ -871,4 +871,30 @@ fn both(body: fn(&mut Client)) {
     let mut c = Client::architect();
     body(&mut c);
     assert_eq!(c.finish(), Some(0));
+}
+
+#[test]
+fn recall_answers_with_the_earlier_fix() {
+    both(recall_answers_with_the_earlier_fix_in);
+}
+
+fn recall_answers_with_the_earlier_fix_in(c: &mut Client) {
+    let (err, v) = c.call("qal_define", json!({"source": "fn f(n: Int) -> Int = { let x = n + 1 in x; x }"}));
+    assert!(err && v["diagnostics"][0]["code"] == "E0201", "{v}");
+    let (err, v) = c.call("qal_define", json!({"source": "fn f(n: Int) -> Int = let x = n + 1 in { x; x }"}));
+    assert!(!err, "{v}");
+    let (err, v) = c.call("qal_recall", json!({"code": "E0201"}));
+    assert!(!err, "{v}");
+    let corrections = v["recall"]["corrections"].as_array().unwrap();
+    assert_eq!(corrections.len(), 1, "{v}");
+    assert_eq!(corrections[0]["count"], 1, "{v}");
+    assert!(corrections[0]["before"].is_string() && corrections[0]["after"].is_string(), "{v}");
+    // A failing define of another name carries the fix in its hints.
+    let (err, v) = c.call("qal_define", json!({"source": "fn g(n: Int) -> Int = { let x = n + 2 in x; x }"}));
+    assert!(err, "{v}");
+    let hints = v["diagnostics"][0]["hints"].as_array().unwrap();
+    assert!(hints.iter().any(|h| h.as_str().is_some_and(|h| h.starts_with("earlier fix of E0201"))), "{v}");
+    // No filter is refused by the store.
+    let (err, v) = c.call("qal_recall", json!({}));
+    assert!(err && v["diagnostics"][0]["code"] == "E0701", "{v}");
 }

@@ -111,6 +111,7 @@ pub const POLICY: &[Row] = &[
     row("qal_view", None, [Yes, Yes, Yes, Yes], true),
     row("qal_query", None, [Yes, Yes, Yes, Yes], true),
     row("qal_history", None, [Yes, Yes, Yes, Yes], true),
+    row("qal_recall", None, [Yes, Yes, Yes, Yes], true),
     row("qal_whoami", None, [Yes, Yes, Yes, Yes], true),
     row("qal_verify", None, [Yes, Yes, Yes, Yes], true),
     row("qal_test", None, [Yes, Yes, Yes, Yes], true),

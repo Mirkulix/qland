@@ -8,7 +8,7 @@ use qal_core::diag::Diagnostic;
 use qal_core::tast::TProgram;
 use qal_prove::{PropOptions, PropReport, PropStatus, Report, Status};
 use qal_run::{Permissions, RunError, TestResult, Value};
-use qal_store::{Defined, Deleted, Entry as QueryEntry, HistoryEntry, Query, Renamed, Store, Verify, View};
+use qal_store::{Defined, Deleted, Entry as QueryEntry, HistoryEntry, Query, Recall, RecallQuery, Renamed, Store, Verify, View};
 use qal_compiler::lexer::is_std_name;
 use qal_compiler::Entry;
 use serde::Serialize;
@@ -30,6 +30,9 @@ pub struct Output {
     /// The entries of `query`, or the cases of `run` with `cases`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub results: Option<Results>,
+    /// The earlier fixes and matching definitions of `recall`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recall: Option<Recall>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub renamed: Option<Renamed>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -949,6 +952,14 @@ pub fn view(ctx: &Ctx, names: &[String]) -> Reply {
 pub fn query(ctx: &Ctx, q: &Query) -> Reply {
     match ctx.open().and_then(|mut s| s.query(q)) {
         Ok(r) => Reply::new(Output { results: Some(Results::Query(r)), ..Output::default() }, 0),
+        Err(d) => Reply::diagnostics(d),
+    }
+}
+
+/// The experience memory: earlier corrections of a diagnostic code and definitions by name or signature.
+pub fn recall(ctx: &Ctx, q: &RecallQuery) -> Reply {
+    match ctx.open().and_then(|mut s| s.recall(q)) {
+        Ok(r) => Reply::new(Output { recall: Some(r), ..Output::default() }, 0),
         Err(d) => Reply::diagnostics(d),
     }
 }
