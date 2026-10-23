@@ -40,6 +40,8 @@ def runs_of(recs):
         s["valid"] = r["valid"]
         t = r.get("transcript") or {}
         s["failed_calls"] = t.get("failed_tool_calls", 0)
+        s["guard"] = t.get("guard_refusals", 0)
+        s["retries"] = t.get("retries", 0)
         s["processed"] = t.get("total_tokens", 0)
         s["over_budget"] = t.get("over_budget", False)
         s["violations"] = t.get("violations", [])
@@ -76,6 +78,24 @@ def winner(q, r):
         return "tie"
     return "QAL" if a < b else "Rust"
 
+TOTALS_ROWS = [("Valid runs", "runs", str), ("Solved (all hidden tests pass)", "solved", str), ("Solved at the first attempt", "first", str),
+               ("Attempts (dispatch + retries)", "attempts", str), ("Total tokens (subagent_tokens of the dispatch results)", "tokens", fmt_k),
+               ("**Tokens per verified solution**", "per_solution", lambda v: f"**{fmt_k(v)}**" if v else "–"),
+               ("Processed tokens (transcripts, incl. cache reads)", "processed", fmt_k),
+               ("Processed tokens per verified solution", "processed_per_solution", lambda v: fmt_k(v) if v else "–"),
+               ("Tool calls (dispatch results)", "calls", str),
+               ("Failed tool calls (errors seen by the agent)", "failed", str),
+               ("Guard refusals (shell commands a worktree guard refused)", "guard", str),
+               ("Retries (the same tool input again right after a failure)", "retries", str),
+               ("Runs over the 60-tool-call budget", "over", str),
+               ("Wall time (minutes)", "minutes", lambda v: f"{v:.1f}")]
+
+
+def totals_rows_text():
+    """The labels of the totals table (for tests and docs)."""
+    return "\n".join(label for label, _, _ in TOTALS_ROWS)
+
+
 def main():
     path = os.path.join(STATE, "results.jsonl")
     recs = [json.loads(l) for l in open(path, encoding="utf-8") if l.strip()] if os.path.exists(path) else []
@@ -100,18 +120,11 @@ def main():
             "runs": len(rs), "solved": solved, "first": sum(bool(r.get("first_pass")) for r in rs), "tokens": tokens,
             "per_solution": tokens / solved if solved else None, "calls": sum(r["tool_uses"] for r in rs),
             "failed": sum(r["failed_calls"] for r in rs), "attempts": sum(r["attempts"] for r in rs),
+            "guard": sum(r.get("guard", 0) for r in rs), "retries": sum(r.get("retries", 0) for r in rs),
             "minutes": sum(r["ms"] for r in rs) / 60000, "over": sum(bool(r.get("over_budget")) for r in rs), "processed": sum(r["processed"] for r in rs),
             "processed_per_solution": sum(r["processed"] for r in rs) / solved if solved else None,
         }
-    rows = [("Valid runs", "runs", str), ("Solved (all hidden tests pass)", "solved", str), ("Solved at the first attempt", "first", str),
-            ("Attempts (dispatch + retries)", "attempts", str), ("Total tokens (subagent_tokens of the dispatch results)", "tokens", fmt_k),
-            ("**Tokens per verified solution**", "per_solution", lambda v: f"**{fmt_k(v)}**" if v else "–"),
-            ("Processed tokens (transcripts, incl. cache reads)", "processed", fmt_k),
-            ("Processed tokens per verified solution", "processed_per_solution", lambda v: fmt_k(v) if v else "–"),
-            ("Tool calls (dispatch results)", "calls", str),
-            ("Failed tool calls (errors seen by the agent)", "failed", str), ("Runs over the 60-tool-call budget", "over", str),
-            ("Wall time (minutes)", "minutes", lambda v: f"{v:.1f}")]
-    for label, key, f in rows:
+    for label, key, f in TOTALS_ROWS:
         md.append(f"| {label} | {f(tot['qal'][key]) if tot['qal'][key] is not None else '–'} | {f(tot['rust'][key]) if tot['rust'][key] is not None else '–'} |")
     wins = {}
     md += ["\n## Per task\n",

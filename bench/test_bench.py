@@ -56,6 +56,17 @@ class Audit(unittest.TestCase):
         self.assertEqual((a["tool_calls"], a["failed_tool_calls"], a["api_calls"]), (3, 1, 4))
         self.assertEqual(a["total_tokens"], 4 * 113)
 
+    def test_audit_reports_guard_refusals_and_retries(self):
+        wd = self.wd
+        cmd = f"cd {wd} && python3 qalc.py call qal_run '{{\"entry\": \"main\"}}'"
+        a = self.audit("qal", [
+            ("Bash", {"command": cmd}, "This session is isolated in the worktree /x, but this command ... Refusing to run it", True),
+            ("Bash", {"command": cmd}, "isError: false\n{}", False),
+            ("Bash", {"command": f"cd {wd} && ls"}, "", False),
+        ])
+        self.assertEqual((a["guard_refusals"], a["retries"]), (1, 1))
+        self.assertEqual(a["failed_tool_calls"], 1)
+
     def test_paths_outside_the_work_dir_are_violations(self):
         wd = self.wd
         a = self.audit("rust", [
@@ -284,6 +295,14 @@ class Report(unittest.TestCase):
         return {"task": task, "arm": arm, "run": 1, "attempt": attempt, "passed": passed, "valid": valid,
                 "dispatch": {"total_tokens": tokens, "tool_uses": 3, "duration_ms": 1000},
                 "transcript": {"failed_tool_calls": 0, "total_tokens": tokens * 2, "violations": [] if valid else ["x"]}}
+
+    def test_totals_carry_guard_refusals_and_retries(self):
+        r = self.rec("t", "qal", 1, True, 10)
+        r["transcript"].update({"guard_refusals": 2, "retries": 1})
+        s = report.runs_of([r, self.rec("u", "qal", 1, True, 10)])
+        self.assertEqual((s[("t", "qal", 1)]["guard"], s[("t", "qal", 1)]["retries"]), (2, 1))
+        self.assertEqual((s[("u", "qal", 1)]["guard"], s[("u", "qal", 1)]["retries"]), (0, 0))
+        self.assertIn("Guard refusals", report.totals_rows_text())
 
     def test_last_attempt_counts_and_a_redo_starts_fresh(self):
         runs = report.runs_of([self.rec("t", "qal", 1, True, 10, valid=False), self.rec("t", "qal", 1, False, 20), self.rec("t", "qal", 2, True, 30)])

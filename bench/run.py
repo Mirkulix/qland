@@ -13,6 +13,10 @@ Work directories live outside the repository, in $BENCH_WORK (default /tmp/qal-b
 fresh random name, so an agent neither works inside the tree that holds the hidden tests and
 reference solutions nor can guess where other agents work; the QAL server binary is copied to
 $BENCH_WORK/bin. $BENCH_STATE (default bench/) holds schedule.json, results.jsonl and workdirs.json.
+
+The controlling session must not run inside a git worktree: its subagents inherit a shell guard
+that refuses many commands (47 refusals in 35 of 40 QAL runs on 2026-10-22), and the audit counts
+those as `guard_refusals` (design spec 2026-10-23, Phase 6 measurement rule).
 """
 
 import glob
@@ -28,6 +32,7 @@ import sys
 BENCH = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(BENCH)
 sys.path.insert(0, BENCH)
+import analyze  # noqa: E402
 import check  # noqa: E402
 import qalc  # noqa: E402
 
@@ -331,8 +336,12 @@ def audit(agent_id, wd, arm):
         else:
             found = []
         violations += [f"call {order[cid]}: {x}" for x in found]
+    # Guard refusals (a worktree session's shell guard refusing a command) and retries (the same
+    # input again right after a failure), as `analyze.attribute` counts them (Phase 6, Task 4).
+    attribution = analyze.attribute(path, arm, 0, 1)
     return {"found": True, "path": path, "api_calls": len(usage), "tokens": tokens, "total_tokens": sum(tokens.values()),
             "tool_calls": len(calls), "over_budget": len(calls) > TOOL_BUDGET, "by_tool": by_tool, "failed_tool_calls": failed,
+            "guard_refusals": attribution["by_category"].get("env.guard", {}).get("calls", 0), "retries": attribution["retries"],
             "violations": violations}
 
 def retry_message(res):
