@@ -792,6 +792,12 @@ fn query_outline_is_the_compact_view_for_a_change_in(c: &mut Client) {
     assert!(!err, "{v}");
     let e = &v["results"][0];
     assert_eq!((e["name"].as_str(), &e["contracts"], &e["uses"], &e["used_by"], &e["tests"]), (Some("inc"), &json!(["req n >= 0", "ens r > n"]), &json!([]), &json!(["twice"]), &json!(["t_inc"])), "{v}");
+    // The outline is the project's own code, for reading: no `std.` names unless asked for, no hashes.
+    let (_, v) = c.call("qal_query", json!({"outline": true}));
+    let names: Vec<&str> = v["results"].as_array().unwrap().iter().map(|e| e["name"].as_str().unwrap()).collect();
+    assert!(names == ["inc", "t_inc", "twice"] && v["results"][0].get("hash").is_none(), "{v}");
+    let (_, v) = c.call("qal_query", json!({"outline": true, "name": "std."}));
+    assert!(v["results"].as_array().is_some_and(|r| !r.is_empty() && r.iter().all(|e| e["name"].as_str().unwrap().starts_with("std."))), "{v}");
     // Without the flag the entries stay compact in the other direction: no outline fields.
     let (_, v) = c.call("qal_query", json!({"name": "inc"}));
     assert!(v["results"][0].get("contracts").is_none() && v["results"][0].get("used_by").is_none(), "{v}");

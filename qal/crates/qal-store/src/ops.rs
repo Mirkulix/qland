@@ -68,6 +68,8 @@ pub struct Query {
 pub struct Entry {
     pub name: String,
     pub kind: &'static str,
+    /// Empty (and left out of the JSON) in an `outline`: it is for reading, not for addressing.
+    #[serde(skip_serializing_if = "String::is_empty")]
     pub hash: String,
     pub signature: String,
     pub effects: Vec<String>,
@@ -402,6 +404,10 @@ pub fn query(conn: &mut Connection, space: &Space, q: &Query) -> Result<Vec<Entr
         if q.name.as_deref().is_some_and(|p| !name.starts_with(p)) {
             continue;
         }
+        // An outline is the project's own code: the imported `std.` names only when asked for.
+        if q.outline && name.starts_with("std.") && !q.name.as_deref().is_some_and(|p| p.starts_with("std.")) {
+            continue;
+        }
         if let Some((text, target)) = &uses {
             let hit = if text.starts_with('#') {
                 snap.row(&tx, hash)?.ok_or_else(|| missing_row(hash))?.refs.contains(target)
@@ -419,6 +425,7 @@ pub fn query(conn: &mut Connection, space: &Space, q: &Query) -> Result<Vec<Entr
         }
         let mut e = Entry { name: name.clone(), kind: Kind::of(&def).as_str(), hash: hash.to_hex(), signature: sig, effects: effects(&def), contracts: None, uses: None, used_by: None, tests: None };
         if q.outline {
+            e.hash = String::new();
             let mut tests = Vec::new();
             let mut used_by = Vec::new();
             for user in snap.dependents(name) {
