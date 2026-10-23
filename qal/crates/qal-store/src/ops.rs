@@ -64,6 +64,30 @@ pub struct Query {
     pub outline: bool,
 }
 
+/// Filters of `recall`; at least one must be given. `code` and `message` select corrections; `name`
+/// and `type_pattern` select stored definitions (as in [`Query`]).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct RecallQuery {
+    /// A diagnostic code such as `E0201`: the corrections made for it.
+    pub code: Option<String>,
+    /// A diagnostic message, a part of one, or its shape (`unknown name `_``): the corrections whose
+    /// message contains it or whose shape contains its shape.
+    pub message: Option<String>,
+    /// Name prefix of the definitions to list.
+    pub name: Option<String>,
+    /// Signature pattern of the definitions to list.
+    pub type_pattern: Option<String>,
+}
+
+/// The answer of `recall`: earlier fixes and matching definitions, both bounded.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Recall {
+    /// At most 5: the most frequent fix of each message shape first, then the next of each.
+    pub corrections: Vec<crate::memory::Correction>,
+    /// At most 20, sorted by name.
+    pub definitions: Vec<Entry>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Entry {
     pub name: String,
@@ -116,7 +140,7 @@ fn effects(d: &Def) -> Vec<String> {
     }
 }
 
-fn text(d: &Def) -> String {
+pub(crate) fn text(d: &Def) -> String {
     qal_compiler::print_program(&Program { defs: vec![d.clone()] }).trim_end().to_string()
 }
 

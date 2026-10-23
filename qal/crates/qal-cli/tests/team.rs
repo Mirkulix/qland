@@ -294,8 +294,8 @@ fn team_commands_need_a_team_store_and_keys_outside_the_project() {
 #[test]
 fn sessions_decide_identity_and_roles_decide_tools() {
     let t = Team::new();
-    let all = ["qal_define", "qal_test", "qal_prove", "qal_run", "qal_call", "qal_request", "qal_view", "qal_query", "qal_rename", "qal_delete", "qal_history", "qal_build", "qal_change", "qal_lease", "qal_review", "qal_merge", "qal_rebase", "qal_whoami", "qal_verify"];
-    let reads = ["qal_test", "qal_prove", "qal_run", "qal_call", "qal_request", "qal_view", "qal_query", "qal_history", "qal_build"];
+    let all = ["qal_define", "qal_test", "qal_prove", "qal_run", "qal_call", "qal_request", "qal_view", "qal_query", "qal_rename", "qal_delete", "qal_history", "qal_build", "qal_recall", "qal_change", "qal_lease", "qal_review", "qal_merge", "qal_rebase", "qal_whoami", "qal_verify"];
+    let reads = ["qal_test", "qal_prove", "qal_run", "qal_call", "qal_request", "qal_view", "qal_query", "qal_history", "qal_build", "qal_recall"];
     let mut arch = t.agent("arch-1");
     assert_eq!(arch.tools(), all);
     let mut imp = t.agent("impl-1");
@@ -413,6 +413,7 @@ fn every_tool_with_every_role_follows_the_matrix() {
             ("qal_define", _) => json!({"source": format!("fn by_{}() -> Int = 1", role)}),
             ("qal_view", _) => json!({"names": ["base"]}),
             ("qal_query", _) => json!({"name": "ba"}),
+            ("qal_recall", _) => json!({"name": "ba"}),
             ("qal_history", _) => json!({"name": "base"}),
             ("qal_test", _) => json!({"names": ["base_works"]}),
             ("qal_prove", _) => json!({"names": ["base"]}),
@@ -562,7 +563,7 @@ fn stores_without_team_mode_are_unchanged() {
     std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o600)).unwrap();
     let mut c = t.mcp(Some(&file));
     c.initialize();
-    assert_eq!(c.tools().len(), 12);
+    assert_eq!(c.tools().len(), 13);
     let (err, v) = c.call("qal_define", json!({"source": "fn f() -> Int = 1", "agent": "me"}));
     assert!(!err && v.get("space").is_none() && v.get("notices").is_none(), "{v}");
     assert_eq!(c.call("qal_history", json!({"name": "f"})).1["history"][0]["agent"], "me");
@@ -864,7 +865,7 @@ fn the_author_reads_review_comments_with_show() {
 #[test]
 fn the_team_reference_has_each_roles_rules_in_twelve_lines() {
     use qal_store::team::policy::{Role, ROLES};
-    assert!(!qal_cli::mcp::REFERENCE.contains("## Team") && qal_cli::mcp::REFERENCE.ends_with("then qal_view only what you will edit.\n"));
+    assert!(!qal_cli::mcp::REFERENCE.contains("## Team") && qal_cli::mcp::REFERENCE.ends_with("matching definitions.\n"));
     assert!(qal_cli::mcp::TEAM_REFERENCE.starts_with("## Team\n"));
     for r in ROLES {
         let t = qal_cli::mcp::team_reference(r);

@@ -9,9 +9,10 @@ use std::time::Duration;
 /// `PRAGMA user_version` of stores this code reads and writes. Version 2 is Phase 1; version 3
 /// (Phase 2b) adds the `proofs` table; version 4 (Phase 3a) adds `meta`; version 5 (Phase 3b) allows
 /// the history action `deleted`; version 6 (Phase 4a) adds the team tables and `history.space` /
-/// `history.record`. Older stores are upgraded in place when they are opened
-/// ([`migrate`]: 2 -> 3 -> 4 -> 5 -> 6, one transaction).
-pub const SCHEMA_VERSION: i64 = 6;
+/// `history.record`; version 7 (Phase 6b) adds `attempts` and `corrections`, the memory of fixes.
+/// Older stores are upgraded in place when they are opened
+/// ([`migrate`]: 2 -> 3 -> 4 -> 5 -> 6 -> 7, one transaction).
+pub const SCHEMA_VERSION: i64 = 7;
 
 /// Proof results by definition hash and prover key (prover version, Z3 version, resource limit):
 /// a definition's hash fixes everything a proof depends on (its callees' contracts are referenced
@@ -167,6 +168,42 @@ fn upgrade_v6(tx: &rusqlite::Transaction) -> Result<(), Vec<Diagnostic>> {
     Ok(())
 }
 
+/// 6 -> 7 (Phase 6b): the memory of corrections, created empty. `attempts` holds the failed
+/// definitions of a name until its next successful `define` (bounded, see `memory`); `corrections`
+/// holds the pairs (failed text, fixed text) that were made of them, with the `shape` of the
+/// diagnostic's message (backticked names replaced by `_`, what hints and `recall` match on) and the
+/// `content` hash of (code, message, before, after, agent); the seed corpus is unique by content, so
+/// importing it twice stores it once, while real corrections keep counting. `IF NOT EXISTS`: a store
+/// downgraded by hand may still have them.
+pub const MEMORY: &str = "
+CREATE TABLE IF NOT EXISTS attempts (
+    id      INTEGER PRIMARY KEY,
+    name    TEXT NOT NULL,
+    agent   TEXT NOT NULL,
+    code    TEXT NOT NULL,
+    path    TEXT NOT NULL,
+    message TEXT NOT NULL,
+    text    TEXT NOT NULL,
+    at      INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS attempts_by_name ON attempts(name, agent);
+CREATE TABLE IF NOT EXISTS corrections (
+    id         INTEGER PRIMARY KEY,
+    code       TEXT NOT NULL,
+    path       TEXT NOT NULL,
+    message    TEXT NOT NULL,
+    shape      TEXT NOT NULL,
+    before     TEXT NOT NULL,
+    after      TEXT NOT NULL,
+    after_hash TEXT NOT NULL,
+    agent      TEXT NOT NULL,
+    at         INTEGER NOT NULL,
+    content    TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS corrections_by_code ON corrections(code, shape);
+CREATE UNIQUE INDEX IF NOT EXISTS corrections_corpus ON corrections(content) WHERE agent = 'corpus';
+";
+
 /// How long a writer waits for another process's `define`/`rename` to finish.
 pub const BUSY_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -238,6 +275,7 @@ pub fn create(conn: &mut Connection, path: &Path) -> Result<(), Vec<Diagnostic>>
         tx.execute_batch(PROOFS).map_err(sql)?;
         tx.execute_batch(META).map_err(sql)?;
         upgrade_v6(&tx)?;
+        tx.execute_batch(MEMORY).map_err(sql)?;
         tx.pragma_update(None, "user_version", SCHEMA_VERSION).map_err(sql)?;
     } else if (2..SCHEMA_VERSION).contains(&version) {
         upgrade(&tx, version)?;
@@ -250,9 +288,9 @@ pub fn create(conn: &mut Connection, path: &Path) -> Result<(), Vec<Diagnostic>>
     Ok(())
 }
 
-/// Upgrades a store of version `from` (2 to 5) to [`SCHEMA_VERSION`] inside `tx`, step by step:
+/// Upgrades a store of version `from` (2 to 6) to [`SCHEMA_VERSION`] inside `tx`, step by step:
 /// 2 -> 3 creates `proofs`, 3 -> 4 creates `meta`, 4 -> 5 rebuilds `history`, 5 -> 6 adds the team
-/// tables and the history columns `space` and `record`.
+/// tables and the history columns `space` and `record`, 6 -> 7 the memory tables.
 fn upgrade(tx: &rusqlite::Transaction, from: i64) -> Result<(), Vec<Diagnostic>> {
     if from <= 2 {
         tx.execute_batch(PROOFS).map_err(sql)?;
@@ -270,11 +308,16 @@ fn upgrade(tx: &rusqlite::Transaction, from: i64) -> Result<(), Vec<Diagnostic>>
         upgrade_v6(tx)?;
         tx.pragma_update(None, "user_version", 6).map_err(sql)?;
     }
+    if from <= 6 {
+        tx.execute_batch(MEMORY).map_err(sql)?;
+        tx.pragma_update(None, "user_version", 7).map_err(sql)?;
+    }
     Ok(())
 }
 
-/// Brings a store of an older version (2 to 5) to [`SCHEMA_VERSION`] in one transaction (2 -> 3
-/// creates `proofs`, 3 -> 4 `meta`, 4 -> 5 rebuilds `history` with its rows, 5 -> 6 the team tables).
+/// Brings a store of an older version (2 to 6) to [`SCHEMA_VERSION`] in one transaction (2 -> 3
+/// creates `proofs`, 3 -> 4 `meta`, 4 -> 5 rebuilds `history` with its rows, 5 -> 6 the team tables,
+/// 6 -> 7 the memory tables).
 /// Other versions are left alone (the caller reports them).
 pub fn migrate(conn: &mut Connection) -> Result<(), Vec<Diagnostic>> {
     let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0)).map_err(sql)?;

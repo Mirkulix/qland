@@ -27,6 +27,10 @@ fn err(s: &mut Store, src: &str) -> Vec<Diagnostic> {
     }
 }
 
+fn ok_as(s: &mut Store, src: &str, agent: &str) -> Vec<Defined> {
+    s.define(src, agent).unwrap_or_else(|d| panic!("unexpected diagnostics: {d:#?}"))
+}
+
 fn statuses(d: &[Defined]) -> Vec<(&str, &str)> {
     d.iter().map(|d| (d.name.as_str(), d.status)).collect()
 }
@@ -1568,4 +1572,328 @@ fn project_groups_identical_to_std_groups_coexist() {
     // `view #hash` shows the definition as one of its own names wrote it (re-review N2).
     let v = s.view(&[format!("#{h}")]).unwrap();
     assert!(v[0].text.contains("std.a.ev(n - 1)"), "{}", v[0].text);
+}
+
+#[test]
+fn a_failed_define_followed_by_a_successful_one_is_a_correction() {
+    let mut s = store();
+    err(&mut s, "fn f(n: Int) -> Int = { let x = n + 1 in x; x }"); // E0201 (unknown name after `;`)
+    ok(&mut s, "fn f(n: Int) -> Int = let x = n + 1 in { x; x }");
+    let r = s.recall(&RecallQuery { code: Some("E0201".into()), ..RecallQuery::default() }).unwrap();
+    assert_eq!(r.corrections.len(), 1);
+    let c = &r.corrections[0];
+    assert!(c.before.contains("in x;") && c.after.contains("in {") && c.count == 1, "{c:?}");
+    assert_eq!(c.after_hash, hash(&mut s, "f"));
+}
+
+#[test]
+fn attempts_match_by_name_and_agent_and_are_bounded() {
+    let mut s = store();
+    assert!(s.define("fn g() -> Int = h()", "a1").is_err()); // unknown name
+    ok_as(&mut s, "fn g() -> Int = 1", "a2"); // another agent: no correction
+    assert!(s.recall(&RecallQuery { code: Some("E0201".into()), ..RecallQuery::default() }).unwrap().corrections.is_empty());
+    for i in 0..25 {
+        assert!(s.define(&format!("fn k() -> Int = x{i}"), "a1").is_err());
+    }
+    assert_eq!(count_where(&s, "attempts", "name = 'k'"), 20); // last 20 per name
+}
+
+fn count_where(s: &Store, table: &str, cond: &str) -> i64 {
+    raw(s).query_row(&format!("SELECT count(*) FROM {table} WHERE {cond}"), [], |r| r.get(0)).unwrap()
+}
+
+const BAD_F: &str = "fn f(n: Int) -> Int = { let x = n + 1 in x; x }"; // E0201
+const GOOD_F: &str = "fn f(n: Int) -> Int = let x = n + 1 in { x; x }";
+
+fn e0201(s: &mut Store) -> Vec<Correction> {
+    s.recall(&RecallQuery { code: Some("E0201".into()), ..RecallQuery::default() }).unwrap().corrections
+}
+
+#[test]
+fn a_parse_error_records_nothing_and_gets_no_hint() {
+    let mut s = store();
+    err(&mut s, BAD_F);
+    ok(&mut s, GOOD_F); // the memory now has a correction of E0201
+    let d = err(&mut s, "fn broken( = ");
+    assert!(d.iter().all(|d| d.def.is_empty() && d.hints.iter().all(|h| !h.starts_with("earlier fix"))), "{d:#?}");
+    assert_eq!(count(&s, "attempts"), 0);
+}
+
+#[test]
+fn several_names_in_one_define_make_one_correction_for_the_failed_one() {
+    let mut s = store();
+    err(&mut s, &format!("{BAD_F}\nfn b() -> Int = 2"));
+    ok(&mut s, &format!("{GOOD_F}\nfn b() -> Int = 2"));
+    assert_eq!(count(&s, "corrections"), 1);
+    assert_eq!(e0201(&mut s).len(), 1);
+}
+
+#[test]
+fn old_attempts_are_dropped_and_never_matched() {
+    let mut s = store();
+    err(&mut s, BAD_F);
+    raw(&s).execute("UPDATE attempts SET at = at - 7300000", []).unwrap();
+    ok(&mut s, GOOD_F);
+    assert!(e0201(&mut s).is_empty(), "an attempt past the retention window is no correction");
+    // A later failure deletes the stale rows of other names.
+    err(&mut s, BAD_F);
+    raw(&s).execute("UPDATE attempts SET at = at - 7300000", []).unwrap();
+    err(&mut s, "fn z() -> Int = nope()");
+    assert_eq!(count_where(&s, "attempts", "name = 'f'"), 0);
+    assert_eq!(count_where(&s, "attempts", "name = 'z'"), 1);
+}
+
+#[test]
+fn recall_of_an_unknown_code_is_empty_not_an_error() {
+    let mut s = store();
+    let r = s.recall(&RecallQuery { code: Some("E9999".into()), ..RecallQuery::default() }).unwrap();
+    assert!(r.corrections.is_empty() && r.definitions.is_empty());
+    // A blank message is no filter (SQLite's instr(x, '') matches every row): refused like no filter.
+    assert_eq!(s.recall(&RecallQuery { message: Some("  ".into()), ..RecallQuery::default() }).unwrap_err()[0].code, "E0701");
+}
+
+#[test]
+fn the_same_agent_gets_the_correction_even_after_another_agent_defined_the_name() {
+    let mut s = store();
+    assert!(s.define(BAD_F, "a1").is_err());
+    ok_as(&mut s, GOOD_F, "a1");
+    assert_eq!(e0201(&mut s).len(), 1);
+    assert_eq!(e0201(&mut s)[0].agent, "a1");
+    // a1 fails, a2 defines the name, a1 then fixes its own attempt: still a correction.
+    let mut s = store();
+    assert!(s.define(BAD_F, "a1").is_err());
+    ok_as(&mut s, "fn f(n: Int) -> Int = n", "a2");
+    assert!(e0201(&mut s).is_empty());
+    ok_as(&mut s, GOOD_F, "a1");
+    assert_eq!(e0201(&mut s).len(), 1);
+}
+
+#[test]
+fn a_store_of_version_6_gets_the_memory_tables() {
+    let dir = project();
+    let mut s = Store::init(&dir).unwrap();
+    ok(&mut s, "fn one() -> Int = 1");
+    drop(s);
+    let db = dir.join(".qal").join("store.db");
+    let c = Connection::open(&db).unwrap();
+    c.execute_batch("DROP TABLE attempts; DROP TABLE corrections; PRAGMA user_version = 6;").unwrap();
+    drop(c);
+    let mut s = Store::open(&db).unwrap();
+    assert_eq!(count(&s, "attempts") + count(&s, "corrections"), 0);
+    assert_eq!(raw(&s).query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), 7);
+    err(&mut s, BAD_F);
+    ok(&mut s, GOOD_F);
+    assert_eq!(e0201(&mut s).len(), 1);
+    assert_eq!(text(&mut s, "one"), "fn one() -> Int\n= 1");
+}
+
+#[test]
+fn excerpts_are_at_most_600_bytes() {
+    let long_line = "é".repeat(400);
+    assert!(memory::excerpt(&long_line).len() <= 600);
+    let lines = (0..100).map(|i| format!("line number {i} xxxxxxxx")).collect::<Vec<_>>().join("\n");
+    let e = memory::excerpt(&lines);
+    assert!(e.len() <= 600 && e.ends_with('…'), "{}", e.len());
+    let edge = format!("{}\n{}", "a".repeat(598), "b".repeat(50));
+    assert!(memory::excerpt(&edge).len() <= 600);
+    assert_eq!(memory::excerpt("short\n"), "short");
+}
+
+fn input(code: &str, before: &str, after: &str) -> CorrectionInput {
+    CorrectionInput { code: code.into(), path: "body".into(), message: "m".into(), before: before.into(), after: after.into() }
+}
+
+#[test]
+fn imported_corrections_answer_recall() {
+    let mut s = store();
+    let mut fix = input("E0201", "fn f(n: Int) -> Int = { let x = n + 1; x }", "fn f(n: Int) -> Int = let x = n + 1 in x");
+    fix.message = "unknown name `x`".into();
+    let mut same_fix_other_name = fix.clone();
+    same_fix_other_name.message = "unknown name `y`".into();
+    let mut other = input("E0201", "fn g() -> Int = { let y = 1; y }", "fn g() -> Int = let y = 1 in y");
+    other.message = "unknown name `y`".into();
+    assert_eq!(s.import_corrections(&[fix.clone(), same_fix_other_name, other]).unwrap(), 3);
+    let r = s.recall(&RecallQuery { code: Some("E0201".into()), ..RecallQuery::default() }).unwrap();
+    assert_eq!(r.corrections.len(), 2);
+    let c = r.corrections.iter().find(|c| c.before == fix.before).unwrap();
+    assert_eq!((c.count, c.agent.as_str(), c.after_hash.as_str(), c.shape.as_str()), (2, "corpus", "", "unknown name `_`"));
+    assert_eq!(c.after, fix.after);
+    // The imported memory decorates later diagnostics of the same shape like a recorded one.
+    let d = err(&mut s, "fn q() -> Int = zz()"); // an unknown name: E0201
+    assert!(d[0].hints.iter().any(|h| h.starts_with("earlier fix of E0201 (2x):")), "{d:#?}");
+}
+
+#[test]
+fn the_shape_of_a_message_hides_its_backticked_names() {
+    assert_eq!(memory::shape("unknown name `x`"), "unknown name `_`");
+    // A capitalised name is a type or variant, another class of mistake than a local: `String`
+    // for `Str` must not share its shape (and its hint) with an unknown local after `;`.
+    assert_eq!(memory::shape("unknown name `String`"), "unknown name `_T`");
+    assert_ne!(memory::shape("unknown name `String`"), memory::shape("unknown name `x`"));
+    assert_eq!(memory::shape("built-in `len` is not a value"), "built-in `_` is not a value");
+    assert_eq!(memory::shape("expected `Int`, found `List[Str]`"), "expected `_T`, found `_T`");
+    assert_eq!(memory::shape("expected Unit, found Int"), "expected Unit, found Int");
+    assert_eq!(memory::shape("an unclosed `tick"), "an unclosed `tick");
+}
+
+fn correction(code: &str, message: &str, before: &str, after: &str) -> CorrectionInput {
+    CorrectionInput { code: code.into(), path: "body".into(), message: message.into(), before: before.into(), after: after.into() }
+}
+
+fn memory_hint(s: &mut Store, src: &str) -> Option<String> {
+    err(s, src).into_iter().flat_map(|d| d.hints).find(|h| h.starts_with("earlier fix"))
+}
+
+#[test]
+fn the_hint_follows_the_message_not_only_the_code() {
+    let mut s = store();
+    s.import_corrections(&[
+        correction("E0201", "built-in `len` is not a value", "fn ls(xs: List[Str]) -> List[Int] = map(xs, len)", "fn ls(xs: List[Str]) -> List[Int] = map(xs, slen)"),
+        correction("E0201", "unknown name `String`", "fn line(n: String) -> Str = n", "fn line(n: Str) -> Str = n"),
+        correction("E0201", "unknown name `x`", "fn f(n: Int) -> Int = { let x = n + 1 in x; x }", "fn f(n: Int) -> Int = let x = n + 1 in { x; x }"),
+    ])
+    .unwrap();
+    // A built-in as a value gets the built-in fix, though two unknown-name fixes are newer.
+    let h = memory_hint(&mut s, "fn g(xs: List[Str]) -> List[Int] = map(xs, len)").unwrap();
+    assert!(h.contains("slen") && !h.contains("String"), "{h}");
+    // `String` gets its own fix (the same message beats a newer one of the same shape).
+    let h = memory_hint(&mut s, "fn k(a: String) -> Str = a").unwrap();
+    assert!(h.contains("String") && h.contains("n: Str"), "{h}");
+    // Another unknown name gets the newest fix of that shape.
+    let h = memory_hint(&mut s, "fn m(n: Int) -> Int = { let y = n in y; y }").unwrap();
+    assert!(h.contains("let x"), "{h}");
+    // A shape nothing was corrected for gets no memory hint.
+    let mut s = store();
+    s.import_corrections(&[correction("E0201", "built-in `len` is not a value", "fn ls(xs: List[Str]) -> List[Int] = map(xs, len)", "fn ls(xs: List[Str]) -> List[Int] = map(xs, slen)")]).unwrap();
+    assert_eq!(memory_hint(&mut s, "fn q() -> Int = zz()"), None);
+}
+
+#[test]
+fn a_fix_seen_twice_beats_a_newer_single() {
+    let mut s = store();
+    let (b, a) = ("fn f(n: Int) -> Int = { let x = n + 1 in x; x }", "fn f(n: Int) -> Int = let x = n + 1 in { x; x }");
+    s.import_corrections(&[
+        correction("E0201", "unknown name `x`", b, a),
+        correction("E0201", "unknown name `y`", b, a),
+        correction("E0201", "unknown name `z`", "fn g() -> Int = zz", "fn g() -> Int = 0"),
+    ])
+    .unwrap();
+    let h = memory_hint(&mut s, "fn q() -> Int = w").unwrap();
+    assert!(h.starts_with("earlier fix of E0201 (2x):") && h.contains("let x"), "{h}");
+    let r = e0201(&mut s);
+    assert_eq!((r.len(), r[0].count, r[1].count), (2, 2, 1), "{r:#?}");
+}
+
+#[test]
+fn the_hint_shows_a_window_around_the_first_difference() {
+    let mut s = store();
+    let head = format!("fn f(n: Int) -> Int = {}", "n + ".repeat(70));
+    let (before, after) = (format!("{head}zz"), format!("{head}1"));
+    assert!(before.len() > 300 && !before.contains('\n'));
+    s.import_corrections(&[correction("E0201", "unknown name `zz`", &before, &after)]).unwrap();
+    let h = memory_hint(&mut s, "fn q() -> Int = w").unwrap();
+    let (b, a) = h.split_once(": ").unwrap().1.split_once(" -> ").unwrap();
+    assert!(b.starts_with('…') && b.ends_with("n + zz") && a.starts_with('…') && a.ends_with("n + 1"), "{h}");
+    assert!(b.chars().count() <= 41 + 80 && a.chars().count() <= 41 + 80, "{h}");
+    // A fix that differs only in spacing shows nothing new: no hint.
+    let mut s = store();
+    s.import_corrections(&[correction("E0201", "unknown name `zz`", "fn f() -> Int = 1", "fn f() -> Int =\n  1")]).unwrap();
+    assert_eq!(memory_hint(&mut s, "fn q() -> Int = w"), None);
+}
+
+#[test]
+fn recall_ranks_by_shape_and_filters_by_message() {
+    let mut s = store();
+    s.import_corrections(&[
+        correction("E0201", "built-in `len` is not a value", "fn ls(xs: List[Str]) -> List[Int] = map(xs, len)", "fn ls(xs: List[Str]) -> List[Int] = map(xs, slen)"),
+        correction("E0201", "unknown name `a`", "fn a1() -> Int = a", "fn a1() -> Int = 1"),
+        correction("E0201", "unknown name `b`", "fn b1() -> Int = b", "fn b1() -> Int = 2"),
+        correction("E0201", "unknown name `c`", "fn c1() -> Int = c", "fn c1() -> Int = 3"),
+        correction("E0201", "unknown name `d`", "fn d1() -> Int = d", "fn d1() -> Int = 4"),
+        correction("E0201", "unknown name `e`", "fn e1() -> Int = e", "fn e1() -> Int = 5"),
+    ])
+    .unwrap();
+    let q = |message: Option<&str>| RecallQuery { code: Some("E0201".into()), message: message.map(str::to_string), ..RecallQuery::default() };
+    // Without a message every shape of the code is represented, though five newer fixes share one shape.
+    let r = s.recall(&q(None)).unwrap().corrections;
+    assert_eq!(r.len(), 5);
+    assert!(r.iter().any(|c| c.shape == "built-in `_` is not a value"), "{r:#?}");
+    // A message selects by substring or by shape.
+    let r = s.recall(&q(Some("is not a value"))).unwrap().corrections;
+    assert_eq!((r.len(), r[0].after.contains("slen")), (1, true), "{r:#?}");
+    let r = s.recall(&q(Some("unknown name `zz`"))).unwrap().corrections;
+    assert!(r.len() == 5 && r.iter().all(|c| c.shape == "unknown name `_`"), "{r:#?}");
+    // The message alone is a filter too.
+    let r = s.recall(&RecallQuery { message: Some("built-in `trim` is not a value".into()), ..RecallQuery::default() }).unwrap();
+    assert_eq!(r.corrections.len(), 1);
+}
+
+#[test]
+fn importing_the_corpus_twice_stores_it_once_but_real_fixes_keep_counting() {
+    let mut s = store();
+    let rec = [correction("E0201", "unknown name `x`", BAD_F, GOOD_F)];
+    assert_eq!(s.import_corrections(&rec).unwrap(), 1);
+    assert_eq!(s.import_corrections(&rec).unwrap(), 0);
+    assert_eq!(count(&s, "corrections"), 1);
+    // Two agents making the same fix are two corrections.
+    for agent in ["a1", "a2"] {
+        let src = BAD_F.replace("fn f", &format!("fn f_{agent}"));
+        assert!(s.define(&src, agent).is_err());
+        ok_as(&mut s, &GOOD_F.replace("fn f", &format!("fn f_{agent}")), agent);
+    }
+    assert_eq!(count(&s, "corrections"), 3);
+    // Only the corpus is unique by content: a real correction may repeat exactly.
+    raw(&s)
+        .execute("INSERT INTO corrections (code, path, message, shape, before, after, after_hash, agent, at, content) SELECT code, path, message, shape, before, after, after_hash, agent, at, content FROM corrections WHERE agent = 'a1'", [])
+        .unwrap();
+    assert_eq!(count(&s, "corrections"), 4);
+}
+
+#[test]
+fn recorded_attempts_cut_path_and_message_and_keep_one_row_per_name() {
+    let mut s = store();
+    let input = qal_compiler::parse_program(BAD_F).unwrap();
+    let long = Diagnostic::new("E0201", "unknown_name", "f", &format!("body{}", ".items[0]".repeat(500)), "m".repeat(10_000));
+    let second = Diagnostic::new("E0203", "type_mismatch", "f", "body", "expected Int, found Str");
+    {
+        let mut c = raw(&s);
+        let tx = c.transaction().unwrap();
+        memory::record_attempts(&tx, &[long, second], &input, "a1").unwrap();
+        tx.commit().unwrap();
+    }
+    assert_eq!(count_where(&s, "attempts", "name = 'f'"), 1, "one row per failed define and name");
+    let (path, message, code): (String, String, String) = raw(&s).query_row("SELECT path, message, code FROM attempts", [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).unwrap();
+    assert!(path.len() <= 600 && message.len() <= 600 && code == "E0201", "{} {} {code}", path.len(), message.len());
+    // A define with two diagnostics on one name records one attempt as well.
+    err(&mut s, "fn h() -> Int = a + b");
+    assert_eq!(count_where(&s, "attempts", "name = 'h'"), 1);
+}
+
+#[test]
+fn an_import_with_a_bad_record_stores_nothing_and_long_texts_are_cut() {
+    let mut s = store();
+    let e = s.import_corrections(&[input("E0201", "a", "b"), input("", "a", "b")]).unwrap_err();
+    assert_eq!(e[0].code, "E0701");
+    assert_eq!(count(&s, "corrections"), 0);
+    let long = format!("fn f() -> Int =\n{}", "  1 +\n".repeat(200));
+    assert_eq!(s.import_corrections(&[input("E0201", &long, "fn f() -> Int = 1")]).unwrap(), 1);
+    let r = s.recall(&RecallQuery { code: Some("E0201".into()), ..RecallQuery::default() }).unwrap();
+    assert!(r.corrections[0].before.len() <= 600 && r.corrections[0].before.ends_with('…'));
+}
+
+#[test]
+fn imported_code_path_and_message_are_bounded_too() {
+    let mut s = store();
+    let mut r = input("E0201", "fn f() -> Int = y", "fn f() -> Int = 1");
+    r.message = "m".repeat(10_000);
+    r.path = format!("body{}", ".items[0]".repeat(500));
+    r.code = format!("E0201{}", "x".repeat(100));
+    assert_eq!(s.import_corrections(&[r]).unwrap(), 1);
+    // The code is cut to 16 bytes, so recall by the cut code finds it.
+    let got = s.recall(&RecallQuery { code: Some(format!("E0201{}", "x".repeat(11))), ..RecallQuery::default() }).unwrap();
+    assert_eq!(got.corrections.len(), 1);
+    let c = &got.corrections[0];
+    assert!(c.code.len() <= 16, "{}", c.code.len());
+    assert!(c.message.len() <= 600 && c.message.ends_with('…'), "{}", c.message.len());
+    assert!(c.path.len() <= 600 && c.path.ends_with('…'), "{}", c.path.len());
 }

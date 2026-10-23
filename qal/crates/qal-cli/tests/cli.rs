@@ -966,3 +966,34 @@ fn stubs_are_reported_and_trap_when_reached() {
     assert_eq!((listening["event"].as_str(), listening["stubs"].clone()), (Some("listening"), json!(["create"])), "{line}");
     assert!(listening["warning"].as_str().unwrap().contains("todo_reached"));
 }
+
+#[test]
+fn corrections_import_fills_the_memory_that_recall_reads() {
+    let dir = project("corrections");
+    qal_in(&dir, &["init"]);
+    let file = write(
+        &dir,
+        "corrections.json",
+        r#"[{"code":"E0201","path":"body","message":"unknown name `String`","before":"fn f(a: String) -> Str = a","after":"fn f(a: Str) -> Str = a","agent":"x"},
+            {"code":"E0201","path":"body","message":"unknown name `Strng`","before":"fn f(a: String) -> Str = a","after":"fn f(a: Str) -> Str = a"}]"#,
+    );
+    let (code, v) = qal_in(&dir, &["corrections", "import", &file]);
+    assert_eq!((code, v["corrections_imported"].as_u64()), (0, Some(2)), "{v}");
+    // The same file again stores nothing new.
+    let (code, v) = qal_in(&dir, &["corrections", "import", &file]);
+    assert_eq!((code, v["corrections_imported"].as_u64()), (0, Some(0)), "{v}");
+    let (code, v) = qal_in(&dir, &["recall", "--code", "E0201", "--message", "unknown name `x`"]);
+    assert_eq!(code, 0, "{v}");
+    let c = &v["recall"]["corrections"][0];
+    assert_eq!((c["count"].as_u64(), c["agent"].as_str(), c["after"].as_str()), (Some(2), Some("corpus"), Some("fn f(a: Str) -> Str = a")), "{v}");
+    let (code, v) = qal_in(&dir, &["recall", "--message", "is not a value"]);
+    assert_eq!((code, v["recall"]["corrections"].as_array().map(Vec::len)), (0, Some(0)), "{v}");
+    // A record without a code is refused and nothing else changes; a missing file is a usage error.
+    let bad = write(&dir, "bad.json", r#"[{"code":"","before":"a","after":"b"}]"#);
+    let (code, v) = qal_in(&dir, &["corrections", "import", &bad]);
+    assert_eq!((code, v["diagnostics"][0]["code"].as_str()), (1, Some("E0701")));
+    let (code, _) = qal_in(&dir, &["recall", "--code", "E0201"]);
+    assert_eq!(code, 0);
+    assert_eq!(qal(&["corrections", "import", "/no/such/file.json"]).0, 2);
+    assert_eq!(qal(&["corrections"]).0, 2);
+}

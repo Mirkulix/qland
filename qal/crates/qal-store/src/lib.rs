@@ -9,6 +9,7 @@
 //! Every operation reports problems as diagnostics (store failures are `store_error`).
 
 mod define;
+mod memory;
 mod ops;
 pub mod package;
 mod pattern;
@@ -19,7 +20,8 @@ pub mod team;
 
 pub use define::{last_lock_held, Release, StdNames};
 pub use space::Space;
-pub use ops::{Deleted, DepView, Entry, HistoryEntry, Query, Renamed, View};
+pub use memory::{Attempt, Correction, CorrectionInput};
+pub use ops::{Deleted, DepView, Entry, HistoryEntry, Query, Recall, RecallQuery, Renamed, View};
 pub use package::{Exported, Imported};
 pub use pattern::matches as signature_matches;
 
@@ -205,7 +207,8 @@ impl Store {
     fn define_with(&mut self, src: &str, agent: &str, verify: Option<&mut Verify>) -> Result<Vec<Defined>, Vec<Diagnostic>> {
         let signer = self.signer.as_deref();
         let team = team::require_signer(&self.conn, signer)?;
-        let agent = signer.map_or(agent, |s| s.member.as_str());
+        let agent = signer.map_or(agent, |s| s.member.as_str()).to_string();
+        let agent = agent.as_str();
         let rules = define::Rules { std: StdNames::Refuse, release: self.release.as_ref(), breaking: self.breaking };
         let space = self.space.clone();
         let report = std::cell::RefCell::new(team::WriteReport::default());
@@ -229,7 +232,98 @@ impl Store {
         };
         let out = define::define_checked(&mut self.conn, src, agent, &rules, &self.space, verify, &guard, &record);
         self.last = report.into_inner();
-        out
+        match out {
+            Ok(defined) => {
+                self.remember_corrections(&defined, agent);
+                Ok(defined)
+            }
+            Err(diags) => Err(self.remember_attempts(diags, src, agent)),
+        }
+    }
+
+    /// A failed `define`: records an attempt per name with a diagnostic and adds the memory's hint
+    /// to the first diagnostic of each code and message shape. Never changes the diagnostics otherwise;
+    /// a failed memory read or write is ignored (like [`Store::try_save_proofs`]).
+    fn remember_attempts(&mut self, mut diags: Vec<Diagnostic>, src: &str, agent: &str) -> Vec<Diagnostic> {
+        if diags.iter().all(|d| d.def.is_empty()) {
+            return diags;
+        }
+        if let Ok(input) = qal_compiler::parse_program(src) {
+            let _ = self.side_write(|tx| memory::record_attempts(tx, &diags, &input, agent));
+        }
+        let mut seen: Vec<(&'static str, String)> = Vec::new();
+        for d in diags.iter_mut().filter(|d| !d.def.is_empty()) {
+            let key = (d.code, memory::shape(&d.message));
+            if seen.contains(&key) {
+                continue;
+            }
+            seen.push(key);
+            let hint = self.conn.transaction().ok().and_then(|tx| memory::hint_for(&tx, d.code, &d.message).ok().flatten());
+            if let Some(h) = hint {
+                d.hints.push(h);
+            }
+        }
+        diags
+    }
+
+    /// A successful `define`: turns the agent's earlier failed attempts of the defined names into
+    /// corrections. Ignored if it fails.
+    fn remember_corrections(&mut self, defined: &[Defined], agent: &str) {
+        let names: Vec<&str> = defined.iter().filter(|d| d.status == "added" || d.status == "replaced").map(|d| d.name.as_str()).collect();
+        // One cheap read first: most defines have no earlier attempt and open no write transaction.
+        if !matches!(memory::has_attempts_for(&self.conn, &names, agent), Ok(true)) {
+            return;
+        }
+        let space = self.space.clone();
+        let _ = self.side_write(|tx| {
+            let snap = Snapshot::load(tx, &space)?;
+            let after = |n: &str| snap.decode_name(tx, n).ok().map(|d| ops::text(&d));
+            memory::record_corrections(tx, defined, &after, agent).map(|_| ())
+        });
+    }
+
+    /// Runs `f` in its own short transaction without waiting for other writers: if one holds the
+    /// lock, nothing is written (the memory simply misses this event).
+    fn side_write(&mut self, f: impl FnOnce(&rusqlite::Transaction) -> Result<(), Vec<Diagnostic>>) -> Result<(), Vec<Diagnostic>> {
+        self.conn.busy_timeout(std::time::Duration::ZERO).map_err(sql)?;
+        let result = (|| {
+            let tx = self.conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate).map_err(sql)?;
+            f(&tx)?;
+            tx.commit().map_err(sql)
+        })();
+        let _ = schema::configure(&self.conn);
+        result
+    }
+
+    /// Imports corrections made elsewhere (the seed corpus) as `corpus` corrections, all or nothing;
+    /// returns how many were stored.
+    pub fn import_corrections(&mut self, records: &[CorrectionInput]) -> Result<usize, Vec<Diagnostic>> {
+        let tx = self.conn.transaction().map_err(sql)?;
+        let n = memory::import(&tx, records)?;
+        tx.commit().map_err(sql)?;
+        Ok(n)
+    }
+
+    /// Earlier corrections for `q.code` and/or `q.message` (at most 5) and the stored definitions
+    /// matching `q.name` and `q.type_pattern` (at most 20). Without any filter it is refused (E0701);
+    /// an unknown code gives empty lists.
+    pub fn recall(&mut self, q: &RecallQuery) -> Result<Recall, Vec<Diagnostic>> {
+        // A blank message is no filter: SQLite's instr(x, '') is 1 for every row.
+        let q = &RecallQuery { message: q.message.clone().filter(|m| !m.trim().is_empty()), ..q.clone() };
+        if q.code.is_none() && q.message.is_none() && q.name.is_none() && q.type_pattern.is_none() {
+            return Err(vec![Diagnostic::new("E0701", "bad_arguments", "", "", "`recall` needs at least one of `code`, `message`, `name`, `type`")
+                .hint("recall {\"code\": \"E0201\", \"message\": \"unknown name `x`\"} lists earlier fixes of a diagnostic; {\"name\": \"prefix\"} or {\"type\": \"fn(Str) -> _\"} lists definitions")]);
+        }
+        let corrections = {
+            let tx = self.conn.transaction().map_err(sql)?;
+            memory::recall(&tx, q)?
+        };
+        let mut definitions = Vec::new();
+        if q.name.is_some() || q.type_pattern.is_some() {
+            definitions = ops::query(&mut self.conn, &self.space, &Query { name: q.name.clone(), type_pattern: q.type_pattern.clone(), ..Query::default() })?;
+            definitions.truncate(20);
+        }
+        Ok(Recall { corrections, definitions })
     }
 
     /// Renames a definition. No hash changes; the history of `old` moves to `new`.

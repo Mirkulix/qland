@@ -155,7 +155,7 @@ fn key_files_are_private_and_never_shown() {
 fn the_policy_matrix() {
     use Role::*;
     // Reads for everyone, anywhere.
-    for tool in ["qal_view", "qal_query", "qal_history", "qal_whoami", "qal_verify", "qal_test", "qal_prove", "qal_run", "qal_call", "qal_request", "qal_build"] {
+    for tool in ["qal_view", "qal_query", "qal_history", "qal_recall", "qal_whoami", "qal_verify", "qal_test", "qal_prove", "qal_run", "qal_call", "qal_request", "qal_build"] {
         for r in policy::ROLES {
             for sp in policy::SPACES {
                 assert!(policy::allows(tool, None, r, sp), "{tool} {r:?} {sp:?}");
@@ -178,9 +178,9 @@ fn the_policy_matrix() {
     assert_eq!(policy::allowed_roles("qal_lease", Some("break"), Space::Main), [Architect]);
     assert!(policy::rule("qal_lease", None, Architect).is_none(), "lease needs an action");
     // tools/list: only available tools; reviewers do not see writes.
-    assert_eq!(policy::tools_for(Reviewer), ["qal_view", "qal_query", "qal_history", "qal_whoami", "qal_verify", "qal_test", "qal_prove", "qal_run", "qal_call", "qal_request", "qal_build", "qal_change", "qal_review", "qal_merge"]);
+    assert_eq!(policy::tools_for(Reviewer), ["qal_view", "qal_query", "qal_history", "qal_recall", "qal_whoami", "qal_verify", "qal_test", "qal_prove", "qal_run", "qal_call", "qal_request", "qal_build", "qal_change", "qal_review", "qal_merge"]);
     assert!(policy::tools_for(Implementer).contains(&"qal_define") && !policy::tools_for(Implementer).contains(&"qal_rename"));
-    assert_eq!(policy::tools_for(Architect).len(), 19);
+    assert_eq!(policy::tools_for(Architect).len(), 20);
     assert!(!policy::tools_for(Implementer).contains(&"qal_review") && policy::tools_for(Implementer).contains(&"qal_rebase"));
     // E0903 names the roles that may.
     let d = policy::forbidden("qal_define", None, Implementer, Space::Main);
@@ -582,7 +582,7 @@ fn version_5_stores_are_upgraded_to_6() {
     let path = s.path().to_path_buf();
     drop(s);
     let mut s = Store::open(&path).unwrap();
-    assert_eq!(raw(&s).query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), 6);
+    assert_eq!(raw(&s).query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), crate::schema::SCHEMA_VERSION);
     assert_eq!(s.query(&crate::Query::default()).unwrap(), before, "same names and hashes");
     assert_eq!(count(&s, "records"), 0);
     let space: String = raw(&s).query_row("SELECT space FROM history WHERE name = 'f'", [], |r| r.get(0)).unwrap();

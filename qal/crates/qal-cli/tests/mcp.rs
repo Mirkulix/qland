@@ -186,7 +186,7 @@ fn handshake_lists_the_tools_with_the_language_reference() {
     assert_eq!(c.request("ping", json!({}))["result"], json!({}));
     let tools = c.request("tools/list", json!({}))["result"]["tools"].clone();
     let names: Vec<&str> = tools.as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap()).collect();
-    assert_eq!(names, ["qal_define", "qal_test", "qal_prove", "qal_run", "qal_call", "qal_request", "qal_view", "qal_query", "qal_rename", "qal_delete", "qal_history", "qal_build"]);
+    assert_eq!(names, ["qal_define", "qal_test", "qal_prove", "qal_run", "qal_call", "qal_request", "qal_view", "qal_query", "qal_rename", "qal_delete", "qal_history", "qal_build", "qal_recall"]);
     for t in tools.as_array().unwrap() {
         assert_eq!(t["inputSchema"]["type"], "object", "{t}");
         assert!(!t["description"].as_str().unwrap().is_empty());
@@ -197,8 +197,9 @@ fn handshake_lists_the_tools_with_the_language_reference() {
     // Phase 2 (generics, closures, maps, bytes, proofs), Phase 3a (a "Services" section of 12 lines)
     // Phase 3b (two lines on `std.` names), Phase 6a (one line on effect parameters) and Phase 6b
     // (one line on `qal_run` cases, one on the tests `qal_define` runs) and the deployment tests
-    // of 2026-10-23 (the outline to read before a change) add to it.
-    assert!(qal_cli::mcp::REFERENCE.lines().count() <= 75 && qal_cli::mcp::REFERENCE.len() <= 9973, "{} lines, {} bytes", qal_cli::mcp::REFERENCE.lines().count(), qal_cli::mcp::REFERENCE.len());
+    // of 2026-10-23 (the outline to read before a change) and Phase 6b (one line on `qal_recall`,
+    // with its `message` filter) add to it.
+    assert!(qal_cli::mcp::REFERENCE.lines().count() <= 76 && qal_cli::mcp::REFERENCE.len() <= 10174, "{} lines, {} bytes", qal_cli::mcp::REFERENCE.lines().count(), qal_cli::mcp::REFERENCE.len());
     // An unknown version gets the newest legacy one.
     let r = c.request("initialize", json!({"protocolVersion": "1999-01-01", "capabilities": {}, "clientInfo": {"name": "x", "version": "1"}}));
     assert_eq!(r["result"]["protocolVersion"], "2025-11-25");
@@ -870,5 +871,88 @@ fn both(body: fn(&mut Client)) {
     assert_eq!(c.finish(), Some(0));
     let mut c = Client::architect();
     body(&mut c);
+    assert_eq!(c.finish(), Some(0));
+}
+
+#[test]
+fn recall_answers_with_the_earlier_fix() {
+    both(recall_answers_with_the_earlier_fix_in);
+}
+
+fn recall_answers_with_the_earlier_fix_in(c: &mut Client) {
+    let (err, v) = c.call("qal_define", json!({"source": "fn f(n: Int) -> Int = { let x = n + 1 in x; x }"}));
+    assert!(err && v["diagnostics"][0]["code"] == "E0201", "{v}");
+    let (err, v) = c.call("qal_define", json!({"source": "fn f(n: Int) -> Int = let x = n + 1 in { x; x }"}));
+    assert!(!err, "{v}");
+    let (err, v) = c.call("qal_recall", json!({"code": "E0201"}));
+    assert!(!err, "{v}");
+    let corrections = v["recall"]["corrections"].as_array().unwrap();
+    assert_eq!(corrections.len(), 1, "{v}");
+    assert_eq!(corrections[0]["count"], 1, "{v}");
+    assert!(corrections[0]["before"].is_string() && corrections[0]["after"].is_string(), "{v}");
+    // A failing define of another name carries the fix in its hints.
+    let (err, v) = c.call("qal_define", json!({"source": "fn g(n: Int) -> Int = { let x = n + 2 in x; x }"}));
+    assert!(err, "{v}");
+    let hints = v["diagnostics"][0]["hints"].as_array().unwrap();
+    assert!(hints.iter().any(|h| h.as_str().is_some_and(|h| h.starts_with("earlier fix of E0201"))), "{v}");
+    // No filter is refused by the store.
+    let (err, v) = c.call("qal_recall", json!({}));
+    assert!(err && v["diagnostics"][0]["code"] == "E0701", "{v}");
+}
+
+/// Phase 6b acceptance: the corpus of the token analysis (`bench/analysis/corrections-2026-10-23.json`)
+/// answers for its three error classes. The whole corpus is imported once into one project, as
+/// `qal corrections import` does, and each class is recalled the way an agent holding the diagnostic
+/// asks: by its code and message. A second import changes nothing.
+#[test]
+fn recall_knows_the_three_error_classes_of_the_token_analysis() {
+    use qal_store::{CorrectionInput, Store};
+    let corpus: Vec<CorrectionInput> = serde_json::from_str(
+        &std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../../bench/analysis/corrections-2026-10-23.json")).unwrap(),
+    )
+    .unwrap();
+    let root = Client::fresh_root();
+    let mut store = Store::init(&root).unwrap();
+    assert_eq!(store.import_corrections(&corpus).unwrap(), corpus.len());
+    assert_eq!(store.import_corrections(&corpus).unwrap(), 0, "the corpus is stored once");
+    drop(store);
+    let mut c = Client::start_at(root);
+    c.initialize();
+    let mut recall = |code: &str, message: &str| -> Vec<Value> {
+        let (err, v) = c.call("qal_recall", json!({"code": code, "message": message}));
+        assert!(!err, "{v}");
+        v["recall"]["corrections"].as_array().unwrap().clone()
+    };
+    let text = |c: &Value, k: &str| c[k].as_str().unwrap().to_string();
+
+    // Class 1: a local name used after `;` is out of scope (E0201 unknown name). The fix binds it with
+    // `let … in` and puts the uses in the block after it.
+    let found = recall("E0201", "unknown name `x`");
+    assert!(found.iter().all(|c| c["shape"] == "unknown name `_`"), "{found:?}");
+    let spaced = |t: String| t.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(found.iter().any(|c| text(c, "before").contains(';') && spaced(text(c, "after")).contains(" in { ")), "{found:?}");
+
+    // Class 2: `String` where `Str` is meant. The fix writes `Str`; the record with this very message comes first.
+    let found = recall("E0201", "unknown name `String`");
+    let first = &found[0];
+    assert!(text(first, "before").contains("String") && text(first, "after").contains("Str") && !text(first, "after").contains("String"), "{found:?}");
+
+    // Class 3: a built-in used as a value (E0201 "is not a value"). The fix replaces the bare built-in
+    // by a helper or closure, so `after` differs from `before` where the built-in stood.
+    let found = recall("E0201", "built-in `len` is not a value");
+    assert!(!found.is_empty() && found.iter().all(|c| c["shape"] == "built-in `_` is not a value"), "{found:?}");
+    assert!(
+        found.iter().any(|c| {
+            let (b, a) = (text(c, "before"), text(c, "after"));
+            let name = text(c, "message").split('`').nth(1).unwrap().to_string();
+            b.contains(&format!(", {name})")) && !a.contains(&format!(", {name})"))
+        }),
+        "{found:?}"
+    );
+    // By code alone the ranking still shows both shapes of E0201.
+    let (err, v) = c.call("qal_recall", json!({"code": "E0201"}));
+    assert!(!err, "{v}");
+    let shapes: Vec<&str> = v["recall"]["corrections"].as_array().unwrap().iter().map(|c| c["shape"].as_str().unwrap()).collect();
+    assert!(shapes.contains(&"unknown name `_`") && shapes.contains(&"built-in `_` is not a value"), "{v}");
     assert_eq!(c.finish(), Some(0));
 }

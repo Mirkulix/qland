@@ -1,0 +1,1 @@
+fn ls(xs: List[Str]) -> List[Int] = map(xs, slen)
