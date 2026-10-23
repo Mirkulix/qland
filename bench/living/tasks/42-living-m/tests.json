@@ -1,0 +1,459 @@
+{
+ "id": "42-living-m",
+ "title": "Order system stage 12",
+ "effects": [
+  "io"
+ ],
+ "cases": [
+  {
+   "name": "example",
+   "args": [],
+   "stdin": "product p1 widget 1000 5\nproduct p2 gadget 250 20\ncustomer c1 ann\ncustomer c2 bob\norder o1 c1 p1:2,p2:8\norder o2 c2 p1:3,p9:1\norder o3 c2 p1:4,p2:1\nrestock p1 10\nreturn o1 3\nreport\ntop\n",
+   "files": {},
+   "public": true,
+   "stdout": "OK o1 3800\nERR 6 unknown_product\nBACKORDER o3\nFILLED o3 4250\nRETURNED o1 1140\n--- customers\nc1 1 2660 0 2660\nc2 1 4250 0 4250\n--- products\np1 11 4\np2 12 8\n--- top\np2 8\np1 4\n",
+   "exit_code": 1
+  },
+  {
+   "name": "second",
+   "args": [],
+   "stdin": "product p1 a 100 10\nproduct p2 b 10 10\ncustomer c1 x silver\npromo p2 40\ntax 10\norder o1 c1 p1:5,p2:5\norder o2 c1 p1 5\norder o3 c1 p1:0\norder o4 c1 p1:1,\norder o5 c1 p1:1,p1:1\nreport\n",
+   "files": {},
+   "public": true,
+   "stdout": "OK o1 534\nOK o2 533\nERR 8 invalid\nERR 9 invalid\nBACKORDER o5\n--- customers\nc1 2 1067 96 1067\n--- products\np1 0 10\np2 5 5\n",
+   "exit_code": 1
+  },
+  {
+   "name": "s0_example",
+   "args": [],
+   "stdin": "product p1 widget 1000 5\nproduct p2 gadget 250 20\ncustomer c1 ann\ncustomer c2 bob\norder o1 c1 p1 2\norder o2 c2 p2 25\norder o3 c1 p2 20\nreport\n",
+   "files": {},
+   "public": false,
+   "stdout": "OK o1 2000\nBACKORDER o2\nOK o3 4750\n--- customers\nc1 2 6750 0 6750\nc2 0 0 0 0\n--- products\np1 3 2\np2 0 20\n",
+   "exit_code": 0
+  },
+  {
+   "name": "s0_second",
+   "args": [],
+   "stdin": "product p1 a 10 1\ncustomer c1 x\norder o1 c1 p1 1\norder o1 c1 p1 1\norder o2 c9 p1 1\norder o3 c1 p9 1\nreport\n",
+   "files": {},
+   "public": false,
+   "stdout": "OK o1 10\nERR 4 duplicate\nERR 5 unknown_customer\nERR 6 unknown_product\n--- customers\nc1 1 10 0 10\n--- products\np1 0 1\n",
+   "exit_code": 1
+  },
+  {
+   "name": "s0_empty",
+   "args": [],
+   "stdin": "",
+   "files": {},
+   "public": false,
+   "stdout": "",
+   "exit_code": 0
+  },
+  {
+   "name": "s0_invalid_lines",
+   "args": [],
+   "stdin": "product p1 a 0 1\nproduct p2 b 10 -1\nproduct p3 c 10\ncustomer\norder o1 c1 p1 0\nfoo\nproduct p-1 a 1 1\n\nreport extra\nreport\n",
+   "files": {},
+   "public": false,
+   "stdout": "ERR 1 invalid\nERR 2 invalid\nERR 3 invalid\nERR 4 invalid\nERR 5 invalid\nERR 6 invalid\nERR 7 invalid\nERR 8 invalid\nERR 9 invalid\n--- customers\n--- products\n",
+   "exit_code": 1
+  },
+  {
+   "name": "s0_duplicates",
+   "args": [],
+   "stdin": "product p1 widget 1000 5\nproduct p2 gadget 250 20\ncustomer c1 ann\ncustomer c2 bob\nproduct p1 again 1 1\ncustomer c1 again\norder o1 c1 p1 1\norder o1 c2 p2 1\nreport\n",
+   "files": {},
+   "public": false,
+   "stdout": "ERR 5 duplicate\nERR 6 duplicate\nOK o1 1000\nERR 8 duplicate\n--- customers\nc1 1 1000 0 1000\nc2 0 0 0 0\n--- products\np1 4 1\np2 20 0\n",
+   "exit_code": 1
+  },
+  {
+   "name": "s0_error_order",
+   "args": [],
+   "stdin": "product p1 widget 1000 5\nproduct p2 gadget 250 20\ncustomer c1 ann\ncustomer c2 bob\norder o1 c9 p9 1\norder o2 c1 p9 1\norder o1 c9 p9 1\nreport\n",
+   "files": {},
+   "public": false,
+   "stdout": "ERR 5 unknown_customer\nERR 6 unknown_product\nERR 7 unknown_customer\n--- customers\nc1 0 0 0 0\nc2 0 0 0 0\n--- products\np1 5 0\np2 20 0\n",
+   "exit_code": 1
+  },
+  {
+   "name": "s0_stock_edge",
+   "args": [],
+   "stdin": "product p1 widget 1000 5\nproduct p2 gadget 250 20\ncustomer c1 ann\ncustomer c2 bob\norder o1 c1 p1 5\norder o2 c1 p1 1\norder o3 c2 p1 0\norder o4 c2 p2 20\norder o5 c2 p2 1\nreport\n",
+   "files": {},
+   "public": false,
+   "stdout": "OK o1 5000\nBACKORDER o2\nERR 7 invalid\nOK o4 4750\nBACKORDER o5\n--- customers\nc1 1 5000 0 5000\nc2 1 4750 0 4750\n--- products\np1 0 5\np2 0 20\n",
+   "exit_code": 1
+  },
+  {
+   "name": "s0_big_numbers",
+   "args": [],
+   "stdin": "product p1 a 999999999 999999999\ncustomer c1 x\norder o1 c1 p1 999999999\nreport\n",
+   "files": {},
+   "public": false,
+   "stdout": "OK o1 949999998100000000\n--- customers\nc1 1 949999998100000000 0 949999998100000000\n--- products\np1 0 999999999\n",
+   "exit_code": 0
+  },
+  {
+   "name": "s0_no_report",
+   "args": [],
+   "stdin": "product p1 widget 1000 5\nproduct p2 gadget 250 20\ncustomer c1 ann\ncustomer c2 bob\norder o1 c1 p1 1\n",
+   "files": {},
+   "public": false,
+   "stdout": "OK o1 1000\n",
+   "exit_code": 0
+  },
+  {
+   "name": "s0_order_of_ids",
+   "args": [],
+   "stdin": "product B b 1 9\nproduct a a 1 9\nproduct _ u 1 9\ncustomer Z z\ncustomer b b\norder o1 b B 1\norder o2 Z a 2\nreport\n",
+   "files": {},
+   "public": false,
+   "stdout": "OK o1 1\nOK o2 2\n--- customers\nZ 1 2 0 2\nb 1 1 0 1\n--- products\nB 8 1\n_ 9 0\na 7 2\n",
+   "exit_code": 0
+  },
+  {
+   "name": "s1_example",
+   "args": [],
+   "stdin": "product p1 widget 1000 5\nproduct p2 gadget 250 20\ncustomer c1 ann\ncustomer c2 bob\norder o1 c1 p2 9\norder o2 c1 p2 10\norder o3 c2 p1 3\nreport\n",
+   "files": {},
+   "public": false,
+   "stdout": "OK o1 2250\nOK o2 2375\nOK o3 3000\n--- customers\nc1 2 4625 0 4625\nc2 1 3000 0 3000\n--- products\np1 2 3\np2 1 19\n",
+   "exit_code": 0
+  },
+  {
+   "name": "s1_second",
+   "args": [],
+   "stdin": "product p1 a 7 100\ncustomer c1 x\norder o1 c1 p1 10\norder o2 c1 p1 11\norder o3 c1 p1 1\nreport\n",
+   "files": {},
+   "public": false,
+   "stdout": "OK o1 66\nOK o2 73\nOK o3 7\n--- customers\nc1 3 146 0 146\n--- products\np1 78 22\n",
+   "exit_code": 0
+  },
+  {
+   "name": "s1_rounding",
+   "args": [],
+   "stdin": "product p1 a 1 100\nproduct p2 b 3 100\ncustomer c1 x\norder o1 c1 p1 10\norder o2 c1 p2 13\norder o3 c1 p1 19\nreport\n",
+   "files": {},
+   "public": false,
+   "stdout": "OK o1 9\nOK o2 37\nOK o3 18\n--- customers\nc1 3 64 0 64\n--- products\np1 71 29\np2 87 13\n",
+   "exit_code": 0
+  },
+  {
+   "name": "s1_discount_not_on_reject",
+   "args": [],
+   "stdin": "product p1 widget 1000 5\nproduct p2 gadget 250 20\ncustomer c1 ann\ncustomer c2 bob\norder o1 c1 p1 10\norder o2 c1 p2 20\nreport\n",
+   "files": {},
+   "public": false,
+   "stdout": "BACKORDER o1\nOK o2 4750\n--- customers\nc1 1 4750 0 4750\nc2 0 0 0 0\n--- products\np1 5 0\np2 0 20\n",
+   "exit_code": 0
+  },
+  {
+   "name": "s2_example",
+   "args": [],
+   "stdin": "product p1 a 1000 100\ncustomer c1 ann gold\ncustomer c2 bob silver\ncustomer c3 cy\norder o1 c1 p1 1\norder o2 c2 p1 1\norder o3 c3 p1 1\norder o4 c1 p1 10\nreport\n",
+   "files": {},
+   "public": false,
+   "stdout": "OK o1 930\nOK o2 970\nOK o3 1000\nOK o4 8800\n--- customers\nc1 2 9730 0 9730\nc2 1 970 0 970\nc3 1 1000 0 1000\n--- products\np1 87 13\n",
+   "exit_code": 0
+  },
+  {
+   "name": "s2_second",
+   "args": [],
+   "stdin": "product p1 a 999 100\ncustomer c1 ann basic\ncustomer c2 bob platinum\ncustomer c3 cy gold extra\norder o1 c1 p1 10\norder o2 c2 p1 1\nreport\n",
+   "files": {},
+   "public": false,
+   "stdout": "ERR 3 invalid\nERR 4 invalid\nOK o1 9490\nERR 6 unknown_customer\n--- customers\nc1 1 9490 0 9490\n--- products\np1 90 10\n",
+   "exit_code": 1
+  },
+  {
+   "name": "s2_tier_rounding",
+   "args": [],
+   "stdin": "product p1 a 101 100\ncustomer g g gold\ncustomer s s silver\norder o1 g p1 3\norder o2 s p1 3\norder o3 g p1 10\norder o4 s p1 10\nreport\n",
+   "files": {},
+   "public": false,
+   "stdout": "OK o1 281\nOK o2 293\nOK o3 888\nOK o4 929\n--- customers\ng 2 1169 0 1169\ns 2 1222 0 1222\n--- products\np1 74 26\n",
+   "exit_code": 0
+  },
+  {
+   "name": "s3_example",
+   "args": [],
+   "stdin": "product p1 widget 1000 5\nproduct p2 gadget 250 20\ncustomer c1 ann\ncustomer c2 bob\norder o1 c1 p1 2\ncancel o1\ncancel o1\ncancel o9\norder o2 c1 p1 5\norder o3 c2 p1 1\ncancel o3\norder o4 c2 p1 1\nreport\n",
+   "files": {},
+   "public": false,
+   "stdout": "OK o1 2000\nCANCELLED o1 2000\nERR 7 not_open\nERR 8 unknown_order\nOK o2 5000\nBACKORDER o3\nCANCELLED o3 0\nBACKORDER o4\n--- customers\nc1 1 5000 0 5000\nc2 0 0 0 0\n--- products\np1 0 5\np2 20 0\n",
+   "exit_code": 1
+  },
+  {
+   "name": "s3_second",
+   "args": [],
+   "stdin": "product p1 a 10 1\ncustomer c1 x gold\norder o1 c1 p1 1\ncancel o1\norder o2 c1 p1 1\ncancel o2\ncancel\ncancel o2 now\nreport\n",
+   "files": {},
+   "public": false,
+   "stdout": "OK o1 9\nCANCELLED o1 9\nOK o2 9\nCANCELLED o2 9\nERR 7 invalid\nERR 8 invalid\n--- customers\nc1 0 0 0 0\n--- products\np1 1 0\n",
+   "exit_code": 1
+  },
+  {
+   "name": "s3_cancel_restores_discounted",
+   "args": [],
+   "stdin": "product p1 a 100 20\ncustomer c1 x silver\norder o1 c1 p1 10\ncancel o1\norder o2 c1 p1 10\nreport\n",
+   "files": {},
+   "public": false,
+   "stdout": "OK o1 920\nCANCELLED o1 920\nOK o2 920\n--- customers\nc1 1 920 0 920\n--- products\np1 10 10\n",
+   "exit_code": 0
+  },
+  {
+   "name": "s4_example",
+   "args": [],
+   "stdin": "product p1 widget 1000 5\nproduct p2 gadget 250 20\ncustomer c1 ann\ncustomer c2 bob\ntax 19\norder o1 c1 p1 1\norder o2 c2 p2 3\ntax 0\norder o3 c1 p2 1\ncancel o1\nreport\n",
+   "files": {},
+   "public": false,
+   "stdout": "OK o1 1190\nOK o2 892\nOK o3 250\nCANCELLED o1 1190\n--- customers\nc1 1 250 0 250\nc2 1 892 142 892\n--- products\np1 5 0\np2 16 4\n",
+   "exit_code": 0
+  },
+  {
+   "name": "s4_second",
+   "args": [],
+   "stdin": "product p1 a 999 100\ncustomer c1 x gold\ntax 7\norder o1 c1 p1 10\ntax 101\ntax -1\ntax 100\norder o2 c1 p1 1\nreport\n",
+   "files": {},
+   "public": false,
+   "stdout": "OK o1 9406\nERR 5 invalid\nERR 6 invalid\nOK o2 1858\n--- customers\nc1 2 11264 1544 11264\n--- products\np1 89 11\n",
+   "exit_code": 1
+  },
+  {
+   "name": "s4_tax_at_order_time",
+   "args": [],
+   "stdin": "product p1 a 100 10\ncustomer c1 x\ntax 10\norder o1 c1 p1 1\ntax 20\ncancel o1\norder o2 c1 p1 1\nreport\n",
+   "files": {},
+   "public": false,
+   "stdout": "OK o1 110\nCANCELLED o1 110\nOK o2 120\n--- customers\nc1 1 120 20 120\n--- products\np1 9 1\n",
+   "exit_code": 0
+  },
+  {
+   "name": "s5_example",
+   "args": [],
+   "stdin": "product p1 widget 1000 5\nproduct p2 gadget 250 20\ncustomer c1 ann\ncustomer c2 bob\nlimit c1 1500\ntax 10\norder o1 c1 p1 1\norder o2 c1 p1 1\npay c1 600\norder o3 c1 p1 1\npay c1 2000\nlimit c9 1\nreport\n",
+   "files": {},
+   "public": false,
+   "stdout": "OK o1 1100\nREJECT o2 credit\nREJECT o3 credit\nERR 11 overpay\nERR 12 unknown_customer\n--- customers\nc1 1 1100 100 500\nc2 0 0 0 0\n--- products\np1 4 1\np2 20 0\n",
+   "exit_code": 1
+  },
+  {
+   "name": "s5_second",
+   "args": [],
+   "stdin": "product p1 a 100 10\ncustomer c1 x\nlimit c1 0\norder o1 c1 p1 1\npay c1 0\npay c9 1\nlimit c1 100\norder o2 c1 p1 1\norder o3 c1 p1 1\ncancel o2\norder o4 c1 p1 1\nreport\n",
+   "files": {},
+   "public": false,
+   "stdout": "REJECT o1 credit\nERR 5 invalid\nERR 6 unknown_customer\nOK o2 100\nREJECT o3 credit\nCANCELLED o2 100\nOK o4 100\n--- customers\nc1 1 100 0 100\n--- products\np1 9 1\n",
+   "exit_code": 1
+  },
+  {
+   "name": "s5_credit_after_stock",
+   "args": [],
+   "stdin": "product p1 a 100 1\ncustomer c1 x\nlimit c1 50\norder o1 c1 p1 2\norder o2 c1 p1 1\nreport\n",
+   "files": {},
+   "public": false,
+   "stdout": "BACKORDER o1\nREJECT o2 credit\n--- customers\nc1 0 0 0 0\n--- products\np1 1 0\n",
+   "exit_code": 1
+  },
+  {
+   "name": "s5_cancel_not_below_zero",
+   "args": [],
+   "stdin": "product p1 a 100 10\ncustomer c1 x\norder o1 c1 p1 1\npay c1 100\ncancel o1\norder o2 c1 p1 2\npay c1 50\nreport\n",
+   "files": {},
+   "public": false,
+   "stdout": "OK o1 100\nCANCELLED o1 100\nOK o2 200\n--- customers\nc1 1 200 0 150\n--- products\np1 8 2\n",
+   "exit_code": 0
+  },
+  {
+   "name": "s6_example",
+   "args": [],
+   "stdin": "product p1 widget 1000 5\nproduct p2 gadget 250 20\ncustomer c1 ann\ncustomer c2 bob\norder o1 c1 p1 5\norder o2 c1 p1 1\nrestock p1 3\norder o3 c1 p1 3\nrestock p9 1\nrestock p1 0\nreport\n",
+   "files": {},
+   "public": false,
+   "stdout": "OK o1 5000\nBACKORDER o2\nFILLED o2 1000\nBACKORDER o3\nERR 9 unknown_product\nERR 10 invalid\n--- customers\nc1 2 6000 0 6000\nc2 0 0 0 0\n--- products\np1 2 6\np2 20 0\n",
+   "exit_code": 1
+  },
+  {
+   "name": "s6_second",
+   "args": [],
+   "stdin": "product p1 a 1 0\ncustomer c1 x\nrestock p1 999999999\norder o1 c1 p1 999999999\nreport\n",
+   "files": {},
+   "public": false,
+   "stdout": "OK o1 949999999\n--- customers\nc1 1 949999999 0 949999999\n--- products\np1 0 999999999\n",
+   "exit_code": 0
+  },
+  {
+   "name": "s7_example",
+   "args": [],
+   "stdin": "product p1 widget 1000 5\nproduct p2 gadget 250 20\ncustomer c1 ann\ncustomer c2 bob\norder o1 c1 p1 6\norder o2 c2 p1 2\norder o3 c1 p1 1\nrestock p1 2\nrestock p1 10\ncancel o1\nreport\n",
+   "files": {},
+   "public": false,
+   "stdout": "BACKORDER o1\nOK o2 2000\nOK o3 1000\nFILLED o1 6000\nCANCELLED o1 6000\n--- customers\nc1 1 1000 0 1000\nc2 1 2000 0 2000\n--- products\np1 14 3\np2 20 0\n",
+   "exit_code": 0
+  },
+  {
+   "name": "s7_second",
+   "args": [],
+   "stdin": "product p1 a 100 0\ncustomer c1 x\nlimit c1 150\norder o1 c1 p1 1\norder o2 c1 p1 1\nrestock p1 5\ncancel o2\ncancel o1\nreport\n",
+   "files": {},
+   "public": false,
+   "stdout": "BACKORDER o1\nBACKORDER o2\nFILLED o1 100\nREJECT o2 credit\nERR 7 not_open\nCANCELLED o1 100\n--- customers\nc1 0 0 0 0\n--- products\np1 5 0\n",
+   "exit_code": 1
+  },
+  {
+   "name": "s7_fifo_skip",
+   "args": [],
+   "stdin": "product p1 a 10 0\ncustomer c1 x\norder o1 c1 p1 5\norder o2 c1 p1 1\nrestock p1 1\nrestock p1 4\nreport\n",
+   "files": {},
+   "public": false,
+   "stdout": "BACKORDER o1\nBACKORDER o2\nFILLED o2 10\n--- customers\nc1 1 10 0 10\n--- products\np1 4 1\n",
+   "exit_code": 0
+  },
+  {
+   "name": "s7_backorder_exit_code",
+   "args": [],
+   "stdin": "product p1 a 10 0\ncustomer c1 x\norder o1 c1 p1 1\nreport\n",
+   "files": {},
+   "public": false,
+   "stdout": "BACKORDER o1\n--- customers\nc1 0 0 0 0\n--- products\np1 0 0\n",
+   "exit_code": 0
+  },
+  {
+   "name": "s8_example",
+   "args": [],
+   "stdin": "product p1 widget 1000 5\nproduct p2 gadget 250 20\ncustomer c1 ann\ncustomer c2 bob\norder o1 c1 p1 6\nprice p1 2000\ntax 10\nrestock p1 1\nprice p9 1\nprice p1 0\norder o2 c2 p1 0\nreport\n",
+   "files": {},
+   "public": false,
+   "stdout": "BACKORDER o1\nFILLED o1 13200\nERR 9 unknown_product\nERR 10 invalid\nERR 11 invalid\n--- customers\nc1 1 13200 1200 13200\nc2 0 0 0 0\n--- products\np1 0 6\np2 20 0\n",
+   "exit_code": 1
+  },
+  {
+   "name": "s8_second",
+   "args": [],
+   "stdin": "product p1 a 100 0\ncustomer c1 x silver\norder o1 c1 p1 10\nprice p1 50\nrestock p1 10\nreport\n",
+   "files": {},
+   "public": false,
+   "stdout": "BACKORDER o1\nFILLED o1 460\n--- customers\nc1 1 460 0 460\n--- products\np1 0 10\n",
+   "exit_code": 0
+  },
+  {
+   "name": "s9_example",
+   "args": [],
+   "stdin": "product p1 widget 1000 5\nproduct p2 gadget 250 20\ncustomer c1 ann\ncustomer c2 bob\nproduct p3 c 1 50\norder o1 c1 p1 3\norder o2 c2 p2 3\norder o3 c1 p3 4\ntop\ncancel o3\ntop\norder o4 c2 p1 1\ntop\nreport\n",
+   "files": {},
+   "public": false,
+   "stdout": "OK o1 3000\nOK o2 750\nOK o3 4\n--- top\np3 4\np1 3\np2 3\nCANCELLED o3 4\n--- top\np1 3\np2 3\nOK o4 1000\n--- top\np1 4\np2 3\n--- customers\nc1 1 3000 0 3000\nc2 2 1750 0 1750\n--- products\np1 1 4\np2 17 3\np3 50 0\n",
+   "exit_code": 0
+  },
+  {
+   "name": "s9_second",
+   "args": [],
+   "stdin": "product p1 a 1 9\ntop\ntop now\norder o1 c9 p1 1\nreport\n",
+   "files": {},
+   "public": false,
+   "stdout": "--- top\nERR 3 invalid\nERR 4 unknown_customer\n--- customers\n--- products\np1 9 0\n",
+   "exit_code": 1
+  },
+  {
+   "name": "s10_example",
+   "args": [],
+   "stdin": "product p1 widget 1000 5\nproduct p2 gadget 250 20\ncustomer c1 ann\ncustomer c2 bob\ntax 10\norder o1 c1 p2 10\nreturn o1 3\nreturn o1 7\nreturn o1 1\ncancel o1\nreturn o9 1\nreport\n",
+   "files": {},
+   "public": false,
+   "stdout": "OK o1 2612\nRETURNED o1 783\nRETURNED o1 1828\nERR 9 bad_qty\nERR 10 not_open\nERR 11 unknown_order\n--- customers\nc1 1 1 1 1\nc2 0 0 0 0\n--- products\np1 5 0\np2 20 0\n",
+   "exit_code": 1
+  },
+  {
+   "name": "s10_second",
+   "args": [],
+   "stdin": "product p1 a 999 10\ncustomer c1 x gold\nlimit c1 100000\norder o1 c1 p1 3\npay c1 2000\nreturn o1 2\nreturn o1 0\nreturn o1\norder o2 c1 p1 10\nreturn o2 1\nreport\n",
+   "files": {},
+   "public": false,
+   "stdout": "OK o1 2787\nRETURNED o1 1858\nERR 7 invalid\nERR 8 invalid\nBACKORDER o2\nERR 10 not_open\n--- customers\nc1 1 929 0 0\n--- products\np1 9 1\n",
+   "exit_code": 1
+  },
+  {
+   "name": "s10_return_pending",
+   "args": [],
+   "stdin": "product p1 a 10 0\ncustomer c1 x\norder o1 c1 p1 1\nreturn o1 1\ncancel o1\nreturn o1 1\nreport\n",
+   "files": {},
+   "public": false,
+   "stdout": "BACKORDER o1\nERR 4 not_open\nCANCELLED o1 0\nERR 6 not_open\n--- customers\nc1 0 0 0 0\n--- products\np1 0 0\n",
+   "exit_code": 1
+  },
+  {
+   "name": "s11_example",
+   "args": [],
+   "stdin": "product p1 widget 1000 5\nproduct p2 gadget 250 20\ncustomer c1 ann\ncustomer c2 bob\npromo p1 20\norder o1 c1 p1 1\npromo p1 0\norder o2 c1 p1 1\npromo p2 50\ncustomer c3 cy gold\norder o3 c3 p2 10\npromo p2 51\npromo p9 1\nreport\n",
+   "files": {},
+   "public": false,
+   "stdout": "OK o1 800\nOK o2 1000\nOK o3 1250\nERR 12 invalid\nERR 13 unknown_product\n--- customers\nc1 2 1800 0 1800\nc2 0 0 0 0\nc3 1 1250 0 1250\n--- products\np1 3 2\np2 10 10\n",
+   "exit_code": 1
+  },
+  {
+   "name": "s11_second",
+   "args": [],
+   "stdin": "product p1 a 1000 100\ncustomer c1 x\npromo p1 50\norder o1 c1 p1 10\npromo p1 45\norder o2 c1 p1 10\nreport\n",
+   "files": {},
+   "public": false,
+   "stdout": "OK o1 5000\nOK o2 5000\n--- customers\nc1 2 10000 0 10000\n--- products\np1 80 20\n",
+   "exit_code": 0
+  },
+  {
+   "name": "random_0",
+   "args": [],
+   "stdin": "product p1 np1 250 3\nproduct p2 np2 99 1\nproduct p3 np3 99 10\ncustomer c1 nc1\ncustomer c2 nc2 gold\nreport\nreturn o1 2\ncustomer c1 y\nproduct p5 x 1000 0\nreturn o1 10\nrestock p5 1\npromo p2 0\nproduct p5 x 50 2\ntax 0\ntop\nreturn o1 10\npay c3 1\ncustomer c3 y\nreport\ntax 0\ntop\nreturn o1 1\ncancel o1\nproduct p2 x 1000 2\npromo p4 10\nreport\n",
+   "files": {},
+   "public": false,
+   "stdout": "--- customers\nc1 0 0 0 0\nc2 0 0 0 0\n--- products\np1 3 0\np2 1 0\np3 10 0\nERR 7 unknown_order\nERR 8 duplicate\nERR 10 unknown_order\nERR 13 duplicate\n--- top\nERR 16 unknown_order\nERR 17 unknown_customer\n--- customers\nc1 0 0 0 0\nc2 0 0 0 0\nc3 0 0 0 0\n--- products\np1 3 0\np2 1 0\np3 10 0\np5 1 0\n--- top\nERR 22 unknown_order\nERR 23 unknown_order\nERR 24 duplicate\nERR 25 unknown_product\n--- customers\nc1 0 0 0 0\nc2 0 0 0 0\nc3 0 0 0 0\n--- products\np1 3 0\np2 1 0\np3 10 0\np5 1 0\n",
+   "exit_code": 1
+  },
+  {
+   "name": "random_1",
+   "args": [],
+   "stdin": "product p1 np1 1000 3\nproduct p2 np2 12345 1\nproduct p3 np3 250 0\ncustomer c1 nc1 basic\ncustomer c2 nc2\npromo p3 50\ncancel o1\norder o1 c3 p4 9\npromo p5 10\nprice p2 2000\ncancel o1\nproduct p1 x 1000 2\nreport\nreport\nrestock p1 5\nproduct p3 x 50 2\nreturn o1 1\norder o2 c3 p3:1,p4:2\nrestock p3 5\norder o3 c3 p2:1,p3:5\nproduct p4 x 50 20\nproduct p3 x 1000 0\nrestock p4 30\ntop\nrestock p5 1\npromo p2 50\nreturn o3 2\nreturn o3 10\npromo p4 10\ntop\nreport\npromo p1 50\nprice p4 2000\nreturn o3 10\nprice p1 2000\nreport\n",
+   "files": {},
+   "public": false,
+   "stdout": "ERR 7 unknown_order\nERR 8 unknown_customer\nERR 9 unknown_product\nERR 11 unknown_order\nERR 12 duplicate\n--- customers\nc1 0 0 0 0\nc2 0 0 0 0\n--- products\np1 3 0\np2 1 0\np3 0 0\n--- customers\nc1 0 0 0 0\nc2 0 0 0 0\n--- products\np1 3 0\np2 1 0\np3 0 0\nERR 16 duplicate\nERR 17 unknown_order\nERR 18 unknown_customer\nERR 20 unknown_customer\nERR 22 duplicate\n--- top\nERR 25 unknown_product\nERR 27 unknown_order\nERR 28 unknown_order\n--- top\n--- customers\nc1 0 0 0 0\nc2 0 0 0 0\n--- products\np1 8 0\np2 1 0\np3 5 0\np4 50 0\nERR 34 unknown_order\n--- customers\nc1 0 0 0 0\nc2 0 0 0 0\n--- products\np1 8 0\np2 1 0\np3 5 0\np4 50 0\n",
+   "exit_code": 1
+  },
+  {
+   "name": "random_2",
+   "args": [],
+   "stdin": "product p1 np1 1000 50\nproduct p2 np2 250 0\nproduct p3 np3 99 3\ncustomer c1 nc1\ncustomer c2 nc2 gold\npay c1 1000\ntop\npay c2 1000\npay c3 1000\nrestock p2 5\ntax 0\nproduct p3 x 50 20\nreturn o1 1\nrestock p2 1\nlimit c1 500\ntax 0\ntop\nproduct p5 x 50 2\npay c3 100\norder o1 c1 p2:2\norder o2 c2 p3:5,p2:10\npromo p3 0\nreport\ncustomer c3 y\npay c3 100\ncancel o2\nprice p5 1\nreport\npay c3 1000\npromo p5 10\ncancel o1\nlimit c2 500\nlimit c3 5000\norder o3 c1 p1 11\ncustomer c2 y\nproduct p1 x 1 2\ncustomer c3 y\ntop\nproduct p5 x 1 2\norder o4 c1 p5 10\npay c3 1000\ntax 100\nrestock p1 5\nrestock p5 30\ntax 19\nreport\n",
+   "files": {},
+   "public": false,
+   "stdout": "ERR 6 overpay\n--- top\nERR 8 overpay\nERR 9 unknown_customer\nERR 12 duplicate\nERR 13 unknown_order\n--- top\nERR 19 unknown_customer\nOK o1 500\nBACKORDER o2\n--- customers\nc1 1 500 0 500\nc2 0 0 0 0\n--- products\np1 50 0\np2 4 2\np3 3 0\np5 2 0\nERR 25 overpay\nCANCELLED o2 0\n--- customers\nc1 1 500 0 500\nc2 0 0 0 0\nc3 0 0 0 0\n--- products\np1 50 0\np2 4 2\np3 3 0\np5 2 0\nERR 29 overpay\nCANCELLED o1 500\nREJECT o3 credit\nERR 35 duplicate\nERR 36 duplicate\nERR 37 duplicate\n--- top\nERR 39 duplicate\nBACKORDER o4\nERR 41 overpay\nFILLED o4 16\n--- customers\nc1 1 16 8 16\nc2 0 0 0 0\nc3 0 0 0 0\n--- products\np1 55 0\np2 6 0\np3 3 0\np5 22 10\n",
+   "exit_code": 1
+  },
+  {
+   "name": "random_3",
+   "args": [],
+   "stdin": "product p1 np1 7 1\nproduct p2 np2 1000 0\nproduct p3 np3 250 0\ncustomer c1 nc1 gold\ncustomer c2 nc2 silver\npay c1 1\norder o1 c2 p3 25\nlimit c3 5000\nrestock p4 1\npay c3 100\nlimit c2 500\npay c1 1\ncustomer c2 y\nrestock p3 5\nproduct p1 x 50 20\nrestock p1 30\nreport\norder o2 c1 p1 11\nreport\nlimit c2 5000\ntax 100\npromo p3 10\ntax 7\ncustomer c3 y\ntax 19\nlimit c3 5000\norder o3 c3 p3:5,p1:5\ntop\npay c1 1\norder o2 c2 p5 10\nreport\ncustomer c3 y\nreport\nreport\nrestock p5 1\nlimit c3 0\ntax 100\ntop\ntax 7\ntop\nprice p1 1\norder o5 c2 p5 2\norder o6 c3 p2:2\nrestock p5 1\nprice p1 1\nreturn o3 1\nreport\ncancel o1\norder o7 c1 p2 2\nlimit c2 5000\ncancel o7\ntax 7\ntop\norder o8 c2 p1:10,p5:1,p3:10\nprice p4 60\nreport\n",
+   "files": {},
+   "public": false,
+   "stdout": "ERR 6 overpay\nBACKORDER o1\nERR 8 unknown_customer\nERR 9 unknown_product\nERR 10 unknown_customer\nERR 12 overpay\nERR 13 duplicate\nERR 15 duplicate\n--- customers\nc1 0 0 0 0\nc2 0 0 0 0\n--- products\np1 31 0\np2 0 0\np3 5 0\nOK o2 67\n--- customers\nc1 1 67 0 67\nc2 0 0 0 0\n--- products\np1 20 11\np2 0 0\np3 5 0\nOK o3 1303\n--- top\np1 16\np3 5\nERR 30 duplicate\n--- customers\nc1 1 67 0 66\nc2 0 0 0 0\nc3 1 1303 208 1303\n--- products\np1 15 16\np2 0 0\np3 0 5\nERR 32 duplicate\n--- customers\nc1 1 67 0 66\nc2 0 0 0 0\nc3 1 1303 208 1303\n--- products\np1 15 16\np2 0 0\np3 0 5\n--- customers\nc1 1 67 0 66\nc2 0 0 0 0\nc3 1 1303 208 1303\n--- products\np1 15 16\np2 0 0\np3 0 5\nERR 35 unknown_product\n--- top\np1 16\np3 5\n--- top\np1 16\np3 5\nERR 42 unknown_product\nBACKORDER o6\nERR 44 unknown_product\nRETURNED o3 130\n--- customers\nc1 1 67 0 66\nc2 0 0 0 0\nc3 1 1173 188 1173\n--- products\np1 15 16\np2 0 0\np3 1 4\nCANCELLED o1 0\nBACKORDER o7\nCANCELLED o7 0\n--- top\np1 16\np3 4\nERR 54 unknown_product\nERR 55 unknown_product\n--- customers\nc1 1 67 0 66\nc2 0 0 0 0\nc3 1 1173 188 1173\n--- products\np1 15 16\np2 0 0\np3 1 4\n",
+   "exit_code": 1
+  },
+  {
+   "name": "random_4",
+   "args": [],
+   "stdin": "product p1 np1 12345 0\nproduct p2 np2 1000 0\nproduct p3 np3 7 1\ncustomer c1 nc1 silver\ncustomer c2 nc2\nreturn o1 1\ncustomer c1 y\ncancel o1\nprice p2 2000\nreport\npay c1 1\ncustomer c1 y\nreport\npromo p1 0\nlimit c2 0\nreport\nlimit c3 100000\nreport\nrestock p3 1\npromo p4 0\npromo p5 0\ncustomer c3 y\nreport\ncustomer c3 y\nreport\ncancel o1\npromo p1 10\nproduct p4 x 1 2\npay c2 100\nprice p3 1\ncancel o1\nprice p1 2000\nreturn o1 10\nrestock p3 5\ntop\npromo p2 50\ncustomer c2 y\nlimit c2 100000\nreport\npay c1 1000\nreport\nproduct p5 x 1000 0\nreport\ntop\norder o1 c3 p5 2\nreport\nreport\nprice p4 1\nprice p4 1\nlimit c3 0\ntop\nrestock p2 5\npay c2 100\ntax 100\nreturn o1 10\ncustomer c2 y\nreport\npay c2 100\nreturn o1 10\ntax 19\nproduct p4 x 1000 2\nprice p3 2000\norder o2 c3 p3 5\npay c2 100\ncancel o1\nreport\n",
+   "files": {},
+   "public": false,
+   "stdout": "ERR 6 unknown_order\nERR 7 duplicate\nERR 8 unknown_order\n--- customers\nc1 0 0 0 0\nc2 0 0 0 0\n--- products\np1 0 0\np2 0 0\np3 1 0\nERR 11 overpay\nERR 12 duplicate\n--- customers\nc1 0 0 0 0\nc2 0 0 0 0\n--- products\np1 0 0\np2 0 0\np3 1 0\n--- customers\nc1 0 0 0 0\nc2 0 0 0 0\n--- products\np1 0 0\np2 0 0\np3 1 0\nERR 17 unknown_customer\n--- customers\nc1 0 0 0 0\nc2 0 0 0 0\n--- products\np1 0 0\np2 0 0\np3 1 0\nERR 20 unknown_product\nERR 21 unknown_product\n--- customers\nc1 0 0 0 0\nc2 0 0 0 0\nc3 0 0 0 0\n--- products\np1 0 0\np2 0 0\np3 2 0\nERR 24 duplicate\n--- customers\nc1 0 0 0 0\nc2 0 0 0 0\nc3 0 0 0 0\n--- products\np1 0 0\np2 0 0\np3 2 0\nERR 26 unknown_order\nERR 29 overpay\nERR 31 unknown_order\nERR 33 unknown_order\n--- top\nERR 37 duplicate\n--- customers\nc1 0 0 0 0\nc2 0 0 0 0\nc3 0 0 0 0\n--- products\np1 0 0\np2 0 0\np3 7 0\np4 2 0\nERR 40 overpay\n--- customers\nc1 0 0 0 0\nc2 0 0 0 0\nc3 0 0 0 0\n--- products\np1 0 0\np2 0 0\np3 7 0\np4 2 0\n--- customers\nc1 0 0 0 0\nc2 0 0 0 0\nc3 0 0 0 0\n--- products\np1 0 0\np2 0 0\np3 7 0\np4 2 0\np5 0 0\n--- top\nBACKORDER o1\n--- customers\nc1 0 0 0 0\nc2 0 0 0 0\nc3 0 0 0 0\n--- products\np1 0 0\np2 0 0\np3 7 0\np4 2 0\np5 0 0\n--- customers\nc1 0 0 0 0\nc2 0 0 0 0\nc3 0 0 0 0\n--- products\np1 0 0\np2 0 0\np3 7 0\np4 2 0\np5 0 0\n--- top\nERR 53 overpay\nERR 55 not_open\nERR 56 duplicate\n--- customers\nc1 0 0 0 0\nc2 0 0 0 0\nc3 0 0 0 0\n--- products\np1 0 0\np2 5 0\np3 7 0\np4 2 0\np5 0 0\nERR 58 overpay\nERR 59 not_open\nERR 61 duplicate\nREJECT o2 credit\nERR 64 overpay\nCANCELLED o1 0\n--- customers\nc1 0 0 0 0\nc2 0 0 0 0\nc3 0 0 0 0\n--- products\np1 0 0\np2 5 0\np3 7 0\np4 2 0\np5 0 0\n",
+   "exit_code": 1
+  },
+  {
+   "name": "random_5",
+   "args": [],
+   "stdin": "product p1 np1 250 10\nproduct p2 np2 7 50\nproduct p3 np3 250 0\ncustomer c1 nc1\ncustomer c2 nc2\nlimit c2 100000\npromo p2 50\nprice p4 2000\ntax 19\ncustomer c1 y\ncustomer c2 y\ntop\ncancel o1\nproduct p4 x 1 20\nproduct p5 x 1 20\norder o1 c3 p5:2\nrestock p3 1\nreturn o1 10\ntax 0\ncustomer c1 y\ncancel o1\nproduct p3 x 1 2\nreturn o1 2\nreturn o1 2\nprice p2 2000\ncustomer c2 y\nrestock p2 1\ncustomer c1 y\nreport\nproduct p1 x 50 20\ncustomer c3 y\npromo p3 0\nlimit c3 100000\nreturn o1 10\ntax 0\ncancel o1\ntax 0\nlimit c1 5000\nlimit c2 0\nreturn o1 2\ncustomer c1 y\ncancel o1\nreport\nreturn o1 2\ncancel o1\nlimit c3 5000\nproduct p4 x 50 20\ncancel o1\norder o2 c1 p3 10\norder o3 c1 p2:2,p5:1\npromo p2 0\nproduct p4 x 1 0\nreport\nlimit c3 0\nprice p2 2000\nproduct p3 x 1000 20\ncancel o1\nproduct p1 x 1 20\ncustomer c1 y\ntop\ntop\nreturn o2 2\npromo p4 0\nrestock p4 5\nprice p5 1\npay c1 1\nproduct p4 x 1 20\ncancel o1\ncustomer c3 y\nlimit c1 0\nprice p2 2000\norder o4 c1 p5:1,p5:1\ntax 7\npromo p4 0\ncustomer c1 y\nreport\n",
+   "files": {},
+   "public": false,
+   "stdout": "ERR 8 unknown_product\nERR 10 duplicate\nERR 11 duplicate\n--- top\nERR 13 unknown_order\nERR 16 unknown_customer\nERR 18 unknown_order\nERR 20 duplicate\nERR 21 unknown_order\nERR 22 duplicate\nERR 23 unknown_order\nERR 24 unknown_order\nERR 26 duplicate\nERR 28 duplicate\n--- customers\nc1 0 0 0 0\nc2 0 0 0 0\n--- products\np1 10 0\np2 51 0\np3 1 0\np4 20 0\np5 20 0\nERR 30 duplicate\nERR 34 unknown_order\nERR 36 unknown_order\nERR 40 unknown_order\nERR 41 duplicate\nERR 42 unknown_order\n--- customers\nc1 0 0 0 0\nc2 0 0 0 0\nc3 0 0 0 0\n--- products\np1 10 0\np2 51 0\np3 1 0\np4 20 0\np5 20 0\nERR 44 unknown_order\nERR 45 unknown_order\nERR 47 duplicate\nERR 48 unknown_order\nBACKORDER o2\nOK o3 2001\nERR 52 duplicate\n--- customers\nc1 1 2001 0 2001\nc2 0 0 0 0\nc3 0 0 0 0\n--- products\np1 10 0\np2 49 2\np3 1 0\np4 20 0\np5 19 1\nERR 56 duplicate\nERR 57 unknown_order\nERR 58 duplicate\nERR 59 duplicate\n--- top\np2 2\np5 1\n--- top\np2 2\np5 1\nERR 62 not_open\nERR 67 duplicate\nERR 68 unknown_order\nERR 69 duplicate\nREJECT o4 credit\nERR 75 duplicate\n--- customers\nc1 1 2001 0 2000\nc2 0 0 0 0\nc3 0 0 0 0\n--- products\np1 10 0\np2 49 2\np3 1 0\np4 25 0\np5 19 1\n",
+   "exit_code": 1
+  }
+ ]
+}
