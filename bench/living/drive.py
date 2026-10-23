@@ -108,6 +108,8 @@ def caught_regressions(path, arm):
     for tid, err, text, seen in results:
         n, inp = tool_of.get(tid, ("?", {}))
         cmd = str(inp.get("command", ""))
+        if n != "Bash":
+            continue  # a Read of TASK.md carries the reference's own mention of E0801
         if arm == "qal":
             if ("define" in cmd or "qal_test" in cmd) and ('"failed":' in text and '"failed":0' not in text.replace(" ", "")):
                 hits.append(f"call {seen}: tests failed")
