@@ -1724,8 +1724,12 @@ fn imported_corrections_answer_recall() {
 #[test]
 fn the_shape_of_a_message_hides_its_backticked_names() {
     assert_eq!(memory::shape("unknown name `x`"), "unknown name `_`");
+    // A capitalised name is a type or variant, another class of mistake than a local: `String`
+    // for `Str` must not share its shape (and its hint) with an unknown local after `;`.
+    assert_eq!(memory::shape("unknown name `String`"), "unknown name `_T`");
+    assert_ne!(memory::shape("unknown name `String`"), memory::shape("unknown name `x`"));
     assert_eq!(memory::shape("built-in `len` is not a value"), "built-in `_` is not a value");
-    assert_eq!(memory::shape("expected `Int`, found `List[Str]`"), "expected `_`, found `_`");
+    assert_eq!(memory::shape("expected `Int`, found `List[Str]`"), "expected `_T`, found `_T`");
     assert_eq!(memory::shape("expected Unit, found Int"), "expected Unit, found Int");
     assert_eq!(memory::shape("an unclosed `tick"), "an unclosed `tick");
 }

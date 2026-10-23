@@ -110,7 +110,10 @@ pub fn shape(message: &str) -> String {
     while let Some(i) = rest.find('`') {
         let Some(j) = rest[i + 1..].find('`') else { break };
         out.push_str(&rest[..i]);
-        out.push_str("`_`");
+        // A capitalised name (type, variant) is another class of mistake than a lowercase one
+        // (local, function): `String` for `Str` must not share a shape with an unknown local.
+        let name = &rest[i + 1..i + 1 + j];
+        out.push_str(if name.starts_with(|c: char| c.is_ascii_uppercase()) { "`_T`" } else { "`_`" });
         rest = &rest[i + 1 + j + 1..];
     }
     out.push_str(rest);
