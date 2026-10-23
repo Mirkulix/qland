@@ -42,8 +42,8 @@
 - Produces:
   - `CATEGORIES: tuple[str, ...]` = `("prompt.reference", "prompt.task", "env.guard", "env.tool_error", "env.read_task", "lang.parse", "lang.name", "lang.type", "lang.effect", "lang.contract", "lang.args", "lang.other_diag", "lang.test_failed", "lang.run_failed", "rust.compile", "rust.test_failed", "rust.panic", "ok.define", "ok.test", "ok.run", "ok.other", "final", "unclassified")`
   - `classify_result(arm: str, tool: str, inp: dict, text: str, is_error: bool) -> str` (eine Kategorie aus `CATEGORIES`, nie `prompt.*`/`final`)
-  - `attribute(path: str, arm: str, reference_chars: int, prompt_chars: int) -> dict` mit Schlüsseln `by_category: {cat: {"processed": int, "new": int, "output": int, "calls": int}}`, `api_calls: int`, `retries: int` (identischer `tool_use.input` unmittelbar nach einem fehlgeschlagenen Aufruf), `unclassified: list[{"call": int, "tool": str, "text": str}]` (Text auf 2 000 Zeichen gekürzt)
-  - `summarize(rows: list[dict]) -> dict` mit je Arm `totals` (Summen je Kategorie und Maß), `means` (je Lauf), `shares` (Anteil je Oberklasse `prompt`, `env`, `lang`, `ok`, `final`, `unclassified` an `processed`), `top3` (drei größte Kategorien nach `processed`)
+  - `attribute(path: str, arm: str, reference_chars: int, prompt_chars: int) -> dict` mit Schlüsseln `by_category: {cat: {"processed": int, "new": int, "output": int, "calls": int}}`, `api_calls: int` (= Runden), `processed_per_round: list[int]` (verarbeitete Tokens je Runde in Reihenfolge; zeigt das Wachstum des Kontexts), `retries: int` (identischer `tool_use.input` unmittelbar nach einem fehlgeschlagenen Aufruf), `unclassified: list[{"call": int, "tool": str, "text": str}]` (Text auf 2 000 Zeichen gekürzt)
+  - `summarize(rows: list[dict]) -> dict` mit je Arm `totals` (Summen je Kategorie und Maß), `means` (je Lauf), `shares` (Anteil je Oberklasse `prompt`, `env`, `lang`, `ok`, `final`, `unclassified` an `processed`), `top3` (drei größte Kategorien nach `processed`), `rounds` (`mean`, `median`, `max` der Runden je Lauf) und `round_cost` (mittlere verarbeitete Tokens der 1., 5. und 10. Runde über alle Läufe, die so viele haben): die Rundenzahl und der Kontextzuwachs je Runde sind neben den Kategorien die zweite Kennzahl des Berichts (eine Runde mehr kostet den ganzen Kontext noch einmal)
   - CLI: `python3 bench/analyze.py <results.jsonl>... --out bench/analysis/<datum>/` schreibt `rows.jsonl` (eine Zeile je Lauf) und `summary.json`
 
 **Attributionsregel** (Festlegung, im Modulkopf dokumentieren): API-Aufruf 1 trägt den Prompt; seine neuen Tokens werden im Verhältnis `reference_chars / prompt_chars` auf `prompt.reference` und `prompt.task` verteilt (`reference_chars` = Länge des `{tools}`-Blocks, den `run.prepare` einsetzt; `prompt_chars` = Länge des fertigen Prompts; beide aus dem archivierten `TASK.md` oder, falls fehlend, aus `bench/prompts/qal.md` plus Referenz berechnet). API-Aufruf n ≥ 2 trägt die Kategorie des Werkzeugergebnisses, das ihm unmittelbar voranging; der letzte API-Aufruf ohne nachfolgendes Werkzeug ist `final`. Die `output`-Tokens eines Aufrufs gehen in dieselbe Kategorie wie seine neuen Tokens.
@@ -85,6 +85,12 @@ def test_summary_top3_and_shares(self):
     s = analyze.summarize(rows)
     self.assertEqual(len(s["qal"]["top3"]), 3)
     self.assertAlmostEqual(sum(s["qal"]["shares"].values()), 1.0, places=6)
+
+def test_rounds_and_round_cost(self):
+    # drei Läufe mit 2, 4 und 6 Runden -> rounds.mean 4, round_cost[1] über drei, round_cost[5] über einen Lauf
+    s = analyze.summarize(rows)
+    self.assertEqual(s["qal"]["rounds"]["mean"], 4.0)
+    self.assertEqual(set(s["qal"]["round_cost"]), {"1", "5", "10"})
 ```
 
 - [ ] **Step 2: Tests laufen lassen, sie müssen fehlschlagen**
