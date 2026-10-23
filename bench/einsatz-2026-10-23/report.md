@@ -66,17 +66,40 @@ Beobachtungen:
 4. **Zweites Mal `isError: true` bei erwartetem Exit-Code 1** (siehe oben, Punkt 4). Das gehört korrigiert, bevor ein Agent lernt, Fehlermeldungen zu ignorieren.
 5. **Dauer bleibt das doppelte**, weil QAL die größere Ausgabe schreibt (10 274 gegen 5 224 Tokens): Verträge und Tests sind Text, den das Modell erzeugen muss.
 
+## Dritter Lauf: Änderung an bestehendem Code, schwächeres Modell
+
+Aufgabe `23-expense-approval-change`: ein Änderungsauftrag auf dem Stand aus Lauf 22 (QAL-Store mit Verträgen und Tests; Rust-Datei mit Tests), drei Änderungen: Wochenendregel für `travel` (Wochentagsberechnung, zwischen `duplicate` und `over_limit`), Essenslimit 6000 → 8000, fünfte Spalte „Monate mit Genehmigung“ in der Zusammenfassung. 15 versteckte Tests, darunter acht Wochentagsdaten über Schaltjahre und Jahrhundertgrenzen. Beide Agenten liefen diesmal auf **Haiku**, damit Fehler überhaupt wahrscheinlich werden.
+
+| | QAL | Rust |
+|---|---|---|
+| versteckte Tests | **15 / 15**, erster Versuch | **15 / 15**, erster Versuch |
+| Runden | 16 | 7 |
+| Dauer | 200 s | 120 s |
+| verarbeitete Tokens | 1 546 106 | 446 091 (Faktor **3,47**) |
+| Ausgabe-Tokens | 36 315 | 21 593 |
+| Art der Änderung | 40 Zeilen `define`: 8 Funktionen ersetzt oder neu, 7 Tests angepasst, 6 neu; Rest unverändert, `main` nur neu verknüpft | Datei komplett neu geschrieben (356 Zeilen, 16 Tests) |
+| Verifikation | 15 Tests grün in der Antwort auf das `define`; 15 Pflichten bewiesen, 1 unbekannt (wie in Lauf 22) | 16 Tests grün |
+| Fehler unterwegs | 4 Werkzeugfehler, alle im eigenen Python-Prüfskript des Agenten (KeyError, `sed`-Syntax, fehlendes `allow`); eine Sprachdiagnose E0508 (Effekt `io` nicht gewährt), korrekt | keine |
+
+Beobachtungen:
+
+1. **Auch die Verträge und Tests aus Lauf 22 haben nichts gefangen, weil wieder nichts falsch war.** Haiku änderte in beiden Sprachen richtig, einschließlich der Wochentagsberechnung. Das Experiment „ein Vertrag bricht“ ist damit zum dritten Mal nicht eingetreten; die Garantien waren jedes Mal grün, und sie *konnten* es nur sein, weil der Code stimmte. Ein Fehler, den sie hätten fangen können, ist in drei Läufen nicht entstanden.
+2. **Was QAL beim Ändern anders macht, ist sichtbar.** Der Store meldete die Änderung präzise: 8 Funktionen `replaced`/`added`, 2 Tests `unchanged`, `main` `relinked`. Die Änderung war ein 40-Zeilen-Delta gegen die geprüfte Basis, und alle 15 Tests liefen sofort mit; der Rust-Agent schrieb die Datei neu und prüfte dann. Für die Frage „was hat sich geändert, und gilt noch, was vorher galt“ ist QAL hier klar im Vorteil.
+3. **Haiku ist in QAL dreimal so teuer wie in Rust, aber nicht wegen der Sprache.** Von den 16 Runden gingen drei auf das Lesen des Programms (`qal_query`, zweimal `qal_view`, zusammen 35 KB Antwort) und neun auf ein selbst geschriebenes Python-Differenzprüfskript mit 240 Zufallsfällen gegen ein eigenes Referenz-Orakel samt dessen Fehlern. Die Werkzeuge der Sprache brauchten vier Runden. Der Tokenabstand ist ein Modell- und Arbeitsstil-Effekt, nicht ein Sprachaufschlag; er zeigt aber, dass ein schwaches Modell mit einer fremden Sprache *mehr* herumprobiert, und jede Runde trägt den 29-KB-Prompt.
+4. **`qal_view` des ganzen Programms kostet 21 KB Kontext.** Ein Agent, der ändern soll, braucht eine kompakte Sicht (Signaturen, Verträge, Testnamen) und den Quelltext nur der Funktionen, die er anfasst; `qal_query` liefert die Signaturen, aber kein Werkzeug sagt „welche Funktionen hängen von `cat_limit` ab“. Das ist ein Befund für die Werkzeuge.
+5. **Protokollverstoß:** Der QAL-Agent meldete sein Ergebnis über `SendMessage` statt als Abschlussantwort; der Harness wertet den Lauf deshalb als ungültig. Für diesen Einsatztest zählt die Lösung (15/15), der Verstoß bleibt notiert.
+
 ## Urteil
 
-Beide Läufe zusammen beantworten die Frage so:
+Alle drei Läufe zusammen beantworten die Frage so:
 
-- **Das System funktioniert.** Vier Agentenläufe, vier richtige Lösungen im ersten Anlauf, davon zwei in einer Sprache, die es vor fünf Tagen in dieser Form nicht gab; keine einzige Sprachdiagnose, kein Umweg über den Checker. Sprache, Store, Checker, Beweiser, Sandbox und Werkzeuge tragen reale Aufgaben.
-- **Der Preis ist bekannt und sinkt mit dem Nutzen.** Ohne Verifikationspflicht 1,61×, mit ihr 1,27× verarbeitete Tokens gegenüber Rust. Je mehr Garantien verlangt werden, desto günstiger wird QAL relativ, weil Verträge, Tests und Ausführung in einem Werkzeugaufruf zusammenfallen. Der verbleibende Aufschlag ist zu großen Teilen der 27-KB-Prompt und der längere Ausgabetext.
-- **Was noch fehlt, ist der Beleg, dass die Garantien einen Fehler fangen.** Beide Aufgaben waren klein genug, dass Sonnet sie fehlerfrei schrieb. Der Beweis für den Wert der Verträge braucht eine Aufgabe, an der ein Agent scheitert, oder eine Änderung an bestehendem Code, bei der ein Vertrag bricht. Das ist der nächste Test, und er ist auch der Ort für Phase 6b: ein Gedächtnis zahlt sich erst aus, wo Fehler entstehen.
+- **Das System funktioniert.** Sechs Agentenläufe mit zwei Modellen, sechs richtige Lösungen im ersten Anlauf, davon drei in einer Sprache, die es vor fünf Tagen in dieser Form nicht gab; eine einzige Sprachdiagnose (eine korrekte Effektverweigerung), kein Umweg über den Checker. Sprache, Store, Checker, Beweiser, Sandbox und Werkzeuge tragen reale Aufgaben, auch Änderungen an bestehendem Code, auch mit einem schwachen Modell.
+- **Der Preis ist bekannt und hängt vom Auftrag ab.** Ohne Verifikationspflicht 1,61×, mit ihr 1,27×, bei einer Änderung durch Haiku 3,47× verarbeitete Tokens gegenüber Rust. Verlangte Garantien machen QAL relativ günstiger, weil Verträge, Tests und Ausführung in einem Werkzeugaufruf zusammenfallen; ein schwaches Modell macht es teurer, weil es in einer fremden Sprache mehr herumprobiert und jede Runde den 27-KB-Prompt trägt. Der Hebel bleibt derselbe: kürzere Referenz, kompaktere Sicht auf den Store.
+- **Der Beleg, dass die Garantien einen Fehler fangen, steht weiter aus.** In drei Aufgaben, zwei Modellen und sechs Läufen ist kein Fehler entstanden, den ein Vertrag oder Test hätte fangen können. Das sagt zweierlei: die Aufgaben waren für heutige Modelle zu klein, und der Wert der Garantien liegt nicht beim Erstschreiben kleiner Programme, sondern beim Ändern großer, über Zeit, durch viele Hände. Dort ist er in diesem Test nur in einer Vorform sichtbar geworden: der Store meldete bei der Änderung exakt, was sich geändert hat und dass alles Vorherige noch gilt.
 
-**Hat sich der Aufwand der fünf Tage gelohnt?** Ja, als Fundament: es gibt ein benutzbares, gemessenes, in sich geschlossenes System, dessen Mehrkosten gegenüber dem Stand der Technik bekannt sind und bei verlangter Verifikation auf rund ein Viertel schrumpfen. Noch nicht als Nachweis des Nutzens: der eigentliche Vorteil, maschinell geprüfte Garantien statt Vertrauen, ist gebaut und funktioniert, hat aber in diesen beiden Läufen noch keinen Fehler verhindert, weil keiner gemacht wurde.
+**Hat sich der Aufwand der fünf Tage gelohnt?** Ja, als Fundament: es gibt ein benutzbares, gemessenes, in sich geschlossenes System, dessen Mehrkosten gegenüber dem Stand der Technik bekannt sind und bei verlangter Verifikation auf rund ein Viertel schrumpfen. Noch nicht als Nachweis des Nutzens: der eigentliche Vorteil, maschinell geprüfte Garantien statt Vertrauen, ist gebaut und funktioniert, hat aber in sechs Läufen keinen Fehler verhindert, weil keiner gemacht wurde. Der nächste Test darf deshalb keine weitere kleine Aufgabe sein, sondern ein Programm von einigen hundert Funktionen, das über mehrere Änderungsaufträge hinweg lebt; erst dort entscheidet sich, ob Verträge und Gedächtnis (Phase 6b) tragen.
 
 ## Dateien
 
-- `bench/tasks/21-expense-approval/`, `bench/tasks/22-expense-approval-contracts/` (`task.md`, `tests.json`: Aufgaben, versteckte Tests)
-- `bench/einsatz-2026-10-23/schedule.json`, `results.jsonl`, `workdirs.json` (Zustand beider Läufe; Transkripte unter `~/.claude/projects/…/subagents/agent-aab-2[12]-expense-approval-*.jsonl`)
+- `bench/tasks/21-expense-approval/`, `22-expense-approval-contracts/`, `23-expense-approval-change/` (`task.md`, `tests.json`: Aufgaben, versteckte Tests)
+- `bench/einsatz-2026-10-23/schedule.json` (mit Modell je Aufgabe), `results.jsonl`, `workdirs.json` (Zustand der sechs Läufe; Transkripte unter `~/.claude/projects/…/subagents/agent-aab-2[123]-expense-approval-*.jsonl`)
