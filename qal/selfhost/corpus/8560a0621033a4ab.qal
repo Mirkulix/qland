@@ -1,0 +1,4 @@
+fn inc(n: Int) -> Int req n >= 0 ens r > n = n + 1
+fn twice(n: Int) -> Int req n >= 0 = inc(inc(n))
+test t_inc = inc(1) == 2
+type P = { a: Int }

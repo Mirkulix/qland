@@ -1,0 +1,1 @@
+fn f(n: Int) -> Int = let x = n + 1 in x
