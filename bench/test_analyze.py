@@ -225,5 +225,51 @@ class Report(unittest.TestCase):
         self.assertIn(" 1.00 | 1.00 |", text.split("| rounds `prompt.*` per run |")[1].split("\n")[0])
 
 
+class ReviewFixes(unittest.TestCase):
+    """Findings of the whole-branch review (2026-10-23)."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.path = os.path.join(self.tmp, "agent-x.jsonl")
+
+    def test_streamed_chunks_use_the_last_usage(self):
+        first = dict(USAGE, output_tokens=6)
+        last = dict(USAGE, output_tokens=1387)
+        lines = [
+            {"type": "assistant", "message": {"id": "m0", "usage": first, "content": [{"type": "text", "text": "…"}]}},
+            {"type": "assistant", "message": {"id": "m0", "usage": last, "content": [{"type": "tool_use", "id": "t0", "name": "Bash", "input": {"command": "cd w && ls"}}]}},
+            {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "t0", "content": "", "is_error": False}]}},
+            {"type": "assistant", "message": {"id": "m1", "usage": USAGE, "content": [{"type": "text", "text": "DONE"}]}},
+        ]
+        write(self.path, "\n".join(json.dumps(l) for l in lines) + "\n")
+        a = analyze.attribute(self.path, "qal", 0, 1)
+        self.assertEqual(a["by_category"]["prompt.task"]["output"], 1387)
+        self.assertEqual(a["processed_per_round"][0], 111 + 1387)
+
+    def test_llm_unclassified_verdict_does_not_override_a_rule(self):
+        err = ("Bash", {"command": "cd /w && cat nothing"}, "cat: nothing: No such file", True)
+        write(self.path, transcript([err, qal_define(), HANDBACK]))
+        a = analyze.attribute(self.path, "qal", 0, 1)
+        import hashlib
+        cache = {hashlib.sha256("cat: nothing: No such file".encode()).hexdigest(): "unclassified"}
+        analyze.apply_cache(a, self.path, "qal", cache)
+        self.assertEqual(a["by_category"]["env.tool_error"]["calls"], 1)
+        self.assertNotIn("unclassified", a["by_category"])
+
+    def test_shell_failure_before_qalc_is_a_tool_error(self):
+        cat = analyze.classify_result("qal", "Bash", {"command": "cd w && python3 gen.py | python3 qalc.py call qal_run -"}, "Exit code 1\npython3: can't open file 'gen.py'", True)
+        self.assertEqual(cat, "env.tool_error")
+
+    def test_prompt_sizes_have_no_reference_when_the_prompt_came_as_a_task_file(self):
+        archive = os.path.join(self.tmp, "archive")
+        os.makedirs(archive)
+        write(os.path.join(archive, "TASK.md"), "You are taking part in a programming benchmark…")
+        ref, prompt = analyze.prompt_sizes({"arm": "qal", "archive": archive})
+        self.assertEqual(ref, 0)
+        self.assertGreater(prompt, 0)
+        ref2, _ = analyze.prompt_sizes({"arm": "qal", "archive": os.path.join(self.tmp, "missing")})
+        self.assertGreater(ref2, 0)
+
+
 if __name__ == "__main__":
     unittest.main()

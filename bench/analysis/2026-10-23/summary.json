@@ -2,354 +2,360 @@
  "per_task": {
   "01-word-count": {
    "qal": {
-    "processed": 257775.0,
+    "processed": 258794.75,
     "rounds": 4.75,
     "top": "ok.run",
     "runs": 4
    },
    "rust": {
-    "processed": 125332.25,
+    "processed": 125613.25,
     "rounds": 2.5,
     "top": "ok.other",
     "runs": 4
    },
-   "ratio": 2.0567332031460377
+   "ratio": 2.060250411481273
   },
   "02-roman": {
    "qal": {
-    "processed": 218579.75,
+    "processed": 220810.75,
     "rounds": 3.75,
     "top": "ok.define",
     "runs": 4
    },
    "rust": {
-    "processed": 146064.5,
+    "processed": 146573.0,
     "rounds": 3,
     "top": "ok.other",
     "runs": 4
    },
-   "ratio": 1.4964604678070303
+   "ratio": 1.5064899401663334
   },
   "03-csv-sum": {
    "qal": {
-    "processed": 257495.75,
+    "processed": 259559.25,
     "rounds": 4.5,
     "top": "ok.define",
     "runs": 4
    },
    "rust": {
-    "processed": 169563.75,
+    "processed": 170919.5,
     "rounds": 3.5,
     "top": "ok.other",
     "runs": 4
    },
-   "ratio": 1.5185778210260152
+   "ratio": 1.5186052498398368
   },
   "04-binary-search": {
    "qal": {
-    "processed": 235538.0,
+    "processed": 237373.25,
     "rounds": 4.25,
     "top": "ok.define",
     "runs": 4
    },
    "rust": {
-    "processed": 144358.25,
+    "processed": 144753.75,
     "rounds": 3,
     "top": "ok.other",
     "runs": 4
    },
-   "ratio": 1.6316213309596093
+   "ratio": 1.6398418002987833
   },
   "05-brackets": {
    "qal": {
-    "processed": 209755.5,
+    "processed": 210850.25,
     "rounds": 3.75,
     "top": "ok.define",
     "runs": 4
    },
    "rust": {
-    "processed": 99636.25,
+    "processed": 100015.0,
     "rounds": 2,
     "top": "ok.other",
     "runs": 4
    },
-   "ratio": 2.105212711237125
+   "ratio": 2.108186272059191
   },
   "06-bank": {
    "qal": {
-    "processed": 265719.25,
+    "processed": 268905.75,
     "rounds": 4.5,
     "top": "ok.define",
     "runs": 4
    },
    "rust": {
-    "processed": 184661.0,
+    "processed": 186418.0,
     "rounds": 3.75,
     "top": "ok.other",
     "runs": 4
    },
-   "ratio": 1.4389570618592988
+   "ratio": 1.4424881181001834
   },
   "07-tokenizer": {
    "qal": {
-    "processed": 155209.5,
+    "processed": 156766.75,
     "rounds": 2.75,
     "top": "ok.define",
     "runs": 4
    },
    "rust": {
-    "processed": 100196.5,
+    "processed": 100685.0,
     "rounds": 2,
     "top": "ok.other",
     "runs": 4
    },
-   "ratio": 1.5490511145598898
+   "ratio": 1.5570020360530368
   },
   "08-expr-eval": {
    "qal": {
-    "processed": 843351.0,
+    "processed": 846568.6666666666,
     "rounds": 11.666666666666666,
     "top": "ok.run",
     "runs": 6
    },
    "rust": {
-    "processed": 178457.75,
+    "processed": 179517.5,
     "rounds": 3.5,
     "top": "ok.other",
     "runs": 4
    },
-   "ratio": 4.725774027746063
+   "ratio": 4.715800223747917
   },
   "09-rle": {
    "qal": {
-    "processed": 258796.75,
+    "processed": 260727.0,
     "rounds": 4.5,
     "top": "ok.define",
     "runs": 4
    },
    "rust": {
-    "processed": 180267.4,
+    "processed": 181669.6,
     "rounds": 3.8,
     "top": "ok.other",
     "runs": 5
    },
-   "ratio": 1.4356270185291407
+   "ratio": 1.4351713220043418
   },
   "10-file-stats": {
    "qal": {
-    "processed": 244206.75,
+    "processed": 246042.5,
     "rounds": 4.25,
     "top": "prompt.task",
     "runs": 4
    },
    "rust": {
-    "processed": 111907.25,
+    "processed": 112431.75,
     "rounds": 2.25,
     "top": "ok.other",
     "runs": 4
    },
-   "ratio": 2.1822245654325347
+   "ratio": 2.1883720568255853
   },
   "11-prime-factors": {
    "qal": {
-    "processed": 241249.0,
+    "processed": 242657.5,
     "rounds": 4.25,
     "top": "ok.define",
     "runs": 4
    },
    "rust": {
-    "processed": 122434.75,
+    "processed": 122746.0,
     "rounds": 2.5,
     "top": "ok.other",
     "runs": 4
    },
-   "ratio": 1.9704291469537856
+   "ratio": 1.9769075978035944
   },
   "12-sort-words": {
    "qal": {
-    "processed": 295603.0,
+    "processed": 296518.75,
     "rounds": 5.25,
     "top": "ok.run",
     "runs": 4
    },
    "rust": {
-    "processed": 121367.25,
+    "processed": 121634.0,
     "rounds": 2.5,
     "top": "ok.other",
     "runs": 4
    },
-   "ratio": 2.435607628911424
+   "ratio": 2.43779494220366
   },
   "13-word-freq": {
    "qal": {
-    "processed": 368671.25,
+    "processed": 370743.75,
     "rounds": 6.25,
     "top": "ok.run",
     "runs": 4
    },
    "rust": {
-    "processed": 156517.5,
+    "processed": 157415.25,
     "rounds": 3.25,
     "top": "ok.other",
     "runs": 4
    },
-   "ratio": 2.355463446579456
+   "ratio": 2.355195891122366
   },
   "14-bst": {
    "qal": {
-    "processed": 365603.5,
+    "processed": 367341.5,
     "rounds": 6.25,
     "top": "ok.run",
     "runs": 4
    },
    "rust": {
-    "processed": 122712.25,
+    "processed": 123378.0,
     "rounds": 2.5,
     "top": "prompt.task",
     "runs": 4
    },
-   "ratio": 2.9793561767468204
+   "ratio": 2.977366305175963
   },
   "15-caesar": {
    "qal": {
-    "processed": 268307.25,
+    "processed": 269830.0,
     "rounds": 4.75,
     "top": "ok.define",
     "runs": 4
    },
    "rust": {
-    "processed": 174608.5,
+    "processed": 175295.75,
     "rounds": 3.5,
     "top": "ok.other",
     "runs": 4
    },
-   "ratio": 1.5366219284857265
+   "ratio": 1.5392843237785285
   },
   "16-anagrams": {
    "qal": {
-    "processed": 140424.0,
+    "processed": 140926.75,
     "rounds": 2.5,
     "top": "ok.define",
     "runs": 4
    },
    "rust": {
-    "processed": 121651.25,
+    "processed": 121953.25,
     "rounds": 2.5,
     "top": "ok.other",
     "runs": 4
    },
-   "ratio": 1.1543161290985502
+   "ratio": 1.1555801095911753
   },
   "17-word-wrap": {
    "qal": {
-    "processed": 348317.5,
+    "processed": 351122.5,
     "rounds": 5.75,
     "top": "ok.define",
     "runs": 4
    },
    "rust": {
-    "processed": 169814.0,
+    "processed": 171126.5,
     "rounds": 3.5,
     "top": "ok.other",
     "runs": 4
    },
-   "ratio": 2.051170692640183
+   "ratio": 2.0518300789182273
   },
   "18-date-diff": {
    "qal": {
-    "processed": 245640.75,
+    "processed": 247269.75,
     "rounds": 4.25,
     "top": "ok.define",
     "runs": 4
    },
    "rust": {
-    "processed": 133868.0,
+    "processed": 134505.75,
     "rounds": 2.75,
     "top": "ok.other",
     "runs": 4
    },
-   "ratio": 1.834947485582813
+   "ratio": 1.8383582114519268
   },
   "19-base-convert": {
    "qal": {
-    "processed": 237089.25,
+    "processed": 238800.5,
     "rounds": 4.25,
     "top": "ok.define",
     "runs": 4
    },
    "rust": {
-    "processed": 169353.4,
+    "processed": 169555.4,
     "rounds": 3.2,
     "top": "ok.other",
     "runs": 5
    },
-   "ratio": 1.3999674644855078
+   "ratio": 1.4083921833217934
   },
   "20-ini-query": {
    "qal": {
-    "processed": 258209.25,
+    "processed": 259857.75,
     "rounds": 4.5,
     "top": "ok.define",
     "runs": 4
    },
    "rust": {
-    "processed": 156917.5,
+    "processed": 157531.75,
     "rounds": 3.25,
     "top": "ok.other",
     "runs": 4
    },
-   "ratio": 1.6455095830611628
+   "ratio": 1.6495579462552787
   }
  },
  "qal": {
   "runs": 82,
   "totals": {
    "prompt.reference": {
-    "processed": 690254.5120743217,
-    "new": 246464.75,
-    "output": 5340.728317466147,
-    "calls": 82
+    "processed": 529386.1953625976,
+    "new": 185609.75,
+    "output": 10089.869931096424,
+    "calls": 62
    },
    "prompt.task": {
-    "processed": 3602377.4879256776,
-    "new": 1490327.25,
-    "output": 1615.2716825338537,
+    "processed": 3804190.8046374028,
+    "new": 1551182.25,
+    "output": 37811.13006890358,
     "calls": 81
    },
    "lang.type": {
-    "processed": 718475,
+    "processed": 718756,
     "new": 49375,
-    "output": 142,
+    "output": 423,
     "calls": 11
    },
    "ok.define": {
-    "processed": 5605733,
+    "processed": 5617408,
     "new": 225340,
-    "output": 3045,
+    "output": 14720,
     "calls": 90
    },
    "lang.name": {
-    "processed": 1296090,
+    "processed": 1298777,
     "new": 63528,
-    "output": 334,
+    "output": 3021,
     "calls": 20
    },
+   "env.tool_error": {
+    "processed": 551956,
+    "new": 4903,
+    "output": 3144,
+    "calls": 9
+   },
    "ok.run": {
-    "processed": 5769576,
-    "new": 59301,
-    "output": 4673,
-    "calls": 88
+    "processed": 5450701,
+    "new": 56663,
+    "output": 9845,
+    "calls": 83
    },
    "lang.parse": {
-    "processed": 173859,
+    "processed": 175361,
     "new": 2639,
-    "output": 114,
+    "output": 1616,
     "calls": 3
    },
    "ok.other": {
-    "processed": 2271839,
+    "processed": 2279386,
     "new": 33821,
-    "output": 2300,
+    "output": 9847,
     "calls": 38
    },
    "lang.other_diag": {
@@ -359,9 +365,9 @@
     "calls": 0
    },
    "lang.run_failed": {
-    "processed": 645625,
+    "processed": 645854,
     "new": 19232,
-    "output": 56,
+    "output": 285,
     "calls": 8
    },
    "lang.args": {
@@ -377,71 +383,71 @@
     "calls": 1
    },
    "env.guard": {
-    "processed": 2379125,
+    "processed": 2419118,
     "new": 133666,
-    "output": 604,
+    "output": 40597,
     "calls": 44
    },
    "env.read_task": {
-    "processed": 1044641,
+    "processed": 1081632,
     "new": 255076,
-    "output": 104,
+    "output": 37095,
     "calls": 20
-   },
-   "env.tool_error": {
-    "processed": 224793,
-    "new": 2265,
-    "output": 28,
-    "calls": 4
    }
   },
   "means": {
    "prompt.reference": {
-    "processed": 8417.737952125875,
-    "new": 3005.6676829268295,
-    "output": 65.13083313983105,
-    "calls": 1.0
+    "processed": 6455.929211738995,
+    "new": 2263.5335365853657,
+    "output": 123.0471942816637,
+    "calls": 0.7560975609756098
    },
    "prompt.task": {
-    "processed": 43931.43277958143,
-    "new": 18174.72256097561,
-    "output": 19.698435152851875,
+    "processed": 46392.57078826101,
+    "new": 18916.856707317074,
+    "output": 461.11134230370214,
     "calls": 0.9878048780487805
    },
    "lang.type": {
-    "processed": 8761.890243902439,
+    "processed": 8765.317073170732,
     "new": 602.1341463414634,
-    "output": 1.7317073170731707,
+    "output": 5.158536585365853,
     "calls": 0.13414634146341464
    },
    "ok.define": {
-    "processed": 68362.59756097561,
+    "processed": 68504.9756097561,
     "new": 2748.048780487805,
-    "output": 37.13414634146341,
+    "output": 179.5121951219512,
     "calls": 1.0975609756097562
    },
    "lang.name": {
-    "processed": 15805.975609756097,
+    "processed": 15838.743902439024,
     "new": 774.7317073170732,
-    "output": 4.073170731707317,
+    "output": 36.84146341463415,
     "calls": 0.24390243902439024
    },
+   "env.tool_error": {
+    "processed": 6731.170731707317,
+    "new": 59.792682926829265,
+    "output": 38.34146341463415,
+    "calls": 0.10975609756097561
+   },
    "ok.run": {
-    "processed": 70360.68292682926,
-    "new": 723.1829268292682,
-    "output": 56.98780487804878,
-    "calls": 1.0731707317073171
+    "processed": 66471.96341463414,
+    "new": 691.0121951219512,
+    "output": 120.0609756097561,
+    "calls": 1.0121951219512195
    },
    "lang.parse": {
-    "processed": 2120.231707317073,
+    "processed": 2138.548780487805,
     "new": 32.18292682926829,
-    "output": 1.3902439024390243,
+    "output": 19.70731707317073,
     "calls": 0.036585365853658534
    },
    "ok.other": {
-    "processed": 27705.353658536584,
+    "processed": 27797.39024390244,
     "new": 412.4512195121951,
-    "output": 28.048780487804876,
+    "output": 120.08536585365853,
     "calls": 0.4634146341463415
    },
    "lang.other_diag": {
@@ -451,9 +457,9 @@
     "calls": 0.0
    },
    "lang.run_failed": {
-    "processed": 7873.475609756098,
+    "processed": 7876.268292682927,
     "new": 234.53658536585365,
-    "output": 0.6829268292682927,
+    "output": 3.475609756097561,
     "calls": 0.0975609756097561
    },
    "lang.args": {
@@ -469,43 +475,37 @@
     "calls": 0.012195121951219513
    },
    "env.guard": {
-    "processed": 29013.719512195123,
+    "processed": 29501.439024390245,
     "new": 1630.0731707317073,
-    "output": 7.365853658536586,
+    "output": 495.0853658536585,
     "calls": 0.5365853658536586
    },
    "env.read_task": {
-    "processed": 12739.524390243903,
+    "processed": 13190.634146341463,
     "new": 3110.682926829268,
-    "output": 1.2682926829268293,
+    "output": 452.3780487804878,
     "calls": 0.24390243902439024
-   },
-   "env.tool_error": {
-    "processed": 2741.378048780488,
-    "new": 27.621951219512194,
-    "output": 0.34146341463414637,
-    "calls": 0.04878048780487805
    }
   },
   "shares": {
-   "prompt": 0.17486067586817639,
-   "lang": 0.1181335434176807,
-   "ok": 0.5559175636190179,
-   "final": 0.002463901597099989,
-   "env": 0.14862431549802496
+   "prompt": 0.17545550817263594,
+   "lang": 0.11760569493317302,
+   "ok": 0.5404061167152948,
+   "env": 0.16408375591440758,
+   "final": 0.002448924264488679
   },
   "top3": [
    [
-    "ok.run",
-    5769576
+    "ok.define",
+    5617408
    ],
    [
-    "ok.define",
-    5605733
+    "ok.run",
+    5450701
    ],
    [
     "prompt.task",
-    3602377.4879256776
+    3804190.8046374028
    ]
   ],
   "rounds": {
@@ -514,8 +514,8 @@
    "max": 18
   },
   "round_cost": {
-   "1": 52349.170731707316,
-   "5": 59320.19047619047,
+   "1": 52848.5,
+   "5": 59553.166666666664,
    "10": 76703
   },
   "retries": 0,
@@ -541,15 +541,15 @@
     "calls": 0
    },
    "prompt.task": {
-    "processed": 3927051.0,
+    "processed": 3937727.0,
     "new": 1376700.0,
-    "output": 7782.0,
+    "output": 18458.0,
     "calls": 82
    },
    "ok.other": {
-    "processed": 6049362,
+    "processed": 6054348,
     "new": 258135,
-    "output": 6291,
+    "output": 11277,
     "calls": 117
    },
    "final": {
@@ -559,15 +559,15 @@
     "calls": 1
    },
    "env.guard": {
-    "processed": 768486,
+    "processed": 782958,
     "new": 36670,
-    "output": 265,
+    "output": 14737,
     "calls": 17
    },
    "env.read_task": {
-    "processed": 1057756,
+    "processed": 1085421,
     "new": 111012,
-    "output": 1080,
+    "output": 28745,
     "calls": 24
    },
    "rust.panic": {
@@ -585,15 +585,15 @@
     "calls": 0.0
    },
    "prompt.task": {
-    "processed": 47890.865853658535,
+    "processed": 48021.060975609755,
     "new": 16789.024390243903,
-    "output": 94.90243902439025,
+    "output": 225.09756097560975,
     "calls": 1.0
    },
    "ok.other": {
-    "processed": 73772.70731707317,
+    "processed": 73833.51219512195,
     "new": 3147.987804878049,
-    "output": 76.71951219512195,
+    "output": 137.52439024390245,
     "calls": 1.4268292682926829
    },
    "final": {
@@ -603,15 +603,15 @@
     "calls": 0.012195121951219513
    },
    "env.guard": {
-    "processed": 9371.780487804877,
+    "processed": 9548.268292682927,
     "new": 447.1951219512195,
-    "output": 3.231707317073171,
+    "output": 179.71951219512195,
     "calls": 0.2073170731707317
    },
    "env.read_task": {
-    "processed": 12899.463414634147,
+    "processed": 13236.841463414634,
     "new": 1353.8048780487804,
-    "output": 13.170731707317072,
+    "output": 350.5487804878049,
     "calls": 0.2926829268292683
    },
    "rust.panic": {
@@ -622,24 +622,24 @@
    }
   },
   "shares": {
-   "prompt": 0.32977211506050613,
-   "ok": 0.5079921043823097,
-   "final": 0.005026545176849442,
-   "env": 0.15335774527815627,
-   "rust": 0.003851490102178483
+   "prompt": 0.3290714319201529,
+   "ok": 0.5059550765461684,
+   "final": 0.005002265970159058,
+   "env": 0.15613833891977363,
+   "rust": 0.0038328866437459517
   },
   "top3": [
    [
     "ok.other",
-    6049362
+    6054348
    ],
    [
     "prompt.task",
-    3927051.0
+    3937727.0
    ],
    [
     "env.read_task",
-    1057756
+    1085421
    ]
   ],
   "rounds": {
@@ -648,8 +648,8 @@
    "max": 6
   },
   "round_cost": {
-   "1": 47890.865853658535,
-   "5": 47274.46153846154,
+   "1": 48021.060975609755,
+   "5": 47325.92307692308,
    "10": null
   },
   "retries": 0,

@@ -74,6 +74,19 @@ Die Reihenfolge ist zwingend. Jede Phase hat ein Abnahmekriterium, das vor der n
 
 **Abnahme:** Tokens QAL ≤ 1,2 × Rust bei gleicher Korrektheit (40/40), über 80 Läufe. **Zwischenbereich:** Liegt der Faktor nach den Maßnahmen zwischen 1,2 und 1,5, folgen höchstens zwei weitere Wochen Iteration; danach beginnt Phase 7 ungeachtet des Ergebnisses, und die Korpus-Erzeugung aus Phase 8 (Nr. 1) startet parallel, weil sie den Einsatz aus Phase 7 nicht braucht. **Abbruchkriterium:** Bleibt der *Sprachanteil* über 1,5, obwohl die drei größten Posten beseitigt sind, dann ist die Umgebung nicht das Problem, sondern die Fremdheit der Sprache; dann Phase 8 (Modell lernt QAL) vorziehen und Phase 7 verkleinern.
 
+### Phase 6b — Erfahrungsgedächtnis (2–3 Wochen, nach der Token-Analyse, vor Phase 7)
+
+**Zweck:** QAL hat ein Programmgedächtnis (`db`), ein Codegedächtnis (Store, Historie, Signaturen, Reviews) und bekommt in Phase 7 ein Modellgedächtnis (aufgezeichnete Antworten). Was fehlt, ist das Gedächtnis der Agenten: jeder beginnt bei null, und dass 27 von 33 „unknown name“-Fehlern derselbe Denkfehler sind (Token-Analyse 23.10.), weiß kein Agent des nächsten Tages. Festlegung des Auftraggebers (23.10.): das Gedächtnis darf der Sprache nicht fehlen. Es wird ohne neues Sprachmittel gebaut, im Store und über MCP.
+
+1. **Korrekturpaare sammeln.** Ein gescheitertes `define` gefolgt von einem erfolgreichen `define` desselben Namens in derselben Sitzung ist eine Korrektur. Der Store speichert (Diagnosecode, Pfad, fehlerhafter Ausschnitt, korrigierter Ausschnitt, Hash der Definition) inhaltsadressiert und ohne Zutun des Agenten. Die 164 Benchmark-Transkripte liefern den Anfangsbestand (Werkzeug neben `bench/analyze.py`).
+2. **`qal_recall`.** Zu einem Diagnosecode, einem Namen oder einem Typmuster: die häufigsten Korrekturen und die passenden gespeicherten Definitionen (`qal_query` findet heute schon nach Typmuster). Antwort klein genug für eine Runde.
+3. **Diagnosen mit Gedächtnis.** Tritt ein Code auf, für den Korrekturen bekannt sind, steht der häufigste Vorschlag direkt im Hinweis der Diagnose. Das ist der Teil, der Runden spart; Phase 6 Nr. 2 (Korrekturvorschläge) nutzt ihn.
+4. **Projektübergreifend, später.** Weil Definitionen und Korrekturen Hashes sind, lässt sich Erfahrung zwischen Projekten teilen, ohne Code zu kopieren; vor Phase 9 nicht nötig.
+
+Das Erfahrungsgedächtnis ist zugleich der Rohstoff für Phase 8: ein Korpus aus Fehlern und Korrekturen ist das, womit ein Modell die Sprache lernt.
+
+**Abnahme:** Im Benchmark-Rerun von Phase 6 erhält jede Diagnose eines Codes mit bekannten Korrekturen einen Vorschlag, und die `lang.*`-Runden je Lauf (0,52 am 23.10.) fallen messbar; `qal_recall` beantwortet die drei Fehlerklassen der Analyse (lokaler Name nach `;`, `String`, Built-in als Wert) mit der richtigen Korrektur (Test im MCP-Crate). **Abbruchkriterium:** Bringt das Gedächtnis im Rerun keine messbare Senkung der Sprachrunden, bleibt es als Korpusquelle (Phase 8) und wird nicht weiter ausgebaut.
+
 ### Phase 7 — Software für KI-Systeme, in QAL (8–12 Wochen)
 
 **Zweck:** Das fehlende Stück von Eigenschaft 3 bauen und zugleich den ersten echten Einsatz schaffen.

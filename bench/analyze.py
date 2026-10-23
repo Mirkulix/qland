@@ -75,6 +75,8 @@ def classify_result(arm, tool, inp, text, is_error):
         return "env.read_task"
     cmd = str(inp.get("command", ""))
     if arm == "qal" and tool == "Bash" and "qalc.py" in cmd:
+        if "isError:" not in text and is_error:
+            return "env.tool_error"  # the shell failed before qalc.py answered
         if "isError: true" in text:
             m = CODE.search(text)
             return diag_category(m.group(1)) if m else "lang.other_diag"
@@ -114,7 +116,8 @@ def read_transcript(path):
                 if mid not in calls:
                     calls[mid] = {"usage": msg.get("usage") or {}, "tools": []}
                     order.append(mid)
-                elif not calls[mid]["usage"] and msg.get("usage"):
+                elif msg.get("usage"):
+                    # streamed chunks repeat the id; the last chunk carries the final output count
                     calls[mid]["usage"] = msg["usage"]
                 for b in msg.get("content") or []:
                     if isinstance(b, dict) and b.get("type") == "tool_use":
@@ -257,13 +260,16 @@ def transcript_path(agent_id):
 
 
 def prompt_sizes(rec):
-    """(reference_chars, prompt_chars) of a run: from the archived TASK.md when present, else from
-    the prompt template plus the reference as `run.prepare` builds it."""
+    """(reference_chars, prompt_chars) of a run. When the prompt was handed over as `TASK.md` in
+    the work directory (archived there), the dispatch prompt was only a pointer and the reference
+    reached the agent in the `Read` result, charged to `env.read_task`: then reference_chars is 0.
+    Otherwise the prompt template plus the reference as `run.prepare` builds it."""
     arm = rec["arm"]
     task_md = os.path.join(rec.get("archive") or "", "TASK.md")
     if rec.get("archive") and os.path.exists(task_md):
         with open(task_md, encoding="utf-8") as f:
             prompt = f.read()
+        return 0, max(len(prompt), 1)
     else:
         with open(os.path.join(BENCH, "prompts", f"{arm}.md"), encoding="utf-8") as f:
             prompt = f.read()
@@ -330,7 +336,8 @@ def apply_cache(a, path, arm, cache):
         cat = classify_result(arm, name, inp, text, is_error) if tid in tool_of else "unclassified"
         if cat in RECLASSIFY:
             new = cache.get(hashlib.sha256(text[:TEXT_LIMIT].encode("utf-8")).hexdigest())
-            if new and new != cat:
+            # an LLM verdict replaces a rule only when it settles something (not `unclassified`)
+            if new and new != cat and new != "unclassified":
                 moves.append((seen + 1, cat, new))
     per_call = {}
     for n, c in enumerate(calls, 1):
