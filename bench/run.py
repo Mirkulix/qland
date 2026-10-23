@@ -112,7 +112,7 @@ def prepare(task, arm, run):
     spec = check.load(task)
     fs = "fs" in spec["effects"]
     wd = new_workdir(task, arm, run)
-    statement = open(os.path.join(BENCH, "tasks", task, "task.md"), encoding="utf-8").read().strip()
+    statement = open(os.path.join(check.TASKS, task, "task.md"), encoding="utf-8").read().strip()
     if arm == "qal":
         check.ensure_qal_binary()
         # The agent's client points at a copy of the server outside the repository.

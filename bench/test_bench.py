@@ -245,6 +245,19 @@ class Robustness(unittest.TestCase):
         self.assertEqual((rc, out, timed_out), (3, b"hi\n", False))
 
 class Checker(unittest.TestCase):
+    def test_bench_tasks_points_the_harness_at_another_task_set(self):
+        tmp = tempfile.mkdtemp()
+        try:
+            os.makedirs(os.path.join(tmp, "01-only"))
+            with open(os.path.join(tmp, "01-only", "tests.json"), "w") as f:
+                json.dump({"id": "01-only", "title": "t", "effects": ["io"], "cases": []}, f)
+            env = dict(os.environ, BENCH_TASKS=tmp)
+            code = "import check; print(check.task_ids(), check.load('01-only')['id'])"
+            out = subprocess.run([sys.executable, "-c", code], cwd=BENCH, env=env, capture_output=True, text=True, check=True).stdout.strip()
+            self.assertEqual(out, "['01-only'] 01-only")
+        finally:
+            shutil.rmtree(tmp)
+
     def test_output_must_match_exactly(self):
         tmp = tempfile.mkdtemp()
         try:

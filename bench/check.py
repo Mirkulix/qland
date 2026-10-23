@@ -30,13 +30,15 @@ sys.path.insert(0, BENCH)
 import qalc  # noqa: E402
 
 TIMEOUT = 10
+# The tasks directory; BENCH_TASKS points an experiment at its own set (same layout).
+TASKS = os.environ.get("BENCH_TASKS", os.path.join(BENCH, "tasks"))
 MAX_OUTPUT = 64 << 10
 
 def task_ids():
-    return sorted(d for d in os.listdir(os.path.join(BENCH, "tasks")) if re.fullmatch(r"\d\d-[a-z-]+", d))
+    return sorted(d for d in os.listdir(TASKS) if re.fullmatch(r"\d\d-[a-z-]+", d))
 
 def load(task):
-    path = os.path.join(BENCH, "tasks", task, "tests.json")
+    path = os.path.join(TASKS, task, "tests.json")
     if not os.path.exists(path):
         raise SystemExit(f"unknown task `{task}` (tasks: {', '.join(task_ids())})")
     with open(path, encoding="utf-8") as f:
