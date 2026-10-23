@@ -129,6 +129,14 @@ class Attribute(unittest.TestCase):
         self.assertAlmostEqual(a["by_category"]["prompt.reference"]["new"], NEW, delta=0.01)
         self.assertAlmostEqual(a["by_category"]["prompt.task"]["new"], 0, delta=0.01)
 
+    def test_reclassify_lists_tool_errors_and_other_diags(self):
+        a = self.attribute([
+            ("Bash", {"command": "cd w && cat nothing"}, "cat: nothing: No such file", True),
+            qal_define('{"diagnostics":[{"code":"E0601"}]}'),
+            qal_define(body="1"), HANDBACK])
+        self.assertEqual([(r["category"], r["text"][:12]) for r in a["reclassify"]], [("env.tool_error", "cat: nothing"), ("lang.other_diag", "isError: tru")])
+        self.assertEqual(a["unclassified"], [])
+
     def test_diag_codes_are_counted(self):
         a = self.attribute([qal_define('{"diagnostics":[{"code":"E0203"},{"code":"E0201"}]}'), qal_define('{"diagnostics":[{"code":"E0203"}]}'), qal_define(body="1"), HANDBACK])
         self.assertEqual(a["diag_codes"], {"E0203": 2, "E0201": 1})

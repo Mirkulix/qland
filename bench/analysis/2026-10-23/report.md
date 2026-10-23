@@ -9,21 +9,22 @@
 | prompt.task | 3602377 | 1490327 | 1615 | 81 | 43931 |
 | env.guard | 2379125 | 133666 | 604 | 44 | 29014 |
 | ok.other | 2271839 | 33821 | 2300 | 38 | 27705 |
-| lang.name | 1239113 | 61641 | 327 | 19 | 15111 |
+| lang.name | 1296090 | 63528 | 334 | 20 | 15806 |
 | env.read_task | 1044641 | 255076 | 104 | 20 | 12740 |
-| lang.other_diag | 867634 | 23196 | 83 | 12 | 10581 |
 | lang.type | 718475 | 49375 | 142 | 11 | 8762 |
 | prompt.reference | 690255 | 246465 | 5341 | 82 | 8418 |
+| lang.run_failed | 645625 | 19232 | 56 | 8 | 7873 |
+| env.tool_error | 224793 | 2265 | 28 | 4 | 2741 |
 | lang.parse | 173859 | 2639 | 114 | 3 | 2120 |
 | lang.args | 65996 | 5382 | 3 | 1 | 805 |
 | final | 60486 | 21991 | 6 | 1 | 738 |
-| env.tool_error | 59761 | 188 | 8 | 1 | 729 |
+| lang.other_diag | 0 | 0 | 0 | 0 | 0 |
 
-Shares of processed tokens: ok 55.6 %, prompt 17.5 %, env 14.2 %, lang 12.5 %, final 0.2 %
+Shares of processed tokens: ok 55.6 %, prompt 17.5 %, env 14.9 %, lang 11.8 %, final 0.2 %
 
 Top 3: ok.run (5769576), ok.define (5605733), prompt.task (3602377)
 
-Umgebung (env) 14.2 % / Sprache (lang) 12.5 %
+Umgebung (env) 14.9 % / Sprache (lang) 11.8 %
 
 Rounds per run: mean 5.0, median 5.0, max 18; retries 0
 

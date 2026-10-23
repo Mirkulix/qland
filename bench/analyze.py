@@ -40,6 +40,8 @@ MEASURES = ("processed", "new", "output")
 ROUND_COST_KEYS = ("1", "5", "10")
 TEXT_LIMIT = 2000
 CHARS_PER_TOKEN = 4
+# Categories the rules cannot settle well; the Haiku pass (classify_llm.py) re-reads their texts.
+RECLASSIFY = ("unclassified", "env.tool_error", "lang.other_diag")
 
 CODE = re.compile(r'"code":\s*"(E\d{4})"')
 RUST_COMPILE = re.compile(r"^error\[E\d+\]|^error: could not compile", re.M)
@@ -142,13 +144,15 @@ def attribute(path, arm, reference_chars, prompt_chars):
         for tid, name, inp in c["tools"]:
             tool_of[tid] = (n, name, inp)
     # category of the result that precedes API call n (results seen before call n was issued)
-    preceding, unclassified, retries = {}, [], 0
+    preceding, unclassified, reclassify, retries = {}, [], [], 0
     diag_codes = collections.Counter()
     last_failed = None
     for tid, is_error, text, seen_calls in results:
         if tid in tool_of:
             n, name, inp = tool_of[tid]
             cat = classify_result(arm, name, inp, text, is_error)
+            if cat in RECLASSIFY:
+                reclassify.append({"call": seen_calls + 1, "tool": name, "category": cat, "text": text[:TEXT_LIMIT]})
             if arm == "qal" and name == "Bash" and "qalc.py" in str(inp.get("command", "")) and "isError: true" in text:
                 diag_codes.update(CODE.findall(text))
             key = json.dumps(inp, sort_keys=True)
@@ -178,7 +182,7 @@ def attribute(path, arm, reference_chars, prompt_chars):
             by[cat][k] += m[k]
         by[cat]["calls"] += 1
     return {"by_category": dict(by), "api_calls": len(calls), "processed_per_round": per_round, "retries": retries,
-            "unclassified": unclassified, "diag_codes": dict(diag_codes)}
+            "unclassified": unclassified, "reclassify": reclassify, "diag_codes": dict(diag_codes)}
 
 
 def group_of(cat):
@@ -291,9 +295,6 @@ def load_cache(path):
                     d = json.loads(line)
                     cache[d["sha256"]] = d["category"]
     return cache
-
-
-RECLASSIFY = ("unclassified", "env.tool_error", "lang.other_diag")
 
 
 def apply_cache(a, path, arm, cache):
