@@ -1,0 +1,1 @@
+fn h(a: Int) -> Int req a >= 1 && a <= 4000000000 ens a <= 3037000499 = a * a % a

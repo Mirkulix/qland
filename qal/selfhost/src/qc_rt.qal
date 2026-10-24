@@ -19,6 +19,7 @@ fn qc_rt_signature(rt: QcRt) -> QcFuncSig =
   match rt {
     QcRtAlloc => QcFuncSig { params: [QcVI64], results: [QcVI32] },
     QcRtArith(_) => QcFuncSig { params: [QcVI64, QcVI64, QcVI32, QcVI32], results: [QcVI64] },
+    QcRtMulDiv(n) => QcFuncSig { params: qc_rt_i64s(n + 1) ++ [QcVI32, QcVI32], results: [QcVI64] },
     QcRtVariant1 => QcFuncSig { params: [QcVI32, QcVI64], results: [QcVI32] },
     QcRtOptFromPtr => QcFuncSig { params: [QcVI32], results: [QcVI32] },
     QcRtStrNew => QcFuncSig { params: [QcVI32], results: [QcVI32] },
@@ -154,6 +155,118 @@ fn qc_rt_arith(m: QcMb, a0: QcAsm, op: QcBinOp) -> QcMbAsm =
       QcMbAsm { m: ma1.m, a: qc_asm_all(ma1.a, [QcILocalGet(0), QcILocalGet(1), QcII64RemS]) },
     _ => QcMbAsm { m: qc_mb_bug(m, "not an arithmetic operator"), a: a }
   }
+
+type QcMulDivL = {
+  hi: Int,
+  lo: Int,
+  mg: Int,
+  dv: Int,
+  q: Int,
+  neg: Int,
+  ov: Int,
+  z: Int,
+  k: Int,
+  h1: Int,
+  l1: Int,
+  h2: Int,
+  l2: Int,
+  s0: Int,
+  s1: Int,
+  s2: Int,
+  mid: Int
+}
+
+fn qc_rt_i64s(n: Int) -> List[QcValType] =
+  if n <= 0 then [] else [QcVI64] ++ qc_rt_i64s(n - 1)
+
+fn qc_rt_abs_u64(a: QcAsm, x: Int) -> QcAsm =
+  qc_asm_all(a, [QcII64Const(0), QcILocalGet(x), QcII64Sub, QcILocalGet(x), QcILocalGet(x), QcII64Const(0), QcII64LtS, QcISelect])
+
+fn qc_rt_mul_wide(a: QcAsm, x: Int, y: Int, h: Int, l: Int, t: QcMulDivL) -> QcAsm =
+  let mk = 4294967295 in
+  qc_asm_all(a, [
+    QcILocalGet(x), QcII64Const(mk), QcII64And, QcILocalGet(y), QcII64Const(mk), QcII64And, QcII64Mul, QcILocalSet(t.s0),
+    QcILocalGet(x), QcII64Const(mk), QcII64And, QcILocalGet(y), QcII64Const(32), QcII64ShrU, QcII64Mul, QcILocalSet(t.s1),
+    QcILocalGet(x), QcII64Const(32), QcII64ShrU, QcILocalGet(y), QcII64Const(mk), QcII64And, QcII64Mul, QcILocalSet(t.s2),
+    QcILocalGet(t.s0), QcII64Const(32), QcII64ShrU, QcILocalGet(t.s1), QcII64Const(mk), QcII64And, QcII64Add, QcILocalGet(t.s2), QcII64Const(mk), QcII64And, QcII64Add, QcILocalSet(t.mid),
+    QcILocalGet(t.s0), QcII64Const(mk), QcII64And, QcILocalGet(t.mid), QcII64Const(32), QcII64Shl, QcII64Or, QcILocalSet(l),
+    QcILocalGet(x), QcII64Const(32), QcII64ShrU, QcILocalGet(y), QcII64Const(32), QcII64ShrU, QcII64Mul,
+    QcILocalGet(t.s1), QcII64Const(32), QcII64ShrU, QcII64Add, QcILocalGet(t.s2), QcII64Const(32), QcII64ShrU, QcII64Add,
+    QcILocalGet(t.mid), QcII64Const(32), QcII64ShrU, QcII64Add, QcILocalSet(h)
+  ])
+
+# One factor f of the product: (hi, lo) * |f| (see qc_rt_muldiv).
+fn qc_rt_muldiv_factors(a: QcAsm, t: QcMulDivL, f: Int, n: Int) -> QcAsm =
+  if f >= n then a
+  else
+    let a1 = qc_asm_i(qc_rt_abs_u64(a, f), QcILocalSet(t.mg)) in
+    let a2 = qc_asm_all(a1, [
+      QcILocalGet(t.neg), QcILocalGet(f), QcII64Const(0), QcII64LtS, QcII32Xor, QcILocalSet(t.neg),
+      QcILocalGet(t.z), QcILocalGet(f), QcII64Eqz, QcII32Or, QcILocalSet(t.z)
+    ]) in
+    let a3 = qc_rt_mul_wide(qc_rt_mul_wide(a2, t.lo, t.mg, t.h1, t.l1, t), t.hi, t.mg, t.h2, t.l2, t) in
+    let a4 = qc_asm_all(a3, [
+      QcILocalGet(t.ov), QcILocalGet(t.h2), QcII64Const(0), QcII64Ne, QcII32Or, QcILocalSet(t.ov),
+      QcILocalGet(t.l2), QcILocalGet(t.h1), QcII64Add, QcILocalSet(t.hi),
+      QcILocalGet(t.ov), QcILocalGet(t.hi), QcILocalGet(t.l2), QcII64LtU, QcII32Or, QcILocalGet(t.hi), QcII64Const(0), QcII64LtS, QcII32Or, QcILocalSet(t.ov),
+      QcILocalGet(t.l1), QcILocalSet(t.lo)
+    ]) in
+    qc_rt_muldiv_factors(a4, t, f + 1, n)
+
+fn qc_rt_muldiv_fail_if(m: QcMb, a: QcAsm, kind: Int, d: Int) -> QcMbAsm =
+  let a1 = qc_asm_i(a, QcIIf(QcBtEmpty)) in
+  let vals = [QcFailVal { local: 0, repr: QcRI64 }, QcFailVal { local: d, repr: QcRI64 }] in
+  let ma = qc_mb_emit_fail(m, a1, kind, QcArgLocal(d + 1), QcArgLocal(d + 2), vals) in
+  QcMbAsm { m: ma.m, a: qc_asm_i(ma.a, QcIEnd) }
+
+# Fused (f1 * ... * fn) / d, mirroring rt.rs `muldiv`. Params: f1..fn = 0..n, d = n, func = n + 1,
+# site = n + 2. The product's magnitude is an unsigned 128-bit (hi, lo), its sign separate.
+fn qc_rt_muldiv(m: QcMb, a0: QcAsm, n: Int) -> QcMbAsm =
+  let d = n in
+  let r_hi = qc_asm_local(a0, QcVI64) in
+  let r_lo = qc_asm_local(r_hi.a, QcVI64) in
+  let r_mg = qc_asm_local(r_lo.a, QcVI64) in
+  let r_dv = qc_asm_local(r_mg.a, QcVI64) in
+  let r_q = qc_asm_local(r_dv.a, QcVI64) in
+  let r_neg = qc_asm_local(r_q.a, QcVI32) in
+  let r_ov = qc_asm_local(r_neg.a, QcVI32) in
+  let r_z = qc_asm_local(r_ov.a, QcVI32) in
+  let r_k = qc_asm_local(r_z.a, QcVI32) in
+  let r_h1 = qc_asm_local(r_k.a, QcVI64) in
+  let r_l1 = qc_asm_local(r_h1.a, QcVI64) in
+  let r_h2 = qc_asm_local(r_l1.a, QcVI64) in
+  let r_l2 = qc_asm_local(r_h2.a, QcVI64) in
+  let r_s0 = qc_asm_local(r_l2.a, QcVI64) in
+  let r_s1 = qc_asm_local(r_s0.a, QcVI64) in
+  let r_s2 = qc_asm_local(r_s1.a, QcVI64) in
+  let r_mid = qc_asm_local(r_s2.a, QcVI64) in
+  let t = QcMulDivL {
+    hi: r_hi.l, lo: r_lo.l, mg: r_mg.l, dv: r_dv.l, q: r_q.l, neg: r_neg.l, ov: r_ov.l, z: r_z.l, k: r_k.l,
+    h1: r_h1.l, l1: r_l1.l, h2: r_h2.l, l2: r_l2.l, s0: r_s0.l, s1: r_s1.l, s2: r_s2.l, mid: r_mid.l
+  } in
+  let a1 = qc_asm_i(qc_rt_abs_u64(r_mid.a, 0), QcILocalSet(t.lo)) in
+  let a2 = qc_asm_all(a1, [QcILocalGet(0), QcII64Const(0), QcII64LtS, QcILocalSet(t.neg), QcILocalGet(0), QcII64Eqz, QcILocalSet(t.z)]) in
+  let a3 = qc_rt_muldiv_factors(a2, t, 1, n) in
+  let a4 = qc_asm_all(a3, [
+    QcILocalGet(t.neg), QcILocalGet(d), QcII64Const(0), QcII64LtS, QcII32Xor, QcILocalSet(t.neg),
+    QcILocalGet(t.ov), QcILocalGet(t.z), QcII32Eqz, QcII32And
+  ]) in
+  let ma1 = qc_rt_muldiv_fail_if(m, a4, 3, d) in
+  let ma2 = qc_rt_muldiv_fail_if(ma1.m, qc_asm_all(ma1.a, [QcILocalGet(d), QcII64Eqz]), 4, d) in
+  let a5 = qc_asm_i(qc_rt_abs_u64(ma2.a, d), QcILocalSet(t.dv)) in
+  let ma3 = qc_rt_muldiv_fail_if(ma2.m, qc_asm_all(a5, [QcILocalGet(t.hi), QcILocalGet(t.dv), QcII64GeU]), 3, d) in
+  let a6 = qc_asm_all(ma3.a, [
+    QcILocalGet(t.hi), QcII64Eqz, QcIIf(QcBtEmpty), QcILocalGet(t.lo), QcILocalGet(t.dv), QcII64DivU, QcILocalSet(t.q), QcIElse,
+    QcIBlock(QcBtEmpty), QcILoop(QcBtEmpty), QcILocalGet(t.k), QcII32Const(64), QcII32GeU, QcIBrIf(1),
+    QcILocalGet(t.hi), QcII64Const(1), QcII64Shl, QcILocalGet(t.lo), QcII64Const(63), QcII64ShrU, QcII64Or, QcILocalSet(t.hi),
+    QcILocalGet(t.lo), QcII64Const(1), QcII64Shl, QcILocalSet(t.lo), QcILocalGet(t.q), QcII64Const(1), QcII64Shl, QcILocalSet(t.q),
+    QcILocalGet(t.hi), QcILocalGet(t.dv), QcII64GeU, QcIIf(QcBtEmpty),
+    QcILocalGet(t.hi), QcILocalGet(t.dv), QcII64Sub, QcILocalSet(t.hi), QcILocalGet(t.q), QcII64Const(1), QcII64Or, QcILocalSet(t.q), QcIEnd
+  ]) in
+  let a7 = qc_asm_i(qc_rt_loop_next(a6, t.k), QcIEnd) in
+  let a8 = qc_asm_all(a7, [QcILocalGet(t.q), QcII64Const(9223372036854775807), QcILocalGet(t.neg), QcII64ExtendI32U, QcII64Add, QcII64GtU]) in
+  let ma4 = qc_rt_muldiv_fail_if(ma3.m, a8, 3, d) in
+  QcMbAsm { m: ma4.m, a: qc_asm_all(ma4.a, [QcII64Const(0), QcILocalGet(t.q), QcII64Sub, QcILocalGet(t.q), QcILocalGet(t.neg), QcISelect]) }
 
 fn qc_rt_split(m: QcMb, a0: QcAsm) -> QcMbAsm =
   let l1 = qc_asm_local(a0, QcVI32) in
@@ -550,6 +663,7 @@ fn qc_rt_body(rt: QcRt, m: QcMb, n_params: Int) -> QcMbAsm =
   match rt {
     QcRtAlloc => qc_rt_alloc(m, a0),
     QcRtArith(op) => qc_rt_arith(m, a0, op),
+    QcRtMulDiv(n) => qc_rt_muldiv(m, a0, n),
     QcRtVariant1 =>
       let lp = qc_asm_local(a0, QcVI32) in
       let p = lp.l in

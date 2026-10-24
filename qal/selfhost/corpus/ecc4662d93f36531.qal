@@ -1,0 +1,4 @@
+fn f() -> Int !io = { print("f"); 6 }
+fn g() -> Int !io = { print("g"); 7 }
+fn h() -> Int !io = { print("h"); 4 }
+fn main(args: List[Str]) -> Int !io = f() * g() / h()

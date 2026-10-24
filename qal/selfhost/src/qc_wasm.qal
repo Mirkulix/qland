@@ -271,6 +271,19 @@ fn qc_binop_is_arith(op: QcBinOp) -> Bool =
     _ => false
   }
 
+# The factors of a left-nested `*` chain in source order (gen.rs `mul_chain`).
+fn qc_mul_chain(e: QcTExpr) -> List[QcTExpr] =
+  match e.kind {
+    QcTKBin(op, a, b, _) => if op == QcOpMul then qc_mul_chain(a) ++ [b] else [e],
+    _ => [e]
+  }
+
+fn qc_is_mul(e: QcTExpr) -> Bool =
+  match e.kind {
+    QcTKBin(op, _, _, _) => op == QcOpMul,
+    _ => false
+  }
+
 type QcFnGenOptSite = {
   g: QcFnGen,
   site: Option[Int]
@@ -289,6 +302,19 @@ fn qc_fngen_binary(g0: QcFnGen, op: QcBinOp, l: QcTExpr, r: QcTExpr, path: Str) 
       let g3 = qc_fngen_expr(g2, r, false) in
       qc_fngen_i(g3, QcIEnd),
     _ =>
+      let is_int = match l.ty { QcTInt => true, _ => false } in
+      if op == QcOpDiv && is_int && qc_is_mul(l) then
+        # `(f1 * ... * fn) / d` is one exact operation (128-bit product), see qc_rt_muldiv
+        let sr = qc_fngen_site(g0, path, qc_binop_sym(op), [
+          QcFieldType { name: "left", ty: QcTInt },
+          QcFieldType { name: "right", ty: QcTInt }
+        ], None) in
+        let factors = qc_mul_chain(l) in
+        let g1 = qc_fngen_exprs_loop(sr.g, factors, 0) in
+        let g2 = qc_fngen_expr(g1, r, false) in
+        let g3 = qc_fngen_site_args(g2, sr.site) in
+        qc_fngen_call_rt(g3, QcRtMulDiv(len(factors)))
+      else
       let is_float = match l.ty { QcTFloat => true, _ => false } in
       let os = if !is_float && qc_binop_is_arith(op) then
         let sr = qc_fngen_site(g0, path, qc_binop_sym(op), [
