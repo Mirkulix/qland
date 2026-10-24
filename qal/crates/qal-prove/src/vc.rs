@@ -763,7 +763,7 @@ impl<'p> Enc<'p> {
     #[allow(clippy::too_many_arguments)]
     fn binary(&mut self, op: BinOp, l: &TExpr, r: &TExpr, ty: &Type, env: &mut Vec<Option<Term>>, pc: &Bool, path: &str) -> (Option<Term>, Bool) {
         let (lp, rp) = (format!("{path}.left"), format!("{path}.right"));
-        if op == BinOp::Div && l.ty == Type::Int && matches!(l.kind, TKind::Bin(BinOp::Mul, ..)) {
+        if TExpr::fused_factors(op, l).is_some() {
             return self.muldiv(l, r, ty, env, pc, &lp, &rp);
         }
         let (lv, lok) = self.enc(l, env, pc, &lp);

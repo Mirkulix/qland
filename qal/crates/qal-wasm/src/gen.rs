@@ -24,18 +24,6 @@ pub struct FnGen<'g, 'p> {
 
 const NONE: u32 = u32::MAX;
 
-/// The factors of a left-nested `*` chain in source order: `a * b * c` -> [a, b, c]. Only the
-/// left operand is unfolded, so a parenthesised `a * (b * c)` keeps `b * c` as one factor.
-pub fn mul_chain<'e>(e: &'e TExpr, out: &mut Vec<&'e TExpr>) {
-    match &e.kind {
-        TKind::Bin(BinOp::Mul, l, r, _) => {
-            mul_chain(l, out);
-            out.push(r);
-        }
-        _ => out.push(e),
-    }
-}
-
 impl<'g, 'p> FnGen<'g, 'p> {
     /// `locals`: types of all locals by id; the first `n_params` are the parameters.
     pub fn new(m: &'g mut Mb<'p>, meta: u32, fn_index: &'g [Option<u32>], locals: &'g [Type], n_params: usize) -> Self {
@@ -348,11 +336,9 @@ impl<'g, 'p> FnGen<'g, 'p> {
             _ => {}
         }
         let int_site = |g: &mut Self| g.site(path, op.symbol(), &[("left", Type::Int), ("right", Type::Int)], None);
-        if op == BinOp::Div && l.ty == Type::Int && matches!(l.kind, TKind::Bin(BinOp::Mul, ..)) {
+        if let Some(factors) = TExpr::fused_factors(op, l) {
             // `(f1 * … * fn) / d` is one exact operation (128-bit product), see `Rt::MulDiv`
             let site = int_site(self);
-            let mut factors = Vec::new();
-            mul_chain(l, &mut factors);
             for f in &factors {
                 self.expr(f, false);
             }

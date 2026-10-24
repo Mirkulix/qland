@@ -8,7 +8,7 @@ Definitions (any order, any number per call; `#` starts a comment):
   fn main(args: List[Str]) -> Int !io = { print("hi"); 0 }   entry point; result = exit code
 Every parameter and result is typed. fn/test names start lowercase, type and variant names uppercase. Built-in names (below) are reserved.
 
-Types: Int (64-bit: products of large inputs overflow and trap, so check bounds or use Float; division by zero traps too), Float, Bool, Unit (value `()`), Str (not String), Bytes, List[T], Map[K, V] (ordered by key), Option[T] = Some(x) | None, Result[T, E] = Ok(x) | Err(e), fn(A) -> B !e. No null, exceptions, implicit conversions or loops: recurse (a call in tail position is a loop; a fn with `ens` makes no tail calls). A built-in is not a value: map(xs, fn(s) => trim(s)), not `map(xs, trim)`.
+Types: Int (64-bit: products of large inputs overflow and trap, so check bounds or use Float; `a * b * ... / c` is computed exactly, with a 128-bit intermediate, and traps only if the result does not fit; division by zero traps too), Float, Bool, Unit (value `()`), Str (not String), Bytes, List[T], Map[K, V] (ordered by key), Option[T] = Some(x) | None, Result[T, E] = Ok(x) | Err(e), fn(A) -> B !e. No null, exceptions, implicit conversions or loops: recurse (a call in tail position is a loop; a fn with `ens` makes no tail calls). A built-in is not a value: map(xs, fn(s) => trim(s)), not `map(xs, trim)`.
 Generics: type Pair[A, B] = { fst: A, snd: B }   type Tree[T] = Leaf | Node(Tree[T], T, Tree[T])
   fn swap[A, B](p: Pair[A, B]) -> Pair[B, A] = Pair { fst: p.snd, snd: p.fst }   type arguments are inferred at calls
   A recursive generic calls itself only at its own parameters (`size[T]` calls `size(l)` on a Tree[T]).
