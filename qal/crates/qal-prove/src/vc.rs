@@ -763,6 +763,9 @@ impl<'p> Enc<'p> {
     #[allow(clippy::too_many_arguments)]
     fn binary(&mut self, op: BinOp, l: &TExpr, r: &TExpr, ty: &Type, env: &mut Vec<Option<Term>>, pc: &Bool, path: &str) -> (Option<Term>, Bool) {
         let (lp, rp) = (format!("{path}.left"), format!("{path}.right"));
+        if op == BinOp::Div && l.ty == Type::Int && matches!(l.kind, TKind::Bin(BinOp::Mul, ..)) {
+            return self.muldiv(l, r, ty, env, pc, &lp, &rp);
+        }
         let (lv, lok) = self.enc(l, env, pc, &lp);
         if matches!(op, BinOp::And | BinOp::Or) {
             let lb = self.as_bool(lv, "a condition the prover does not model");
@@ -873,6 +876,48 @@ impl<'p> Enc<'p> {
                 (h, and(&[ok, f]))
             }
         }
+    }
+
+    /// The fused `(f1 * … * fn) / d` (code generation: `Rt::MulDiv`): the factors and the divisor
+    /// are evaluated left to right; the product is exact, so the only conditions are
+    /// |f1 · … · fn| < 2^127, d != 0 and the quotient (truncated toward zero) in range.
+    #[allow(clippy::too_many_arguments)]
+    fn muldiv(&mut self, l: &TExpr, r: &TExpr, ty: &Type, env: &mut Vec<Option<Term>>, pc: &Bool, lp: &str, rp: &str) -> (Option<Term>, Bool) {
+        fn chain<'e>(e: &'e TExpr, path: String, out: &mut Vec<(&'e TExpr, String)>) {
+            match &e.kind {
+                TKind::Bin(BinOp::Mul, a, b, _) => {
+                    chain(a, format!("{path}.left"), out);
+                    out.push((b, format!("{path}.right")));
+                }
+                _ => out.push((e, path)),
+            }
+        }
+        let mut operands = Vec::new();
+        chain(l, lp.to_string(), &mut operands);
+        operands.push((r, rp.to_string()));
+        let mut ok = truth();
+        let mut ints = Some(Vec::new());
+        for (e, p) in operands {
+            let (v, o) = self.enc(e, env, &and(&[pc.clone(), ok.clone()]), &p);
+            ok = conj(&ok, &o);
+            ints = match (ints, v) {
+                (Some(mut xs), Some(Term::I(x))) => {
+                    xs.push(x);
+                    Some(xs)
+                }
+                _ => None,
+            };
+        }
+        let Some((d, ints)) = ints.as_ref().and_then(|xs| xs.split_last()) else {
+            let (h, f) = self.unknown(ty, "`/` on Int");
+            return (h, and(&[ok, f]));
+        };
+        let p = Int::mul(ints);
+        // 2^127 = (2^62)^2 * 2^3
+        let bound = Int::mul(&[Int::from_i64(1 << 62), Int::from_i64(1 << 62), Int::from_i64(8)]);
+        let q = tdiv(&p, d);
+        let ok = and(&[ok, p.lt(&bound), p.gt(bound.unary_minus()), d.eq(Int::from_i64(0)).not(), in_range(&q)]);
+        (Some(Term::I(q)), ok)
     }
 
     /// A call of `fns[i]` (or `generics[i]`): obligations for its `req`, assumptions from its contracts.
