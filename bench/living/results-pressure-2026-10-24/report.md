@@ -1,0 +1,44 @@
+# Living program, pressure run of 2026-10-24: result
+
+Protocol: `bench/living/README.md` plus pressure mode (commit 8df97e87). This is the same order system and the same 12 change requests with the same hidden tests as the run of 2026-10-23. The difference: each change request carries only the change and two examples, as a ticket would. There is no full specification and no word about tests or contracts. Each line starts from the normal run's stage 0 of the same line, which is code with contracts and tests. Both arms run on Haiku. There is no retry: every stage builds on what the previous one left.
+
+## Result
+
+| | QAL / Haiku | Rust / Haiku |
+|---|---|---|
+| stages with every hidden test green | **0 / 12** | **12 / 12** |
+| bugs that reached the hidden tests | 1, introduced at stage 1 and never noticed | 0 |
+| rounds / processed tokens | 108 / 8.81 M | 91 / 6.15 M |
+| verification the agents ran unasked | `qal_test` 4×, `qal_prove` 0×; `qal_define` ran the stored tests every time | `cargo test` 14× |
+| own verification that went red during a run | 1 (stage 7: stored tests broken by the backorder change, fixed) | 3 (stages 4, 5: `cargo test`, fixed) |
+
+## The bug
+
+Stage 1 (quantity discount) in QAL:
+
+```
+fn total(price: Int, qty: Int) -> Int
+  ens qty >= 10 && r == price * qty * 95 / 100 || qty < 10 && r == price * qty
+= if qty >= 10 then price * qty * 95 / 100 else price * qty
+```
+
+With price and quantity at their maximum of 999 999 999 each, `price * qty * 95` exceeds 64 bits. QAL traps on overflow, so the program stops with a runtime error instead of printing. The hidden test `s0_big_numbers` failed from stage 1 to stage 12. The Rust line has computed in `u128` since stage 0, so the same formula is correct there.
+
+**Why QAL's guarantees did not catch it:**
+- The **stored tests** that `qal_define` runs cover no large amounts.
+- The **prover** proves the `ens`. With trapping overflow the equation holds whenever the function returns, so the proof is correct and still says nothing about the trap.
+- The **property test** of `total` would have hit the overflow on random inputs, but only if someone runs `qal_test`. Even then, the reference says traps are counted (`traps`), not failures. The agent here ran `qal_test` 4 times in 12 stages, and the trap would not have turned it red.
+- No contract bounds the inputs, such as `req price <= 999999999 && qty <= 999999999`. With such a `req`, a trap in the property test would be a real finding.
+
+## What this means
+
+- **This is the first experiment in which a bug got through, and it got through in QAL, not in Rust.** The cause is a language property (64-bit Int with traps, against `u128` in the Rust code) together with guarantees that exist but have to be invoked. Without being asked, the agents did not invoke them. The Rust agents ran `cargo test` on their own 14 times; the QAL agents trusted the tests that `define` runs, and those had no case for the bug.
+- QAL's thesis was that machine-checked guarantees catch what other workflows let through. This experiment refutes it in this form. **A guarantee that has to be called does not protect an agent that does not call it.**
+
+## Consequences for the language
+
+1. **`qal_define` reports traps.** For every defined function with an `ens` or a `req`, `define` runs the generated property test too, as it already runs the stored tests. An overflow trap on inputs that satisfy `req` becomes a warning in the reply. The guarantee then works without being asked for.
+2. **Bounding inputs pays off and should be suggested.** The trap warning should suggest a `req` that bounds the inputs. Without one, every overflow counts as possible, and nothing distinguishes a real finding.
+3. **Integer width:** a 64-bit Int that traps is safer than one that wraps. It is still a pitfall for business arithmetic with products of large values. Options: a 128-bit intermediate result for `*` followed by `/`, or a `muldiv` built-in. To be decided.
+
+Files: `state-pressure` (git-ignored) is copied here as `results.jsonl`, `workdirs.json` and `schedule.json`.

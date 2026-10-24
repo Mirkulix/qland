@@ -1,0 +1,270 @@
+{
+ "seed": "living-2026-10-23",
+ "runs": 2,
+ "model": {
+  "1": "sonnet",
+  "2": "haiku"
+ },
+ "entries": [
+  {
+   "task": "30-living-a",
+   "arm": "qal",
+   "run": 1
+  },
+  {
+   "task": "30-living-a",
+   "arm": "qal",
+   "run": 2
+  },
+  {
+   "task": "30-living-a",
+   "arm": "rust",
+   "run": 1
+  },
+  {
+   "task": "30-living-a",
+   "arm": "rust",
+   "run": 2
+  },
+  {
+   "task": "31-living-b",
+   "arm": "qal",
+   "run": 1
+  },
+  {
+   "task": "31-living-b",
+   "arm": "qal",
+   "run": 2
+  },
+  {
+   "task": "31-living-b",
+   "arm": "rust",
+   "run": 1
+  },
+  {
+   "task": "31-living-b",
+   "arm": "rust",
+   "run": 2
+  },
+  {
+   "task": "32-living-c",
+   "arm": "qal",
+   "run": 1
+  },
+  {
+   "task": "32-living-c",
+   "arm": "qal",
+   "run": 2
+  },
+  {
+   "task": "32-living-c",
+   "arm": "rust",
+   "run": 1
+  },
+  {
+   "task": "32-living-c",
+   "arm": "rust",
+   "run": 2
+  },
+  {
+   "task": "33-living-d",
+   "arm": "qal",
+   "run": 1
+  },
+  {
+   "task": "33-living-d",
+   "arm": "qal",
+   "run": 2
+  },
+  {
+   "task": "33-living-d",
+   "arm": "rust",
+   "run": 1
+  },
+  {
+   "task": "33-living-d",
+   "arm": "rust",
+   "run": 2
+  },
+  {
+   "task": "34-living-e",
+   "arm": "qal",
+   "run": 1
+  },
+  {
+   "task": "34-living-e",
+   "arm": "qal",
+   "run": 2
+  },
+  {
+   "task": "34-living-e",
+   "arm": "rust",
+   "run": 1
+  },
+  {
+   "task": "34-living-e",
+   "arm": "rust",
+   "run": 2
+  },
+  {
+   "task": "35-living-f",
+   "arm": "qal",
+   "run": 1
+  },
+  {
+   "task": "35-living-f",
+   "arm": "qal",
+   "run": 2
+  },
+  {
+   "task": "35-living-f",
+   "arm": "rust",
+   "run": 1
+  },
+  {
+   "task": "35-living-f",
+   "arm": "rust",
+   "run": 2
+  },
+  {
+   "task": "36-living-g",
+   "arm": "qal",
+   "run": 1
+  },
+  {
+   "task": "36-living-g",
+   "arm": "qal",
+   "run": 2
+  },
+  {
+   "task": "36-living-g",
+   "arm": "rust",
+   "run": 1
+  },
+  {
+   "task": "36-living-g",
+   "arm": "rust",
+   "run": 2
+  },
+  {
+   "task": "37-living-h",
+   "arm": "qal",
+   "run": 1
+  },
+  {
+   "task": "37-living-h",
+   "arm": "qal",
+   "run": 2
+  },
+  {
+   "task": "37-living-h",
+   "arm": "rust",
+   "run": 1
+  },
+  {
+   "task": "37-living-h",
+   "arm": "rust",
+   "run": 2
+  },
+  {
+   "task": "38-living-i",
+   "arm": "qal",
+   "run": 1
+  },
+  {
+   "task": "38-living-i",
+   "arm": "qal",
+   "run": 2
+  },
+  {
+   "task": "38-living-i",
+   "arm": "rust",
+   "run": 1
+  },
+  {
+   "task": "38-living-i",
+   "arm": "rust",
+   "run": 2
+  },
+  {
+   "task": "39-living-j",
+   "arm": "qal",
+   "run": 1
+  },
+  {
+   "task": "39-living-j",
+   "arm": "qal",
+   "run": 2
+  },
+  {
+   "task": "39-living-j",
+   "arm": "rust",
+   "run": 1
+  },
+  {
+   "task": "39-living-j",
+   "arm": "rust",
+   "run": 2
+  },
+  {
+   "task": "40-living-k",
+   "arm": "qal",
+   "run": 1
+  },
+  {
+   "task": "40-living-k",
+   "arm": "qal",
+   "run": 2
+  },
+  {
+   "task": "40-living-k",
+   "arm": "rust",
+   "run": 1
+  },
+  {
+   "task": "40-living-k",
+   "arm": "rust",
+   "run": 2
+  },
+  {
+   "task": "41-living-l",
+   "arm": "qal",
+   "run": 1
+  },
+  {
+   "task": "41-living-l",
+   "arm": "qal",
+   "run": 2
+  },
+  {
+   "task": "41-living-l",
+   "arm": "rust",
+   "run": 1
+  },
+  {
+   "task": "41-living-l",
+   "arm": "rust",
+   "run": 2
+  },
+  {
+   "task": "42-living-m",
+   "arm": "qal",
+   "run": 1
+  },
+  {
+   "task": "42-living-m",
+   "arm": "qal",
+   "run": 2
+  },
+  {
+   "task": "42-living-m",
+   "arm": "rust",
+   "run": 1
+  },
+  {
+   "task": "42-living-m",
+   "arm": "rust",
+   "run": 2
+  }
+ ]
+}
