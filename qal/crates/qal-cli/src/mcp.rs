@@ -515,6 +515,13 @@ impl Server {
             Ok(r) => r,
             Err(message) => Reply::diagnostics(vec![Diagnostic::new("E0701", "bad_arguments", "", "", message).hint(format!("see the input schema of `{name}` in tools/list"))]),
         };
+        // Hashes are for addressing old versions (qal_history, qal_view `#<hash>`): in 295 view,
+        // history and query calls of the benchmark agents none used one, and two per defined name
+        // made a define reply of 60 names 9 KB longer.
+        for d in reply.out.defined.iter_mut().flatten() {
+            d.hash.clear();
+            d.old_hash = None;
+        }
         if let Some(e) = &mut reply.out.error {
             for h in &mut e.hints {
                 *h = allow_hint(h);
@@ -588,6 +595,7 @@ impl Server {
             }
             _ => {}
         }
+        let mut io = false;
         if matches!(name, "qal_run" | "qal_call" | "qal_request" | "qal_define") {
             let a = Args::new(name, args)?;
             let wanted: Vec<String> = a.strings("allow")?.unwrap_or_default().iter().flat_map(|s| s.split(',').map(|x| x.trim().to_string()).collect::<Vec<_>>()).filter(|x| !x.is_empty()).collect();
@@ -600,6 +608,7 @@ impl Server {
                     .hint("files, the network and real databases stay with the owner on the command line (qal run, qal serve); test with \"db:mem\"");
                 return Ok(Reply::diagnostics(vec![d]));
             }
+            io = allowed.iter().any(|x| x == "io");
         }
         let signer = if policy::WRITE_TOOLS.contains(&name) {
             match signer_of(store, who) {
@@ -609,7 +618,7 @@ impl Server {
         } else {
             None
         };
-        self.tool(name, args, None, Some(&TeamCall { signer, member: who.member.clone(), session: who.session.clone(), space: space.clone() }))
+        self.tool(name, args, None, Some(&TeamCall { signer, member: who.member.clone(), session: who.session.clone(), space: space.clone(), io }))
     }
 
     fn tool(&self, name: &str, args: &Map<String, J>, client: Option<&str>, team: Option<&TeamCall>) -> Result<Reply, String> {
@@ -633,7 +642,14 @@ impl Server {
             })
         };
         let ctx = self.ctx(a.string("stdin")?, team);
-        let perms = |a: &Args| -> Result<Permissions, String> { Permissions::parse_in(&a.strings("allow")?.unwrap_or_default(), &self.root) };
+        // `io` is the call's own stdin and stdout (print, read_line, read_all): granted unless a team
+        // store forbids it (pressure run 7: forgetting it cost a round 9 times in 12 stages); the
+        // rest needs `allow`.
+        let perms = |a: &Args| -> Result<Permissions, String> {
+            let mut p = Permissions::parse_in(&a.strings("allow")?.unwrap_or_default(), &self.root)?;
+            p.io |= team.is_none_or(|t| t.io);
+            Ok(p)
+        };
         Ok(match name {
             "qal_define" => {
                 let src = a.required("source")?;
@@ -867,6 +883,8 @@ struct TeamCall {
     member: String,
     session: String,
     space: qal_store::Space,
+    /// The team lets agents grant `io`: it is granted without `allow`, as outside a team.
+    io: bool,
 }
 
 /// The tools whose rights depend on their action and change set (checked by the store).
@@ -1241,16 +1259,16 @@ fn tool_params(tool: &str) -> &'static [&'static str] {
 pub fn tools() -> J {
     let s = |d: &str| json!({"type": "string", "description": d});
     let list = |d: &str| json!({"type": "array", "items": {"type": "string"}, "description": d});
-    let allow = list("Effects to grant: \"io\", \"time\", \"rand\", \"fs:<dir>\" (a directory inside the project, relative to its root; hidden entries like .git are never reachable), \"db:mem\" (a fresh in-memory SQLite database), \"db\" or \"db:<name>\" (the project's .qal/db/main.sqlite or <name>.sqlite), \"net:<host>[:port]\" (outgoing HTTP to that host; names must resolve to public addresses, IP literals like \"net:127.0.0.1:9000\" reach exactly that address). Default: none.");
+    let allow = list("Effects to grant: \"io\", \"time\", \"rand\", \"fs:<dir>\" (a directory inside the project, relative to its root; hidden entries like .git are never reachable), \"db:mem\" (a fresh in-memory SQLite database), \"db\" or \"db:<name>\" (the project's .qal/db/main.sqlite or <name>.sqlite), \"net:<host>[:port]\" (outgoing HTTP to that host; names must resolve to public addresses, IP literals like \"net:127.0.0.1:9000\" reach exactly that address). \"io\" (the call's own stdin and stdout) is always granted, the rest only when listed.");
     // The full list once (qal_run); the other tools that run code point to it.
-    let allow_short = list("Effects to grant, as for qal_run (default: none).");
+    let allow_short = list("Effects to grant, as for qal_run (io is always granted).");
     let allow_request = allow_short.clone();
     let stdin = s("Text that read_line() and read_all() read (default: empty).");
     let agent = s("Who makes the change, recorded in the history (default: the MCP client's name).");
     let read_only = json!({"readOnlyHint": true, "openWorldHint": false});
     let writes = json!({"readOnlyHint": false, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false});
     let define = format!(
-        "Add or replace QAL definitions (types, functions, tests) in the project's store. Nothing is stored unless all of them parse and type-check together with the stored code; then the result lists each name with its hash and status (added, replaced, unchanged, relinked). Otherwise `diagnostics` say what to fix. Contracts are proven on the way (`proofs`): a function whose contract is refuted is not stored (the diagnostic has a counterexample). Then the stored tests that use a function it defined run (`tests`, `passed`, `failed`): a failing test does not undo the definition.\n\n{REFERENCE}"
+        "Add or replace QAL definitions (types, functions, tests) in the project's store. Nothing is stored unless all of them parse and type-check together with the stored code; then the result lists each name with its status (added, replaced, unchanged, relinked; qal_history has the hashes). Otherwise `diagnostics` say what to fix. Contracts are proven on the way (`proofs`): a function whose contract is refuted is not stored (the diagnostic has a counterexample). Then the stored tests that use a function it defined run (`tests`, `passed`, `failed`): a failing test does not undo the definition.\n\n{REFERENCE}"
     );
     json!([
         {"name": "qal_define", "title": "Define QAL code", "description": define, "annotations": writes,
@@ -1265,7 +1283,7 @@ pub fn tools() -> J {
          "description": "Prove the `req`/`ens` contracts of stored functions and tests with Z3 (all, or the named ones; in a project, all means its own: `std.` ones when named): every `ens`, and the `req` of every called function at its call site. Status per obligation: proven, refuted (with a counterexample that really violates it), or unknown (with the reason: Int and Bool facts are modelled exactly, other values only approximately; the contract stays checked at runtime). Results are stored per definition hash.",
          "inputSchema": {"type": "object", "properties": {"names": list("Function or test names (default: all).")}, "additionalProperties": false}},
         {"name": "qal_run", "title": "Run a QAL program", "annotations": {"readOnlyHint": false, "destructiveHint": false, "openWorldHint": true},
-         "description": "Run a stored entry point `fn(List[Str]) -> Int` (default `main`) with string arguments. Result: exit_code and stdout, or a runtime `error` (contract violation, overflow, timeout after 10 s, ...). Effects the program declares must be granted with `allow`. To try several inputs in one call, pass `cases` instead of `args`/`stdin`: `results` has one {args, exit_code, stdout, error} per case, in order; the call fails only if a case ends in a runtime error (an exit code is data).",
+         "description": "Run a stored entry point `fn(List[Str]) -> Int` (default `main`) with string arguments. Result: exit_code and stdout, or a runtime `error` (contract violation, overflow, timeout after 10 s, ...). Effects the program declares beyond io must be granted with `allow`. To try several inputs in one call, pass `cases` instead of `args`/`stdin`: `results` has one {args, exit_code, stdout, error} per case, in order; the call fails only if a case ends in a runtime error (an exit code is data).",
          "inputSchema": {"type": "object", "properties": {"entry": s("Entry point name (default main)."), "args": list("Program arguments."), "stdin": stdin.clone(),
              "cases": {"type": "array", "minItems": 1, "maxItems": ops::MAX_CASES, "description": "Runs, one per case, instead of `args`/`stdin`: {args (default []), stdin (default empty)}.",
                        "items": {"type": "object", "properties": {"args": {"type": "array", "items": {"type": "string"}}, "stdin": {"type": "string"}}, "additionalProperties": false}},
@@ -1286,7 +1304,7 @@ pub fn tools() -> J {
          "description": "Show stored definitions as text with their hash, signature, effects and the signatures of their direct dependencies. Names, or `#<hash>` for old versions from the history.",
          "inputSchema": {"type": "object", "properties": {"names": list("Names or #<hash>.")}, "required": ["names"], "additionalProperties": false}},
         {"name": "qal_query", "title": "Search the QAL codebase", "annotations": read_only,
-         "description": "List stored definitions {name, kind, hash, signature, effects}, filtered by name prefix, signature pattern (`_` = any one type, e.g. `fn(Str) -> _`) and/or direct use of a name or #hash. No filter lists everything. `outline: true` lists the project's own definitions (no `std.` unless `name` starts with `std.`, no hashes) with each one's `contracts` (req/ens), `uses`, `used_by` (functions) and `tests`: the view to read before a change, much smaller than qal_view.",
+         "description": "List stored definitions {name, kind, hash, signature, effects}, filtered by name prefix, signature pattern (`_` = any one type, e.g. `fn(Str) -> _`) and/or direct use of a name or #hash. No filter lists everything. `outline: true` lists the project's own definitions (no `std.` unless `name` starts with `std.`, no hashes) with each one's `contracts` (req/ens), `uses`, `used_by` (functions) and `tests` (empty lists left out; a test is listed under the `tests` of what it uses): the view to read before a change, much smaller than qal_view.",
          "inputSchema": {"type": "object", "properties": {"name": s("Name prefix."), "type": s("Signature pattern, e.g. fn(List[Int]) -> Int."), "uses": s("Only definitions that refer to this name or #hash."), "outline": {"type": "boolean", "description": "Add contracts, uses, used_by and tests to every entry."}}, "additionalProperties": false}},
         {"name": "qal_rename", "title": "Rename a QAL definition", "annotations": writes,
          "description": "Rename a stored definition. No hash changes; everything that refers to it follows the new name; the history moves along.",

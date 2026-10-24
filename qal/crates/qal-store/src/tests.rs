@@ -214,7 +214,8 @@ fn signature_change_needs_the_dependents_in_the_same_call() {
     ok(&mut s, "fn base() -> Int = 1\nfn user() -> Int = base() + 1\nfn user2() -> Int = base()\ntest t = user() == 2");
     let before = hashes(&mut s);
     let d = err(&mut s, "fn base(x: Int) -> Int = x");
-    assert_eq!(d.len(), 1);
+    // E0401 first, then the check's own diagnostics of the dependents that break.
+    assert!(d.len() > 1 && d[1..].iter().all(|x| x.def == "user" || x.def == "user2"), "{d:?}");
     assert_eq!((d[0].kind, d[0].code, d[0].def.as_str()), ("signature_change", "E0401", "base"));
     assert_eq!(d[0].dependents, vec!["user".to_string(), "user2".to_string()]);
     assert_eq!((d[0].expected.as_deref(), d[0].found.as_deref()), (Some("fn() -> Int"), Some("fn(Int) -> Int")));
@@ -230,11 +231,43 @@ fn signature_change_needs_the_dependents_in_the_same_call() {
 }
 
 #[test]
+fn a_signature_change_relinks_the_dependents_that_still_check() {
+    // Pressure run 7: E0401 cost a round 17 times in 12 stages, mostly for dependents that needed
+    // no change (a type holding a record that got a field, a match with a `_` arm).
+    let mut s = store();
+    ok(&mut s, "type P = { x: Int }\ntype Box = { p: P }\nfn get_x(p: P) -> Int = p.x\ntype C = A | B\nfn f(c: C) -> Int = match c { A => 1, _ => 2 }\ntest t = f(B) == 2");
+    let d = ok(&mut s, "type P = { x: Int, y: Int }");
+    assert_eq!(statuses(&d), vec![("P", "replaced"), ("Box", "relinked"), ("get_x", "relinked")]);
+    assert_eq!(text(&mut s, "get_x"), "fn get_x(p: P) -> Int\n= p.x");
+    let d = ok(&mut s, "type C = A | B | D");
+    assert_eq!(statuses(&d), vec![("C", "replaced"), ("f", "relinked"), ("t", "relinked")]);
+    // A kind change is still refused.
+    assert_eq!(err(&mut s, "test get_x = true")[0].kind, "kind_change");
+}
+
+#[test]
+fn a_definition_cut_short_names_its_open_bracket() {
+    // Pressure run 7: "expected `,`, found `test`" at the next definition, with no hint.
+    let mut s = store();
+    let d = err(&mut s, "fn f(x: Int) -> Int = max(x, min(x, 3)\n\ntest t = f(1) == 1");
+    assert_eq!((d[0].kind, d[0].path.as_str()), ("parse", "3:1"), "{d:?}");
+    assert_eq!(d[0].hints, vec!["the `(` opened at 1:26 is not closed: the definition there needs a `)`".to_string()]);
+    // Brackets inside strings and comments do not count; the end of the text counts too.
+    let d = err(&mut s, "fn g(x: Int) -> Str = { # (\n  let y = \"(\" in y");
+    assert_eq!(d[0].hints, vec!["the `{` opened at 1:23 is not closed: the definition there needs a `}`".to_string()], "{d:?}");
+    // An error inside a definition keeps its own diagnostics.
+    let d = err(&mut s, "fn h(x: Int) -> Int = max(x 3)");
+    assert!(d[0].hints.iter().all(|h| !h.contains("not closed")), "{d:?}");
+}
+
+#[test]
 fn type_changes_follow_the_same_rule() {
     let mut s = store();
     ok(&mut s, "type P = { x: Int }\nfn mk() -> P = P { x: 1 }\nfn get_x(p: P) -> Int = p.x\ntest t = get_x(mk()) == 1");
     let d = err(&mut s, "type P = { x: Int, y: Int }");
-    assert_eq!((d[0].kind, d[0].dependents.clone()), ("signature_change", vec!["get_x".to_string(), "mk".to_string()]));
+    // `get_x` still checks against the new type, only `mk` breaks.
+    assert_eq!((d[0].kind, d[0].dependents.clone()), ("signature_change", vec!["mk".to_string()]));
+    assert_eq!(d[1].def, "mk");
     assert_eq!((d[0].expected.as_deref(), d[0].found.as_deref()), (Some("type = { x: Int }"), Some("type = { x: Int, y: Int }")));
     let d = ok(&mut s, "type P = { x: Int, y: Int }\nfn mk() -> P = P { x: 1, y: 2 }\nfn get_x(p: P) -> Int = p.x");
     assert_eq!(statuses(&d), vec![("P", "replaced"), ("mk", "replaced"), ("get_x", "replaced"), ("t", "relinked")]);
@@ -302,9 +335,10 @@ fn query_outline_adds_contracts_uses_users_and_tests() {
     assert_eq!((inc.uses.as_deref(), inc.used_by.as_deref(), inc.tests.as_deref()), (Some(&[][..]), Some(&["twice".to_string()][..]), Some(&["t_inc".to_string()][..])));
     let twice = outline.iter().find(|e| e.name == "twice").unwrap();
     assert_eq!((twice.contracts.as_deref(), twice.uses.as_deref(), twice.used_by.as_deref(), twice.tests.as_deref()), (Some(&["req n >= 0".to_string()][..]), Some(&["inc".to_string()][..]), Some(&[][..]), Some(&[][..])));
-    // Types and tests carry the fields too (a test uses, nothing uses it; a type has no contracts).
+    // Types and tests carry the fields too (a type has no contracts; a test is listed under the
+    // `tests` of what it uses, not with its own `uses`).
     let t = outline.iter().find(|e| e.name == "t_inc").unwrap();
-    assert_eq!((t.contracts.as_deref(), t.uses.as_deref()), (Some(&[][..]), Some(&["inc".to_string()][..])));
+    assert_eq!((t.contracts.as_deref(), t.uses.as_deref()), (Some(&[][..]), Some(&[][..])));
     assert_eq!(outline.iter().find(|e| e.name == "P").unwrap().used_by.as_deref(), Some(&[][..]));
     // Without `outline`, the entries stay as they were.
     let plain = s.query(&Query::default()).unwrap();

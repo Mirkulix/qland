@@ -1,0 +1,2 @@
+fn get_x(p: P) -> Int
+= p.x

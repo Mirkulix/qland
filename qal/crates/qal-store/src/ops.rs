@@ -96,19 +96,27 @@ pub struct Entry {
     #[serde(skip_serializing_if = "String::is_empty")]
     pub hash: String,
     pub signature: String,
+    /// Left out of the JSON when empty, like the lists below (pressure run 7: an outline of 132
+    /// definitions was 26 KB, a fifth of it empty lists).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub effects: Vec<String>,
     /// The function's `req`/`ens` as written (`outline` only; empty for types and tests).
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "none_or_empty")]
     pub contracts: Option<Vec<String>>,
-    /// The stored names this definition refers to directly (`outline` only).
-    #[serde(skip_serializing_if = "Option::is_none")]
+    /// The stored names this definition refers to directly (`outline` only; not for a test, which
+    /// is listed under the `tests` of what it uses).
+    #[serde(skip_serializing_if = "none_or_empty")]
     pub uses: Option<Vec<String>>,
     /// The functions and types that refer to it directly (`outline` only).
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "none_or_empty")]
     pub used_by: Option<Vec<String>>,
     /// The tests that refer to it directly (`outline` only).
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "none_or_empty")]
     pub tests: Option<Vec<String>>,
+}
+
+fn none_or_empty(v: &Option<Vec<String>>) -> bool {
+    v.as_ref().is_none_or(Vec::is_empty)
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -460,7 +468,7 @@ pub fn query(conn: &mut Connection, space: &Space, q: &Query) -> Result<Vec<Entr
                 if is_test { tests.push(user) } else { used_by.push(user) }
             }
             e.contracts = Some(contracts(&def));
-            e.uses = Some(entry.refs.clone());
+            e.uses = Some(if e.kind == "test" { Vec::new() } else { entry.refs.clone() });
             e.used_by = Some(used_by);
             e.tests = Some(tests);
         }

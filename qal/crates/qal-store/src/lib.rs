@@ -43,6 +43,8 @@ pub struct Defined {
     pub name: String,
     /// `type`, `fn` or `test`.
     pub kind: &'static str,
+    /// Empty (and left out of the JSON) in an MCP reply: agents address definitions by name.
+    #[serde(skip_serializing_if = "String::is_empty")]
     pub hash: String,
     /// `added` (new name), `replaced` (new version), `unchanged` (same hash), or `relinked`
     /// (a stored dependent that now refers to the new versions).

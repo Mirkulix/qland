@@ -327,7 +327,7 @@ fn prepare(tx: &Transaction, input: &Program, rules: &Rules, space: &Space) -> R
     }
 
     let input_names: HashSet<&str> = input.defs.iter().map(|d| d.name()).collect();
-    replacement_rule(tx, &snap, input, &input_names)?;
+    let changed = replacement_rule(tx, &snap, input, &input_names, &Default::default())?;
 
     // Stored definitions keep the names they were written against; the ones that refer to a
     // redefined name get new hashes when the combined program is hashed.
@@ -335,7 +335,7 @@ fn prepare(tx: &Transaction, input: &Program, rules: &Rules, space: &Space) -> R
     let mut combined = stored;
     combined.defs.extend(input.defs.iter().cloned());
     // Only the definitions written now may not take prelude names (older stored ones keep working).
-    let typed = qal_compiler::check_stored(&combined, &|n| input_names.contains(n) && !legacy_writer())?;
+    let typed = qal_compiler::check_stored(&combined, &|n| input_names.contains(n) && !legacy_writer()).map_err(|d| broken_dependents(&changed, d))?;
 
     let hashed = hash(&combined)?;
     if policy == StdNames::Unchanged && !std_store {
@@ -391,36 +391,15 @@ pub(crate) struct Replayed {
 
 /// Replays `input` (definitions decoded from a change set, written against its names) on `snap`
 /// with the names in `removed` gone, as one `define` would: the replacement rule (a changed
-/// signature needs its other dependents in the same replay), the full check, hashing and the
+/// signature needs its other dependents to still check), the full check, hashing and the
 /// store invariants. Nothing is written (see [`store_defs`]).
 pub(crate) fn replay(tx: &Transaction, snap: &Snapshot, input: &Program, removed: &std::collections::BTreeSet<String>) -> Result<Replayed, Vec<Diagnostic>> {
     let input_names: HashSet<&str> = input.defs.iter().map(|d| d.name()).collect();
-    let mut diags = Vec::new();
-    for d in &input.defs {
-        if !snap.names.contains_key(d.name()) {
-            continue;
-        }
-        let old = snap.decode_name(tx, d.name())?;
-        let (before, after) = (signature(&old), signature(d));
-        if before == after {
-            continue;
-        }
-        if before.0 != after.0 {
-            diags.push(Diagnostic::kind_change(d.name(), before.0.as_str(), after.0.as_str()));
-            continue;
-        }
-        let dependents: Vec<String> = snap.dependents(d.name()).into_iter().filter(|n| !input_names.contains(n.as_str()) && !removed.contains(n)).collect();
-        if !dependents.is_empty() {
-            diags.push(Diagnostic::signature_change(d.name(), &show(&before), &show(&after), &dependents));
-        }
-    }
-    if !diags.is_empty() {
-        return Err(diags);
-    }
+    let changed = replacement_rule(tx, snap, input, &input_names, removed)?;
     let stored = snap.program(tx, &|n| input_names.contains(n) || removed.contains(n))?;
     let mut combined = stored;
     combined.defs.extend(input.defs.iter().cloned());
-    let typed = qal_compiler::check_stored(&combined, &|n| input_names.contains(n))?;
+    let typed = qal_compiler::check_stored(&combined, &|n| input_names.contains(n)).map_err(|d| broken_dependents(&changed, d))?;
     let hashed = hash(&combined)?;
     identical_types(&hashed.defs)?;
     group_aliases(&hashed.defs)?;
@@ -542,10 +521,23 @@ fn canonical_check(snap: &Snapshot, input_names: &HashSet<&str>, canons: &[Canon
     Ok(())
 }
 
-/// Replacing a definition with a different signature fails unless the call also redefines every
-/// stored definition written against it.
-fn replacement_rule(tx: &Transaction, snap: &Snapshot, input: &Program, input_names: &HashSet<&str>) -> Result<(), Vec<Diagnostic>> {
+/// A definition replaced with a different signature, and the stored definitions written against it
+/// that the call does not redefine.
+struct Changed {
+    name: String,
+    before: String,
+    after: String,
+    dependents: Vec<String>,
+}
+
+/// A name keeps its kind (E0405). A replacement with a different signature (of the same kind) is
+/// allowed when every stored dependent the call does not redefine still checks against it: those
+/// are relinked like the dependents of a same-signature replacement (pressure run 7: refusing them
+/// cost a round 17 times in 12 stages). Returns the changed signatures with such dependents, for
+/// [`broken_dependents`] if the check fails.
+fn replacement_rule(tx: &Transaction, snap: &Snapshot, input: &Program, input_names: &HashSet<&str>, removed: &std::collections::BTreeSet<String>) -> Result<Vec<Changed>, Vec<Diagnostic>> {
     let mut diags = Vec::new();
+    let mut changed = Vec::new();
     let mut seen = HashSet::new();
     for d in &input.defs {
         if !snap.names.contains_key(d.name()) || !seen.insert(d.name()) {
@@ -560,16 +552,31 @@ fn replacement_rule(tx: &Transaction, snap: &Snapshot, input: &Program, input_na
             diags.push(Diagnostic::kind_change(d.name(), before.0.as_str(), after.0.as_str()));
             continue;
         }
-        let dependents: Vec<String> = snap.dependents(d.name()).into_iter().filter(|n| !input_names.contains(n.as_str())).collect();
+        let dependents: Vec<String> = snap.dependents(d.name()).into_iter().filter(|n| !input_names.contains(n.as_str()) && !removed.contains(n)).collect();
         if !dependents.is_empty() {
-            diags.push(Diagnostic::signature_change(d.name(), &show(&before), &show(&after), &dependents));
+            changed.push(Changed { name: d.name().to_string(), before: show(&before), after: show(&after), dependents });
         }
     }
     if diags.is_empty() {
-        Ok(())
+        Ok(changed)
     } else {
         Err(diags)
     }
+}
+
+/// The check failed: E0401 `signature_change` for each changed signature with the stored dependents
+/// that do not check (their diagnostics follow), then the check's diagnostics.
+fn broken_dependents(changed: &[Changed], check: Vec<Diagnostic>) -> Vec<Diagnostic> {
+    let failing: HashSet<&str> = check.iter().map(|d| d.def.as_str()).collect();
+    let mut out: Vec<Diagnostic> = changed
+        .iter()
+        .filter_map(|c| {
+            let broken: Vec<String> = c.dependents.iter().filter(|n| failing.contains(n.as_str())).cloned().collect();
+            (!broken.is_empty()).then(|| Diagnostic::signature_change(&c.name, &c.before, &c.after, &broken))
+        })
+        .collect();
+    out.extend(check);
+    out
 }
 
 /// Types are identified by their structure: a second name for the same type would need type

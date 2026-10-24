@@ -200,8 +200,9 @@ fn handshake_lists_the_tools_with_the_language_reference() {
     // of 2026-10-23 (the outline to read before a change) and Phase 6b (one line on `qal_recall`,
     // with its `message` filter), the rerun of 2026-10-24 (`cases` on qal_define) and the pressure run of
     // 2026-10-24 (the property tests define runs) and the fused multiply-divide (`a * b * ... / c`
-    // exact, on the Int type) and pressure run 5 (E0806, a change without a test) add to it.
-    assert!(qal_cli::mcp::REFERENCE.lines().count() <= 76 && qal_cli::mcp::REFERENCE.len() <= 10620, "{} lines, {} bytes", qal_cli::mcp::REFERENCE.lines().count(), qal_cli::mcp::REFERENCE.len());
+    // exact, on the Int type) and pressure run 5 (E0806, a change without a test) and pressure run 7 (dependents that still check are relinked,
+    // io needs no grant) add to it.
+    assert!(qal_cli::mcp::REFERENCE.lines().count() <= 76 && qal_cli::mcp::REFERENCE.len() <= 10700, "{} lines, {} bytes", qal_cli::mcp::REFERENCE.lines().count(), qal_cli::mcp::REFERENCE.len());
     // An unknown version gets the newest legacy one.
     let r = c.request("initialize", json!({"protocolVersion": "1999-01-01", "capabilities": {}, "clientInfo": {"name": "x", "version": "1"}}));
     assert_eq!(r["result"]["protocolVersion"], "2025-11-25");
@@ -220,10 +221,14 @@ fn defines_tests_runs_and_inspects_code_in(c: &mut Client) {
     assert!(c.root.join(".qal/store.db").is_file());
     let (err, v) = c.call("qal_test", json!({}));
     assert_eq!((err, v["passed"].as_u64(), v["failed"].as_u64()), (false, Some(2), Some(0)));
-    // Effects must be granted explicitly.
+    // `io` (the call's own stdin and stdout) is granted; other effects must be granted explicitly.
     let (err, v) = c.call("qal_run", json!({"args": [" 42"]}));
+    assert!(!err, "{v}");
+    let (err, v) = c.call("qal_define", json!({"source": "fn clock(args: List[Str]) -> Int !time = if now_ms() > 0 then 0 else 1"}));
+    assert!(!err, "{v}");
+    let (err, v) = c.call("qal_run", json!({"entry": "clock"}));
     assert_eq!((err, v["error"]["kind"].as_str()), (true, Some("permission_denied")));
-    assert_eq!(v["error"]["hints"], json!(["pass `\"allow\": [\"io\"]` to qal_run, qal_call or qal_request"]));
+    assert_eq!(v["error"]["hints"], json!(["pass `\"allow\": [\"time\"]` to qal_run, qal_call or qal_request"]));
     let (err, v) = c.call("qal_run", json!({"args": [" 42"], "allow": ["io"]}));
     assert_eq!((err, v), (false, json!({"exit_code": 0, "stdout": "ok 42\n"})));
     // A non-zero exit code is a result, not a tool failure.
@@ -676,7 +681,7 @@ fn test_services_with_qal_request_in(c: &mut Client) {
     // Errors before anything runs.
     let (err, v) = c.call("qal_request", json!({"requests": [{"path": "/health"}]}));
     assert_eq!((err, v["error"]["kind"].as_str()), (true, Some("permission_denied")));
-    assert_eq!(v["error"]["hints"], json!(["pass `\"allow\": [\"db:mem\", \"io\"]` to qal_run, qal_call or qal_request"]));
+    assert_eq!(v["error"]["hints"], json!(["pass `\"allow\": [\"db:mem\"]` to qal_run, qal_call or qal_request"]));
     let (err, v) = c.call("qal_request", json!({"handler": "text", "allow": ["db:mem", "io"], "requests": []}));
     assert_eq!((err, v["error"]["code"].as_str()), (true, Some("E0520")));
     let (err, v) = c.call("qal_request", json!({"init": "nope", "allow": ["db:mem", "io"], "requests": []}));
@@ -796,7 +801,8 @@ fn query_outline_is_the_compact_view_for_a_change_in(c: &mut Client) {
     let (err, v) = c.call("qal_query", json!({"name": "inc", "outline": true}));
     assert!(!err, "{v}");
     let e = &v["results"][0];
-    assert_eq!((e["name"].as_str(), &e["contracts"], &e["uses"], &e["used_by"], &e["tests"]), (Some("inc"), &json!(["req n >= 0", "ens r > n"]), &json!([]), &json!(["twice"]), &json!(["t_inc"])), "{v}");
+    // Empty lists are left out (`uses`, `effects`).
+    assert_eq!((e["name"].as_str(), &e["contracts"], e.get("uses"), e.get("effects"), &e["used_by"], &e["tests"]), (Some("inc"), &json!(["req n >= 0", "ens r > n"]), None, None, &json!(["twice"]), &json!(["t_inc"])), "{v}");
     // The outline is the project's own code, for reading: no `std.` names unless asked for, no hashes.
     let (_, v) = c.call("qal_query", json!({"outline": true}));
     let names: Vec<&str> = v["results"].as_array().unwrap().iter().map(|e| e["name"].as_str().unwrap()).collect();
@@ -829,8 +835,10 @@ fn run_takes_a_list_of_cases_in(c: &mut Client) {
     let (err, v) = c.call("qal_run", json!({"cases": [{"args": ["a", "b"]}, {"args": ["c"], "stdin": ""}], "allow": ["io"]}));
     assert_eq!((err, v["results"][0]["stdout"].as_str(), v["results"][0].get("stdin")), (false, Some("a,b\n"), None), "{v}");
     // A case's runtime error is its result; the other cases still run.
-    let (err, v) = c.call("qal_run", json!({"cases": [{"args": ["a"]}, {"args": ["b"]}]}));
-    assert_eq!((err, v["results"][0]["error"]["kind"].as_str(), v["results"].as_array().map(Vec::len)), (true, Some("permission_denied"), Some(2)), "{v}");
+    let (err, v) = c.call("qal_define", json!({"source": "fn boom(args: List[Str]) -> Int = 10 / len(args)"}));
+    assert!(!err, "{v}");
+    let (err, v) = c.call("qal_run", json!({"entry": "boom", "cases": [{"args": []}, {"args": ["b"]}]}));
+    assert_eq!((err, v["results"][0]["error"]["kind"].as_str(), v["results"][1]["exit_code"].as_i64()), (true, Some("div_by_zero"), Some(10)), "{v}");
     // With `cases`, the arguments and input belong to the cases.
     for bad in [json!({"cases": [{"args": ["a"]}], "args": ["z"]}), json!({"cases": [{}], "stdin": "z"}), json!({"cases": []}), json!({"cases": [{"argv": []}]}), json!({"cases": vec![json!({}); 65]})] {
         let (err, v) = c.call("qal_run", bad.clone());
@@ -933,8 +941,12 @@ fn define_runs_cases_after_storing_the_code_in(c: &mut Client) {
     assert_eq!(v["results"][0], json!({"args": ["a"], "exit_code": 0, "stdout": "x!\n"}), "{v}");
     assert_eq!(v["results"][1]["exit_code"], 1, "{v}");
     // A runtime error in a case makes the call an error; the definition is stored anyway.
+    let boom = "fn boom(args: List[Str]) -> Int = 10 / len(args)";
+    let (err, v) = c.call("qal_define", json!({"source": boom, "entry": "boom", "cases": [{}]}));
+    assert!(err && v["defined"][0]["status"] == "added" && v["results"][0]["error"]["kind"] == "div_by_zero", "{v}");
+    // `io` needs no `allow`.
     let (err, v) = c.call("qal_define", json!({"source": src, "cases": [{"stdin": "z"}]}));
-    assert!(err && v["defined"][0]["status"] == "unchanged" && v["results"][0]["error"]["kind"] == "permission_denied", "{v}");
+    assert!(!err && v["defined"][0]["status"] == "unchanged" && v["results"][0]["stdout"] == "z!\n", "{v}");
     // Code that does not check is not run.
     let (err, v) = c.call("qal_define", json!({"source": "fn main(args: List[Str]) -> Int = nope", "cases": [{}]}));
     assert!(err && v.get("results").is_none() && v["diagnostics"][0]["code"] == "E0201", "{v}");

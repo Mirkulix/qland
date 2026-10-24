@@ -444,7 +444,66 @@ pub fn select(name: &str) -> Result<&'static dyn Backend, String> {
 
 /// Parses a whole program.
 pub fn parse_program(src: &str) -> Result<Program, Diagnostic> {
-    backend().parse(src)
+    backend().parse(src).map_err(|d| unclosed_hint(src, d))
+}
+
+/// A parse error without a hint at the start of a definition (`fn`, `type`, `test`) or at the
+/// end of the text, while a bracket is still open, gets the innermost open bracket as a hint: the
+/// definition before it was cut short (pressure run 7: "expected `,`, found `test`" at the next
+/// definition, with no hint, cost three rounds). Added after either backend's parse.
+fn unclosed_hint(src: &str, mut d: Diagnostic) -> Diagnostic {
+    if d.kind != "parse" || !d.hints.is_empty() {
+        return d;
+    }
+    let Some((line, col)) = d.path.split_once(':').and_then(|(l, c)| Some((l.parse::<usize>().ok()?, c.parse::<usize>().ok()?))) else {
+        return d;
+    };
+    let chars: Vec<char> = src.chars().collect();
+    let (mut i, mut l, mut c) = (0, 1, 1);
+    let mut open: Vec<(char, usize, usize)> = Vec::new();
+    let mut in_str = false;
+    while i < chars.len() && (l, c) < (line, col) {
+        let ch = chars[i];
+        if in_str {
+            if ch == '\\' {
+                i += 1;
+                c += 1;
+            } else if ch == '"' {
+                in_str = false;
+            }
+        } else {
+            match ch {
+                '"' => in_str = true,
+                '#' => {
+                    while i + 1 < chars.len() && chars[i + 1] != '\n' {
+                        i += 1;
+                    }
+                }
+                '(' | '[' | '{' => open.push((ch, l, c)),
+                ')' | ']' | '}' => {
+                    open.pop();
+                }
+                _ => {}
+            }
+        }
+        if chars.get(i) == Some(&'\n') {
+            (l, c) = (l + 1, 1);
+        } else {
+            c += 1;
+        }
+        i += 1;
+    }
+    let rest: String = chars[i.min(chars.len())..].iter().take(5).collect();
+    let at_definition = rest.trim().is_empty() || ["fn ", "type ", "test "].iter().any(|k| rest.starts_with(k));
+    if let (Some(&(b, bl, bc)), true) = (open.last(), at_definition && !in_str) {
+        let close = match b {
+            '(' => ')',
+            '[' => ']',
+            _ => '}',
+        };
+        d.hints.push(format!("the `{b}` opened at {bl}:{bc} is not closed: the definition there needs a `{close}`"));
+    }
+    d
 }
 
 /// The canonical text of a program.
