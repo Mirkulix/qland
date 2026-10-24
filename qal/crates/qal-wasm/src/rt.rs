@@ -25,6 +25,10 @@ pub enum Rt {
     Alloc,
     /// Checked Int `+ - * / %`: (a: i64, b: i64, func: i32, site: i32) -> i64.
     Arith(BinOp),
+    /// Fused `(f1 * … * fn) / d` over Int, exact with a 128-bit product:
+    /// (f1: i64, …, fn: i64, d: i64, func: i32, site: i32) -> i64. Fails with int_overflow
+    /// unless |f1 · … · fn| < 2^127 and the quotient (truncated toward zero) fits in an i64.
+    MulDiv(u32),
     /// (tag: i32, slot: i64) -> ptr of a one-field variant.
     Variant1,
     /// (ptr or -1) -> Option[Str]
@@ -172,6 +176,11 @@ impl Rt {
         let (p, r): (&[ValType], &[ValType]) = match self {
             Rt::Alloc => (&[I64], &[I32]),
             Rt::Arith(_) => (&[I64, I64, I32, I32], &[I64]),
+            Rt::MulDiv(n) => {
+                let mut p = vec![I64; n as usize + 1];
+                p.extend([I32, I32]);
+                return (p, vec![I64]);
+            }
             Rt::Variant1 => (&[I32, I64], &[I32]),
             Rt::OptFromPtr | Rt::StrNew | Rt::StrTrim | Rt::StrToInt | Rt::StrChars | Rt::StrCase(_) | Rt::ListNew | Rt::ListReverse | Rt::ListSort(_) => (&[I32], &[I32]),
             Rt::ResultFrom | Rt::ResultUnitFrom | Rt::StrConcat | Rt::StrEq | Rt::StrContains | Rt::StrStartsWith | Rt::StrJoin | Rt::StrCmp | Rt::StrIndexOf | Rt::ListConcat => (&[I32, I32], &[I32]),
@@ -211,6 +220,7 @@ impl Rt {
         match self {
             Rt::Alloc => alloc(m, &mut a),
             Rt::Arith(op) => arith(m, &mut a, op),
+            Rt::MulDiv(n) => muldiv(m, &mut a, n),
             Rt::Variant1 => {
                 let p = a.local(I32);
                 a.all([I::I64Const(16), I::Call(m.rt(Rt::Alloc)), I::LocalTee(p), I::LocalGet(0), I::I32Store(m32(0))]);
@@ -816,6 +826,85 @@ fn arith(m: &mut Mb, a: &mut Asm, op: BinOp) {
         }
         _ => m.bug(format!("not an arithmetic operator: {op:?}")),
     }
+}
+
+/// Pushes |x| of the i64 local `x` as an unsigned value (|i64::MIN| = 2^63).
+fn abs_u64(a: &mut Asm, x: u32) {
+    a.all([I::I64Const(0), I::LocalGet(x), I::I64Sub, I::LocalGet(x), I::LocalGet(x), I::I64Const(0), I::I64LtS, I::Select]);
+}
+
+/// The full 128-bit product of the unsigned i64 locals `x` and `y` into `(h, l)`, from 32-bit
+/// partial products. `t` = (s0, s1, s2, mid) are scratch i64 locals.
+fn mul_wide(a: &mut Asm, x: u32, y: u32, h: u32, l: u32, t: [u32; 4]) {
+    const M: i64 = 0xFFFF_FFFF;
+    let [s0, s1, s2, mid] = t;
+    a.all([I::LocalGet(x), I::I64Const(M), I::I64And, I::LocalGet(y), I::I64Const(M), I::I64And, I::I64Mul, I::LocalSet(s0)]);
+    a.all([I::LocalGet(x), I::I64Const(M), I::I64And, I::LocalGet(y), I::I64Const(32), I::I64ShrU, I::I64Mul, I::LocalSet(s1)]);
+    a.all([I::LocalGet(x), I::I64Const(32), I::I64ShrU, I::LocalGet(y), I::I64Const(M), I::I64And, I::I64Mul, I::LocalSet(s2)]);
+    // mid = (s0 >> 32) + low(s1) + low(s2) < 3 * 2^32: bits 32..95 of the product, with carries
+    a.all([I::LocalGet(s0), I::I64Const(32), I::I64ShrU, I::LocalGet(s1), I::I64Const(M), I::I64And, I::I64Add, I::LocalGet(s2), I::I64Const(M), I::I64And, I::I64Add, I::LocalSet(mid)]);
+    a.all([I::LocalGet(s0), I::I64Const(M), I::I64And, I::LocalGet(mid), I::I64Const(32), I::I64Shl, I::I64Or, I::LocalSet(l)]);
+    a.all([I::LocalGet(x), I::I64Const(32), I::I64ShrU, I::LocalGet(y), I::I64Const(32), I::I64ShrU, I::I64Mul]);
+    a.all([I::LocalGet(s1), I::I64Const(32), I::I64ShrU, I::I64Add, I::LocalGet(s2), I::I64Const(32), I::I64ShrU, I::I64Add]);
+    a.all([I::LocalGet(mid), I::I64Const(32), I::I64ShrU, I::I64Add, I::LocalSet(h)]);
+}
+
+/// Fused `(f1 * … * fn) / d`. Params: f1..fn = 0..n, d = n, func = n + 1, site = n + 2.
+/// The magnitude of the product is kept as an unsigned 128-bit value (hi, lo) and the sign
+/// separately; the trap values are the first factor (`left`) and the divisor (`right`).
+fn muldiv(m: &mut Mb, a: &mut Asm, n: u32) {
+    let (d, func, site) = (n, n + 1, n + 2);
+    let (hi, lo, mg, dv, q) = (a.local(I64), a.local(I64), a.local(I64), a.local(I64), a.local(I64));
+    let (neg, ov, z, k) = (a.local(I32), a.local(I32), a.local(I32), a.local(I32));
+    let (h1, l1, h2, l2) = (a.local(I64), a.local(I64), a.local(I64), a.local(I64));
+    let t = [a.local(I64), a.local(I64), a.local(I64), a.local(I64)];
+    let vals = [(0, Repr::I64), (d, Repr::I64)];
+    let fail_if = |m: &mut Mb, a: &mut Asm, kind: i32| {
+        a.i(I::If(BlockType::Empty));
+        m.emit_fail(a, kind, Arg::Local(func), Arg::Local(site), &vals);
+        a.i(I::End);
+    };
+    abs_u64(a, 0);
+    a.i(I::LocalSet(lo));
+    a.all([I::LocalGet(0), I::I64Const(0), I::I64LtS, I::LocalSet(neg), I::LocalGet(0), I::I64Eqz, I::LocalSet(z)]);
+    for f in 1..n {
+        abs_u64(a, f);
+        a.i(I::LocalSet(mg));
+        a.all([I::LocalGet(neg), I::LocalGet(f), I::I64Const(0), I::I64LtS, I::I32Xor, I::LocalSet(neg)]);
+        a.all([I::LocalGet(z), I::LocalGet(f), I::I64Eqz, I::I32Or, I::LocalSet(z)]);
+        // (hi, lo) * mg = lo * mg + (hi * mg) << 64; it fits iff hi * mg < 2^64 and the new hi < 2^63
+        mul_wide(a, lo, mg, h1, l1, t);
+        mul_wide(a, hi, mg, h2, l2, t);
+        a.all([I::LocalGet(ov), I::LocalGet(h2), I::I64Const(0), I::I64Ne, I::I32Or, I::LocalSet(ov)]);
+        a.all([I::LocalGet(l2), I::LocalGet(h1), I::I64Add, I::LocalSet(hi)]);
+        a.all([I::LocalGet(ov), I::LocalGet(hi), I::LocalGet(l2), I::I64LtU, I::I32Or, I::LocalGet(hi), I::I64Const(0), I::I64LtS, I::I32Or, I::LocalSet(ov)]);
+        a.all([I::LocalGet(l1), I::LocalSet(lo)]);
+    }
+    a.all([I::LocalGet(neg), I::LocalGet(d), I::I64Const(0), I::I64LtS, I::I32Xor, I::LocalSet(neg)]);
+    // a zero factor makes the product 0 whatever the other factors are (and (hi, lo) is 0 then)
+    a.all([I::LocalGet(ov), I::LocalGet(z), I::I32Eqz, I::I32And]);
+    fail_if(m, a, FAIL_OVERFLOW);
+    a.all([I::LocalGet(d), I::I64Eqz]);
+    fail_if(m, a, FAIL_DIV_ZERO);
+    abs_u64(a, d);
+    a.i(I::LocalSet(dv));
+    // hi >= |d| means a quotient of 2^64 or more
+    a.all([I::LocalGet(hi), I::LocalGet(dv), I::I64GeU]);
+    fail_if(m, a, FAIL_OVERFLOW);
+    a.all([I::LocalGet(hi), I::I64Eqz, I::If(BlockType::Empty), I::LocalGet(lo), I::LocalGet(dv), I::I64DivU, I::LocalSet(q), I::Else]);
+    // restoring long division of (hi, lo) by dv, one bit of lo per step; hi is the remainder and
+    // stays below dv <= 2^63, so shifting it left by one never loses a bit
+    a.all([I::Block(BlockType::Empty), I::Loop(BlockType::Empty), I::LocalGet(k), I::I32Const(64), I::I32GeU, I::BrIf(1)]);
+    a.all([I::LocalGet(hi), I::I64Const(1), I::I64Shl, I::LocalGet(lo), I::I64Const(63), I::I64ShrU, I::I64Or, I::LocalSet(hi)]);
+    a.all([I::LocalGet(lo), I::I64Const(1), I::I64Shl, I::LocalSet(lo), I::LocalGet(q), I::I64Const(1), I::I64Shl, I::LocalSet(q)]);
+    a.all([I::LocalGet(hi), I::LocalGet(dv), I::I64GeU, I::If(BlockType::Empty)]);
+    a.all([I::LocalGet(hi), I::LocalGet(dv), I::I64Sub, I::LocalSet(hi), I::LocalGet(q), I::I64Const(1), I::I64Or, I::LocalSet(q), I::End]);
+    loop_next(a, k);
+    a.i(I::End);
+    // the quotient fits iff q <= 2^63 - 1 (positive) or q <= 2^63 (negative), unsigned
+    a.all([I::LocalGet(q), I::I64Const(i64::MAX), I::LocalGet(neg), I::I64ExtendI32U, I::I64Add, I::I64GtU]);
+    fail_if(m, a, FAIL_OVERFLOW);
+    a.all([I::I64Const(0), I::LocalGet(q), I::I64Sub, I::LocalGet(q), I::LocalGet(neg), I::Select]);
 }
 
 /// split(s, sep). Params: s = 0, sep = 1, func = 2, site = 3.
