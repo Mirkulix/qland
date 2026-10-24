@@ -1,0 +1,208 @@
+{
+ "seed": "qal-p6-rerun",
+ "runs": 2,
+ "model": "sonnet",
+ "entries": [
+  {
+   "task": "05-brackets",
+   "arm": "qal",
+   "run": 1
+  },
+  {
+   "task": "02-roman",
+   "arm": "qal",
+   "run": 2
+  },
+  {
+   "task": "10-file-stats",
+   "arm": "qal",
+   "run": 2
+  },
+  {
+   "task": "04-binary-search",
+   "arm": "qal",
+   "run": 2
+  },
+  {
+   "task": "05-brackets",
+   "arm": "qal",
+   "run": 2
+  },
+  {
+   "task": "14-bst",
+   "arm": "qal",
+   "run": 1
+  },
+  {
+   "task": "08-expr-eval",
+   "arm": "qal",
+   "run": 1
+  },
+  {
+   "task": "12-sort-words",
+   "arm": "qal",
+   "run": 2
+  },
+  {
+   "task": "06-bank",
+   "arm": "qal",
+   "run": 2
+  },
+  {
+   "task": "20-ini-query",
+   "arm": "qal",
+   "run": 2
+  },
+  {
+   "task": "15-caesar",
+   "arm": "qal",
+   "run": 1
+  },
+  {
+   "task": "12-sort-words",
+   "arm": "qal",
+   "run": 1
+  },
+  {
+   "task": "16-anagrams",
+   "arm": "qal",
+   "run": 1
+  },
+  {
+   "task": "11-prime-factors",
+   "arm": "qal",
+   "run": 2
+  },
+  {
+   "task": "14-bst",
+   "arm": "qal",
+   "run": 2
+  },
+  {
+   "task": "19-base-convert",
+   "arm": "qal",
+   "run": 2
+  },
+  {
+   "task": "08-expr-eval",
+   "arm": "qal",
+   "run": 2
+  },
+  {
+   "task": "09-rle",
+   "arm": "qal",
+   "run": 2
+  },
+  {
+   "task": "02-roman",
+   "arm": "qal",
+   "run": 1
+  },
+  {
+   "task": "17-word-wrap",
+   "arm": "qal",
+   "run": 1
+  },
+  {
+   "task": "07-tokenizer",
+   "arm": "qal",
+   "run": 1
+  },
+  {
+   "task": "13-word-freq",
+   "arm": "qal",
+   "run": 1
+  },
+  {
+   "task": "18-date-diff",
+   "arm": "qal",
+   "run": 2
+  },
+  {
+   "task": "09-rle",
+   "arm": "qal",
+   "run": 1
+  },
+  {
+   "task": "03-csv-sum",
+   "arm": "qal",
+   "run": 2
+  },
+  {
+   "task": "03-csv-sum",
+   "arm": "qal",
+   "run": 1
+  },
+  {
+   "task": "16-anagrams",
+   "arm": "qal",
+   "run": 2
+  },
+  {
+   "task": "17-word-wrap",
+   "arm": "qal",
+   "run": 2
+  },
+  {
+   "task": "01-word-count",
+   "arm": "qal",
+   "run": 2
+  },
+  {
+   "task": "11-prime-factors",
+   "arm": "qal",
+   "run": 1
+  },
+  {
+   "task": "15-caesar",
+   "arm": "qal",
+   "run": 2
+  },
+  {
+   "task": "06-bank",
+   "arm": "qal",
+   "run": 1
+  },
+  {
+   "task": "04-binary-search",
+   "arm": "qal",
+   "run": 1
+  },
+  {
+   "task": "01-word-count",
+   "arm": "qal",
+   "run": 1
+  },
+  {
+   "task": "07-tokenizer",
+   "arm": "qal",
+   "run": 2
+  },
+  {
+   "task": "18-date-diff",
+   "arm": "qal",
+   "run": 1
+  },
+  {
+   "task": "10-file-stats",
+   "arm": "qal",
+   "run": 1
+  },
+  {
+   "task": "19-base-convert",
+   "arm": "qal",
+   "run": 1
+  },
+  {
+   "task": "20-ini-query",
+   "arm": "qal",
+   "run": 1
+  },
+  {
+   "task": "13-word-freq",
+   "arm": "qal",
+   "run": 2
+  }
+ ],
+ "note": "QAL arm only; Rust baseline: bench/rerun-2026-10-23"
+}
