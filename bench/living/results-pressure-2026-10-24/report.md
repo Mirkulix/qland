@@ -66,3 +66,7 @@ The QAL/Haiku line was run again through all 12 stages, from the same stage 0, w
 In stage 1 the agent wrote the discount as `x - (x + 19) / 20` and gave the reason before its first `define`: "this also avoids the intermediate × 95 overflow". The warnings came afterwards and were confirmed. So the effect is most likely the reference line about traps and bounds, which the agent reads at the start, rather than the warning in the reply. This is one run per arm, a single sample. It shows that the gap of run 1 can be closed, not that it always will be.
 
 Cost: QAL is at 1.47× Rust's processed tokens on this line, with the same result.
+
+## Fourth run (repeat of run 3, same binary)
+
+Stage 1 again: the agent wrote `price * qty * 95 / 100`, received both E0804 and E0805 in the `define` reply, did not mention them, and kept the formula. The hidden test failed (19/20); the line was stopped after stage 1. **With the warnings, stage 1 succeeded in 1 of 2 runs.** The warnings improve the odds, but they do not make the result reliable: an agent can always ignore a warning. Removing the bug class needs arithmetic that does not overflow in this range (wider intermediate results), not more advice.
