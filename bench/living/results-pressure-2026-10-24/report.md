@@ -128,3 +128,19 @@ Run 7 spent its extra rounds on the tools, not on the language: E0401 `signature
 **Caveat:** one run. The agents wrote fewer tests than in run 7 (86 lines, E0806 once); stage 7 (backorders, the logic bug of run 5) passed with them. Whether the result holds with fewer tests needs a repeat.
 
 **Protocol note on run 8:** stage 3 is marked invalid: the agent ran `cat > /tmp/x` with no input (an empty file outside its work dir, removed afterwards) before a `qal_view`. Its result (26/26) is unaffected. As in run 7, strictly 11 valid green stages plus one green stage with a path violation; both violations are the same Haiku habit.
+
+## Run 9: repeat of run 8
+
+Same binary, tickets and protocol (`results-run9.jsonl`). **12 / 12 stages green, all 12 valid** (no path violation), 0 bugs reached the hidden tests. 119 rounds / 9.41 M processed tokens; tool errors in replies: 3 in total (E0801, E0501, E0405), no E0401 or E0508. The agents wrote 113 `test` lines in 27 defines; E0806 fired 4 times.
+
+| | QAL run 8 | QAL run 9 | **QAL mean 8–9** | Rust mean (runs 1–2) |
+|---|---|---|---|---|
+| stages green | 12 / 12 | 12 / 12 | | 12 / 12 |
+| rounds | 100 | 119 | **109.5** | 88.5 |
+| processed tokens | 6.95 M | 9.41 M | **8.18 M** | 5.75 M |
+
+**Cost after the friction fixes: 1.42× Rust on the means** (run by run 1.13× to 1.76×; runs 5 and 7 before them: 1.63× and 1.72–1.98×). The spread between two runs of the same setup (6.95 vs 9.41 M) is as large as the effect of the fixes, so single runs do not resolve differences below ~30 %. The extra cost of run 9 sits in stages 7 and 12 (15 and 17 rounds, 3.4 M together): more defines with tests, not tool errors.
+
+**Reliability:** QAL/Haiku now has three consecutive pressure runs at 12/12 (7, 8, 9) against 0/12, 12/12, 1 failed stage 1 and 6/12 in runs 1–5. The two bug classes found are closed by the language (exact multiply-divide) and by the instructions plus E0806 (tests with every change).
+
+**Open finding:** from stage 3 on, every `qal_test` and define reported the property failure E0803 on `settle` (the generator gives `tier = -1`, which reaches `total`'s `req`; `settle` has no `req` of its own). Five agents reported it and left it alone, rightly for the task, since no real input reaches it; the warning stayed as noise for ten stages. A contract-level fix in the program (a `req` on `settle`) or a way to say "inputs come only from the parser" would remove it.
