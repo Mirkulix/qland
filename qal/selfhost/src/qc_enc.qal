@@ -128,6 +128,7 @@ type QcIns =
   | QcII64Sub
   | QcII64Mul
   | QcII64DivS
+  | QcII64DivU
   | QcII64RemS
   | QcII64And
   | QcII64Or
@@ -250,6 +251,7 @@ fn qc_ins_acc(ins: QcIns, acc: Accum[Int]) -> Accum[Int] =
     QcII64Sub => AccPush(acc, 125),
     QcII64Mul => AccPush(acc, 126),
     QcII64DivS => AccPush(acc, 127),
+    QcII64DivU => AccPush(acc, 128),
     QcII64RemS => AccPush(acc, 129),
     QcII64And => AccPush(acc, 131),
     QcII64Or => AccPush(acc, 132),
@@ -340,6 +342,7 @@ type QcShift =
 type QcRt =
   | QcRtAlloc
   | QcRtArith(QcBinOp)
+  | QcRtMulDiv(Int)
   | QcRtVariant1
   | QcRtOptFromPtr
   | QcRtResultFrom
@@ -406,6 +409,7 @@ fn qc_rt_key(rt: QcRt) -> Str =
   match rt {
     QcRtAlloc => "Alloc",
     QcRtArith(op) => "Arith:" ++ from_int(qc_binop_tag(op)),
+    QcRtMulDiv(n) => "MulDiv:" ++ from_int(n),
     QcRtVariant1 => "Variant1",
     QcRtOptFromPtr => "OptFromPtr",
     QcRtResultFrom => "ResultFrom",

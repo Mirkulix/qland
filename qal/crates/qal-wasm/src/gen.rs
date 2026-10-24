@@ -335,8 +335,19 @@ impl<'g, 'p> FnGen<'g, 'p> {
             }
             _ => {}
         }
-        let float = l.ty == Type::Float;
         let int_site = |g: &mut Self| g.site(path, op.symbol(), &[("left", Type::Int), ("right", Type::Int)], None);
+        if let Some(factors) = TExpr::fused_factors(op, l) {
+            // `(f1 * … * fn) / d` is one exact operation (128-bit product), see `Rt::MulDiv`
+            let site = int_site(self);
+            for f in &factors {
+                self.expr(f, false);
+            }
+            self.expr(r, false);
+            self.site_args(site);
+            self.call_rt(Rt::MulDiv(factors.len() as u32));
+            return;
+        }
+        let float = l.ty == Type::Float;
         let site = (!float && matches!(op, BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Rem)).then(|| int_site(self));
         self.expr(l, false);
         self.expr(r, false);

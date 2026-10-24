@@ -89,6 +89,91 @@ fn arithmetic_failures_name_def_path_and_operands() {
 }
 
 #[test]
+fn product_then_division_is_exact_with_a_128_bit_intermediate() {
+    let r = runner(
+        "fn total(price: Int, qty: Int) -> Int = price * qty * 95 / 100\nfn md(a: Int, b: Int, d: Int) -> Int = a * b / d\n\
+         fn md3(a: Int, b: Int, c: Int, d: Int) -> Int = a * b * c / d\nfn mul(a: Int, b: Int) -> Int = a * b\n\
+         fn mr(a: Int, b: Int, c: Int) -> Int = a * b % c",
+    );
+    let int = Value::Int;
+    assert_eq!(r.call("total", &[int(999_999_999), int(999_999_999)]), Ok(int(949_999_998_100_000_000)));
+    assert_eq!(r.call("total", &[int(-999_999_999), int(999_999_999)]), Ok(int(-949_999_998_100_000_000)), "truncates toward zero");
+    assert_eq!(r.call("md", &[int(i64::MAX), int(2), int(2)]), Ok(int(i64::MAX)));
+    assert_eq!(r.call("md", &[int(7), int(1), int(-2)]), Ok(int(-3)));
+    assert_eq!(r.call("md", &[int(i64::MIN), int(1), int(1)]), Ok(int(i64::MIN)));
+    assert_eq!(r.call("md3", &[int(i64::MIN), int(i64::MIN), int(1), int(i64::MIN)]), Ok(int(i64::MIN)), "quotient -2^63 fits");
+    assert_eq!(r.call("md3", &[int(i64::MAX), int(i64::MAX), int(0), int(1)]), Ok(int(0)), "a zero factor makes the product 0");
+    assert_eq!(r.call("md3", &[int(i64::MAX), int(i64::MAX), int(-1), int(i64::MAX)]), Ok(int(-i64::MAX)));
+    let e = r.call("md", &[int(i64::MAX), int(4), int(2)]).unwrap_err();
+    assert_eq!((e.kind, e.path.as_str()), ("int_overflow", "body"), "the quotient does not fit");
+    assert_eq!(serde_json::to_value(&e.values).unwrap(), json!({"left": i64::MAX, "right": 2}));
+    assert_eq!(r.call("md", &[int(i64::MIN), int(1), int(-1)]).unwrap_err().kind, "int_overflow");
+    let e = r.call("md3", &[int(i64::MIN), int(i64::MIN), int(2), int(1)]).unwrap_err();
+    assert_eq!(e.kind, "int_overflow", "|product| = 2^127 does not fit in 128 bits signed");
+    assert_eq!(r.call("md3", &[int(1 << 62), int(1 << 62), int(1 << 62), int(i64::MAX)]).unwrap_err().kind, "int_overflow");
+    let e = r.call("md", &[int(3), int(4), int(0)]).unwrap_err();
+    assert_eq!((e.kind, e.path.as_str()), ("div_by_zero", "body"));
+    assert_eq!(serde_json::to_value(&e.values).unwrap(), json!({"left": 3, "right": 0}));
+    assert_eq!(r.call("mul", &[int(i64::MAX), int(2)]).unwrap_err().kind, "int_overflow", "a plain product still traps");
+    assert_eq!(r.call("mr", &[int(i64::MAX), int(2), int(3)]).unwrap_err().kind, "int_overflow", "`%` is not fused");
+    assert_eq!(r.call("mr", &[int(7), int(5), int(4)]), Ok(int(3)));
+}
+
+/// The fused `(f1 * … * fn) / d` against an i128 reference: Ok(quotient) or the failure kind.
+fn muldiv_reference(fs: &[i64], d: i64) -> Result<i64, &'static str> {
+    let p = if fs.contains(&0) { Some(0) } else { fs.iter().try_fold(1i128, |p, f| p.checked_mul(*f as i128)) };
+    let p = p.filter(|p| *p != i128::MIN).ok_or("int_overflow")?;
+    if d == 0 {
+        return Err("div_by_zero");
+    }
+    i64::try_from(p / d as i128).map_err(|_| "int_overflow")
+}
+
+#[test]
+fn fused_product_division_matches_an_i128_reference() {
+    let r = runner("fn md(a: Int, b: Int, d: Int) -> Int = a * b / d\nfn md3(a: Int, b: Int, c: Int, d: Int) -> Int = a * b * c / d");
+    let edges = [0, 1, -1, 2, -2, 3, 95, 100, 999_999_999, -999_999_999, 1 << 31, (1 << 32) - 1, 1 << 32, -(1 << 32), 1 << 62, i64::MAX, i64::MIN, i64::MAX - 1, i64::MIN + 1];
+    let mut seed = 0x2545_f491_4f6c_dd1du64;
+    let mut next = || {
+        seed ^= seed << 13;
+        seed ^= seed >> 7;
+        seed ^= seed << 17;
+        // mix magnitudes: full 64-bit, 32-bit and small values
+        match seed % 3 {
+            0 => seed as i64,
+            1 => (seed as i64) >> 32,
+            _ => (seed as i64) >> 56,
+        }
+    };
+    let mut cases: Vec<[i64; 4]> = Vec::new();
+    for a in edges {
+        for b in edges {
+            cases.push([a, b, edges[(a as usize ^ b as usize) % edges.len()], edges[(a as usize).wrapping_add(b as usize) % edges.len()]]);
+        }
+    }
+    for _ in 0..1500 {
+        cases.push([next(), next(), next(), next()]);
+    }
+    for [a, b, c, d] in cases {
+        let got = |name: &str, args: &[i64]| r.call(name, &args.iter().map(|x| Value::Int(*x)).collect::<Vec<_>>()).map_err(|e| e.kind);
+        let want = |fs: &[i64], d: i64| muldiv_reference(fs, d).map(Value::Int);
+        assert_eq!(got("md", &[a, b, d]), want(&[a, b], d), "{a} * {b} / {d}");
+        assert_eq!(got("md3", &[a, b, c, d]), want(&[a, b, c], d), "{a} * {b} * {c} / {d}");
+    }
+}
+
+#[test]
+fn fused_product_division_evaluates_left_to_right() {
+    let r = main_runner(
+        "fn f() -> Int !io = { print(\"f\"); 6 }\nfn g() -> Int !io = { print(\"g\"); 7 }\nfn h() -> Int !io = { print(\"h\"); 4 }\n\
+         fn main(args: List[Str]) -> Int !io = f() * g() / h()",
+        "io",
+    );
+    let out = r.run_main(&[]);
+    assert_eq!((out.result, out.stdout.as_str()), (Ok(Value::Int(10)), "f\ng\nh\n"));
+}
+
+#[test]
 fn builtin_failures_are_reported() {
     let r = runner("fn cut(s: Str) -> Str = slice(s, 1, 10)\nfn parts(s: Str) -> List[Str] = split(s, \"\")");
     let e = r.call("cut", &[Value::Str("abc".into())]).unwrap_err();

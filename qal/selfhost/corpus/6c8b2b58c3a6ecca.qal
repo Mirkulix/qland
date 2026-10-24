@@ -1,0 +1,1 @@
+fn part(price: Int, qty: Int) -> Int = 95 * (price * qty) / 100

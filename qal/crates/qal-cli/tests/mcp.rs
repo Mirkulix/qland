@@ -199,8 +199,9 @@ fn handshake_lists_the_tools_with_the_language_reference() {
     // (one line on `qal_run` cases, one on the tests `qal_define` runs) and the deployment tests
     // of 2026-10-23 (the outline to read before a change) and Phase 6b (one line on `qal_recall`,
     // with its `message` filter), the rerun of 2026-10-24 (`cases` on qal_define) and the pressure run of
-    // 2026-10-24 (the property tests define runs) add to it.
-    assert!(qal_cli::mcp::REFERENCE.lines().count() <= 76 && qal_cli::mcp::REFERENCE.len() <= 10389, "{} lines, {} bytes", qal_cli::mcp::REFERENCE.lines().count(), qal_cli::mcp::REFERENCE.len());
+    // 2026-10-24 (the property tests define runs) and the fused multiply-divide (`a * b * ... / c`
+    // exact, on the Int type) add to it.
+    assert!(qal_cli::mcp::REFERENCE.lines().count() <= 76 && qal_cli::mcp::REFERENCE.len() <= 10500, "{} lines, {} bytes", qal_cli::mcp::REFERENCE.lines().count(), qal_cli::mcp::REFERENCE.len());
     // An unknown version gets the newest legacy one.
     let r = c.request("initialize", json!({"protocolVersion": "1999-01-01", "capabilities": {}, "clientInfo": {"name": "x", "version": "1"}}));
     assert_eq!(r["result"]["protocolVersion"], "2025-11-25");
@@ -856,15 +857,28 @@ fn define_runs_the_property_tests_of_what_it_defines_in(c: &mut Client) {
     let w = v["warnings"].as_array().and_then(|ws| ws.iter().find(|w| w["code"] == "E0804")).cloned().unwrap_or_default();
     assert!(w["def"] == "total" && w["message"].as_str().unwrap().contains("overflow"), "{v}");
     assert!(w["hints"].as_array().unwrap().iter().any(|h| h.as_str().unwrap().contains("req")), "{v}");
-    // The products of unbounded Int parameters are named (E0805): the domain lives in no `req`.
-    let w = v["warnings"].as_array().and_then(|ws| ws.iter().find(|w| w["code"] == "E0805")).cloned().unwrap_or_default();
-    assert!(w["def"] == "total" && w["message"].as_str().unwrap().contains("price") && w["message"].as_str().unwrap().contains("qty"), "{v}");
+    // `price * qty * 95 / 100` is one exact operation (2026-10-24, fused multiply-divide): only the
+    // quotient can overflow, so there is no E0805 for its product.
+    assert!(!v["warnings"].as_array().is_some_and(|ws| ws.iter().any(|w| w["code"] == "E0805")), "{v}");
+    // The plain products of unbounded Int parameters are named (E0805): the domain lives in no `req`.
+    // A parenthesised product inside the factors of a fused division is a plain one.
+    for (src, names) in [("fn area(w: Int, h: Int) -> Int = w * h", ["w", "h"]), ("fn part(price: Int, qty: Int) -> Int = 95 * (price * qty) / 100", ["price", "qty"])] {
+        let (err, v) = c.call("qal_define", json!({"source": src}));
+        assert!(!err, "{v}");
+        let w = v["warnings"].as_array().and_then(|ws| ws.iter().find(|w| w["code"] == "E0805")).cloned().unwrap_or_default();
+        assert!(names.iter().all(|n| w["message"].as_str().unwrap_or("").contains(n)), "{src}: {v}");
+    }
     // With a `req` that bounds the inputs to what fits, there is no trap and no warning.
     let (err, v) = c.call("qal_define", json!({"source": "fn total(price: Int, qty: Int) -> Int req price >= 0 && price <= 1000000 && qty >= 0 && qty <= 1000000 ens r == price * qty * 95 / 100 = price * qty * 95 / 100"}));
     assert!(!err && v["properties"][0]["traps"] == 0, "{v}");
     assert!(!v["warnings"].as_array().is_some_and(|ws| ws.iter().any(|w| w["code"] == "E0804" || w["code"] == "E0805")), "{v}");
-    // A bounded domain that still overflows: the trap now shows up on inputs inside it.
-    let (_, v) = c.call("qal_define", json!({"source": "fn total(price: Int, qty: Int) -> Int req price >= 0 && price <= 999999999 && qty >= 0 && qty <= 999999999 ens r == price * qty * 95 / 100 = price * qty * 95 / 100"}));
+    // The domain of the pressure run, 9-digit amounts: `price * qty * 95` does not fit in 64 bits,
+    // but the fused division is exact, so no input inside the domain traps.
+    let (err, v) = c.call("qal_define", json!({"source": "fn total(price: Int, qty: Int) -> Int req price >= 0 && price <= 999999999 && qty >= 0 && qty <= 999999999 ens r == price * qty * 95 / 100 = price * qty * 95 / 100"}));
+    assert!(!err && v["properties"][0]["traps"] == 0, "{v}");
+    assert!(!v["warnings"].as_array().is_some_and(|ws| ws.iter().any(|w| w["code"] == "E0804" || w["code"] == "E0805")), "{v}");
+    // A bounded domain whose plain product still overflows: the trap shows up on inputs inside it.
+    let (_, v) = c.call("qal_define", json!({"source": "fn total(price: Int, qty: Int) -> Int req price >= 0 && price <= 999999999 && qty >= 0 && qty <= 999999999 ens r == price * qty * 95 = price * qty * 95"}));
     assert!(v["warnings"].as_array().is_some_and(|ws| ws.iter().any(|w| w["code"] == "E0804" && w["def"] == "total")), "{v}");
     // A failing property is reported as a warning too; the definition stays stored and the call is not an error.
     // (A contract the prover can refute is rejected before that, E0801; maps it only approximates.)

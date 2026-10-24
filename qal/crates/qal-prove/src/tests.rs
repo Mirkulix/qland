@@ -60,6 +60,26 @@ fn division_truncates_toward_zero() {
 }
 
 #[test]
+fn product_then_division_is_modelled_as_one_exact_operation() {
+    // `price * qty * 95` does not fit in 64 bits for 9-digit amounts; the fused form only needs the quotient to fit.
+    let total = "fn total(price: Int, qty: Int) -> Int req price >= 0 && price <= 999999999 && qty >= 0 && qty <= 999999999 ens r >= 0 = price * qty * 95 / 100";
+    let r = one(total, "total");
+    assert_eq!((r.status, r.reason.as_deref()), (Status::Proven, None), "{r:#?}");
+    // Returning no longer implies that the intermediate product fits: a * a / a returns a for every a > 0.
+    // (Modelled as `(a * a) / a` with a trapping `*`, this was proven, wrongly: f(4000000000) returns 4000000000.)
+    let r = one("fn f(a: Int) -> Int req a >= 1 && a <= 4000000000 ens r <= 3037000499 = a * a / a", "f");
+    assert_eq!(r.status, Status::Refuted, "{r:#?}");
+    assert!(r.counterexample.as_ref().unwrap()["a"].as_i64().unwrap() > 3037000499, "{r:#?}");
+    // Returning still implies that the quotient fits: 6208^5 <= 2^63 - 1 < 6209^5.
+    let big = |bound: i64| format!("fn big(a: Int) -> Int req a >= 0 ens a <= {bound} = a * a * a * a * a / 1");
+    assert_eq!(one(&big(6208), "big").status, Status::Proven);
+    assert_eq!(one(&big(6207), "big").status, Status::Refuted);
+    // A plain product still traps on its own, and `%` is not fused.
+    assert_eq!(one("fn g(a: Int) -> Int req a >= 1 && a <= 4000000000 ens r <= 3037000499 = a * a / a + 0 * (a * a)", "g").status, Status::Proven);
+    assert_eq!(one("fn h(a: Int) -> Int req a >= 1 && a <= 4000000000 ens a <= 3037000499 = a * a % a", "h").status, Status::Proven);
+}
+
+#[test]
 fn call_sites_must_establish_the_callee_req() {
     let src = "fn pos(x: Int) -> Int req x > 0 = x\n\
                fn caller(y: Int) -> Int = pos(y)\n\
@@ -191,7 +211,8 @@ fn results_are_deterministic_and_limited() {
     assert!(!slow[0].is_stable());
     let only = prove(&typed(src), Some(&["bad".to_string()]), &Options::default());
     assert_eq!(only.iter().map(|r| r.def.as_str()).collect::<Vec<_>>(), vec!["bad"]);
-    assert!(Options::default().key().starts_with("qal-prove/5 z3-"));
+    // 6: the fused `(a * b * …) / c` is modelled exactly; results of version 5 are not reused.
+    assert!(Options::default().key().starts_with("qal-prove/6 z3-"));
 }
 
 #[test]

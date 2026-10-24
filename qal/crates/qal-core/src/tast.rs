@@ -343,6 +343,26 @@ impl TExpr {
         }
     }
 
+    /// The factors of a fused `(f1 * … * fn) / d` over Int, in source order, if `op` applied to
+    /// the left operand `l` is one: `/` whose left operand is an Int `*` chain. Such a division is
+    /// one exact operation (128-bit product; it traps only if the quotient does not fit), in code
+    /// generation (`qal-wasm` `Rt::MulDiv`) and in the prover alike. Only the left operands of the
+    /// chain are unfolded: in `a * (b * c) / d` the factor `b * c` is a plain product.
+    pub fn fused_factors(op: BinOp, l: &TExpr) -> Option<Vec<&TExpr>> {
+        if op != BinOp::Div || l.ty != Type::Int || !matches!(l.kind, TKind::Bin(BinOp::Mul, ..)) {
+            return None;
+        }
+        let mut factors = Vec::new();
+        let mut e = l;
+        while let TKind::Bin(BinOp::Mul, x, y, _) = &e.kind {
+            factors.push(&**y);
+            e = x;
+        }
+        factors.push(e);
+        factors.reverse();
+        Some(factors)
+    }
+
     /// True if this expression (or one inside it) calls the built-in `b`.
     pub fn calls_builtin(&self, b: Builtin) -> bool {
         let mut stack = vec![self];
