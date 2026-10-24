@@ -70,3 +70,19 @@ Cost: QAL is at 1.47× Rust's processed tokens on this line, with the same resul
 ## Fourth run (repeat of run 3, same binary)
 
 Stage 1 again: the agent wrote `price * qty * 95 / 100`, received both E0804 and E0805 in the `define` reply, did not mention them, and kept the formula. The hidden test failed (19/20); the line was stopped after stage 1. **With the warnings, stage 1 succeeded in 1 of 2 runs.** The warnings improve the odds, but they do not make the result reliable: an agent can always ignore a warning. Removing the bug class needs arithmetic that does not overflow in this range (wider intermediate results), not more advice.
+
+## Fifth run: exact multiply-divide (merge 1d0e4a3a)
+
+The QAL/Haiku line was run again through all 12 stages from the same stage 0 and with the same tickets. The binary now computes `(a * b * …) / c` exactly through a 128-bit product (`price * qty * 95 / 100` cannot overflow for 9-digit amounts any more).
+
+| | run 1 | run 3 | run 4 | **run 5** | Rust/Haiku |
+|---|---|---|---|---|---|
+| stage 1 (the overflow) | red | green | red | **green** | green |
+| stages with every hidden test green | 0 / 12 | 12 / 12 | stopped | **6 / 12** | 12 / 12 |
+| rounds / processed tokens | 108 / 8.81 M | 113 / 9.07 M | | 109 / 8.72 M | 91 / 6.15 M |
+
+**Stage 1:** the agent wrote `price * qty * 95 / 100` again, the formula of runs 1 and 4. With the new arithmetic it is correct (20/20). The overflow class is closed without the agent having to notice anything.
+
+**Stages 7 to 12:** a different bug, introduced at stage 7 (backorders) and never noticed. Cancelling a pending backorder removed the order instead of marking it cancelled. A second `cancel` or a `return` then answered `unknown_order` instead of `not_open`, and the id could be used again (`duplicate` expected). The stage-7 ticket's example covers a cancel of a filled backorder, not of a pending one. The agent's stored tests went red once during stage 7 and were fixed; none covered this case. Stages 8 to 12 inherited the bug (1 or 2 hidden tests red each).
+
+**What this means:** the arithmetic fix does what it should. The remaining gap to Rust in this setting is ordinary logic bugs under thin tickets, which no QAL mechanism covers today: no contract states "an order id, once used, stays known". A single sample per arm; the Rust line had no such bug in its one run.
