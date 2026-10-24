@@ -107,3 +107,5 @@ Stage 7 (backorders) passed: the agent's own tests went red once during the run 
 **Cost:** QAL at 1.72× to 1.98× Rust's processed tokens on this line (run 5: 1.63×). The tests cost rounds and context. The result is now the same as Rust's; the premium is larger.
 
 **State of the pressure line after seven runs:** the two bug classes found (64-bit overflow, untested rule changes) are closed, the first by the language (exact multiply-divide), the second by the instructions. One run each; the second fix rests on agent compliance and should be repeated before it counts as reliable.
+
+**Protocol note on run 7:** stage 10 is marked invalid by the driver (`valid: false`). The agent redirected a `qal_view` dump of the program to `/tmp/x`, a path outside its work dir (30 KB, no secrets; it reported the file as empty, which was wrong; removed afterwards). The stage's code and result (46/46) are unaffected; strictly by the protocol, run 7 counts 11 valid stages of 11 green plus one green stage with a path violation.
