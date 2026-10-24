@@ -211,7 +211,8 @@ fn results_are_deterministic_and_limited() {
     assert!(!slow[0].is_stable());
     let only = prove(&typed(src), Some(&["bad".to_string()]), &Options::default());
     assert_eq!(only.iter().map(|r| r.def.as_str()).collect::<Vec<_>>(), vec!["bad"]);
-    assert!(Options::default().key().starts_with("qal-prove/5 z3-"));
+    // 6: the fused `(a * b * …) / c` is modelled exactly; results of version 5 are not reused.
+    assert!(Options::default().key().starts_with("qal-prove/6 z3-"));
 }
 
 #[test]
