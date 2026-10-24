@@ -92,10 +92,15 @@ def full_spec(k):
     return "\n\n".join(p)
 
 
-def statement(stage, examples):
-    """The task text: title, change request (stage > 0), full specification, public examples."""
+def statement(stage, examples, pressure=False):
+    """The task text: title, change request (stage > 0), full specification, public examples.
+    `pressure`: the change request alone, as a ticket would state it, without the full
+    specification and without any instruction about tests or contracts."""
     parts = [f"# {TITLE}" + (f": change {stage}" if stage else "")]
-    if stage:
+    if stage and pressure:
+        parts.append("The order system from the previous jobs is already in place: in QAL it is in this project's store (`main` and its helpers), in Rust it is `src/main.rs` in this project. Change it as follows and keep everything else as it is.")
+        parts.append("## The change\n\n" + change_request(stage))
+    elif stage:
         parts.append("The order system from the previous jobs is already in place, with its contracts and tests: in QAL it is in this project's store (`main` and its helpers; start with `qal_query {\"outline\": true}`, then `qal_view` only what you will edit), in Rust it is `src/main.rs` in this project. Change it as follows, keep everything else as it is, and keep the program's own verification intact: update the existing contracts and tests where the rules change, add tests for the new rules, and make sure the tests (and in QAL `qal_prove`) pass before you reply `DONE`. Mention in your final sentence how many tests ran and what the prover reported.")
         parts.append("## The change\n\n" + change_request(stage))
         parts.append("## Full specification after the change\n\n" + full_spec(stage))

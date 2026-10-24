@@ -21,9 +21,13 @@ import time
 HERE = os.path.dirname(os.path.abspath(__file__))
 BENCH = os.path.dirname(HERE)
 REPO = os.path.dirname(BENCH)
-STATE = os.path.join(HERE, "state")
-WORK = "/tmp/qal-living"
-ENV = dict(os.environ, QAL_BIN=os.path.join(REPO, "qal", "target", "release", "qal"), BENCH_TASKS=os.path.join(HERE, "tasks"), BENCH_STATE=STATE, BENCH_WORK=WORK)
+# LIVING_MODE=pressure: change requests without full specification and test duty
+# (tasks-pressure), stage 1 seeded from the normal run's stage 0 of the same line.
+PRESSURE = os.environ.get("LIVING_MODE") == "pressure"
+STATE = os.path.join(HERE, "state-pressure" if PRESSURE else "state")
+NORMAL_STATE = os.path.join(HERE, "state")
+WORK = "/tmp/qal-living-p" if PRESSURE else "/tmp/qal-living"
+ENV = dict(os.environ, QAL_BIN=os.path.join(REPO, "qal", "target", "release", "qal"), BENCH_TASKS=os.path.join(HERE, "tasks-pressure" if PRESSURE else "tasks"), BENCH_STATE=STATE, BENCH_WORK=WORK)
 MODELS = {1: "sonnet", 2: "haiku"}
 STAGES = 13
 sys.path.insert(0, BENCH)
@@ -38,14 +42,14 @@ def key(k, arm, run):
     return f"{task_id(k)}-{arm}-run{run}"
 
 
-def records():
-    p = os.path.join(STATE, "results.jsonl")
+def records(state=None):
+    p = os.path.join(state or STATE, "results.jsonl")
     return [json.loads(l) for l in open(p, encoding="utf-8")] if os.path.exists(p) else []
 
 
 def archive_of(k, arm, run):
     """The archived work dir of the last recorded attempt of a stage."""
-    recs = [r for r in records() if r["task"] == task_id(k) and r["arm"] == arm and r["run"] == run and r.get("archive")]
+    recs = [r for r in records(NORMAL_STATE if PRESSURE and k == 0 else None) if r["task"] == task_id(k) and r["arm"] == arm and r["run"] == run and r.get("archive")]
     if not recs:
         raise SystemExit(f"stage {k} of {arm}/{MODELS[run]} has no archived result yet")
     return recs[-1]["archive"]

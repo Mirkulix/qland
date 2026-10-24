@@ -17,7 +17,8 @@ sys.path.insert(0, HERE)
 import oracle  # noqa: E402
 import spec  # noqa: E402
 
-TASKS = os.path.join(HERE, "tasks")
+PRESSURE = os.environ.get("LIVING_MODE") == "pressure"
+TASKS = os.path.join(HERE, "tasks-pressure" if PRESSURE else "tasks")
 STAGES = 13
 
 BASE = "product p1 widget 1000 5\nproduct p2 gadget 250 20\ncustomer c1 ann\ncustomer c2 bob\n"
@@ -177,7 +178,7 @@ def main(argv):
     for stage in range(STAGES):
         cases = cases_of(stage)
         public = [(c["name"], c["stdin"], c["stdout"], c["exit_code"]) for c in cases if c["public"]]
-        text = spec.statement(stage, public)
+        text = spec.statement(stage, public, PRESSURE)
         # The statement's examples must be what the oracle computes.
         for name, stdin, stdout, code in public:
             block = text.split(f"### Example `{name}`")[1]
