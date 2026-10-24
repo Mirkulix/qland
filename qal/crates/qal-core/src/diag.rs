@@ -386,6 +386,7 @@ pub const KNOWN: &[(&str, &str)] = &[
     ("E0803", "property_failed"),
     ("E0804", "property_traps"),
     ("E0805", "unbounded_product"),
+    ("E0806", "untested_change"),
     // Phase 4 (team procedure, signed records).
     ("E0900", "not_a_team"),
     ("E0901", "lease_held"),

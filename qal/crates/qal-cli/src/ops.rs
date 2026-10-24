@@ -552,7 +552,9 @@ pub fn define(ctx: &Ctx, src: &str, agent: &str, breaking: bool) -> Reply {
             let reports = current_reports(&d, reports);
             let tests = tests_of(&mut store, &d);
             let fns: Vec<String> = d.iter().filter(|x| x.kind == "fn" && x.status != "relinked" && x.status != "unchanged").map(|x| x.name.clone()).collect();
+            let untested = untested_changes(&d);
             let mut out = Output { defined: Some(d), ..Output::default() };
+            out.warnings = untested;
             out.set_proofs(reports);
             std.report(&mut out);
             team_report(store.last_write(), &mut out);
@@ -563,6 +565,25 @@ pub fn define(ctx: &Ctx, src: &str, agent: &str, breaking: bool) -> Reply {
         }
         Err(d) => std.failed(d),
     }
+}
+
+/// The warning E0806 for a `define` that replaces a stored function and defines no `test`: a change
+/// is a new rule, and the stored tests only pin the old ones. In pressure run 5 of the living
+/// program (2026-10-24) a change to `cancel` dropped cancelled backorders; no test covered it,
+/// while the Rust agents wrote a test for each new rule. A first definition is not warned about.
+fn untested_changes(defined: &[Defined]) -> Option<Vec<Diagnostic>> {
+    if defined.iter().any(|d| d.kind == "test" && d.status != "relinked" && d.status != "unchanged") {
+        return None;
+    }
+    let changed: Vec<Diagnostic> = defined
+        .iter()
+        .filter(|d| d.kind == "fn" && d.status == "replaced")
+        .map(|d| {
+            Diagnostic::new("E0806", "untested_change", &d.name, "", format!("`{}` changed and this define has no `test` for the change", d.name))
+                .hint("add a `test` in the same define that pins the new rule: the request's example and the edge case it implies (e.g. what happens to an id after cancel)")
+        })
+        .collect();
+    (!changed.is_empty()).then_some(changed)
 }
 
 /// The stored tests that refer directly to a function this `define` wrote (as `query` with
