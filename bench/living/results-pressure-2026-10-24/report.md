@@ -109,3 +109,22 @@ Stage 7 (backorders) passed: the agent's own tests went red once during the run 
 **State of the pressure line after seven runs:** the two bug classes found (64-bit overflow, untested rule changes) are closed, the first by the language (exact multiply-divide), the second by the instructions. One run each; the second fix rests on agent compliance and should be repeated before it counts as reliable.
 
 **Protocol note on run 7:** stage 10 is marked invalid by the driver (`valid: false`). The agent redirected a `qal_view` dump of the program to `/tmp/x`, a path outside its work dir (30 KB, no secrets; it reported the file as empty, which was wrong; removed afterwards). The stage's code and result (46/46) are unaffected; strictly by the protocol, run 7 counts 11 valid stages of 11 green plus one green stage with a path violation.
+
+## Run 8: the tool friction of run 7 removed (commit 0627f2b1)
+
+Run 7 spent its extra rounds on the tools, not on the language: E0401 `signature_change` 17 times (a changed type or signature refused although the stored dependents still checked), E0508 `permission_denied` 9 times (`io` not granted to `qal_run`), and 3 parse errors without a hint (a bracket left open, reported at the next definition). Built before run 8: dependents that still check are relinked, E0401 only lists the ones that break, followed by their errors; `io` (the call's own stdin and stdout) needs no `allow`; a parse error at the next definition names the open bracket; the outline leaves out empty lists and a test's own `uses` (26 → ~16 KB on the run-7 program); MCP define replies leave out the hashes (no agent used one in 295 view/history/query calls). Same tickets, same Haiku protocol, `results-run8.jsonl`.
+
+| | QAL run 7 | **QAL run 8** | Rust run 1 | Rust run 2 |
+|---|---|---|---|---|
+| stages with every hidden test green | 12 / 12 | **12 / 12** | 12 / 12 | 12 / 12 |
+| bugs that reached the hidden tests | 0 | **0** | 0 | 0 |
+| rounds / processed tokens | 132 / 10.58 M | **100 / 6.95 M** | 91 / 6.15 M | 86 / 5.34 M |
+| E0401 / E0508 in replies | 17 / 9 | **0 / 0** | | |
+| `define` / `view` rounds | 33 / 40 | 17 / 25 | | |
+| `test` lines the agents wrote in defines | 280 | 86 | | |
+
+**Cost:** QAL at **1.13× to 1.30×** Rust's processed tokens (run 7: 1.72–1.98×), 1.10–1.16× its rounds. The remaining per-round premium is mostly the prompt: TASK.md (reference plus tool descriptions, 26 KB against Rust's 4 KB) is about half of the carried tool context.
+
+**Caveat:** one run. The agents wrote fewer tests than in run 7 (86 lines, E0806 once); stage 7 (backorders, the logic bug of run 5) passed with them. Whether the result holds with fewer tests needs a repeat.
+
+**Protocol note on run 8:** stage 3 is marked invalid: the agent ran `cat > /tmp/x` with no input (an empty file outside its work dir, removed afterwards) before a `qal_view`. Its result (26/26) is unaffected. As in run 7, strictly 11 valid green stages plus one green stage with a path violation; both violations are the same Haiku habit.
