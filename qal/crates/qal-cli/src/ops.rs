@@ -614,6 +614,7 @@ fn run_properties_of_define(ctx: &Ctx, fns: &[String], out: &mut Output) {
         return;
     }
     let Ok(loaded) = ctx.load(&Source::Store) else { return };
+    unbounded_products(&loaded.typed, fns, out);
     let names: Vec<String> = qal_prove::props::candidates(&loaded.typed).into_iter().map(|i| loaded.typed.fns[i].def.name.clone()).filter(|n| fns.contains(n)).collect();
     if names.is_empty() {
         return;
@@ -645,6 +646,32 @@ fn run_properties_of_define(ctx: &Ctx, fns: &[String], out: &mut Output) {
     }
     let existing = out.properties.get_or_insert_with(Vec::new);
     existing.extend(props);
+}
+
+/// The warning E0805 for a function that multiplies `Int` parameters no `req` mentions: a product of
+/// unbounded values overflows 64 bits somewhere, and only a `req` can say where the domain ends (the
+/// living program's pressure run: `price * qty * 95` with amounts of 9 digits). Read from the printed
+/// body and contracts; a parameter counts as bounded when a `req` names it.
+fn unbounded_products(tp: &TProgram, fns: &[String], out: &mut Output) {
+    for f in tp.fns.iter().filter(|f| fns.contains(&f.def.name)) {
+        let def = &f.def;
+        let body = qal_compiler::print_expr(&def.body);
+        if !body.contains(" * ") {
+            continue;
+        }
+        let reqs: Vec<String> = def.req.iter().map(qal_compiler::print_expr).collect();
+        let mentions = |text: &str, name: &str| text.split(|c: char| !(c.is_alphanumeric() || c == '_')).any(|w| w == name);
+        let unbounded: Vec<&str> = def.params.iter().filter(|p| p.ty == qal_core::ast::Type::Int && mentions(&body, &p.name) && !reqs.iter().any(|r| mentions(r, &p.name))).map(|p| p.name.as_str()).collect();
+        if unbounded.is_empty() {
+            continue;
+        }
+        let list = unbounded.iter().map(|n| format!("`{n}`")).collect::<Vec<_>>().join(", ");
+        let example = unbounded.iter().map(|n| format!("{n} >= 0 && {n} <= 1000000000")).collect::<Vec<_>>().join(" && ");
+        out.warnings.get_or_insert_with(Vec::new).push(
+            Diagnostic::new("E0805", "unbounded_product", &def.name, "", format!("`{}` multiplies Int values that depend on {list}, which no `req` bounds: some inputs overflow 64 bits", def.name))
+                .hint(format!("state the domain, e.g. `req {example}`, with the task's real limits; the property test then checks every input inside it")),
+        );
+    }
 }
 
 /// What a write reports besides its result (Phase 4 §10.2): the leases it took (team mode) and the

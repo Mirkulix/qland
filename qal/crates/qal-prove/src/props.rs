@@ -11,7 +11,7 @@
 //! - Deterministic: the inputs follow from the seed and the function's name; sizes grow from 0 to
 //!   `max_size` over the runs.
 
-use crate::gen::{fnv, generatable, random, shrink, Rng};
+use crate::gen::{fnv, generatable, random_with, shrink, Rng};
 use qal_core::ast::{BinOp, FnDef, Type};
 use qal_core::tast::{TExpr, TFn, TKind, TProgram};
 use qal_run::{RunError, Runner, Value, Values};
@@ -143,6 +143,25 @@ fn run_one(runner: &Runner, f: &str, args: &[Value]) -> Run {
     }
 }
 
+/// The Int literals of a function's `req` and their neighbours (`x <= 999999999` gives 999999998,
+/// 999999999 and 1000000000): the limits of the domain the function declares.
+fn req_bounds(f: &TFn) -> Vec<i64> {
+    let mut out = Vec::new();
+    for r in &f.def.req {
+        let text = qal_compiler::print_expr(r);
+        for w in text.split(|c: char| !(c.is_ascii_digit() || c == '-')) {
+            if let Ok(n) = w.parse::<i64>() {
+                for v in [n.saturating_sub(1), n, n.saturating_add(1)] {
+                    if !out.contains(&v) {
+                        out.push(v);
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
 /// The same contract failed (definition and contract, not the values).
 fn same_failure(a: &RunError, b: &RunError) -> bool {
     a.def == b.def && a.contract == b.contract && a.path == b.path
@@ -165,6 +184,7 @@ fn run_properties(tp: &TProgram, runner: &Runner, fns: &[usize], opts: &PropOpti
         }
         let mut rng = Rng::new(seed);
         let types: Vec<Type> = f.def.params.iter().map(|p| p.ty.clone()).collect();
+        let edges = req_bounds(f);
         let max_tries = opts.runs.saturating_mul(10).max(1);
         let mut tries = 0;
         let mut out_of_time = false;
@@ -177,7 +197,7 @@ fn run_properties(tp: &TProgram, runner: &Runner, fns: &[usize], opts: &PropOpti
             // inputs never satisfy does not stall generation at size 0.
             let size = (opts.max_size * tries as u64 / opts.runs.max(1) as u64).min(opts.max_size);
             tries += 1;
-            let Some(args) = types.iter().map(|t| random(tp, t, size, &mut rng)).collect::<Option<Vec<Value>>>() else { break };
+            let Some(args) = types.iter().map(|t| random_with(tp, t, size, &mut rng, &edges)).collect::<Option<Vec<Value>>>() else { break };
             match run_one(runner, name, &args) {
                 Run::Discard => report.discarded += 1,
                 Run::Pass => report.runs += 1,

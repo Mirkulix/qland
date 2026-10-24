@@ -856,10 +856,16 @@ fn define_runs_the_property_tests_of_what_it_defines_in(c: &mut Client) {
     let w = v["warnings"].as_array().and_then(|ws| ws.iter().find(|w| w["code"] == "E0804")).cloned().unwrap_or_default();
     assert!(w["def"] == "total" && w["message"].as_str().unwrap().contains("overflow"), "{v}");
     assert!(w["hints"].as_array().unwrap().iter().any(|h| h.as_str().unwrap().contains("req")), "{v}");
+    // The products of unbounded Int parameters are named (E0805): the domain lives in no `req`.
+    let w = v["warnings"].as_array().and_then(|ws| ws.iter().find(|w| w["code"] == "E0805")).cloned().unwrap_or_default();
+    assert!(w["def"] == "total" && w["message"].as_str().unwrap().contains("price") && w["message"].as_str().unwrap().contains("qty"), "{v}");
     // With a `req` that bounds the inputs to what fits, there is no trap and no warning.
     let (err, v) = c.call("qal_define", json!({"source": "fn total(price: Int, qty: Int) -> Int req price >= 0 && price <= 1000000 && qty >= 0 && qty <= 1000000 ens r == price * qty * 95 / 100 = price * qty * 95 / 100"}));
     assert!(!err && v["properties"][0]["traps"] == 0, "{v}");
-    assert!(!v["warnings"].as_array().is_some_and(|ws| ws.iter().any(|w| w["code"] == "E0804")), "{v}");
+    assert!(!v["warnings"].as_array().is_some_and(|ws| ws.iter().any(|w| w["code"] == "E0804" || w["code"] == "E0805")), "{v}");
+    // A bounded domain that still overflows: the trap now shows up on inputs inside it.
+    let (_, v) = c.call("qal_define", json!({"source": "fn total(price: Int, qty: Int) -> Int req price >= 0 && price <= 999999999 && qty >= 0 && qty <= 999999999 ens r == price * qty * 95 / 100 = price * qty * 95 / 100"}));
+    assert!(v["warnings"].as_array().is_some_and(|ws| ws.iter().any(|w| w["code"] == "E0804" && w["def"] == "total")), "{v}");
     // A failing property is reported as a warning too; the definition stays stored and the call is not an error.
     // (A contract the prover can refute is rejected before that, E0801; maps it only approximates.)
     let (err, v) = c.call("qal_define", json!({"source": "fn small(m: Map[Int, Int]) -> Int ens r <= 1 = map_size(m)"}));

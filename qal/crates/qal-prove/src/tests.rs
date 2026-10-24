@@ -277,13 +277,17 @@ fn passing_properties_count_runs_discards_and_traps() {
         "fn clamp(x: Int) -> Int ens r >= 0 && r <= 10 = if x < 0 then 0 else if x > 10 then 10 else x\n\
          fn inv(x: Int) -> Int req x != 0 ens r == 100 / x = 100 / x\n\
          fn sq(x: Int) -> Int ens r >= 0 = x * x\n\
-         fn rare(x: Int) -> Int req x == 123456 ens r == x = x",
+         fn bound(x: Int) -> Int req x == 123456 ens r == x = x\n\
+         fn rare(x: Int, y: Int) -> Int req y > 1000 && x == y * 7 + 123456 ens r == x = x",
     );
-    let st: Vec<(&str, PropStatus, u32)> = rs.iter().map(|r| (r.def.as_str(), r.status, r.runs)).collect();
-    assert_eq!(st, vec![("clamp", PropStatus::Passed, 100), ("inv", PropStatus::Passed, 100), ("sq", PropStatus::Passed, 100), ("rare", PropStatus::GaveUp, 0)]);
+    let st: Vec<(&str, PropStatus)> = rs.iter().map(|r| (r.def.as_str(), r.status)).collect();
+    assert_eq!(st, vec![("clamp", PropStatus::Passed), ("inv", PropStatus::Passed), ("sq", PropStatus::Passed), ("bound", PropStatus::Passed), ("rare", PropStatus::GaveUp)]);
+    assert_eq!((rs[0].runs, rs[1].runs, rs[2].runs), (100, 100, 100));
     assert!(rs[1].discarded > 0, "x = 0 is generated");
     assert!(rs[2].traps > 0 && rs[2].trap.as_ref().unwrap().kind == "int_overflow" && rs[2].error.is_none(), "edge values overflow: {:?}", rs[2]);
-    assert_eq!(rs[3].discarded, 1000);
+    // The literals of a `req` are drawn as inputs: a domain is tested at its limits.
+    assert!(rs[3].runs > 0, "{:?}", rs[3]);
+    assert_eq!(rs[4].runs, 0);
 }
 
 #[test]
