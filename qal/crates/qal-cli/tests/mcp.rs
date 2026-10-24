@@ -198,8 +198,9 @@ fn handshake_lists_the_tools_with_the_language_reference() {
     // Phase 3b (two lines on `std.` names), Phase 6a (one line on effect parameters) and Phase 6b
     // (one line on `qal_run` cases, one on the tests `qal_define` runs) and the deployment tests
     // of 2026-10-23 (the outline to read before a change) and Phase 6b (one line on `qal_recall`,
-    // with its `message` filter) and the rerun of 2026-10-24 (`cases` on qal_define) add to it.
-    assert!(qal_cli::mcp::REFERENCE.lines().count() <= 76 && qal_cli::mcp::REFERENCE.len() <= 10261, "{} lines, {} bytes", qal_cli::mcp::REFERENCE.lines().count(), qal_cli::mcp::REFERENCE.len());
+    // with its `message` filter), the rerun of 2026-10-24 (`cases` on qal_define) and the pressure run of
+    // 2026-10-24 (the property tests define runs) add to it.
+    assert!(qal_cli::mcp::REFERENCE.lines().count() <= 76 && qal_cli::mcp::REFERENCE.len() <= 10389, "{} lines, {} bytes", qal_cli::mcp::REFERENCE.lines().count(), qal_cli::mcp::REFERENCE.len());
     // An unknown version gets the newest legacy one.
     let r = c.request("initialize", json!({"protocolVersion": "1999-01-01", "capabilities": {}, "clientInfo": {"name": "x", "version": "1"}}));
     assert_eq!(r["result"]["protocolVersion"], "2025-11-25");
@@ -573,7 +574,9 @@ fn get_proofs_counterexamples_and_property_tests_in(c: &mut Client) {
     assert!(!err, "{v}");
     let statuses: Vec<(&str, &str)> = v["proofs"].as_array().unwrap().iter().map(|r| (r["def"].as_str().unwrap(), r["status"].as_str().unwrap())).collect();
     assert_eq!(statuses, [("abs", "proven"), ("head", "unknown"), ("t", "proven")]);
-    assert_eq!((v["warnings"][0]["code"].as_str(), v["warnings"][0]["def"].as_str(), v["warnings"].as_array().map(Vec::len)), (Some("E0802"), Some("head"), Some(1)));
+    assert_eq!((v["warnings"][0]["code"].as_str(), v["warnings"][0]["def"].as_str(), v["warnings"].as_array().map(Vec::len)), (Some("E0802"), Some("head"), Some(2)));
+    // The define already runs the property test of `head`: the counterexample the proof could not decide.
+    assert_eq!((v["warnings"][1]["code"].as_str(), v["warnings"][1]["def"].as_str()), (Some("E0803"), Some("head")), "{v}");
     // A refuted contract: nothing is stored, the diagnostic carries the counterexample.
     let (err, v) = c.call("qal_define", json!({"source": "fn dec(x: Int) -> Int ens r >= 0 = x - 1"}));
     assert!(err);
@@ -835,6 +838,33 @@ fn run_takes_a_list_of_cases_in(c: &mut Client) {
     // Without `cases`, `qal_run` is unchanged.
     let (err, v) = c.call("qal_run", json!({"args": ["q"], "stdin": "p", "allow": ["io"]}));
     assert_eq!((err, v), (false, json!({"exit_code": 0, "stdout": "pq\n"})));
+}
+
+#[test]
+fn define_runs_the_property_tests_of_what_it_defines() {
+    both(define_runs_the_property_tests_of_what_it_defines_in);
+}
+
+fn define_runs_the_property_tests_of_what_it_defines_in(c: &mut Client) {
+    // The pressure run of the living program (2026-10-24): `price * qty * 95` overflowed on large
+    // inputs, the `ens` held whenever the function returned, and nobody ran qal_test. Now the
+    // define reply carries the property test of what it defined and a warning for its traps.
+    let (err, v) = c.call("qal_define", json!({"source": "fn total(price: Int, qty: Int) -> Int ens r == price * qty * 95 / 100 = price * qty * 95 / 100"}));
+    assert!(!err, "{v}");
+    let p = &v["properties"][0];
+    assert!(p["def"] == "total" && p["traps"].as_u64().unwrap_or(0) > 0, "{v}");
+    let w = v["warnings"].as_array().and_then(|ws| ws.iter().find(|w| w["code"] == "E0804")).cloned().unwrap_or_default();
+    assert!(w["def"] == "total" && w["message"].as_str().unwrap().contains("overflow"), "{v}");
+    assert!(w["hints"].as_array().unwrap().iter().any(|h| h.as_str().unwrap().contains("req")), "{v}");
+    // With a `req` that bounds the inputs to what fits, there is no trap and no warning.
+    let (err, v) = c.call("qal_define", json!({"source": "fn total(price: Int, qty: Int) -> Int req price >= 0 && price <= 1000000 && qty >= 0 && qty <= 1000000 ens r == price * qty * 95 / 100 = price * qty * 95 / 100"}));
+    assert!(!err && v["properties"][0]["traps"] == 0, "{v}");
+    assert!(!v["warnings"].as_array().is_some_and(|ws| ws.iter().any(|w| w["code"] == "E0804")), "{v}");
+    // A failing property is reported as a warning too; the definition stays stored and the call is not an error.
+    // (A contract the prover can refute is rejected before that, E0801; maps it only approximates.)
+    let (err, v) = c.call("qal_define", json!({"source": "fn small(m: Map[Int, Int]) -> Int ens r <= 1 = map_size(m)"}));
+    assert!(!err && v["defined"][0]["name"] == "small", "{v}");
+    assert!(v["warnings"].as_array().unwrap().iter().any(|w| w["code"] == "E0803" && w["def"] == "small"), "{v}");
 }
 
 #[test]

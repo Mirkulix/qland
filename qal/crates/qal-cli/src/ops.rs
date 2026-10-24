@@ -551,12 +551,14 @@ pub fn define(ctx: &Ctx, src: &str, agent: &str, breaking: bool) -> Reply {
         Ok(d) => {
             let reports = current_reports(&d, reports);
             let tests = tests_of(&mut store, &d);
+            let fns: Vec<String> = d.iter().filter(|x| x.kind == "fn" && x.status != "relinked" && x.status != "unchanged").map(|x| x.name.clone()).collect();
             let mut out = Output { defined: Some(d), ..Output::default() };
             out.set_proofs(reports);
             std.report(&mut out);
             team_report(store.last_write(), &mut out);
             drop(store);
             run_tests_of_define(ctx, &tests, &mut out);
+            run_properties_of_define(ctx, &fns, &mut out);
             Reply::new(out, 0)
         }
         Err(d) => std.failed(d),
@@ -599,6 +601,50 @@ fn run_tests_of_define(ctx: &Ctx, tests: &[String], out: &mut Output) {
     out.failed = r.out.failed;
     out.skipped = r.out.skipped;
     out.tests_informative = true;
+}
+
+/// Runs the generated property tests of the functions a `define` wrote (those that have one: pure,
+/// with an `ens` or calling a function with `req`), as `test` does with their names. A failed
+/// property is the warning E0803, runs that trapped (overflow, division by zero, ...) on inputs that
+/// satisfy `req` are the warning E0804: the definitions stay stored and the reply is no error. Without
+/// this, a contract proven under trapping arithmetic and a property nobody runs let an overflow
+/// through (living program, pressure run of 2026-10-24).
+fn run_properties_of_define(ctx: &Ctx, fns: &[String], out: &mut Output) {
+    if fns.is_empty() {
+        return;
+    }
+    let Ok(loaded) = ctx.load(&Source::Store) else { return };
+    let names: Vec<String> = qal_prove::props::candidates(&loaded.typed).into_iter().map(|i| loaded.typed.fns[i].def.name.clone()).filter(|n| fns.contains(n)).collect();
+    if names.is_empty() {
+        return;
+    }
+    let mut opts = PropOptions::default();
+    if let Some(t) = ctx.timeout {
+        opts.timeout = opts.timeout.min(t);
+    }
+    let Ok(mut props) = qal_prove::check_properties(&loaded.typed, Some(&names), &opts) else { return };
+    let warnings = out.warnings.get_or_insert_with(Vec::new);
+    for p in &mut props {
+        p.error = p.error.take().map(capped);
+        p.trap = p.trap.take().map(capped);
+        if p.status == PropStatus::Failed {
+            let why = p.error.as_ref().map_or_else(String::new, |e| format!(": {}", e.message));
+            warnings.push(Diagnostic::new("E0803", "property_failed", &p.def, "", format!("the property test of `{}` failed on a generated input{why}", p.def)).hint("the input is in `properties` (counterexample); fix the body or the contract"));
+        }
+        if p.traps > 0 {
+            let what = p.trap.as_ref().map_or_else(|| "a trap".to_string(), |t| t.message.clone());
+            let values = p.trap.as_ref().and_then(|t| serde_json::to_string(&t.values).ok()).unwrap_or_default();
+            warnings.push(
+                Diagnostic::new("E0804", "property_traps", &p.def, "", format!("`{}` trapped in {} of {} generated runs: {what} {values}", p.def, p.traps, p.runs + p.traps))
+                    .hint(format!("if such inputs cannot occur, say so with a `req` on `{}` that bounds them (e.g. `req x >= 0 && x <= 1000000000`); otherwise compute so that it cannot trap", p.def)),
+            );
+        }
+    }
+    if warnings.is_empty() {
+        out.warnings = None;
+    }
+    let existing = out.properties.get_or_insert_with(Vec::new);
+    existing.extend(props);
 }
 
 /// What a write reports besides its result (Phase 4 §10.2): the leases it took (team mode) and the

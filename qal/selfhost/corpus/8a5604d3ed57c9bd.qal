@@ -1,0 +1,1 @@
+fn total(price: Int, qty: Int) -> Int ens r == price * qty * 95 / 100 = price * qty * 95 / 100

@@ -383,6 +383,8 @@ pub const KNOWN: &[(&str, &str)] = &[
     ("E0702", "result_too_large"),
     ("E0801", "contract_refuted"),
     ("E0802", "contract_unproven"),
+    ("E0803", "property_failed"),
+    ("E0804", "property_traps"),
     // Phase 4 (team procedure, signed records).
     ("E0900", "not_a_team"),
     ("E0901", "lease_held"),
