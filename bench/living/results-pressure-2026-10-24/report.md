@@ -52,3 +52,17 @@ The QAL/Haiku line was rerun at stage 1 from the same stage 0 with the new binar
 **Consequence:** this cannot be closed by a better warning, only by the arithmetic or by required bounds:
 1. Wider integers for intermediate results (`a * b / c` in 128 bits, or a 128-bit `Int`), as the Rust code had with `u128`. This is a language decision with consequences for the compiler, the self-hosting bootstrap and the prover.
 2. Or a `req` that bounds every `Int` parameter of an arithmetic function becomes a rule (a warning on `define` without bounds). This makes the domain visible, but costs every agent a line per function.
+
+## Third run: warning on unbounded products, property tests at the bounds (commit 29ae7deb)
+
+The QAL/Haiku line was run again through all 12 stages, from the same stage 0, with the same tickets and the binary that warns on products of unbounded `Int` parameters (E0805) and draws the `req` literals as property-test inputs.
+
+| | QAL/Haiku run 1 | QAL/Haiku run 3 | Rust/Haiku |
+|---|---|---|---|
+| stages with every hidden test green | 0 / 12 | **12 / 12** | 12 / 12 |
+| bugs that reached the hidden tests | 1 (overflow, stages 1–12) | 0 | 0 |
+| rounds / processed tokens | 108 / 8.81 M | 113 / 9.07 M | 91 / 6.15 M |
+
+In stage 1 the agent wrote the discount as `x - (x + 19) / 20` and gave the reason before its first `define`: "this also avoids the intermediate × 95 overflow". The warnings came afterwards and were confirmed. So the effect is most likely the reference line about traps and bounds, which the agent reads at the start, rather than the warning in the reply. This is one run per arm, a single sample. It shows that the gap of run 1 can be closed, not that it always will be.
+
+Cost: QAL is at 1.47× Rust's processed tokens on this line, with the same result.
