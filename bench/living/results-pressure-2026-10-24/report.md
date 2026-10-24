@@ -90,3 +90,20 @@ The QAL/Haiku line was run again through all 12 stages from the same stage 0 and
 **Rust/Haiku, second run (same tickets, same stage 0):** 12 / 12 again, 86 rounds / 5.34 M processed tokens (QAL run 5: 109 / 8.72 M, 1.63×). At stage 7 the Rust agent kept a pending backorder in the order map with an explicit `Status::Pending`, set `Status::Cancelled` on cancel, and wrote its own test `cancelled_id_stays_taken`. The QAL agent removed the order from its map. Across two Rust runs the Rust line had no bug reach the hidden tests; across QAL runs 1, 3, 4 and 5, three of four let one through (overflow twice, this logic bug once).
 
 The difference at stage 7 is not a language guarantee but agent habit: the Rust agents write a test for each new rule unasked (`cargo test` is part of the routine), the QAL agents rely on the tests `define` runs and add few of their own.
+
+## Seventh run: a change without a test is named (merges 0b1eff64, c082135f)
+
+New: a `define` that replaces a stored function and defines no `test` gets the warning E0806 `untested_change`, and the reference says so in one line ("pin each new rule with a test in the same define"). Run 6 is void: its binary let the proof warnings of the same define replace E0806 (fixed in 68dcb653, with a test for that case); it is kept aside as `state-pressure-run6-invalid`, not counted.
+
+| | QAL run 5 | **QAL run 7** | Rust run 1 | Rust run 2 |
+|---|---|---|---|---|
+| stages with every hidden test green | 6 / 12 | **12 / 12** | 12 / 12 | 12 / 12 |
+| bugs that reached the hidden tests | 1 (stage 7) | **0** | 0 | 0 |
+| rounds / processed tokens | 109 / 8.72 M | 132 / 10.58 M | 91 / 6.15 M | 86 / 5.34 M |
+| `test` lines the agents wrote in defines | stage 7: 3 | stage 7: 28; all stages: 280 | | |
+
+Stage 7 (backorders) passed: the agent's own tests went red once during the run (call 8) and were fixed before delivery. The warning itself appeared once in 12 stages (stage 12); in every other stage the agent had already put tests into the define. **What changed the behaviour is the reference line the agents read at the start, not the warning in the reply**, as in run 3 with the overflow line.
+
+**Cost:** QAL at 1.72× to 1.98× Rust's processed tokens on this line (run 5: 1.63×). The tests cost rounds and context. The result is now the same as Rust's; the premium is larger.
+
+**State of the pressure line after seven runs:** the two bug classes found (64-bit overflow, untested rule changes) are closed, the first by the language (exact multiply-divide), the second by the instructions. One run each; the second fix rests on agent compliance and should be repeated before it counts as reliable.
