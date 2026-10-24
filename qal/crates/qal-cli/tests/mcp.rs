@@ -200,8 +200,8 @@ fn handshake_lists_the_tools_with_the_language_reference() {
     // of 2026-10-23 (the outline to read before a change) and Phase 6b (one line on `qal_recall`,
     // with its `message` filter), the rerun of 2026-10-24 (`cases` on qal_define) and the pressure run of
     // 2026-10-24 (the property tests define runs) and the fused multiply-divide (`a * b * ... / c`
-    // exact, on the Int type) add to it.
-    assert!(qal_cli::mcp::REFERENCE.lines().count() <= 76 && qal_cli::mcp::REFERENCE.len() <= 10500, "{} lines, {} bytes", qal_cli::mcp::REFERENCE.lines().count(), qal_cli::mcp::REFERENCE.len());
+    // exact, on the Int type) and pressure run 5 (E0806, a change without a test) add to it.
+    assert!(qal_cli::mcp::REFERENCE.lines().count() <= 76 && qal_cli::mcp::REFERENCE.len() <= 10620, "{} lines, {} bytes", qal_cli::mcp::REFERENCE.lines().count(), qal_cli::mcp::REFERENCE.len());
     // An unknown version gets the newest legacy one.
     let r = c.request("initialize", json!({"protocolVersion": "1999-01-01", "capabilities": {}, "clientInfo": {"name": "x", "version": "1"}}));
     assert_eq!(r["result"]["protocolVersion"], "2025-11-25");
@@ -844,6 +844,32 @@ fn run_takes_a_list_of_cases_in(c: &mut Client) {
 #[test]
 fn define_runs_the_property_tests_of_what_it_defines() {
     both(define_runs_the_property_tests_of_what_it_defines_in);
+}
+
+#[test]
+fn define_warns_on_a_change_without_a_test() {
+    both(define_warns_on_a_change_without_a_test_in);
+}
+
+fn define_warns_on_a_change_without_a_test_in(c: &mut Client) {
+    // Pressure run 5 of the living program (2026-10-24): a change request changed `cancel`, the
+    // agent wrote no test for the new rule, and a cancelled backorder vanished from the orders. The
+    // Rust agents wrote a test for each new rule. A define that changes a stored function and
+    // defines no test now says so (E0806); a first definition does not.
+    let untested = |v: &serde_json::Value| v["warnings"].as_array().and_then(|ws| ws.iter().find(|w| w["code"] == "E0806")).cloned();
+    let (err, v) = c.call("qal_define", json!({"source": "fn fee(n: Int) -> Int = n + 1"}));
+    assert!(!err && untested(&v).is_none(), "{v}");
+    let (err, v) = c.call("qal_define", json!({"source": "fn fee(n: Int) -> Int = n + 2"}));
+    assert!(!err && v["defined"][0]["name"] == "fee", "{v}");
+    let w = untested(&v).unwrap_or_default();
+    assert!(w["def"] == "fee" && w["kind"] == "untested_change", "{v}");
+    assert!(w["hints"].as_array().unwrap().iter().any(|h| h.as_str().unwrap().contains("test")), "{v}");
+    // The same change with a test for it: no warning.
+    let (err, v) = c.call("qal_define", json!({"source": "fn fee(n: Int) -> Int = n + 3\ntest fee_adds_three = fee(1) == 4"}));
+    assert!(!err && untested(&v).is_none(), "{v}");
+    // A define that only adds a test is no change.
+    let (err, v) = c.call("qal_define", json!({"source": "test fee_zero = fee(0) == 3"}));
+    assert!(!err && untested(&v).is_none(), "{v}");
 }
 
 fn define_runs_the_property_tests_of_what_it_defines_in(c: &mut Client) {

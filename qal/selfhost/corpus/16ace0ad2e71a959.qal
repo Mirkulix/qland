@@ -1,0 +1,1 @@
+fn fee(n: Int) -> Int = n + 2
