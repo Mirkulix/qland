@@ -588,7 +588,7 @@ impl Server {
             }
             _ => {}
         }
-        if matches!(name, "qal_run" | "qal_call" | "qal_request") {
+        if matches!(name, "qal_run" | "qal_call" | "qal_request" | "qal_define") {
             let a = Args::new(name, args)?;
             let wanted: Vec<String> = a.strings("allow")?.unwrap_or_default().iter().flat_map(|s| s.split(',').map(|x| x.trim().to_string()).collect::<Vec<_>>()).filter(|x| !x.is_empty()).collect();
             let allowed = match store.team_allow() {
@@ -640,7 +640,25 @@ impl Server {
                 if src.len() > MAX_SOURCE_BYTES {
                     return Err(format!("`source` is longer than {MAX_SOURCE_BYTES} bytes; define the code in several calls"));
                 }
-                ops::define(&ctx, &src, &agent(&a)?, false)
+                // `cases`: run the entry point on them once the code is stored (the round of a
+                // separate qal_run after every define); code that does not check is not run.
+                let run = match a.cases()? {
+                    Some(cases) => Some((a.string("entry")?.unwrap_or_else(|| "main".into()), perms(&a)?, cases)),
+                    None => None,
+                };
+                let mut reply = ops::define(&ctx, &src, &agent(&a)?, false);
+                if let Some((entry, perms, cases)) = run {
+                    if reply.out.diagnostics.is_none() {
+                        let r = ops::run_cases(&ctx, &Source::Store, perms, &entry, &cases);
+                        reply.out.failure |= r.out.failure;
+                        reply.out.results = r.out.results;
+                        if let Some(d) = r.out.diagnostics {
+                            reply.out.diagnostics = Some(d);
+                        }
+                        reply.code = reply.code.max(r.code);
+                    }
+                }
+                reply
             }
             "qal_view" => {
                 let names = a.names("names")?;
@@ -1195,7 +1213,7 @@ const TOOL_NAMES: [&str; 13] = ["qal_define", "qal_test", "qal_prove", "qal_run"
 
 fn tool_params(tool: &str) -> &'static [&'static str] {
     match tool {
-        "qal_define" => &["source", "agent", "change"],
+        "qal_define" => &["source", "agent", "entry", "cases", "allow", "change"],
         "qal_view" => &["names", "change"],
         "qal_query" => &["name", "type", "uses", "outline", "change"],
         "qal_test" => &["names", "seed", "change"],
@@ -1224,7 +1242,9 @@ pub fn tools() -> J {
     let s = |d: &str| json!({"type": "string", "description": d});
     let list = |d: &str| json!({"type": "array", "items": {"type": "string"}, "description": d});
     let allow = list("Effects to grant: \"io\", \"time\", \"rand\", \"fs:<dir>\" (a directory inside the project, relative to its root; hidden entries like .git are never reachable), \"db:mem\" (a fresh in-memory SQLite database), \"db\" or \"db:<name>\" (the project's .qal/db/main.sqlite or <name>.sqlite), \"net:<host>[:port]\" (outgoing HTTP to that host; names must resolve to public addresses, IP literals like \"net:127.0.0.1:9000\" reach exactly that address). Default: none.");
-    let allow_request = allow.clone();
+    // The full list once (qal_run); the other tools that run code point to it.
+    let allow_short = list("Effects to grant, as for qal_run (default: none).");
+    let allow_request = allow_short.clone();
     let stdin = s("Text that read_line() and read_all() read (default: empty).");
     let agent = s("Who makes the change, recorded in the history (default: the MCP client's name).");
     let read_only = json!({"readOnlyHint": true, "openWorldHint": false});
@@ -1234,7 +1254,10 @@ pub fn tools() -> J {
     );
     json!([
         {"name": "qal_define", "title": "Define QAL code", "description": define, "annotations": writes,
-         "inputSchema": {"type": "object", "properties": {"source": s("QAL source text with one or more definitions."), "agent": agent}, "required": ["source"], "additionalProperties": false}},
+         "inputSchema": {"type": "object", "properties": {"source": s("QAL source text with one or more definitions."), "agent": agent,
+             "cases": {"type": "array", "minItems": 1, "maxItems": ops::MAX_CASES, "description": "Optional: once the code is stored, run the entry point on these cases, as qal_run does (`results`).",
+                       "items": {"type": "object", "properties": {"args": {"type": "array", "items": {"type": "string"}}, "stdin": {"type": "string"}}, "additionalProperties": false}},
+             "entry": s("Entry point for `cases` (default main)."), "allow": list("Effects to grant for `cases`, as for qal_run.")}, "required": ["source"], "additionalProperties": false}},
         {"name": "qal_test", "title": "Run QAL tests", "annotations": read_only,
          "description": "Run the stored tests and the generated property tests (all, or the named tests and functions; in a project, all means its own: `std.` tests run when named). A pure function with an `ens`, or that calls a function with `req`, gets a property test: 100 generated inputs that satisfy its `req`; any contract violation fails it, with a shrunk counterexample. Result: each test with passed true/false and the runtime error of a failing one, `properties` (passed, failed, gave_up, skipped), plus passed/failed counts.",
          "inputSchema": {"type": "object", "properties": {"names": list("Test or function names (default: all)."), "seed": {"type": "integer", "minimum": 0, "description": "Seed of the generated inputs (default 0)."}}, "additionalProperties": false}},
@@ -1245,13 +1268,13 @@ pub fn tools() -> J {
          "description": "Run a stored entry point `fn(List[Str]) -> Int` (default `main`) with string arguments. Result: exit_code and stdout, or a runtime `error` (contract violation, overflow, timeout after 10 s, ...). Effects the program declares must be granted with `allow`. To try several inputs in one call, pass `cases` instead of `args`/`stdin`: `results` has one {args, exit_code, stdout, error} per case, in order; the call fails only if a case ends in a runtime error (an exit code is data).",
          "inputSchema": {"type": "object", "properties": {"entry": s("Entry point name (default main)."), "args": list("Program arguments."), "stdin": stdin.clone(),
              "cases": {"type": "array", "minItems": 1, "maxItems": ops::MAX_CASES, "description": "Runs, one per case, instead of `args`/`stdin`: {args (default []), stdin (default empty)}.",
-                       "items": {"type": "object", "properties": {"args": list("Program arguments."), "stdin": s("Text that read_line() and read_all() read.")}, "additionalProperties": false}},
+                       "items": {"type": "object", "properties": {"args": {"type": "array", "items": {"type": "string"}}, "stdin": {"type": "string"}}, "additionalProperties": false}},
              "allow": allow.clone()}, "additionalProperties": false}},
         {"name": "qal_call", "title": "Call a QAL function", "annotations": {"readOnlyHint": false, "destructiveHint": false, "openWorldHint": true},
          "description": "Call any stored function with JSON arguments and get its result as JSON, both in the same form: numbers, strings, true/false, null for Unit, arrays for List and Bytes, [[key, value], ...] for Map, objects for records, `None` is \"None\", `Some(3)` is {\"Some\":[3]}. Function values cannot be passed.",
-         "inputSchema": {"type": "object", "properties": {"fn": s("Function name."), "args": {"type": "array", "description": "Arguments in parameter order."}, "stdin": stdin, "allow": allow}, "required": ["fn"], "additionalProperties": false}},
+         "inputSchema": {"type": "object", "properties": {"fn": s("Function name."), "args": {"type": "array", "description": "Arguments in parameter order."}, "stdin": stdin, "allow": allow_short}, "required": ["fn"], "additionalProperties": false}},
         {"name": "qal_request", "title": "Send HTTP requests to a QAL service", "annotations": {"readOnlyHint": false, "destructiveHint": false, "openWorldHint": true},
-         "description": "Run HTTP requests against a stored handler `fn(HttpRequest) -> HttpResponse` exactly as `qal serve` would (same limits, same checks, one database transaction per request: committed for status 200-399, else rolled back), without a server. `init` (a `fn() -> Result[Unit, Str]`, e.g. creating tables) runs first; all requests share one database (\"db:mem\": a fresh one per call). Result: `responses`, one per request: status, headers, body, json (if the response is JSON), db (commit/rollback/none), stdout, and the full runtime `error` of a failed request (500/503).",
+         "description": "Run HTTP requests against a stored handler `fn(HttpRequest) -> HttpResponse` as `qal serve` would (one database transaction per request: committed for status 200-399, else rolled back). `init` (`fn() -> Result[Unit, Str]`) runs first; all requests share one database. Result: `responses` with status, headers, body, json, db (commit/rollback/none), stdout, and the runtime `error` of a failed request.",
          "inputSchema": {"type": "object", "properties": {
              "handler": s("Handler function (default handle)."),
              "init": s("Function run once before the requests."),
@@ -1269,7 +1292,7 @@ pub fn tools() -> J {
          "description": "Rename a stored definition. No hash changes; everything that refers to it follows the new name; the history moves along.",
          "inputSchema": {"type": "object", "properties": {"old": s("Current name."), "new": s("New name."), "agent": agent.clone()}, "required": ["old", "new"], "additionalProperties": false}},
         {"name": "qal_delete", "title": "Delete a QAL definition", "annotations": {"readOnlyHint": false, "destructiveHint": true, "idempotentHint": false, "openWorldHint": false},
-         "description": "Remove a stored name that no other stored definition refers to (otherwise `has_dependents` lists them: delete or redefine those first, or name them in `with`). The history keeps a `deleted` entry and the old version stays viewable by #hash; the name is gone from query, view, test and export and can be defined again. `std.` names cannot be deleted in a project.",
+         "description": "Remove a stored name nothing else refers to (else `has_dependents` lists them: delete those too, or name them in `with`). The old version stays viewable by #hash; `std.` names cannot be deleted in a project.",
          "inputSchema": {"type": "object", "properties": {"name": s("Name to delete."), "with": list("More names deleted in the same call, e.g. the other members of a mutually recursive group (default: none)."), "agent": agent.clone()}, "required": ["name"], "additionalProperties": false}},
         {"name": "qal_history", "title": "QAL definition history", "annotations": read_only,
          "description": "Every recorded change of a name, oldest first: added, replaced, relinked, renamed, deleted, with hashes, agent and time.",
@@ -1278,8 +1301,8 @@ pub fn tools() -> J {
          "description": "Compile a stored function into a standalone WebAssembly module `.qal/build/<entry>.wasm` plus `<entry>.manifest.json` (hash, signature, required effects, host imports).",
          "inputSchema": {"type": "object", "properties": {"entry": s("Function to build, usually main.")}, "required": ["entry"], "additionalProperties": false}},
         {"name": "qal_recall", "title": "Recall earlier fixes", "annotations": read_only,
-         "description": "What the store learned from earlier failed definitions: with `code` (e.g. E0201) and/or `message` (the diagnostic's message or a part of it) the corrections made for that diagnostic, the most frequent fix of each message shape first (at most 5: code, path, message, shape, `before` and `after` excerpts, `count` of times seen), with `name` (prefix) and/or `type` (signature pattern) the matching definitions (at most 20). At least one filter is required. Fixes are learned per agent: sessions that pass no `agent` to qal_define share their client's name.",
-         "inputSchema": {"type": "object", "properties": {"code": s("Diagnostic code, e.g. E0201."), "message": s("Diagnostic message, a part of it, or its shape with names as `_`, e.g. unknown name `x`."), "name": s("Name prefix of the definitions to list."), "type": s("Signature pattern of the definitions to list, e.g. fn(Str) -> _.")}, "additionalProperties": false}},
+         "description": "Earlier fixes of a diagnostic: with `code` and/or `message` the corrections (most frequent first, at most 5, with `before`/`after` excerpts); with `name` (prefix) and/or `type` (signature pattern) matching definitions (at most 20). At least one filter.",
+         "inputSchema": {"type": "object", "properties": {"code": s("e.g. E0201."), "message": s("The diagnostic's message or a part of it."), "name": s("Name prefix."), "type": s("Signature pattern, e.g. fn(Str) -> _.")}, "additionalProperties": false}},
     ])
 }
 

@@ -1,0 +1,1 @@
+fn main(args: List[Str]) -> Int !io = { print(read_all() ++ "!"); if len(args) == 0 then 1 else 0 }

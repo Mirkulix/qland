@@ -198,8 +198,8 @@ fn handshake_lists_the_tools_with_the_language_reference() {
     // Phase 3b (two lines on `std.` names), Phase 6a (one line on effect parameters) and Phase 6b
     // (one line on `qal_run` cases, one on the tests `qal_define` runs) and the deployment tests
     // of 2026-10-23 (the outline to read before a change) and Phase 6b (one line on `qal_recall`,
-    // with its `message` filter) add to it.
-    assert!(qal_cli::mcp::REFERENCE.lines().count() <= 76 && qal_cli::mcp::REFERENCE.len() <= 10174, "{} lines, {} bytes", qal_cli::mcp::REFERENCE.lines().count(), qal_cli::mcp::REFERENCE.len());
+    // with its `message` filter) and the rerun of 2026-10-24 (`cases` on qal_define) add to it.
+    assert!(qal_cli::mcp::REFERENCE.lines().count() <= 76 && qal_cli::mcp::REFERENCE.len() <= 10261, "{} lines, {} bytes", qal_cli::mcp::REFERENCE.lines().count(), qal_cli::mcp::REFERENCE.len());
     // An unknown version gets the newest legacy one.
     let r = c.request("initialize", json!({"protocolVersion": "1999-01-01", "capabilities": {}, "clientInfo": {"name": "x", "version": "1"}}));
     assert_eq!(r["result"]["protocolVersion"], "2025-11-25");
@@ -325,7 +325,7 @@ fn malformed_messages_get_error_responses_and_the_server_keeps_going() {
     let (err, v) = c.call("qal_view", json!({"names": "main"}));
     assert_eq!((err, v["diagnostics"][0]["kind"].as_str()), (true, Some("bad_arguments")));
     let (err, v) = c.call("qal_define", json!({"src": "fn f() -> Int = 1"}));
-    assert_eq!((err, v["diagnostics"][0]["message"].as_str()), (true, Some("unknown argument `src` (`qal_define` takes: source, agent)")));
+    assert_eq!((err, v["diagnostics"][0]["message"].as_str()), (true, Some("unknown argument `src` (`qal_define` takes: source, agent, entry, cases, allow)")));
     let (err, v) = c.call("qal_define", json!({"source": "x".repeat((1 << 20) + 1)}));
     assert!(err && v["diagnostics"][0]["message"].as_str().unwrap().contains("longer than"));
     for agent in ["evil\u{202E}name", "a\u{61C}b", "tag\u{E0041}", ""] {
@@ -835,6 +835,31 @@ fn run_takes_a_list_of_cases_in(c: &mut Client) {
     // Without `cases`, `qal_run` is unchanged.
     let (err, v) = c.call("qal_run", json!({"args": ["q"], "stdin": "p", "allow": ["io"]}));
     assert_eq!((err, v), (false, json!({"exit_code": 0, "stdout": "pq\n"})));
+}
+
+#[test]
+fn define_runs_cases_after_storing_the_code() {
+    both(define_runs_cases_after_storing_the_code_in);
+}
+
+fn define_runs_cases_after_storing_the_code_in(c: &mut Client) {
+    // One call defines the program and runs the examples: the round an agent spends on a separate
+    // qal_run after every define.
+    let src = "fn main(args: List[Str]) -> Int !io = { print(read_all() ++ \"!\"); if len(args) == 0 then 1 else 0 }";
+    let (err, v) = c.call("qal_define", json!({"source": src, "cases": [{"args": ["a"], "stdin": "x"}, {"stdin": "y"}], "allow": ["io"]}));
+    assert!(!err, "{v}");
+    assert_eq!(v["defined"][0]["name"], "main", "{v}");
+    assert_eq!(v["results"][0], json!({"args": ["a"], "exit_code": 0, "stdout": "x!\n"}), "{v}");
+    assert_eq!(v["results"][1]["exit_code"], 1, "{v}");
+    // A runtime error in a case makes the call an error; the definition is stored anyway.
+    let (err, v) = c.call("qal_define", json!({"source": src, "cases": [{"stdin": "z"}]}));
+    assert!(err && v["defined"][0]["status"] == "unchanged" && v["results"][0]["error"]["kind"] == "permission_denied", "{v}");
+    // Code that does not check is not run.
+    let (err, v) = c.call("qal_define", json!({"source": "fn main(args: List[Str]) -> Int = nope", "cases": [{}]}));
+    assert!(err && v.get("results").is_none() && v["diagnostics"][0]["code"] == "E0201", "{v}");
+    // Another entry point by `entry`.
+    let (err, v) = c.call("qal_define", json!({"source": "fn other(args: List[Str]) -> Int = 7", "entry": "other", "cases": [{}]}));
+    assert!(!err && v["results"][0]["exit_code"] == 7, "{v}");
 }
 
 #[test]
