@@ -42,3 +42,13 @@ With price and quantity at their maximum of 999 999 999 each, `price * qty * 95`
 3. **Integer width:** a 64-bit Int that traps is safer than one that wraps. It is still a pitfall for business arithmetic with products of large values. Options: a 128-bit intermediate result for `*` followed by `/`, or a `muldiv` built-in. To be decided.
 
 Files: `state-pressure` (git-ignored) is copied here as `results.jsonl`, `workdirs.json` and `schedule.json`.
+
+## Follow-up: `define` runs the property tests (commit b814522d)
+
+The QAL/Haiku line was rerun at stage 1 from the same stage 0 with the new binary. The agent wrote the same formula. Its first `define` came back with the warning E0804: `total` trapped on generated inputs, with the hint to bound the inputs with `req`. The agent's own words: "the only warnings are the existing overflow traps for huge negative inputs, which the old code also had". It did not change the code, and the hidden test failed again (19/20). The line was stopped after stage 1, because the outcome of the remaining stages was clear.
+
+**The agent was right about what it saw.** Without a `req`, the old `price * qty` also traps on extreme generated inputs. The warning reports the first trapping input the generator found, which has values far beyond any real amount. Nothing in it shows that the new formula already overflows at 311 588 000 × 311 588 000, inside the 9-digit domain of the task, where the old one did not. The language cannot know that domain. It is in the stage-0 specification, but not in the code (no `req`) and not in the ticket.
+
+**Consequence:** this cannot be closed by a better warning, only by the arithmetic or by required bounds:
+1. Wider integers for intermediate results (`a * b / c` in 128 bits, or a 128-bit `Int`), as the Rust code had with `u128`. This is a language decision with consequences for the compiler, the self-hosting bootstrap and the prover.
+2. Or a `req` that bounds every `Int` parameter of an arithmetic function becomes a rule (a warning on `define` without bounds). This makes the domain visible, but costs every agent a line per function.
