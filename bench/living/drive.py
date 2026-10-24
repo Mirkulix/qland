@@ -96,6 +96,9 @@ def finish(k, arm, run, prefix, attempt, reply):
     d = json.load(open(os.path.join(STATE, "dispatch.json")))
     duration_ms = int((time.time() - d[key(k, arm, run)]) * 1000)
     print(f"{key(k, arm, run)} ({MODELS[run]}): processed={a['total_tokens']} rounds={a['api_calls']} tool_calls={a['tool_calls']} failed_calls={a['failed_tool_calls']} violations={a['violations']}")
+    # Pressure lines get no retry: the attempt is final (archived) and the next stage builds on it.
+    if PRESSURE:
+        attempt = 3
     r = subprocess.run([sys.executable, "bench/run.py", "finish", task_id(k), arm, str(run), "--attempt", str(attempt), "--agent-id", agent,
                         "--subagent-tokens", str(tokens), "--tool-uses", str(a["tool_calls"]), "--duration-ms", str(duration_ms), "--reply", reply], cwd=REPO, env=ENV)
     caught = caught_regressions(path, arm)
