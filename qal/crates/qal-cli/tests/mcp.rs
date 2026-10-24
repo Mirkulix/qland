@@ -867,8 +867,13 @@ fn define_warns_on_a_change_without_a_test_in(c: &mut Client) {
     // The same change with a test for it: no warning.
     let (err, v) = c.call("qal_define", json!({"source": "fn fee(n: Int) -> Int = n + 3\ntest fee_adds_three = fee(1) == 4"}));
     assert!(!err && untested(&v).is_none(), "{v}");
+    // A change whose define also reports proof results (E0802 on an unproven contract): the
+    // proof warnings must not replace E0806 (pressure run 6, stage 7, where they did).
+    let (err, v) = c.call("qal_define", json!({"source": "fn fee(n: Int) -> Int ens r == map_size(map_new()) + n + 4 = n + 4"}));
+    assert!(!err && v["warnings"].as_array().is_some_and(|ws| ws.iter().any(|w| w["code"] == "E0802")), "{v}");
+    assert!(untested(&v).is_some_and(|w| w["def"] == "fee"), "{v}");
     // A define that only adds a test is no change.
-    let (err, v) = c.call("qal_define", json!({"source": "test fee_zero = fee(0) == 3"}));
+    let (err, v) = c.call("qal_define", json!({"source": "test fee_zero = fee(0) == 4"}));
     assert!(!err && untested(&v).is_none(), "{v}");
 }
 

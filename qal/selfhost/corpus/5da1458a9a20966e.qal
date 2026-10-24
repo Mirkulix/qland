@@ -1,1 +1,0 @@
-test fee_zero = fee(0) == 3

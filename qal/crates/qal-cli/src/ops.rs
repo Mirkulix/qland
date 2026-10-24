@@ -554,8 +554,11 @@ pub fn define(ctx: &Ctx, src: &str, agent: &str, breaking: bool) -> Reply {
             let fns: Vec<String> = d.iter().filter(|x| x.kind == "fn" && x.status != "relinked" && x.status != "unchanged").map(|x| x.name.clone()).collect();
             let untested = untested_changes(&d);
             let mut out = Output { defined: Some(d), ..Output::default() };
-            out.warnings = untested;
             out.set_proofs(reports);
+            // After the proof warnings, which set `warnings` (pressure run 6: they replaced E0806).
+            if let Some(u) = untested {
+                out.warnings.get_or_insert_with(Vec::new).extend(u);
+            }
             std.report(&mut out);
             team_report(store.last_write(), &mut out);
             drop(store);
