@@ -120,7 +120,7 @@ def caught_regressions(path, arm):
         if arm == "qal":
             if ("define" in cmd or "qal_test" in cmd) and ('"failed":' in text and '"failed":0' not in text.replace(" ", "")):
                 hits.append(f"call {seen}: tests failed")
-            if "E0801" in text:
+            if "E0801" in text and "qalc" in cmd and "cat TASK.md" not in cmd:
                 hits.append(f"call {seen}: contract refuted")
         else:
             if "cargo test" in cmd and ("test result: FAILED" in text or "panicked" in text):
