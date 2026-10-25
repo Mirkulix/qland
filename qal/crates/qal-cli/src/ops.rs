@@ -1447,7 +1447,7 @@ fn replay_observed(ctx: &Ctx, written: Option<&Loaded>, out: &mut Output) {
     };
     let start = Instant::now();
     let mut runners: Vec<(String, Option<qal_run::Runner>)> = Vec::new();
-    let (mut ran, mut changed) = (0usize, Vec::new());
+    let (mut ran, mut changed, mut accepted) = (0usize, Vec::new(), Vec::new());
     for run in &runs {
         if start.elapsed() > REPLAY_BUDGET {
             break;
@@ -1475,6 +1475,13 @@ fn replay_observed(ctx: &Ctx, written: Option<&Loaded>, out: &mut Output) {
         if now_code.as_ref().ok() == Some(&run.exit_code) && now_out == run.stdout {
             continue;
         }
+        // Reported once, by the define that made the change: the new output is what later defines
+        // compare against (pressure run 12: a report field added at stage 4 was reported again at
+        // every later stage, because nobody ran the old inputs again). A run that fails now keeps
+        // its old output and is reported until it is fixed.
+        if let Ok(code) = now_code {
+            accepted.push(Observed { stdout: now_out.clone(), exit_code: code, ..run.clone() });
+        }
         let (was, now) = match &now_code {
             Err(m) => (first_line(&run.stdout), format!("runtime error: {m}")),
             Ok(_) if now_out != run.stdout => first_difference(&run.stdout, &now_out),
@@ -1482,14 +1489,19 @@ fn replay_observed(ctx: &Ctx, written: Option<&Loaded>, out: &mut Output) {
         };
         changed.push(ChangedRun { entry: run.entry.clone(), args: run.args.clone(), stdin: cut(&run.stdin, 600), was, now });
     }
+    if let Ok(mut store) = ctx.open() {
+        for run in &accepted {
+            let _ = store.observe(run);
+        }
+    }
     if changed.is_empty() {
         return;
     }
     let first = &changed[0];
     let entry = first.entry.clone();
     out.warnings.get_or_insert_with(Vec::new).push(
-        Diagnostic::new("E0807", "behaviour_changed", &entry, "", format!("`{entry}` behaves differently on {} of {ran} earlier runs: `{}` is now `{}`", changed.len(), first.was, first.now))
-            .hint("the runs are in `changed_runs`; if the change request changes this output, run it again with qal_run to record the new behaviour; otherwise the change broke a rule that held before"),
+        Diagnostic::new("E0807", "behaviour_changed", &entry, "", format!("this define changed what `{entry}` prints on {} of {ran} earlier runs: `{}` is now `{}`", changed.len(), first.was, first.now))
+            .hint("the runs are in `changed_runs`; if the change request changes this output, nothing to do (it is the new baseline and is not reported again); otherwise the change broke a rule that held before"),
     );
     changed.truncate(SHOWN_CHANGES);
     out.changed_runs = Some(changed);

@@ -994,12 +994,17 @@ fn define_reports_earlier_runs_whose_output_changed() {
     let (err, v) = c.call("qal_define", json!({"source": "fn price(q: Int) -> Int = if q >= 10 then q * 90 else q * 100"}));
     assert!(!err, "{v}");
     let w = v["warnings"].as_array().and_then(|ws| ws.iter().find(|w| w["code"] == "E0807")).cloned().unwrap_or_default();
-    assert_eq!(w["message"], "`main` behaves differently on 1 of 2 earlier runs: `1140` is now `1080`", "{v}");
+    assert_eq!(w["message"], "this define changed what `main` prints on 1 of 2 earlier runs: `1140` is now `1080`", "{v}");
     assert_eq!(v["changed_runs"], json!([{"entry": "main", "args": [], "stdin": "aaaaaaaaaaaa", "was": "1140", "now": "1080"}]), "{v}");
-    // Running it again records the new output: the next define is quiet.
-    assert!(!c.call("qal_run", json!({"stdin": "aaaaaaaaaaaa"})).0);
+    // Reported once: the new output is the baseline, the next define is quiet.
     let (err, v) = c.call("qal_define", json!({"source": "fn other(x: Int) -> Int = x + 0"}));
     assert!(!err && !v.to_string().contains("E0807"), "{v}");
+    // A run that fails now (a runtime error) keeps its old output and is reported until it is fixed.
+    let broken = "fn price(q: Int) -> Int = if q >= 10 then 1 / 0 else q * 100";
+    for _ in 0..2 {
+        let (_, v) = c.call("qal_define", json!({"source": broken}));
+        assert!(v["changed_runs"][0]["now"].as_str().unwrap_or("").starts_with("runtime error"), "{v}");
+    }
     assert_eq!(c.finish(), Some(0));
 }
 
