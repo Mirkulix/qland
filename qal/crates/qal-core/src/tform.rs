@@ -1480,6 +1480,10 @@ fn validate(p: &TProgram) -> Result<(), String> {
     }
     let check_fn = |f: &TFn, kind: &str| -> R<()> {
         let v = V { p, locals: f.locals.len(), what: format!("{kind} `{}`", f.def.name) };
+        // Parameters are the first locals: code generation reads their types there.
+        if f.def.params.len() > f.locals.len() {
+            return Err(format!("{}: {} parameters but {} locals", v.what, f.def.params.len(), f.locals.len()));
+        }
         if let Some(r) = f.result_local {
             v.local(r)?;
         }
@@ -1635,6 +1639,12 @@ mod tests {
         let mut p = sample();
         p.fns[0].locals.truncate(2);
         assert!(decode(&encode(&p)).unwrap_err().contains("local"));
+        // More parameters than locals (a mutated form made code generation index past the locals).
+        let mut p = sample();
+        let n = p.fns[0].def.params.len();
+        p.fns[0].locals.truncate(n.saturating_sub(1));
+        p.fns[0].result_local = None;
+        assert!(n == 0 || decode(&encode(&p)).is_err());
         // Shapes must fit the declared types (review M6).
         let mut p = sample();
         p.tests[0].body = TExpr { ty: Type::option(Type::Int), kind: TKind::Variant(2, vec![]) };
