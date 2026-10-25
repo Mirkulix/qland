@@ -120,3 +120,49 @@ difference is one of:
 - a prover that sees through small Bool helpers (inline their bodies).
 
 Either way, A3 is the measurement that would show it, with the same mutants.
+
+## A3 again, with req-directed generation (2026-10-25, later)
+
+`qal-prove/src/repair.rs` now reads a `req` as atoms on paths into the parameters, through Bool
+helpers, `map_get` lookups and `fold(..., true, fn(a, x) => a && p(x))`, and repairs every other
+generated input towards them before it runs. Every input still has to pass the real `req`, so
+a run means what it meant before; only the chance of a run changed. Raw results:
+`results-a3-repair.json`.
+
+The first run of the property tests found three gaps in my own A3 contracts, on the
+**unmutated** code:
+
+- `fill` promised something about the stored records under `oid` and `c.id` without requiring
+  them to be valid: a frame condition was missing (`order_at(st, oid)`, `cust_at(st, c.id)`).
+- `take_back` can keep `taxes <= spent` only if the customer's net covers the refund's net; the
+  exact precondition is `c.spent - c.taxes >= o.total * qty / o.qty - o.tax * qty / o.qty`.
+
+That is the job of contracts: they force the precision a random test never asks for. After these
+corrections, the five contracted functions pass 100 of 100 runs each. Before, they gave up at 37,
+3 and 0 runs (`fill`, `put_back`, `take_back`).
+
+| | valid mutants caught (of 14) |
+|---|---|
+| Rust `cargo test` (2 example tests, `assert!`s) | 1 |
+| QAL before (random inputs) | 2 |
+| **QAL with req-directed inputs** | **5** |
+
+The three new catches are property tests of the mutated function failing its `ens` in the
+`qal_define` reply that stores the bug. The same tests pass 100 of 100 runs on the unmutated code:
+
+- `cancel_outstanding_negative`: `put_back`;
+- `cancel_keeps_tax`: `put_back`;
+- `return_keeps_tax`: `take_back`.
+
+Rust's `assert!`s of the same invariants sit on the same paths, but no test runs them.
+
+**The design's criterion is met: QAL catches 4 more than Rust.** Two caveats:
+
+- One code base, one set of mutants. The contracts were written by me after the mutants were
+  chosen, from the design's fixed list of invariants.
+- The remaining 9 mutants are rules (ordering, off-by-one at limits, what an id means after a
+  cancel) that no invariant of the list states. Only a test or a contract that states the rule
+  catches them.
+
+**Next:** Phase B, agent runs with trap tickets. These answer whether agents write such
+contracts themselves, and whether the property warnings change what they deliver.
