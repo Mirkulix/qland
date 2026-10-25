@@ -118,3 +118,25 @@ Fixed:
 at this size. An incremental check and hash would recompute only the defined names and their
 dependents. That changes the protocol of the self-hosted compiler and so the bootstrap fixpoint,
 which is the next step for programs of this size.
+
+## Live trial of E0807 (2026-10-25, later)
+
+The setup of run 11, stage 12, repeated three times in parallel:
+
+- the stage-11 store of run 11;
+- its behaviour memory, filled with the 25 real `qal_run` inputs of stages 1–11;
+- the current binary;
+- three fresh Haiku agents on the stage-12 ticket.
+
+**Result:** all three passed the hidden tests (50/50), none made run 11's tier-discount mistake,
+and E0807 never fired. None of the 25 kept runs changed output, so there was no false alarm.
+
+**What this shows and what it does not:**
+
+- **Shown:** the memory stays quiet when nothing breaks. In run 13 it fired only for the three
+  intended changes.
+- **Not shown:** an agent correcting a live regression after an E0807. That mistake came up once
+  in 9 attempts at stage 12 (runs 7–13 and these 3), so showing it needs many more attempts, or a
+  ticket built to provoke it.
+- **What is evidenced** is the replay on run 11: the warning names the hidden test's failure, with
+  its input, in the round that made the mistake.
