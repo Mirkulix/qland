@@ -201,8 +201,8 @@ fn handshake_lists_the_tools_with_the_language_reference() {
     // with its `message` filter), the rerun of 2026-10-24 (`cases` on qal_define) and the pressure run of
     // 2026-10-24 (the property tests define runs) and the fused multiply-divide (`a * b * ... / c`
     // exact, on the Int type) and pressure run 5 (E0806, a change without a test) and pressure run 7 (dependents that still check are relinked,
-    // io needs no grant) add to it.
-    assert!(qal_cli::mcp::REFERENCE.lines().count() <= 76 && qal_cli::mcp::REFERENCE.len() <= 10700, "{} lines, {} bytes", qal_cli::mcp::REFERENCE.lines().count(), qal_cli::mcp::REFERENCE.len());
+    // io needs no grant) add to it; after pressure run 9 the services moved to qal_query's topic "services".
+    assert!(qal_cli::mcp::REFERENCE.lines().count() <= 67 && qal_cli::mcp::REFERENCE.len() <= 9450, "{} lines, {} bytes", qal_cli::mcp::REFERENCE.lines().count(), qal_cli::mcp::REFERENCE.len());
     // An unknown version gets the newest legacy one.
     let r = c.request("initialize", json!({"protocolVersion": "1999-01-01", "capabilities": {}, "clientInfo": {"name": "x", "version": "1"}}));
     assert_eq!(r["result"]["protocolVersion"], "2025-11-25");
@@ -696,9 +696,16 @@ fn test_services_with_qal_request_in(c: &mut Client) {
     let (err, v) = c.call("qal_request", json!({"allow": ["db:mem", "io"], "requests": [{"method": "POST", "path": "/todos", "body": "x".repeat((1 << 20) + 1)}]}));
     assert_eq!((err, v["responses"][0]["status"].as_u64(), v["responses"][0]["error"]["code"].as_str()), (false, Some(413), Some("E0800")));
     let reference = qal_cli::mcp::REFERENCE;
-    for needle in ["fn handle(rq: HttpRequest) -> HttpResponse", "string literal with `?` placeholders", "committed only for status 200-399", "\"db:mem\"", "qal_query name \"std.\""] {
-        assert!(reference.contains(needle), "{needle}");
+    assert!(reference.contains("qal_query name \"std.\"") && reference.contains("qal_query {\"topic\": \"services\"}"));
+    // The services reference is a topic of qal_query, not part of qal_define's description.
+    let (err, v) = c.call("qal_query", json!({"topic": "services"}));
+    assert!(!err, "{v}");
+    let text = v["reference"].as_str().unwrap_or("");
+    for needle in ["fn handle(rq: HttpRequest) -> HttpResponse", "string literal with `?` placeholders", "committed only for status 200-399", "\"db:mem\""] {
+        assert!(text.contains(needle) && !reference.contains(needle), "{needle}");
     }
+    let (err, v) = c.call("qal_query", json!({"topic": "nope"}));
+    assert!(err && v.to_string().contains("unknown topic"), "{v}");
 
 }
 

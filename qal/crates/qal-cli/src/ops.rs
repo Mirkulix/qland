@@ -30,6 +30,9 @@ pub struct Output {
     /// The entries of `query`, or the cases of `run` with `cases`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub results: Option<Results>,
+    /// The text of a reference topic (`qal_query {"topic": ...}`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reference: Option<&'static str>,
     /// The earlier fixes and matching definitions of `recall`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub recall: Option<Recall>,

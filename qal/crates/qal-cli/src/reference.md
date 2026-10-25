@@ -57,23 +57,14 @@ Built-ins (indices count characters; slice and range are half-open: the end is e
   to_int accepts an optional sign and digits only (no spaces: trim first). Deep non-tail recursion can overflow the stack (about 100 000 calls).
 Performance: push on a list or ++ on a string in a loop is quadratic (about 8 000 elements at most): build lists with split/map/filter/range. len and slice on Str are O(n): iterate with chars.
 
-Services (prelude types exist in every program; their names and variants are reserved):
-  HttpHeader = { name: Str, value: Str }  HttpRequest = { method: Str, path: Str, query: Str, headers: List[HttpHeader], body: Str }
-  HttpResponse = { status: Int, headers: List[HttpHeader], body: Str }  HttpCall = { method: Str, url: Str, headers: List[HttpHeader], body: Str }
-  A service handler is `fn handle(rq: HttpRequest) -> HttpResponse` (any effects; header names arrive lowercase); test it with qal_request.
-  db_exec(sql, params) -> Result[Int, DbError] !db (changed rows)  db_query(sql, params) -> Result[DbRows, DbError] !db
-    sql must be a string literal with `?` placeholders, one statement, no PRAGMA/ATTACH/BEGIN/COMMIT (E0241, E0242); values go in params: [SqlInt(id), SqlText(t)]
-    SqlValue = SqlNull | SqlInt(Int) | SqlFloat(Float) | SqlText(Str)  DbRows = { columns: List[Str], rows: List[List[SqlValue]] }
-    DbError = DbConstraint(Str) | DbSql(Str) | DbBusy | DbFull | DbTooLarge. One transaction per execution, committed only for status 200-399 (qal_call: no error, qal_run: exit 0).
-  http(call) -> Result[HttpResponse, NetError] !net  NetError = NetDenied(Str) | NetInvalid(Str) | NetConnect(Str) | NetTimeout | NetTooLarge; redirects are not followed.
-  Grant "db:mem" (fresh in-memory database), "db" or "db:<name>" (.qal/db/<name>.sqlite), "net:<host>[:port]".
+Services (HTTP handlers, SQLite via db_exec/db_query, outgoing http; the prelude types Http*, Sql*, Db*, Net* and their variants are reserved): qal_query {"topic": "services"} has the reference.
 Standard library: `std.<module>.<name>` is one name (fn std.json.parse, type std.json.Json, std.json.Str("a"), pattern std.json.Int(n), std.route.Route[A]).
   It is read-only in a project (defining or renaming a `std.` name is E0240) and imported automatically; list it with qal_query name "std.".
 Store rules: defining an existing name replaces it. Same signature: everything using it is relinked and re-checked automatically. Changed signature: dependents that still check are relinked too; the others are rejected (`signature_change` lists them, their errors follow) unless the same call redefines them. A name keeps its kind (fn, test, type). References bind to names: qal_rename changes no hash and users follow the new name. qal_delete removes a name nothing refers to (else `has_dependents`). Two names can hold the identical definition, but one definition cannot refer to both (E0404 `alias_reference`): use one name.
 qal_define runs the stored tests that use a function it defined (`tests`, `passed`, `failed`) and the property tests of the functions it defined (warning E0803: failed, E0804: trapped, e.g. overflow; bound the inputs with `req`); failures keep the definition. A define that changes a stored fn without a `test` warns E0806: pin each new rule with a test in the same define.
 Several inputs in one call: qal_run {"cases": [{"args": ["a"], "stdin": "x"}, {"args": []}]} (results in order; fails only on a runtime error); qal_define takes the same `cases` (and `allow`) and runs them once the code is stored.
 Workflow: qal_define -> qal_test -> qal_run (entry point; io is granted, grant other effects with allow: "fs:<dir>" grants read AND write of all non-hidden files under that project dir, e.g. Cargo.toml: grant the narrowest dir) or qal_call (any fn, JSON args). qal_prove shows the proof status. Before a change, read qal_query {"outline": true} (contracts, uses, used_by, tests), then qal_view only what you will edit.
-A diagnostic whose mistake was fixed before carries the fix in its hints; qal_recall {"code": "E0201", "message": "unknown name `x`"} (or name/type) lists earlier corrections and matching definitions.
+A diagnostic whose mistake was fixed before carries the fix in its hints; qal_recall lists earlier corrections.
 ## Team
 @architect You are an architect: you own the interfaces (types, signatures, contracts). Write them, with `todo()` bodies, in your own change set; open work packages for others with qal_change open {title, scope, assignee}. You merge (qal_merge) and comment (qal_review "comment").
 @implementer You are an implementer: claim a work package (qal_change claim) or open your own; replace bodies there. Existing names: only those in the scope (E0905), never their type, signature, contracts or kind (E0906); new names are free. qal_change show lists each review of your change set with its comments (read `changes` feedback there).
