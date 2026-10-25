@@ -29,28 +29,31 @@ type QcGlobals = {
   fns: List[QcFnEntry],
   variants: List[QcVariantEntry],
   type_index: Map[Str, Int],
+  # The position in `fns` / `variants` of the first entry of each name: lookups were linear
+  # searches, quadratic in the size of the codebase (1520 definitions: most of a define's time).
+  fn_index: Map[Str, Int],
+  variant_index: Map[Str, Int],
   prelude: Bool
 }
 
-fn qc_g_find_fn_loop(fns: List[QcFnEntry], name: Str, idx: Int) -> Option[QcFnEntry] =
-  if idx >= len(fns) then None
-  else
-    let e = list_at(fns, idx) in
-    if e.name == name then Some(e)
-    else qc_g_find_fn_loop(fns, name, idx + 1)
-
 fn qc_g_find_fn(g: QcGlobals, name: Str) -> Option[QcFnEntry] =
-  qc_g_find_fn_loop(g.fns, name, 0)
-
-fn qc_g_find_variant_loop(vars: List[QcVariantEntry], name: Str, idx: Int) -> Option[QcVariantEntry] =
-  if idx >= len(vars) then None
-  else
-    let e = list_at(vars, idx) in
-    if e.name == name then Some(e)
-    else qc_g_find_variant_loop(vars, name, idx + 1)
+  match map_get(g.fn_index, name) {
+    Some(i) => if i < len(g.fns) then Some(list_at(g.fns, i)) else None,
+    None => None
+  }
 
 fn qc_g_find_variant(g: QcGlobals, name: Str) -> Option[QcVariantEntry] =
-  qc_g_find_variant_loop(g.variants, name, 0)
+  match map_get(g.variant_index, name) {
+    Some(i) => if i < len(g.variants) then Some(list_at(g.variants, i)) else None,
+    None => None
+  }
+
+# `index` with the names of `vars` from position `from` on that it does not have yet.
+fn qc_index_variants(vars: List[QcVariantEntry], from: Int, index: Map[Str, Int]) -> Map[Str, Int] =
+  if from >= len(vars) then index
+  else
+    let n = (list_at(vars, from)).name in
+    qc_index_variants(vars, from + 1, if map_has(index, n) then index else map_put(index, n, from))
 
 fn qc_g_type_def(g: QcGlobals, name: Str) -> Option[QcTypeDef] =
   match map_get(g.type_index, name) {
@@ -1832,6 +1835,8 @@ fn qc_build_globals(p: QcProgram, is_new: fn(Str) -> Bool) -> QcGlobalsDiagsRes 
       fns: [],
       variants: [],
       type_index: map_new(),
+      fn_index: map_new(),
+      variant_index: map_new(),
       prelude: !legacy
     },
     idx: 0
@@ -1847,7 +1852,7 @@ fn qc_build_globals(p: QcProgram, is_new: fn(Str) -> Bool) -> QcGlobalsDiagsRes 
     } in
     let next_tp = QcTProgram { types: push(cur_g.tp.types, t), fns: [], tests: [], generics: [] } in
     let next_idx = map_put(cur_g.type_index, t.name, cur_idx) in
-    QcGlobalsFoldAcc { g: QcGlobals { tp: next_tp, fns: cur_g.fns, variants: next_vars, type_index: next_idx, prelude: cur_g.prelude }, idx: cur_idx + 1 }
+    QcGlobalsFoldAcc { g: QcGlobals { tp: next_tp, fns: cur_g.fns, variants: next_vars, type_index: next_idx, fn_index: cur_g.fn_index, variant_index: qc_index_variants(next_vars, len(cur_g.variants), cur_g.variant_index), prelude: cur_g.prelude }, idx: cur_idx + 1 }
   ) in
   let g0 = g0_acc.g in
   # User types
@@ -1857,7 +1862,7 @@ fn qc_build_globals(p: QcProgram, is_new: fn(Str) -> Bool) -> QcGlobalsDiagsRes 
   # Check irregular recursion
   let diags3 = qc_irregular_recursion(res2.g.tp, res2.diags) in
   # Collect functions and tests
-  let res4 = qc_collect_fn_signatures_loop(p.defs, res2.g, diags3, 0, 0, 0, []) in
+  let res4 = qc_collect_fn_signatures_loop(p.defs, res2.g, diags3, 0, 0, 0, map_new()) in
   QcGlobalsDiagsRes { g: res4.g, diags: res4.diags }
 
 fn qc_collect_user_types_loop(defs: List[QcDef], g: QcGlobals, diags: List[QcDiag], legacy: Bool, is_new: fn(Str) -> Bool, idx: Int) -> QcGlobalsDiagsRes =
@@ -1885,7 +1890,7 @@ fn qc_collect_user_types_loop(defs: List[QcDef], g: QcGlobals, diags: List[QcDia
           } in
           let type_k = len(g.tp.types) in
           let next_tp = QcTProgram { types: push(g.tp.types, t), fns: g.tp.fns, tests: g.tp.tests, generics: g.tp.generics } in
-          let next_g = QcGlobals { tp: next_tp, fns: g.fns, variants: body_res.vars, type_index: map_put(g.type_index, t.name, type_k), prelude: g.prelude } in
+          let next_g = QcGlobals { tp: next_tp, fns: g.fns, variants: body_res.vars, type_index: map_put(g.type_index, t.name, type_k), fn_index: g.fn_index, variant_index: qc_index_variants(body_res.vars, len(g.variants), g.variant_index), prelude: g.prelude } in
           qc_collect_user_types_loop(defs, next_g, body_res.diags, legacy, is_new, idx + 1),
       _ => qc_collect_user_types_loop(defs, g, diags, legacy, is_new, idx + 1)
     }
@@ -1940,7 +1945,7 @@ fn qc_resolve_type_bodies_loop(g: QcGlobals, diags: List[QcDiag], legacy: Bool, 
       QcBodyEnum(nvs) => qc_update_variants_fields_loop(g.variants, t.name, nvs, 0),
       _ => g.variants
     } in
-    let next_g = QcGlobals { tp: QcTProgram { types: next_types, fns: g.tp.fns, tests: g.tp.tests, generics: g.tp.generics }, fns: g.fns, variants: next_vars, type_index: g.type_index, prelude: g.prelude } in
+    let next_g = QcGlobals { tp: QcTProgram { types: next_types, fns: g.tp.fns, tests: g.tp.tests, generics: g.tp.generics }, fns: g.fns, variants: next_vars, type_index: g.type_index, fn_index: g.fn_index, variant_index: g.variant_index, prelude: g.prelude } in
     qc_resolve_type_bodies_loop(next_g, diags_body, legacy, k + 1)
 
 fn qc_update_variants_fields_loop(vars: List[QcVariantEntry], type_name: Str, vs: List[QcVariant], idx: Int) -> List[QcVariantEntry] =
@@ -1978,14 +1983,14 @@ fn qc_resolve_variant_fields_loop(g: QcGlobals, fields: List[QcType], tparams: L
     let ty = match res.ty { Some(t) => t, None => QcTUnit } in
     qc_resolve_variant_fields_loop(g, fields, tparams, def_name, path, res.diags, idx + 1, AccPush(acc, ty))
 
-fn qc_collect_fn_signatures_loop(defs: List[QcDef], g: QcGlobals, diags: List[QcDiag], idx: Int, fn_idx: Int, gen_idx: Int, seen: List[Str]) -> QcGlobalsDiagsRes =
+fn qc_collect_fn_signatures_loop(defs: List[QcDef], g: QcGlobals, diags: List[QcDiag], idx: Int, fn_idx: Int, gen_idx: Int, seen: Map[Str, Bool]) -> QcGlobalsDiagsRes =
   if idx >= len(defs) then QcGlobalsDiagsRes { g: g, diags: diags }
   else
     let d = list_at(defs, idx) in
     match d {
       QcDefType(_) => qc_collect_fn_signatures_loop(defs, g, diags, idx + 1, fn_idx, gen_idx, seen),
       QcDefFn(f) =>
-        let d_seen = if qc_contains_str_loop(seen, f.name, 0) then
+        let d_seen = if map_has(seen, f.name) then
           push(diags, qc_diag_duplicate_name(f.name, "", f.name))
         else if qc_builtin_is_name(f.name) then
           push(diags, qc_diag_builtin_name(f.name))
@@ -2002,19 +2007,20 @@ fn qc_collect_fn_signatures_loop(defs: List[QcDef], g: QcGlobals, diags: List[Qc
         let ret_ty = match (qc_resolve_type(g, f.ret, f.tparams, f.eparams, f.name, "", [])).ty { Some(t) => t, None => QcTUnit } in
         let sig = QcSig { tparams: f.tparams, eparams: f.eparams, params: ptypes, ret: ret_ty, effects: f.effects } in
         let next_fns = push(g.fns, QcFnEntry { name: f.name, idx: cur_slot, sig: sig }) in
-        let next_g = QcGlobals { tp: g.tp, fns: next_fns, variants: g.variants, type_index: g.type_index, prelude: g.prelude } in
+        let next_index = if map_has(g.fn_index, f.name) then g.fn_index else map_put(g.fn_index, f.name, len(g.fns)) in
+        let next_g = QcGlobals { tp: g.tp, fns: next_fns, variants: g.variants, type_index: g.type_index, fn_index: next_index, variant_index: g.variant_index, prelude: g.prelude } in
         let next_fn_idx = if is_gen then fn_idx else fn_idx + 1 in
         let next_gen_idx = if is_gen then gen_idx + 1 else gen_idx in
-        qc_collect_fn_signatures_loop(defs, next_g, d_seen, idx + 1, next_fn_idx, next_gen_idx, push(seen, f.name)),
+        qc_collect_fn_signatures_loop(defs, next_g, d_seen, idx + 1, next_fn_idx, next_gen_idx, map_put(seen, f.name, true)),
       QcDefTest(t) =>
-        let d_seen = if qc_contains_str_loop(seen, t.name, 0) then
+        let d_seen = if map_has(seen, t.name) then
           push(diags, qc_diag_duplicate_name(t.name, "", t.name))
         else if qc_builtin_is_name(t.name) then
           push(diags, qc_diag_builtin_name(t.name))
         else if t.name == "memory" || t.name == "qal_alloc" then
           push(diags, qc_diag_hint(qc_diag_duplicate_name(t.name, "", t.name), "`" ++ t.name ++ "` is reserved by the runtime"))
         else diags in
-        qc_collect_fn_signatures_loop(defs, g, d_seen, idx + 1, fn_idx, gen_idx, push(seen, t.name))
+        qc_collect_fn_signatures_loop(defs, g, d_seen, idx + 1, fn_idx, gen_idx, map_put(seen, t.name, true))
     }
 
 # Main checker entry point
