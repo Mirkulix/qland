@@ -157,3 +157,34 @@ So an incremental define needs the self-hosted checker to take the stored signat
 check only the bodies of the defined names and their dependents. That changes `qc_check` (QAL) and
 the protocol, and needs the bootstrap fixpoint re-established. It is the open engineering step for
 codebases above a few hundred functions. Until then: 0.46 s at 67 functions, about 2 s at 1520.
+
+## Inside the self-hosted compiler (2026-10-25, later)
+
+**Measured with fuel** (counted instructions) per compiler call, checking 1520 definitions:
+
+- the parse alone costs 212 M;
+- each of the 14 `CHECK_RANGE` work items costs ~206 M, the whole-text parse again, because
+  checking its 128 definitions is cheap;
+- the 27 validation items cost ~73 M each, decoding the whole typed form;
+- the two joins cost 204 and 270 M.
+
+**Two changes, each with the bootstrap fixpoint re-established and all suites green:**
+
+- `cfbc6222`: the checker's globals look functions and variants up in maps, not by linear search.
+  About 10 %, so the lookups were not the main cost.
+- `9bbb6895`: `CHECK_FILE` splits into at most 8 work items (the host runs 8 at a time), so the
+  whole-text parse is repeated 8 times instead of 14. `qal check` of the 1520 definitions takes
+  1.17 s instead of 1.44 s.
+- **Tried and kept out:** larger validation items. They ran out of the 1 GiB limit while
+  bootstrapping the compiler itself; the small items exist for memory.
+
+**Result:**
+
+| codebase | at the start of the day | now |
+|---|---|---|
+| 67 functions, median define | 1.24 s | **0.46 s** |
+| 1520 definitions, typical define | 4.5–5.0 s | **1.65–1.75 s** |
+
+The rest is spread over single-core steps of the self-hosted pipeline: the main parse, the joins,
+and the host's parse and print. Each of them needs the architectural change of the incremental
+design (`docs/superpowers/specs/2026-10-25-qal-incremental-define-design.md`).
