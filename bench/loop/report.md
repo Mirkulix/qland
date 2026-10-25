@@ -140,3 +140,20 @@ and E0807 never fired. None of the 25 kept runs changed output, so there was no 
   ticket built to provoke it.
 - **What is evidenced** is the replay on run 11: the warning names the hidden test's failure, with
   its input, in the round that made the mistake.
+
+## Why the rest needs the self-hosted compiler (2026-10-25, later)
+
+Two ways around it, both measured at 1520 definitions:
+
+1. **`DEFINE` with the real store state** (protocol §4.5) and only the new text. Its hash equals
+   the store's, but it takes 1.58 s, as long as check and hash together: it type-checks the whole
+   program as well.
+2. **A host-side cache of the fork/join work items.** The check splits into a main call of
+   780 ms (parsing 400 KB and splitting it, on one core), 14 + 27 work items of 725 + 258 ms on
+   8 cores, and joins of 230 ms. Each item carries about 100 definitions with their context, so a
+   change alters several of them, and the single-core main call cannot be cached at all.
+
+So an incremental define needs the self-hosted checker to take the stored signatures as given and
+check only the bodies of the defined names and their dependents. That changes `qc_check` (QAL) and
+the protocol, and needs the bootstrap fixpoint re-established. It is the open engineering step for
+codebases above a few hundred functions. Until then: 0.46 s at 67 functions, about 2 s at 1520.
