@@ -297,7 +297,13 @@ pub fn check_properties(tp: &TProgram, only: Option<&[String]>, opts: &PropOptio
         return Ok(Vec::new());
     }
     let program = with_req_checks(tp, &fns);
-    let module = qal_compiler::compile(&program, &Entry::All).map_err(|m| RunError::new("compile_error", "", format!("the program cannot be compiled to WebAssembly: {m}")))?;
+    // Only the tested functions, their `req?` checks and the invariants are entry points: the rest
+    // of a large codebase is compiled only as far as they reach it (1520 definitions: 1.25 s for
+    // the properties of one define, most of it compiling everything).
+    let invs = Invariants::of(tp);
+    let mut exports: Vec<String> = fns.iter().flat_map(|&i| [tp.fns[i].def.name.clone(), req_name(&tp.fns[i].def.name)]).collect();
+    exports.extend(tp.fns.iter().map(|f| f.def.name.clone()).filter(|n| invs.is_invariant(n)));
+    let module = qal_compiler::compile(&program, &Entry::Fns(exports)).map_err(|m| RunError::new("compile_error", "", format!("the program cannot be compiled to WebAssembly: {m}")))?;
     let runner = Runner::new(module).map_err(|m| RunError::new("compile_error", "", m))?.with_fuel(opts.fuel).with_timeout(opts.timeout);
     Ok(run_properties(&program, &runner, &fns, opts))
 }

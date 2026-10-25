@@ -1210,14 +1210,25 @@ fn test_with(ctx: &Ctx, source: &Source, loaded: &Loaded, perms: Permissions, na
     if !unknown.is_empty() {
         return Reply::diagnostics(unknown);
     }
-    let runner = match ctx.runner(loaded, &Entry::Tests, perms) {
+    let run_all = names.is_empty();
+    // Named tests (a define's): compile only them and what they reach, not every test of the
+    // project (a codebase of 1520 definitions: 0.97 s for 72 tests, most of it compiling 760).
+    let pruned;
+    let compiled = if run_all {
+        loaded
+    } else {
+        let mut typed = loaded.typed.clone();
+        typed.tests.retain(|t| names.iter().any(|n| *n == t.name));
+        pruned = Loaded { program: qal_core::ast::Program::default(), typed };
+        &pruned
+    };
+    let runner = match ctx.runner(compiled, &Entry::Tests, perms) {
         Ok(r) => r,
         Err(e) => return Reply::error(e),
     };
     let start = Instant::now();
     let mut tests = Vec::new();
     let mut skipped = Vec::new();
-    let run_all = names.is_empty();
     // In a project, "all" means the project's own tests: std's run when named (or in the std store).
     let own_only = run_all
         && match source {

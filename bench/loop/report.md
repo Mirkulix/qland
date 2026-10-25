@@ -88,3 +88,33 @@ changed_runs: product p1 a 1000 100 / customer c1 ann gold / order o1 c1 p1 10 .
 
 That is the hidden test's failure, shown to the agent in the round in which it made the mistake.
 Whether an agent then fixes it is a question for an agent run.
+
+## Scaling (2026-10-25, later)
+
+`scale.py` makes the run-10 program ten times as large: 1520 definitions and 760 tests, all
+passing. A define in it took **4.5–5.0 s**, so the one second held only for small programs. Where
+the time went:
+
+| step | time |
+|---|---|
+| whole-program check | 1.41 s |
+| hash | 0.60 s |
+| tests | 0.97 s, mostly compiling all 760 tests to run 72 |
+| properties | 1.25 s, compiling every function to test one |
+
+Fixed:
+
+- **Tests** compile only the tests a define runs, and what they reach.
+- **Properties** compile only the tested functions, their `req` checks and the invariants as entry
+  points.
+- **Check and hash** run at the same time; both only read the combined program.
+
+| codebase | before | after |
+|---|---|---|
+| 67 functions (run 10), median | 0.64 s | **0.46 s** (max 0.70) |
+| 1520 definitions, typical define with 72 tests | 4.5–5.0 s | **1.9–2.1 s** |
+
+**Left:** the self-hosted compiler checks and hashes the whole codebase on every define, ≈ 1.6 s
+at this size. An incremental check and hash would recompute only the defined names and their
+dependents. That changes the protocol of the self-hosted compiler and so the bootstrap fixpoint,
+which is the next step for programs of this size.
