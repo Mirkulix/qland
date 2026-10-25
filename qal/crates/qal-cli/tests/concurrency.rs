@@ -247,11 +247,12 @@ fn eight_processes_with_random_operations_lose_nothing() {
                                 }
                             }
                         } else if op < 50 {
-                            let r = c.call("qal_define", json!({"source": format!("fn {name}() -> Int = {}", rng.below(1000)), "change": change}));
+                            let src = format!("fn {name}() -> Int = {}", rng.below(1000));
+                            let r = c.call("qal_define", json!({"source": src, "change": change}));
                             if !r.0 {
-                                let d = &r.1["defined"][0];
-                                last.entry(change.clone()).or_default().insert(name.clone(), d["hash"].as_str().unwrap().to_string());
-                                confirmed.push((change.clone(), name.clone(), d["hash"].as_str().unwrap().to_string()));
+                                let hash = qal_compiler::hash_program(&qal_compiler::parse_program(&src).unwrap()).unwrap().defs[0].hash.to_hex();
+                                last.entry(change.clone()).or_default().insert(name.clone(), hash.clone());
+                                confirmed.push((change.clone(), name.clone(), hash));
                             } else if code(&r.1) == "E0908" {
                                 // Merged (or abandoned) meanwhile: go on in a new change set.
                                 change = c.open(&format!("more work of {member}"));
