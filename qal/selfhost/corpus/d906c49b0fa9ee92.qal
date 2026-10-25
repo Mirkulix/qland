@@ -1,0 +1,1 @@
+fn twice[T](xs: List[T]) -> List[T] = concat(xs, concat(xs, []))

@@ -192,3 +192,61 @@ codebases above a few hundred functions. Until then: 0.46 s at 67 functions, abo
 The rest is spread over single-core steps of the self-hosted pipeline: the main parse, the joins,
 and the host's parse and print. Each of them needs the architectural change of the incremental
 design (`docs/superpowers/specs/2026-10-25-qal-incremental-define-design.md`).
+
+## The incremental define (2026-10-26)
+
+**What it does** (`qal/crates/qal-store/src/incremental.rs`; design: approach C in
+`docs/superpowers/specs/2026-10-25-qal-incremental-define-design.md`):
+
+- **Cache:** after each define the store keeps its checked and hashed program in
+  `.qal/typed.cache`, keyed by the codebase (names, hashes, local names) and the compiler's hash.
+- **Check:** only the input, its transitive dependents, the generic functions and the callers of
+  instances are checked in full; everything else enters as a signature. The unchanged typed forms
+  come from the cache with their calls renumbered.
+- **Hash:** only the changed definitions and what they refer to are hashed.
+- **Smaller fixes:**
+  - The tests reaching a define are found from one snapshot instead of one query per dependent
+    (about 0.2 s at 1520 definitions).
+  - A define stores only the canons with new hashes.
+
+The self-hosted compiler, its protocol and the bootstrap are unchanged.
+
+**Differential test:**
+
+- **Setup:**
+  - 318 archived benchmark stores, 2424 defines;
+  - per store: body edits, a new function with a test, a new type, and an edit that is rejected;
+  - every define ran with `QAL_INCREMENTAL=verify`, which also takes the full path and compares.
+- **Result:**
+  - 1753 incremental checks and 1784 incremental hashes, **all identical** to the full path;
+  - 0 differences;
+  - the rest are first defines without a cache and rejected inputs (these always take the full
+    path, so their diagnostics are the full check's).
+- **Bug found by the run:** a parameter named `todo` shadowed the stub body `todo()` in six living
+  stores. It was harmless (full path), but slow; fixed.
+- **Fixed by review:** the cache key is computed from what the define wrote, not from a snapshot
+  taken after the commit, which could already contain another writer's define.
+- **Regression test:** `incremental_define_equals_the_full_one` (`qal-cli/tests/cli.rs`):
+  - nine steps over generics, instances, closures, variants, records, a recursive group, a contract
+    and a rejection;
+  - each step must take the incremental path and agree;
+  - a second project built with `QAL_INCREMENTAL=off` must end with the same hashes.
+
+**Measured** (the whole 1-turn loop: check, proof, tests, property tests, replay, relink):
+
+| codebase | at the start of 2026-10-25 | before this change | now |
+|---|---|---|---|
+| 66 functions, median define | 1.24 s | 0.46 s | **0.30 s** |
+| 1520 definitions, typical define | 4.5–5.0 s | 1.65–1.75 s | **0.61–0.72 s** |
+
+**Where the 0.65 s at 1520 definitions go now:**
+
+| step | time |
+|---|---|
+| reduced check | 0.25 s |
+| Z3 proofs of the ~80 relinked functions (a dependent's hash changed, so its proof is redone) | 0.12 s |
+| locked write | 0.06 s |
+| tests | 0.08 s |
+| property tests and replay | 0.08 s |
+
+The goal of the design (under 0.5 s) is reached at 66 functions and nearly at 1520.

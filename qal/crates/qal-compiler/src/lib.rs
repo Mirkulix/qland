@@ -99,6 +99,22 @@ pub fn set_qal_driver(d: Driver) {
     }
 }
 
+static COMPILER_IDENTITY: std::sync::RwLock<Option<String>> = std::sync::RwLock::new(None);
+
+/// Records which compiler module the driver runs (e.g. the hash of its WebAssembly): results that
+/// depend on the compiler, like a store's kept checked program, are keyed by it.
+pub fn set_compiler_identity(id: String) {
+    if let Ok(mut lock) = COMPILER_IDENTITY.write() {
+        *lock = Some(id);
+    }
+}
+
+/// The identity of the compiler in use: the module set with [`set_compiler_identity`], else the
+/// backend's name and this crate's version.
+pub fn compiler_identity() -> String {
+    COMPILER_IDENTITY.read().ok().and_then(|l| l.clone()).unwrap_or_else(|| format!("{}-{}", backend().name(), env!("CARGO_PKG_VERSION")))
+}
+
 /// True if a driver for the self-hosted compiler module has been installed.
 pub fn has_qal_driver() -> bool {
     QAL_DRIVER.read().map(|l| l.is_some()).unwrap_or(false)

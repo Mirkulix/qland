@@ -1002,3 +1002,73 @@ fn corrections_import_fills_the_memory_that_recall_reads() {
     assert_eq!(qal(&["corrections", "import", "/no/such/file.json"]).0, 2);
     assert_eq!(qal(&["corrections"]).0, 2);
 }
+
+/// A define reuses the checked and hashed program of the last one for what it does not change
+/// (`qal-store/src/incremental.rs`). Every step here runs with `QAL_INCREMENTAL=verify`, which also
+/// runs the full check and hash and reports whether the two agree; a second project defines the
+/// same steps with `QAL_INCREMENTAL=off`, and both end with the same hashes.
+#[test]
+fn incremental_define_equals_the_full_one() {
+    let steps = [
+        "type Shape = Circle(Int) | Rect(Int, Int) | Dot\n\
+         type Acct = { id: Int, balance: Int }\n\
+         fn area(s: Shape) -> Int = match s { Circle(r) => 3 * r * r, Rect(w, h) => w * h, Dot => 0 }\n\
+         fn twice[T](xs: List[T]) -> List[T] = concat(xs, xs)\n\
+         fn total(xs: List[Shape]) -> Int = fold(map(xs, fn(s) => area(s)), 0, fn(a, b) => a + b)\n\
+         fn deposit(a: Acct, n: Int) -> Acct\n  req n >= 0\n  ens r.balance >= a.balance\n= Acct { id: a.id, balance: a.balance + n }\n\
+         fn is_even(n: Int) -> Bool = if n == 0 then true else is_odd(n - 1)\n\
+         fn is_odd(n: Int) -> Bool = if n == 0 then false else is_even(n - 1)\n\
+         fn count(xs: List[Int]) -> Int = len(twice(xs))\n\
+         test area_rect = area(Rect(2, 3)) == 6\n\
+         test total_two = total([Dot, Circle(1)]) == 3\n\
+         test even_4 = is_even(4)\n\
+         test count_2 = count([1, 2]) == 4\n",
+        // A leaf body: its users are relinked, the rest is reused.
+        "fn area(s: Shape) -> Int = match s { Circle(r) => 3 * r * r, Rect(w, h) => w * h, Dot => 1 }\n",
+        // A new instance of a generic function, and a test of it.
+        "fn names(xs: List[Str]) -> Int = len(twice(xs))\ntest names_1 = names([\"a\"]) == 2\n",
+        // One member of a recursive group.
+        "fn is_odd(n: Int) -> Bool = if n == 0 then false else if n == 1 then true else is_even(n - 1)\n",
+        // A contract.
+        "fn deposit(a: Acct, n: Int) -> Acct\n  req n >= 1\n  ens r.balance > a.balance\n= Acct { id: a.id, balance: a.balance + n }\n",
+        // A generic body: every instance changes.
+        "fn twice[T](xs: List[T]) -> List[T] = concat(xs, concat(xs, []))\n",
+        // A new type and a function over an old one.
+        "type Ledger = { accts: List[Acct], day: Int }\nfn day_of(l: Ledger) -> Int = l.day + len(l.accts)\n",
+        // Rejected: the error is the full check's.
+        "fn total(xs: List[Shape]) -> Int = no_such_name(xs)\n",
+        // After a rejection the kept program still belongs to the codebase.
+        "fn total(xs: List[Shape]) -> Int = fold(map(xs, fn(s) => area(s) + 0), 0, fn(a, b) => a + b)\n",
+    ];
+    let run = |tag: &str, mode: &str| -> (Vec<String>, Value) {
+        let dir = project(tag);
+        assert_eq!(qal_in(&dir, &["init"]).0, 0);
+        let mut reports = Vec::new();
+        for (i, step) in steps.iter().enumerate() {
+            let file = write(&dir, &format!("step{i}.qal"), step);
+            let out = Command::new(env!("CARGO_BIN_EXE_qal")).args(["define", &file]).current_dir(&dir).env("QAL_INCREMENTAL", mode).stdin(Stdio::null()).output().unwrap();
+            let stderr = String::from_utf8(out.stderr).unwrap();
+            let rejected = i == 7;
+            assert_eq!(out.status.code() != Some(0), rejected, "step {i}: {}\n{stderr}", String::from_utf8_lossy(&out.stdout));
+            reports.extend(stderr.lines().filter(|l| l.starts_with("QAL_INCREMENTAL")).map(|l| format!("{i}: {l}")));
+        }
+        let (_, outline) = qal_in(&dir, &["query", "--outline"]);
+        (reports, outline)
+    };
+    let (reports, verified) = run("incremental-verify", "verify");
+    assert!(!reports.iter().any(|r| r.contains("DIFFERENT")), "{reports:#?}");
+    // Every step after the first, except the rejected one, takes the incremental path for both.
+    for i in [1, 2, 3, 4, 5, 6, 8] {
+        for what in ["check", "hash"] {
+            assert!(reports.iter().any(|r| r.starts_with(&format!("{i}: ")) && r.contains(&format!("incremental {what}")) && r.contains("identical")), "step {i} {what}: {reports:#?}");
+        }
+    }
+    let (_, full) = run("incremental-off", "off");
+    let hashes = |v: &Value| -> Vec<(String, String)> {
+        let mut out: Vec<(String, String)> = v["results"].as_array().unwrap().iter().map(|e| (e["name"].as_str().unwrap().to_string(), e["hash"].as_str().unwrap_or_default().to_string())).collect();
+        out.sort();
+        out
+    };
+    assert_eq!(hashes(&verified), hashes(&full));
+    assert!(hashes(&full).iter().any(|(n, _)| n == "day_of"));
+}

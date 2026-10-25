@@ -9,6 +9,7 @@
 //! Every operation reports problems as diagnostics (store failures are `store_error`).
 
 mod define;
+mod incremental;
 mod memory;
 mod ops;
 pub mod package;
@@ -265,7 +266,10 @@ impl Store {
         let team = team::require_signer(&self.conn, signer)?;
         let agent = signer.map_or(agent, |s| s.member.as_str()).to_string();
         let agent = agent.as_str();
-        let rules = define::Rules { std: StdNames::Refuse, release: self.release.as_ref(), breaking: self.breaking };
+        // The checked program of the last define (main only: change sets are small and short-lived).
+        let cache = (self.space == Space::Main).then(|| incremental::cache_path(&self.path));
+        let prior = cache.as_deref().and_then(incremental::load);
+        let rules = define::Rules { std: StdNames::Refuse, release: self.release.as_ref(), breaking: self.breaking, prior: prior.as_ref() };
         let space = self.space.clone();
         let report = std::cell::RefCell::new(team::WriteReport::default());
         // What the session viewed is in the team log (reads never write store.db).
@@ -288,6 +292,12 @@ impl Store {
         };
         let mut written = None;
         let out = define::define_checked(&mut self.conn, src, agent, &rules, &self.space, verify, &guard, &record, &mut written);
+        if let (Ok(_), Some(path), Some(w)) = (&out, &cache, &written) {
+            // The key of what this define wrote (a snapshot taken now could hold another writer's
+            // define as well).
+            let written = snapshot::fingerprint(w.hashed.defs.iter().map(|c| (c.name.as_str(), &c.hash, c.local_names.as_slice())));
+            incremental::save(path, &incremental::key(&written), &w.typed, &w.hashed);
+        }
         self.written = written;
         self.last = report.into_inner();
         match out {
@@ -389,7 +399,7 @@ impl Store {
         let signer = self.signer.as_deref();
         team::require_signer(&self.conn, signer)?;
         let agent = signer.map_or(agent, |s| s.member.as_str());
-        let rules = define::Rules { std: StdNames::Refuse, release: self.release.as_ref(), breaking: self.breaking };
+        let rules = define::Rules { std: StdNames::Refuse, release: self.release.as_ref(), breaking: self.breaking, prior: None };
         let space = self.space.clone();
         let log = if team::is_team(&self.conn)? { self.team_log().ok() } else { None };
         let record = |tx: &rusqlite::Transaction, labels: &[team::Entry], before: &team::Rows| {
@@ -404,7 +414,7 @@ impl Store {
         let signer = self.signer.as_deref();
         team::require_signer(&self.conn, signer)?;
         let agent = signer.map_or(agent, |s| s.member.as_str());
-        let rules = define::Rules { std: StdNames::Refuse, release: self.release.as_ref(), breaking: self.breaking };
+        let rules = define::Rules { std: StdNames::Refuse, release: self.release.as_ref(), breaking: self.breaking, prior: None };
         let space = self.space.clone();
         let log = if team::is_team(&self.conn)? { self.team_log().ok() } else { None };
         let record = |tx: &rusqlite::Transaction, labels: &[team::Entry], before: &team::Rows| {
@@ -420,6 +430,22 @@ impl Store {
     }
 
     /// Named definitions matching every given filter, sorted by name.
+    /// The tests that refer to one of `names`, directly or through other definitions (one
+    /// snapshot; a query per dependent took a quarter of a define at 1520 definitions).
+    pub fn tests_reaching(&mut self, names: &[String]) -> Result<Vec<String>, Vec<Diagnostic>> {
+        let snap = Snapshot::load(&self.conn, &self.space)?;
+        let start: std::collections::HashSet<&str> = names.iter().map(String::as_str).collect();
+        let mut out = Vec::new();
+        for n in snap.with_dependents(&start) {
+            let Some(e) = snap.names.get(&n) else { continue };
+            if snap.row(&self.conn, &e.hash)?.is_some_and(|r| r.kind == qal_core::canon::Kind::Test) {
+                out.push(n);
+            }
+        }
+        out.sort();
+        Ok(out)
+    }
+
     pub fn query(&mut self, q: &Query) -> Result<Vec<Entry>, Vec<Diagnostic>> {
         ops::query(&mut self.conn, &self.space, q)
     }

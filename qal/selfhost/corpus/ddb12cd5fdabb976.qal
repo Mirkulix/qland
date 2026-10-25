@@ -1,0 +1,2 @@
+fn names(xs: List[Str]) -> Int = len(twice(xs))
+test names_1 = names(["a"]) == 2

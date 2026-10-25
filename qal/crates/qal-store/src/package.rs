@@ -279,7 +279,7 @@ pub fn import(conn: &mut Connection, file: &str, verify: Option<&mut Verify>, re
         }
         post(defined, tx, before)
     };
-    let rules = Rules { std: if is_std { StdNames::Package } else { StdNames::Unchanged }, release, breaking: false };
+    let rules = Rules { std: if is_std { StdNames::Package } else { StdNames::Unchanged }, release, breaking: false, prior: None };
     let ours = meta(conn, META_STD_PACKAGE)?;
     let defined = define::define_checked(conn, &pkg.text, &agent, &rules, &crate::space::Space::Main, verify, &define::no_guard, &check, &mut None).map_err(|mut d| {
         // Built against another std: say so first (the hashes or names differ because of it).

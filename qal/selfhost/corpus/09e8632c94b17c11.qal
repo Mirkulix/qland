@@ -1,0 +1,4 @@
+fn deposit(a: Acct, n: Int) -> Acct
+  req n >= 1
+  ens r.balance > a.balance
+= Acct { id: a.id, balance: a.balance + n }

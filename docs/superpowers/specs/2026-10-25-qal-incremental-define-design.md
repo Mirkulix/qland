@@ -1,7 +1,8 @@
 # QAL: incremental define — design
 
 **Date:** 2026-10-25
-**Status:** draft for review (no code yet)
+**Status:** implemented on the host side (approach C below, `qal/crates/qal-store/src/incremental.rs`);
+approaches A and B stay open
 **Why:** the 1-turn verification loop takes 0.46 s on a 67-function program, but about 2 s at 1520
 definitions (`bench/loop/report.md`, sections "Scaling" and "Why the rest needs the self-hosted
 compiler"). Of those 2 s, about 1.6 s are spent checking and hashing the **whole** codebase in the
@@ -59,6 +60,27 @@ diagnostics, typed form.
 could stay in memory between defines, with the compiler receiving only deltas. This is cheaper to
 build, but does nothing for the CLI or for the benchmark harness, which starts a server per call,
 and it puts state into a protocol that is stateless today.
+
+**C. Reuse the last define's results on the host (implemented).** No change to the self-hosted
+compiler, its protocol or the bootstrap:
+
+- After a define, the store keeps its checked and hashed program in `.qal/typed.cache`. The key is
+  a fingerprint of the codebase (names, hashes, local names) and the compiler's module hash.
+- **Check:** a define of the same codebase checks a reduced program. The changed definitions (the
+  input and its transitive dependents), the generic functions and the definitions that call an
+  instance stay in full; every other function becomes its signature with body `todo()`, every
+  other test `true`. The typed forms of the unchanged definitions are taken from the cache with
+  their calls renumbered: by name for functions, by generic name and type arguments for
+  instances. This answers the open question above: instances never have to be keyed, because what
+  produces them is checked again.
+- **Hash:** a definition's hash depends only on what it refers to. Only the changed definitions
+  and their transitive dependencies are hashed. The dependencies of the input are over-approximated
+  by every identifier in its text that names a stored definition, plus the type of every variant it
+  names. The canons of the rest come from the cache.
+- **Fallback:** anything uncertain falls back to the full path: no cache for this codebase, a
+  diagnostic, a name or instance missing on either side, a changed signature of a kept function.
+  `QAL_INCREMENTAL=off` always takes the full path; `QAL_INCREMENTAL=verify` takes both and reports
+  whether they agree.
 
 ## Verification
 

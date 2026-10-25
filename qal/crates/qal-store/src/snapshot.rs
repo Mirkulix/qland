@@ -49,6 +49,24 @@ pub struct NameEntry {
     pub refs: Vec<String>,
 }
 
+/// [`Snapshot::fingerprint`] of the names, hashes and local names `entries` (in any order).
+pub fn fingerprint<'a>(entries: impl Iterator<Item = (&'a str, &'a Hash, &'a [String])>) -> Hash {
+    let mut entries: Vec<_> = entries.collect();
+    entries.sort_by_key(|e| e.0);
+    let mut bytes = Vec::new();
+    for (name, hash, locals) in entries {
+        bytes.extend_from_slice(name.as_bytes());
+        bytes.push(0);
+        bytes.extend_from_slice(&hash.0);
+        for l in locals {
+            bytes.extend_from_slice(l.as_bytes());
+            bytes.push(1);
+        }
+        bytes.push(0);
+    }
+    Hash::of(&bytes)
+}
+
 pub struct Snapshot {
     pub names: BTreeMap<String, NameEntry>,
     /// hash -> its names, sorted (the first one is the primary name used for hashes shown without
@@ -86,6 +104,26 @@ fn index(names: &BTreeMap<String, NameEntry>) -> (HashMap<Hash, Vec<String>>, Ha
 
 impl Snapshot {
     /// Reads all names of `space` and the definitions they point to.
+    /// A hash of the codebase: every name with its definition's hash and local names (the key of
+    /// the checked program a define keeps, see `incremental`).
+    pub fn fingerprint(&self) -> Hash {
+        fingerprint(self.names.iter().map(|(n, e)| (n.as_str(), &e.hash, e.locals.as_slice())))
+    }
+
+    /// The names that refer to one of `names`, directly or through others, and `names` themselves.
+    pub fn with_dependents(&self, names: &std::collections::HashSet<&str>) -> std::collections::HashSet<String> {
+        let mut out: std::collections::HashSet<String> = names.iter().map(|n| n.to_string()).collect();
+        let mut todo: Vec<String> = out.iter().cloned().collect();
+        while let Some(n) = todo.pop() {
+            for u in self.users.get(&n).into_iter().flatten() {
+                if out.insert(u.clone()) {
+                    todo.push(u.clone());
+                }
+            }
+        }
+        out
+    }
+
     /// True if `other` holds the same names with the same definitions and references: the same
     /// codebase (rows are content-addressed, so equal hashes are equal definitions).
     pub fn same_codebase(&self, other: &Snapshot) -> bool {

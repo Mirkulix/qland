@@ -294,6 +294,7 @@ impl Invoke for Compiler {
 
 /// Initializes the `Qal` backend in `qal-compiler` to run against `module`.
 pub fn init_qal_backend(module: CompiledModule, jobs: usize) -> Result<(), String> {
+    qal_compiler::set_compiler_identity(format!("qal:{}", qal_core::canon::Hash::of(&module.wasm).to_hex()));
     let limits = Limits::compiler();
     let compiler = std::sync::Arc::new(Compiler::new(module, &limits, jobs)?);
     qal_compiler::set_qal_driver(Box::new(move |req: &[u8]| {

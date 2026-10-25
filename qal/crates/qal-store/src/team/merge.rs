@@ -469,7 +469,7 @@ fn builds_on(tx: &Transaction, d: &str) -> Result<(BTreeSet<String>, BTreeSet<St
 fn write_merge(tx: &Transaction, signer: &Signer, p: &Plan, checked: &MergeChecked, key: &str) -> Result<Value, Vec<Diagnostic>> {
     let id = p.row.id.as_str();
     if let Some(r) = &p.replayed {
-        define::store_defs(tx, &r.hashed)?;
+        define::store_defs(tx, &r.hashed, &|_| false)?;
     }
     let hashes: HashSet<&str> = p.changed.iter().map(|(_, h)| h.as_str()).collect();
     define::store_results(tx, key, checked.proofs.iter().filter(|(h, _)| hashes.contains(h.as_str())).cloned())?;
@@ -829,7 +829,7 @@ fn main_snap_kind(snap: &Snapshot, tx: &Transaction, name: &str) -> &'static str
 fn write_rebase(tx: &Transaction, signer: &Signer, p: &RebasePlan, proofs: Option<(&str, Vec<(String, String)>)>) -> Result<Value, Vec<Diagnostic>> {
     let id = p.row.id.as_str();
     let now = now_ms();
-    define::store_defs(tx, &p.replayed.hashed)?;
+    define::store_defs(tx, &p.replayed.hashed, &|_| false)?;
     if let Some((key, rows)) = proofs {
         let hashes: HashSet<&str> = p.verify.iter().map(|d| d.hash.as_str()).collect();
         define::store_results(tx, key, rows.into_iter().filter(|(h, _)| hashes.contains(h.as_str())))?;

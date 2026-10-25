@@ -54,6 +54,8 @@ pub struct Rules<'a> {
     pub release: Option<&'a Release>,
     /// The std store only: allow changing or deleting released names (`--breaking`).
     pub breaking: bool,
+    /// The checked program of the last define, if any (used when it belongs to this codebase).
+    pub prior: Option<&'a crate::incremental::Prior>,
 }
 
 /// In the std store: released names keep their signatures unless the change is breaking (E0244).
@@ -229,6 +231,7 @@ fn commit(tx: Transaction, start: std::time::Instant) -> Result<(), Vec<Diagnost
 pub struct Written {
     pub program: Program,
     pub typed: TProgram,
+    pub hashed: Hashed,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -309,7 +312,7 @@ struct Prepared {
 
 impl Prepared {
     fn into_written(self) -> Written {
-        Written { program: self.program, typed: self.typed }
+        Written { program: self.program, typed: self.typed, hashed: self.hashed }
     }
 
     /// Writes the definitions (`dry`: only computes the results).
@@ -359,9 +362,14 @@ fn prepare(tx: &Transaction, input: &Program, rules: &Rules, space: &Space) -> R
     // Checking and hashing both read the combined program and nothing else: they run at the same
     // time (a codebase of 1520 definitions: 1.4 s and 0.6 s in the self-hosted compiler). A check
     // error comes first, as when they ran one after the other.
+    // The last define's results, if they belong to this codebase (see `incremental`).
+    let prior = rules.prior.filter(|p| p.fingerprint == crate::incremental::key(&snap.fingerprint()));
+    let affected = snap.with_dependents(&input_names);
+    let refs_of = |n: &str| snap.names.get(n).map(|e| e.refs.clone());
     let (typed, hashed) = std::thread::scope(|scope| {
-        let hashing = scope.spawn(|| hash(&combined));
-        let typed = qal_compiler::check_stored(&combined, &|n| input_names.contains(n) && !legacy_writer());
+        let hashing = scope.spawn(|| crate::incremental::hash(&combined, input, prior.map(|p| &p.hashed), &affected, &refs_of, &hash));
+        let full = |p: &Program| qal_compiler::check_stored(p, &|n| input_names.contains(n) && !legacy_writer());
+        let typed = crate::incremental::check(&combined, prior.map(|p| &p.typed), &affected, &full);
         (typed, hashing.join().unwrap_or_else(|_| Err(vec![Diagnostic::store_error("hashing the codebase panicked")])))
     });
     let typed = typed.map_err(|d| broken_dependents(&changed, d))?;
@@ -654,7 +662,9 @@ fn write(tx: &Transaction, snap: &Snapshot, input: &Program, hashed: &Hashed, ag
     let canons = &hashed.defs;
     let input_names: HashSet<&str> = input.defs.iter().map(|d| d.name()).collect();
     if !dry {
-        store_defs(tx, hashed)?;
+        // A canon under a name that already holds its hash is stored, with its group and deps
+        // (inserting all of them again cost 0.1 s of a define at 1520 definitions).
+        store_defs(tx, hashed, &|c| snap.names.get(&c.name).is_some_and(|e| e.hash == c.hash))?;
     }
     let hash_of: HashMap<&str, Hash> = canons.iter().map(|c| (c.name.as_str(), c.hash)).collect();
     let mut results: HashMap<&str, Defined> = HashMap::new();
@@ -712,21 +722,23 @@ fn marked(tx: &Transaction, space: &Space, name: &str) -> Result<bool, Vec<Diagn
     Ok(n > 0)
 }
 
-/// Stores the groups, definitions and dependencies of a hashed program (those already stored stay).
-pub(crate) fn store_defs(tx: &Transaction, hashed: &Hashed) -> Result<(), Vec<Diagnostic>> {
+/// Stores the groups, definitions and dependencies of a hashed program (those already stored stay;
+/// `stored` names canons known to be stored with their groups and deps, which are skipped).
+pub(crate) fn store_defs(tx: &Transaction, hashed: &Hashed, stored: &dyn Fn(&Canon) -> bool) -> Result<(), Vec<Diagnostic>> {
     let now = now_ms();
-    let canons = &hashed.defs;
-    for (h, form) in &hashed.groups {
+    let canons: Vec<&Canon> = hashed.defs.iter().filter(|c| !stored(c)).collect();
+    let groups: HashSet<Hash> = canons.iter().filter_map(|c| c.group).collect();
+    for (h, form) in hashed.groups.iter().filter(|(h, _)| groups.contains(h)) {
         tx.execute("INSERT OR IGNORE INTO groups (hash, form) VALUES (?1, ?2)", params![h.to_hex(), form]).map_err(sql)?;
     }
-    for c in canons {
+    for c in &canons {
         tx.execute(
             "INSERT OR IGNORE INTO defs (hash, kind, canonical, signature, effects, local_names, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             params![c.hash.to_hex(), c.kind.as_str(), c.canonical, c.signature, json(&c.effects), json(&c.local_names), now],
         )
         .map_err(sql)?;
     }
-    for c in canons {
+    for c in &canons {
         for d in &c.deps {
             tx.execute("INSERT OR IGNORE INTO deps (hash, dep_hash) VALUES (?1, ?2)", params![c.hash.to_hex(), d.to_hex()]).map_err(sql)?;
         }

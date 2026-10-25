@@ -1,0 +1,1 @@
+fn total(xs: List[Shape]) -> Int = no_such_name(xs)

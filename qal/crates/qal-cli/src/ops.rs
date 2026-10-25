@@ -609,20 +609,13 @@ fn tests_of(store: &mut Store, defined: &[Defined]) -> Vec<String> {
             tests.push(t.name.clone());
         }
     }
-    let mut fns: Vec<String> = defined.iter().filter(|d| d.kind == "fn" && d.status != "relinked").map(|d| d.name.clone()).collect();
-    let mut i = 0;
-    while i < fns.len() {
-        let Ok(users) = store.query(&Query { uses: Some(fns[i].clone()), ..Query::default() }) else {
-            i += 1;
-            continue;
-        };
-        for u in users {
-            let seen = if u.kind == "test" { &mut tests } else if u.kind == "fn" { &mut fns } else { continue };
-            if !seen.contains(&u.name) {
-                seen.push(u.name);
+    let fns: Vec<String> = defined.iter().filter(|d| d.kind == "fn" && d.status != "relinked").map(|d| d.name.clone()).collect();
+    if !fns.is_empty() {
+        for t in store.tests_reaching(&fns).unwrap_or_default() {
+            if !tests.contains(&t) {
+                tests.push(t);
             }
         }
-        i += 1;
     }
     tests
 }
