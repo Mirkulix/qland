@@ -1,0 +1,1 @@
+fn other(x: Int) -> Int = x + 0

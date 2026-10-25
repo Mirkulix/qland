@@ -63,6 +63,19 @@ pub fn project_of(start: &Path) -> Option<PathBuf> {
     start.ancestors().find(|d| d.join(STORE_DIR).join(STORE_FILE).is_file()).map(Path::to_path_buf)
 }
 
+/// Runs kept at most (`Store::observe`).
+pub const MAX_OBSERVED: usize = 200;
+
+/// A run of an entry point and what it printed.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct Observed {
+    pub entry: String,
+    pub args: Vec<String>,
+    pub stdin: String,
+    pub stdout: String,
+    pub exit_code: i64,
+}
+
 pub struct Store {
     conn: Connection,
     path: PathBuf,
@@ -179,6 +192,39 @@ impl Store {
     /// define's tests and property tests run on without loading and checking it again.
     pub fn take_written(&mut self) -> Option<(qal_core::ast::Program, qal_core::tast::TProgram)> {
         self.written.take().map(|w| (w.program, w.typed))
+    }
+
+    /// Keeps a run of `entry` that needed no effect but `io` with its output (see
+    /// `schema::OBSERVED`); a later run with the same arguments and input replaces it. At most
+    /// `MAX_OBSERVED` runs are kept, the oldest go first.
+    pub fn observe(&mut self, run: &Observed) -> Result<(), Vec<Diagnostic>> {
+        let args = serde_json::to_string(&run.args).unwrap_or_default();
+        let at = now_ms();
+        self.conn
+            .execute(
+                "INSERT INTO observed (entry, args, stdin, stdout, exit_code, at) VALUES (?1, ?2, ?3, ?4, ?5, ?6) \
+                 ON CONFLICT(entry, args, stdin) DO UPDATE SET stdout = excluded.stdout, exit_code = excluded.exit_code, at = excluded.at",
+                rusqlite::params![run.entry, args, run.stdin, run.stdout, run.exit_code, at],
+            )
+            .map_err(sql)?;
+        self.conn
+            .execute("DELETE FROM observed WHERE id NOT IN (SELECT id FROM observed ORDER BY at DESC, id DESC LIMIT ?1)", [MAX_OBSERVED as i64])
+            .map_err(sql)?;
+        Ok(())
+    }
+
+    /// The kept runs, newest first, at most `limit`.
+    pub fn observed(&self, limit: usize) -> Result<Vec<Observed>, Vec<Diagnostic>> {
+        let mut st = self.conn.prepare("SELECT entry, args, stdin, stdout, exit_code FROM observed ORDER BY at DESC, id DESC LIMIT ?1").map_err(sql)?;
+        let rows = st
+            .query_map([limit as i64], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, String>(3)?, r.get::<_, i64>(4)?)))
+            .map_err(sql)?;
+        let mut out = Vec::new();
+        for row in rows {
+            let (entry, args, stdin, stdout, exit_code) = row.map_err(sql)?;
+            out.push(Observed { entry, args: serde_json::from_str(&args).unwrap_or_default(), stdin, stdout, exit_code });
+        }
+        Ok(out)
     }
 
     pub fn last_write(&self) -> &team::WriteReport {

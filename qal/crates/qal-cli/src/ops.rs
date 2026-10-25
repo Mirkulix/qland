@@ -8,7 +8,7 @@ use qal_core::diag::Diagnostic;
 use qal_core::tast::{TExpr, TKind, TProgram};
 use qal_prove::{PropOptions, PropReport, PropStatus, Report, Status};
 use qal_run::{Permissions, RunError, TestResult, Value};
-use qal_store::{CorrectionInput, Defined, Deleted, Entry as QueryEntry, HistoryEntry, Query, Recall, RecallQuery, Renamed, Store, Verify, View};
+use qal_store::{CorrectionInput, Defined, Deleted, Entry as QueryEntry, HistoryEntry, Observed, Query, Recall, RecallQuery, Renamed, Store, Verify, View};
 use qal_compiler::lexer::is_std_name;
 use qal_compiler::Entry;
 use serde::Serialize;
@@ -30,6 +30,9 @@ pub struct Output {
     /// The entries of `query`, or the cases of `run` with `cases`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub results: Option<Results>,
+    /// Earlier runs (kept by `run`) whose output the new code changed (`define`, warning E0807).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub changed_runs: Option<Vec<ChangedRun>>,
     /// The text of a reference topic (`qal_query {"topic": ...}`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reference: Option<&'static str>,
@@ -568,6 +571,7 @@ pub fn define(ctx: &Ctx, src: &str, agent: &str, breaking: bool) -> Reply {
             drop(store);
             run_tests_of_define(ctx, loaded.as_ref(), &tests, &mut out);
             run_properties_of_define(ctx, loaded.as_ref(), &fns, &mut out);
+            replay_observed(ctx, loaded.as_ref(), &mut out);
             Reply::new(out, 0)
         }
         Err(d) => std.failed(d),
@@ -1323,6 +1327,7 @@ pub fn call(ctx: &Ctx, source: &Source, perms: Permissions, name: &str, args: Ca
 
 /// Runs an entry point `fn(List[Str]) -> Int`; the exit code is the program's (1 if outside 0..=255).
 pub fn run(ctx: &Ctx, source: &Source, perms: Permissions, name: &str, args: &[String]) -> Reply {
+    let replayable = replayable(ctx, source, &perms);
     let runner = match entry_runner(ctx, source, perms, name) {
         Ok(r) => r,
         Err(reply) => return reply,
@@ -1332,6 +1337,10 @@ pub fn run(ctx: &Ctx, source: &Source, perms: Permissions, name: &str, args: &[S
     ctx.stdout(&mut out, outcome.stdout, outcome.stdout_bytes);
     match exit_of(name, outcome.result) {
         Ok(code) => {
+            if replayable && out.stdout_truncated.is_none() {
+                let stdin = String::from_utf8_lossy(ctx.stdin.as_deref().unwrap_or_default()).into_owned();
+                observe(ctx, Observed { entry: name.to_string(), args: args.to_vec(), stdin, stdout: out.stdout.clone().unwrap_or_default(), exit_code: code });
+            }
             out.exit_code = Some(code);
             Reply::new(out, u8::try_from(code).unwrap_or(1))
         }
@@ -1352,25 +1361,163 @@ pub fn run_cases(ctx: &Ctx, source: &Source, perms: Permissions, name: &str, cas
         let d = Diagnostic::new("E0701", "bad_arguments", "", "", format!("{} cases; 1 to {MAX_CASES} per call", cases.len()));
         return Reply::diagnostics(vec![d]);
     }
+    let replayable = replayable(ctx, source, &perms);
     let mut runner = match entry_runner(ctx, source, perms, name) {
         Ok(r) => r,
         Err(reply) => return reply,
     };
     let mut results = Vec::with_capacity(cases.len());
     for case in cases {
-        let input = case.stdin.as_ref().map(|s| s.as_bytes().to_vec()).or_else(|| ctx.stdin.clone()).unwrap_or_default();
-        runner = runner.with_stdin(input);
+        runner = runner.with_stdin(input_of(ctx, case));
         let outcome = runner.run_entry(name, &case.args);
         let (stdout, stdout_truncated) = ctx.cut_stdout(outcome.stdout, outcome.stdout_bytes);
         let (exit_code, error) = match exit_of(name, outcome.result) {
             Ok(code) => (Some(code), None),
             Err(e) => (None, Some(e)),
         };
+        if let (true, Some(code), None) = (replayable, exit_code, stdout_truncated) {
+            let stdin = String::from_utf8_lossy(&input_of(ctx, case)).into_owned();
+            observe(ctx, Observed { entry: name.to_string(), args: case.args.clone(), stdin, stdout: stdout.clone(), exit_code: code });
+        }
         results.push(RunResult { args: case.args.clone(), exit_code, stdout: Some(stdout), stdout_truncated, error });
     }
     let failed = results.iter().any(|r| r.error.is_some());
     let out = Output { results: Some(Results::Run(results)), failure: failed, ..Output::default() };
     Reply::new(out, u8::from(failed))
+}
+
+/// A case's input: its own `stdin`, else the context's, else nothing.
+fn input_of(ctx: &Ctx, case: &RunCase) -> Vec<u8> {
+    case.stdin.as_ref().map(|s| s.as_bytes().to_vec()).or_else(|| ctx.stdin.clone()).unwrap_or_default()
+}
+
+/// True if a run can be kept to run again later: from the store, outside a team's change set, with
+/// its input given (not the process's stdin) and no effect but `io`: running it again must not
+/// write a file, a database or the network, and must print the same for the same code.
+fn replayable(ctx: &Ctx, source: &Source, perms: &Permissions) -> bool {
+    matches!(source, Source::Store) && ctx.space.is_none() && ctx.stdin.is_some() && !perms.time && !perms.rand && perms.fs.is_empty() && perms.db.is_none() && perms.net.is_empty()
+}
+
+/// Keeps a run (`Store::observe`); a store that cannot take it loses nothing else.
+fn observe(ctx: &Ctx, run: Observed) {
+    if let Ok(mut store) = ctx.open() {
+        let _ = store.observe(&run);
+    }
+}
+
+/// Earlier runs a define runs again, at most.
+const MAX_REPLAYS: usize = 64;
+/// Wall-clock budget of those runs.
+const REPLAY_BUDGET: Duration = Duration::from_secs(2);
+/// Changed runs shown in a reply, at most.
+const SHOWN_CHANGES: usize = 3;
+
+/// An earlier run whose output the new code changed.
+#[derive(Debug, Serialize)]
+pub struct ChangedRun {
+    pub entry: String,
+    pub args: Vec<String>,
+    /// The input, cut to 600 bytes.
+    pub stdin: String,
+    /// The first output line that differs, before and now (`exit <n>` when only the exit code
+    /// differs; the runtime error's message when the run fails now).
+    pub was: String,
+    pub now: String,
+}
+
+/// Runs the kept runs of entry points again on the code a define wrote and reports, as warning
+/// E0807, the ones whose output or exit code changed: an earlier rule the change broke, or one the
+/// change request meant to change (then a new run records the new output).
+fn replay_observed(ctx: &Ctx, written: Option<&Loaded>, out: &mut Output) {
+    if ctx.space.is_some() {
+        return;
+    }
+    let Ok(runs) = ctx.open().and_then(|s| s.observed(MAX_REPLAYS)) else { return };
+    if runs.is_empty() {
+        return;
+    }
+    let fresh;
+    let loaded = match written {
+        Some(l) => l,
+        None => {
+            let Ok(l) = ctx.load(&Source::Store) else { return };
+            fresh = l;
+            &fresh
+        }
+    };
+    let start = Instant::now();
+    let mut runners: Vec<(String, Option<qal_run::Runner>)> = Vec::new();
+    let (mut ran, mut changed) = (0usize, Vec::new());
+    for run in &runs {
+        if start.elapsed() > REPLAY_BUDGET {
+            break;
+        }
+        if !runners.iter().any(|(e, _)| *e == run.entry) {
+            let r = (is_entry_point(&loaded.typed, &run.entry))
+                .then(|| loaded.runner(&Entry::Fn(run.entry.clone()), Permissions { io: true, ..Permissions::default() }).ok())
+                .flatten()
+                .map(|r| match ctx.timeout {
+                    Some(t) => r.with_timeout(t),
+                    None => r,
+                });
+            runners.push((run.entry.clone(), r));
+        }
+        let Some((_, slot)) = runners.iter_mut().find(|(e, _)| *e == run.entry) else { continue };
+        let Some(r) = slot.take() else { continue };
+        let r = r.with_stdin(run.stdin.as_bytes().to_vec());
+        let outcome = r.run_entry(&run.entry, &run.args);
+        *slot = Some(r);
+        ran += 1;
+        let (now_out, now_code) = match exit_of(&run.entry, outcome.result) {
+            Ok(code) => (outcome.stdout, Ok(code)),
+            Err(e) => (outcome.stdout, Err(e.message)),
+        };
+        if now_code.as_ref().ok() == Some(&run.exit_code) && now_out == run.stdout {
+            continue;
+        }
+        let (was, now) = match &now_code {
+            Err(m) => (first_line(&run.stdout), format!("runtime error: {m}")),
+            Ok(_) if now_out != run.stdout => first_difference(&run.stdout, &now_out),
+            Ok(code) => (format!("exit {}", run.exit_code), format!("exit {code}")),
+        };
+        changed.push(ChangedRun { entry: run.entry.clone(), args: run.args.clone(), stdin: cut(&run.stdin, 600), was, now });
+    }
+    if changed.is_empty() {
+        return;
+    }
+    let first = &changed[0];
+    let entry = first.entry.clone();
+    out.warnings.get_or_insert_with(Vec::new).push(
+        Diagnostic::new("E0807", "behaviour_changed", &entry, "", format!("`{entry}` behaves differently on {} of {ran} earlier runs: `{}` is now `{}`", changed.len(), first.was, first.now))
+            .hint("the runs are in `changed_runs`; if the change request changes this output, run it again with qal_run to record the new behaviour; otherwise the change broke a rule that held before"),
+    );
+    changed.truncate(SHOWN_CHANGES);
+    out.changed_runs = Some(changed);
+}
+
+fn first_line(s: &str) -> String {
+    s.lines().next().unwrap_or("").to_string()
+}
+
+/// The first line where `a` and `b` differ (an absent line is empty).
+fn first_difference(a: &str, b: &str) -> (String, String) {
+    let (al, bl): (Vec<&str>, Vec<&str>) = (a.lines().collect(), b.lines().collect());
+    for i in 0..al.len().max(bl.len()) {
+        let (x, y) = (al.get(i).copied().unwrap_or(""), bl.get(i).copied().unwrap_or(""));
+        if x != y {
+            return (x.to_string(), y.to_string());
+        }
+    }
+    (format!("{} bytes", a.len()), format!("{} bytes", b.len()))
+}
+
+/// `s` cut to at most `max` bytes at a character boundary.
+fn cut(s: &str, max: usize) -> String {
+    let mut end = s.len().min(max);
+    while !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    s[..end].to_string()
 }
 
 /// The runner of the entry point `name` (`fn(List[Str]) -> Int`), or the reply why there is none.

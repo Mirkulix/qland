@@ -1710,11 +1710,11 @@ fn a_store_of_version_6_gets_the_memory_tables() {
     drop(s);
     let db = dir.join(".qal").join("store.db");
     let c = Connection::open(&db).unwrap();
-    c.execute_batch("DROP TABLE attempts; DROP TABLE corrections; PRAGMA user_version = 6;").unwrap();
+    c.execute_batch("DROP TABLE attempts; DROP TABLE corrections; DROP TABLE observed; PRAGMA user_version = 6;").unwrap();
     drop(c);
     let mut s = Store::open(&db).unwrap();
-    assert_eq!(count(&s, "attempts") + count(&s, "corrections"), 0);
-    assert_eq!(raw(&s).query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), 7);
+    assert_eq!(count(&s, "attempts") + count(&s, "corrections") + count(&s, "observed"), 0);
+    assert_eq!(raw(&s).query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), schema::SCHEMA_VERSION);
     err(&mut s, BAD_F);
     ok(&mut s, GOOD_F);
     assert_eq!(e0201(&mut s).len(), 1);

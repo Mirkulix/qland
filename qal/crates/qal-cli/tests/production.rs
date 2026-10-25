@@ -207,6 +207,6 @@ fn production_schema_migration_version_integrity() {
     let db_path = dir.join(".qal").join("store.db");
     let conn = rusqlite::Connection::open(&db_path).unwrap();
     let user_version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-    // Current production schema is version 7
-    assert_eq!(user_version, 7, "store database must be at current schema version 7");
+    // Current production schema is version 8 (7 -> 8: `observed`, the behaviour memory)
+    assert_eq!(user_version, 8, "store database must be at current schema version 8");
 }

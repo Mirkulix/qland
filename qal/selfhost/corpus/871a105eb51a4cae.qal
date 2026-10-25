@@ -1,0 +1,1 @@
+fn price(q: Int) -> Int = if q >= 10 then q * 90 else q * 100

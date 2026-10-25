@@ -53,3 +53,38 @@ change that keeps its meaning, one MCP call each.
 - **Agent rounds.** The loop gives the answer in one round, but whether agents then need fewer
   rounds is measured only by agent runs. Pressure run 10, with point 3 but not yet point 4: 101
   rounds.
+
+## Point 6: the behaviour memory (E0807)
+
+**What happened.** Pressure run 11 (this binary minus E0807) failed stage 12 (45/50): the first bug
+to reach the hidden tests since run 5.
+
+- **The bug.** The ticket said "tier discount and tax apply to the whole order", and the agent
+  applied the tier discount after the line discounts. That rounds twice: 8835 instead of 8800.
+- **Why the loop missed it.** In the same define the agent rewrote `total_tier_discount`, the test
+  that pinned the old rule, so all 67 tests passed. The old versions of the three changed tests no
+  longer even type-check: `total` gained a parameter. No test, proof or property could see the
+  regression.
+
+**What did see it** were the agent's own earlier runs. Of the 25 `qal_run` inputs of stages 1–11,
+3 print differently on the stage-12 code. All three are stage-2 runs of tier discounts. The other
+22 print the same, so the signal carries little noise.
+
+**What was built.** Schema 8 adds a table `observed`:
+
+- every run of an entry point that needs no effect but `io` is kept with its output (the latest
+  output per input; 200 runs at most);
+- a define runs the newest 64 again on the code it wrote, within a 2 s budget, and reports
+  E0807 `behaviour_changed` with the first changed line and the input (`changed_runs`);
+- an intended change is recorded by running the input again.
+
+**Replayed on run 11:** the 25 runs, recorded on the stage-11 code, were put into a copy of the
+stage-12 store, and one define was made. The reply, in 0.78 s:
+
+```
+E0807 `main` behaves differently on 3 of 25 earlier runs: `OK o1 8800` is now `OK o1 8835`
+changed_runs: product p1 a 1000 100 / customer c1 ann gold / order o1 c1 p1 10 ...
+```
+
+That is the hidden test's failure, shown to the agent in the round in which it made the mistake.
+Whether an agent then fixes it is a question for an agent run.

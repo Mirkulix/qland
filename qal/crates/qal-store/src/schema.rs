@@ -9,10 +9,11 @@ use std::time::Duration;
 /// `PRAGMA user_version` of stores this code reads and writes. Version 2 is Phase 1; version 3
 /// (Phase 2b) adds the `proofs` table; version 4 (Phase 3a) adds `meta`; version 5 (Phase 3b) allows
 /// the history action `deleted`; version 6 (Phase 4a) adds the team tables and `history.space` /
-/// `history.record`; version 7 (Phase 6b) adds `attempts` and `corrections`, the memory of fixes.
+/// `history.record`; version 7 (Phase 6b) adds `attempts` and `corrections`, the memory of fixes;
+/// version 8 adds `observed`, the runs whose output a define compares against.
 /// Older stores are upgraded in place when they are opened
-/// ([`migrate`]: 2 -> 3 -> 4 -> 5 -> 6 -> 7, one transaction).
-pub const SCHEMA_VERSION: i64 = 7;
+/// ([`migrate`]: 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8, one transaction).
+pub const SCHEMA_VERSION: i64 = 8;
 
 /// Proof results by definition hash and prover key (prover version, Z3 version, resource limit):
 /// a definition's hash fixes everything a proof depends on (its callees' contracts are referenced
@@ -204,6 +205,24 @@ CREATE INDEX IF NOT EXISTS corrections_by_code ON corrections(code, shape);
 CREATE UNIQUE INDEX IF NOT EXISTS corrections_corpus ON corrections(content) WHERE agent = 'corpus';
 ";
 
+/// 7 -> 8: the behaviour memory. Every run of an entry point an agent makes (`qal_run`, `cases`)
+/// that needs no effect but `io` is kept with its output, once per entry, arguments and input (the
+/// latest output wins); a `define` runs them again on the new code and reports the ones whose
+/// output changed (E0807). Pressure run 11 stage 12: a change request rewrote the tests that
+/// pinned the tier discount along with the code, and only runs of stage 2 still showed the rule.
+pub const OBSERVED: &str = "
+CREATE TABLE IF NOT EXISTS observed (
+    id        INTEGER PRIMARY KEY,
+    entry     TEXT NOT NULL,
+    args      TEXT NOT NULL,
+    stdin     TEXT NOT NULL,
+    stdout    TEXT NOT NULL,
+    exit_code INTEGER NOT NULL,
+    at        INTEGER NOT NULL,
+    UNIQUE (entry, args, stdin)
+);
+";
+
 /// How long a writer waits for another process's `define`/`rename` to finish.
 pub const BUSY_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -276,6 +295,7 @@ pub fn create(conn: &mut Connection, path: &Path) -> Result<(), Vec<Diagnostic>>
         tx.execute_batch(META).map_err(sql)?;
         upgrade_v6(&tx)?;
         tx.execute_batch(MEMORY).map_err(sql)?;
+        tx.execute_batch(OBSERVED).map_err(sql)?;
         tx.pragma_update(None, "user_version", SCHEMA_VERSION).map_err(sql)?;
     } else if (2..SCHEMA_VERSION).contains(&version) {
         upgrade(&tx, version)?;
@@ -290,7 +310,7 @@ pub fn create(conn: &mut Connection, path: &Path) -> Result<(), Vec<Diagnostic>>
 
 /// Upgrades a store of version `from` (2 to 6) to [`SCHEMA_VERSION`] inside `tx`, step by step:
 /// 2 -> 3 creates `proofs`, 3 -> 4 creates `meta`, 4 -> 5 rebuilds `history`, 5 -> 6 adds the team
-/// tables and the history columns `space` and `record`, 6 -> 7 the memory tables.
+/// tables and the history columns `space` and `record`, 6 -> 7 the memory tables, 7 -> 8 `observed`.
 fn upgrade(tx: &rusqlite::Transaction, from: i64) -> Result<(), Vec<Diagnostic>> {
     if from <= 2 {
         tx.execute_batch(PROOFS).map_err(sql)?;
@@ -311,6 +331,10 @@ fn upgrade(tx: &rusqlite::Transaction, from: i64) -> Result<(), Vec<Diagnostic>>
     if from <= 6 {
         tx.execute_batch(MEMORY).map_err(sql)?;
         tx.pragma_update(None, "user_version", 7).map_err(sql)?;
+    }
+    if from <= 7 {
+        tx.execute_batch(OBSERVED).map_err(sql)?;
+        tx.pragma_update(None, "user_version", 8).map_err(sql)?;
     }
     Ok(())
 }

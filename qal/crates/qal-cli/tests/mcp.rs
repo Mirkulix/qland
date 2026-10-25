@@ -202,8 +202,8 @@ fn handshake_lists_the_tools_with_the_language_reference() {
     // 2026-10-24 (the property tests define runs) and the fused multiply-divide (`a * b * ... / c`
     // exact, on the Int type) and pressure run 5 (E0806, a change without a test) and pressure run 7 (dependents that still check are relinked,
     // io needs no grant) add to it; after pressure run 9 the services moved to qal_query's topic "services";
-    // the mutation study added type invariants (`inv_T`), the 1-turn loop the property tests of every defined fn.
-    assert!(qal_cli::mcp::REFERENCE.lines().count() <= 68 && qal_cli::mcp::REFERENCE.len() <= 9850, "{} lines, {} bytes", qal_cli::mcp::REFERENCE.lines().count(), qal_cli::mcp::REFERENCE.len());
+    // the mutation study added type invariants (`inv_T`), the 1-turn loop the property tests of every defined fn and the replay of earlier runs (E0807).
+    assert!(qal_cli::mcp::REFERENCE.lines().count() <= 68 && qal_cli::mcp::REFERENCE.len() <= 10050, "{} lines, {} bytes", qal_cli::mcp::REFERENCE.lines().count(), qal_cli::mcp::REFERENCE.len());
     // An unknown version gets the newest legacy one.
     let r = c.request("initialize", json!({"protocolVersion": "1999-01-01", "capabilities": {}, "clientInfo": {"name": "x", "version": "1"}}));
     assert_eq!(r["result"]["protocolVersion"], "2025-11-25");
@@ -970,6 +970,37 @@ fn one_define_is_the_whole_verification_loop_in(c: &mut Client) {
     assert!(st.contains(&("at", "replaced")) && st.contains(&("first", "relinked")), "{v}");
     assert_eq!((v["tests"][0]["name"].as_str(), v["passed"].as_u64()), (Some("first_works"), Some(1)), "{v}");
     assert!(v["properties"].as_array().unwrap().iter().any(|p| p["def"] == "at" && p["status"] == "passed" && p["traps"] == 0), "{v}");
+}
+
+#[test]
+fn define_reports_earlier_runs_whose_output_changed() {
+    let mut c = Client::start();
+    c.initialize();
+    // Pressure run 11 stage 12: a change rewrote the tests that pinned a rule along with the code;
+    // only earlier runs still showed the rule. A define runs the kept runs again (E0807).
+    let src = "fn price(q: Int) -> Int = if q >= 10 then q * 95 else q * 100\nfn main(args: List[Str]) -> Int !io = { print(from_int(price(len(read_all())))); 0 }";
+    assert!(!c.call("qal_define", json!({"source": src})).0);
+    let (err, v) = c.call("qal_run", json!({"stdin": "aaaaaaaaaaaa"}));
+    assert!(!err && v["stdout"] == "1140\n", "{v}");
+    assert!(!c.call("qal_run", json!({"stdin": "aaa"})).0);
+    // A run with another effect is not kept (running it again could write somewhere).
+    let clock = "fn tick(args: List[Str]) -> Int !io !time = { print(from_int(now_ms() * 0)); 0 }";
+    assert!(!c.call("qal_define", json!({"source": clock})).0);
+    assert!(!c.call("qal_run", json!({"entry": "tick", "allow": ["time"]})).0);
+    // A change of an unrelated function: the kept runs print the same, no warning.
+    let (err, v) = c.call("qal_define", json!({"source": "fn other(x: Int) -> Int = x"}));
+    assert!(!err && !v.to_string().contains("E0807"), "{v}");
+    // The discount changes: one of the two kept runs prints differently.
+    let (err, v) = c.call("qal_define", json!({"source": "fn price(q: Int) -> Int = if q >= 10 then q * 90 else q * 100"}));
+    assert!(!err, "{v}");
+    let w = v["warnings"].as_array().and_then(|ws| ws.iter().find(|w| w["code"] == "E0807")).cloned().unwrap_or_default();
+    assert_eq!(w["message"], "`main` behaves differently on 1 of 2 earlier runs: `1140` is now `1080`", "{v}");
+    assert_eq!(v["changed_runs"], json!([{"entry": "main", "args": [], "stdin": "aaaaaaaaaaaa", "was": "1140", "now": "1080"}]), "{v}");
+    // Running it again records the new output: the next define is quiet.
+    assert!(!c.call("qal_run", json!({"stdin": "aaaaaaaaaaaa"})).0);
+    let (err, v) = c.call("qal_define", json!({"source": "fn other(x: Int) -> Int = x + 0"}));
+    assert!(!err && !v.to_string().contains("E0807"), "{v}");
+    assert_eq!(c.finish(), Some(0));
 }
 
 #[test]
