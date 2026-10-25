@@ -73,3 +73,50 @@ A difference can only show where tests are thin. Two candidates remain:
 - **Phase B:** agent runs with trap tickets of these bug classes.
 
 A3 is cheap and decides whether Phase B is worth its cost.
+
+## A3: thin tests, the same invariants
+
+Script: `a3/prepare.py` (contracts `a3/qal_contracts.qal`, Rust edits `a3/rust_edits.json`), raw
+results: `results-a3.json`. Both arms keep only the two public examples of stage 12 as tests.
+Both get the invariants of the design:
+
+- stock and sold ≥ 0, outstanding ≥ 0, tax ≤ spent, returned ≤ ordered, discount ≤ 50;
+- QAL: as `req`/`ens` on the five functions that write a customer, order or product record
+  (`put_back`, `take_back`, `fill`, `pay`, `sell`), with the bodies unchanged;
+- Rust: as `assert!`s at the same places. The unsigned types already enforce ≥ 0 (a debug-build
+  underflow panics).
+
+The invariants were written after the mutants were chosen. They are the list fixed in the design,
+not contracts aimed at single mutants, but the bias is there. One of my first QAL contracts was
+wrong: `take_back` required `o.total <= c.spent`, which no longer holds after a partial return,
+and the hidden tests' run stopped on it (`contract_violation`). It was corrected before the
+measurement.
+
+| | valid mutants caught (of 14) |
+|---|---|
+| Rust `cargo test` (2 example tests, `assert!`s) | 1 (`qty_discount_per_line`, by an example) |
+| QAL `qal_define` / `qal_test` (2 example tests, contracts) | 2 (the same one, and `no_discount_cap` by `discount`'s proven `ens`) |
+
+QAL is one ahead; the criterion of the design (at least 3) is not met. The invariants that would
+catch four more mutants (outstanding below 0 on cancel, tax kept on cancel or return, one item
+too many returned) are written down in QAL, but nothing checks them before the code runs:
+
+1. **The prover** treats a Bool helper without `ens` (`cust_ok`, `cust_at`) as unknown, and
+   approximates record fields: every obligation over the state is `unknown`.
+2. **The property tests give up.** Random records almost never satisfy a `req` with several
+   field conditions: `put_back` 3 runs of 1000 inputs, `take_back` 0, `fill` 37. So the contract
+   is checked only on the inputs the two examples happen to reach, which is what Rust's `assert!`
+   does too.
+
+## Conclusion of the study
+
+QAL's guarantees beat Rust in this study only where a contract is about integers the prover models
+exactly (the discount cap). For invariants over records and maps they are, today, run-time
+checks, as in Rust. Agent runs (Phase B) would not show more than that. What would make the
+difference is one of:
+
+- inputs generated so that they satisfy the `req` (e.g. field by field from its conditions, or
+  from a Z3 model of it) instead of random ones filtered by it;
+- a prover that sees through small Bool helpers (inline their bodies).
+
+Either way, A3 is the measurement that would show it, with the same mutants.

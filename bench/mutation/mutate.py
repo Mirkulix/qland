@@ -50,6 +50,12 @@ def qal_arm(root, mutant):
         c = qalc.Client(root=tmp)
         try:
             res = {}
+            # What the unmutated code already reports (A3's contracts have unknowns, gave_ups and
+            # traps on extreme inputs): only what is new after the mutation counts.
+            _, _, t0 = c.call("qal_test", {})
+            base_tests = {x["name"] for x in t0.get("tests") or [] if not x.get("passed")}
+            base_props = {p["def"] for p in t0.get("properties") or [] if p["status"] == "failed"}
+            base_warn = {(p["def"], "E0803") for p in t0.get("properties") or [] if p["status"] == "failed"} | {(p["def"], "E0804") for p in t0.get("properties") or [] if p.get("traps")}
             if mutant["qal"]:
                 defs = sorted({e["def"] for e in mutant["qal"]})
                 _, _, views = c.call("qal_view", {"names": defs})
@@ -57,12 +63,12 @@ def qal_arm(root, mutant):
                 src = "\n\n".join(apply(texts[d], [e for e in mutant["qal"] if e["def"] == d], f"qal {mutant['id']} {d}") for d in defs)
                 is_error, _, out = c.call("qal_define", {"source": src})
                 diags = out.get("diagnostics") or []
-                warnings = [w for w in out.get("warnings") or [] if w["code"] in PROPERTY_WARNINGS]
+                warnings = [w for w in out.get("warnings") or [] if w["code"] in PROPERTY_WARNINGS and (w["def"], w["code"]) not in base_warn]
                 if is_error and not any(d["code"] == "E0801" for d in diags):
                     return {"invalid": [d["message"] for d in diags][:3]}
                 res["define"] = {
                     "refuted": [d["message"] for d in diags if d["code"] == "E0801"],
-                    "failed_tests": [t["name"] for t in out.get("tests") or [] if not t.get("passed")],
+                    "failed_tests": [t["name"] for t in out.get("tests") or [] if not t.get("passed") and t["name"] not in base_tests],
                     "ran_tests": len(out.get("tests") or []),
                     "property_warnings": [f"{w['code']} {w['def']}: {w['message']}" for w in warnings],
                 }
@@ -73,8 +79,8 @@ def qal_arm(root, mutant):
                     res["hidden"] = {"failed": None, "note": "not stored"}
                     return res
             _, _, t = c.call("qal_test", {})
-            failed = [x["name"] for x in t.get("tests") or [] if not x.get("passed")]
-            props = [f"{p['def']} {p['status']}" for p in t.get("properties") or [] if p["status"] == "failed"]
+            failed = [x["name"] for x in t.get("tests") or [] if not x.get("passed") and x["name"] not in base_tests]
+            props = [f"{p['def']} {p['status']}" for p in t.get("properties") or [] if p["status"] == "failed" and p["def"] not in base_props]
             res["test"] = {"failed_tests": failed, "failed_properties": props, "detected": bool(failed or props)}
         finally:
             c.close()

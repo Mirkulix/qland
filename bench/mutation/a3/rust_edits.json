@@ -1,0 +1,33 @@
+{
+ "tests": "#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn example_one() {\n        assert_eq!(run(\"product p1 widget 1000 5\\nproduct p2 gadget 250 20\\ncustomer c1 ann\\ncustomer c2 bob\\norder o1 c1 p1:2,p2:8\\norder o2 c2 p1:3,p9:1\\norder o3 c2 p1:4,p2:1\\nrestock p1 10\\nreturn o1 3\\nreport\\ntop\\n\".as_bytes()), (\"OK o1 3800\\nERR 6 unknown_product\\nBACKORDER o3\\nFILLED o3 4250\\nRETURNED o1 1140\\n--- customers\\nc1 1 2660 0 2660\\nc2 1 4250 0 4250\\n--- products\\np1 11 4\\np2 12 8\\n--- top\\np2 8\\np1 4\\n\".to_string(), true));\n    }\n\n    #[test]\n    fn example_two() {\n        assert_eq!(run(\"product p1 a 100 10\\nproduct p2 b 10 10\\ncustomer c1 x silver\\npromo p2 40\\ntax 10\\norder o1 c1 p1:5,p2:5\\norder o2 c1 p1 5\\norder o3 c1 p1:0\\norder o4 c1 p1:1,\\norder o5 c1 p1:1,p1:1\\nreport\\n\".as_bytes()), (\"OK o1 534\\nOK o2 533\\nERR 8 invalid\\nERR 9 invalid\\nBACKORDER o5\\n--- customers\\nc1 2 1067 96 1067\\n--- products\\np1 0 10\\np2 5 5\\n\".to_string(), true));\n    }\n}\n",
+ "replace": [
+  [
+   "/// Checks the credit limit for `total` more.",
+   "/// A3 of the mutation study: the invariants the unsigned types do not already enforce.\nfn cust_ok(c: &Customer) -> bool {\n    c.tax <= c.spent\n}\n\n/// Checks the credit limit for `total` more."
+  ],
+  [
+   "        let percent = (quantity_percent + tier.percent() + product.promo).min(50);\n",
+   "        let percent = (quantity_percent + tier.percent() + product.promo).min(50);\n        assert!(percent <= 50);\n"
+  ],
+  [
+   "            customer.outstanding += total;\n        }",
+   "            customer.outstanding += total;\n            assert!(cust_ok(customer));\n        }"
+  ],
+  [
+   "        customer.outstanding = customer.outstanding.saturating_sub(total);\n",
+   "        customer.outstanding = customer.outstanding.saturating_sub(total);\n        assert!(cust_ok(customer));\n"
+  ],
+  [
+   "        order.returned += qty;\n",
+   "        order.returned += qty;\n        assert!(order.returned <= order.qty && order.tax <= order.total);\n"
+  ],
+  [
+   "        customer.outstanding = customer.outstanding.saturating_sub(refund);\n",
+   "        customer.outstanding = customer.outstanding.saturating_sub(refund);\n        assert!(cust_ok(customer));\n"
+  ],
+  [
+   "                customer.outstanding -= cents;\n",
+   "                customer.outstanding -= cents;\n                assert!(cust_ok(customer));\n"
+  ]
+ ]
+}
