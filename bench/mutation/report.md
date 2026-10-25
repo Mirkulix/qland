@@ -210,3 +210,42 @@ The same three bugs are caught as in A3, now by the invariant: "the result of `p
 Not caught: `return_one_too_many`. `give_back` would call `take_back` outside its `req`, but the
 generated `st` almost never holds an order under the generated `oid`, so that path is not reached.
 A generator that draws keys from the maps it generates would reach it.
+
+## A5: reachable states (an experiment, not kept)
+
+`a5/reach-experiment.patch` (raw results: `results-a5.json`; source: `a5/qal_invariants.qal`).
+
+**Idea:** build the inputs of functions over the state from the program's own functions:
+
+- a seed (`initial()`), then random steps (`add_customer`, `place_order`, `pay`, `cancel` ...);
+- strings drawn mostly from the keys already in the state;
+- remembered successful calls varied, as a fuzzer keeps the inputs that got somewhere;
+- the function under test tried on every state.
+
+On reachable states the relations between records hold by construction, so A5 needs only the
+three invariant lines and two domain `req`s (`stock >= 0`, `qty > 0`), not A4's relational ones.
+
+| | valid mutants caught (of 14) |
+|---|---|
+| A4, without reachable states | 5 |
+| A4, with reachable states | 5 |
+| A5, invariants only, with reachable states | 2 |
+
+**What went wrong on the way, all fixed in the experiment:**
+
+- the walks first learnt to place orders without lines, which always succeed;
+- a step that only set an error flag counted as progress;
+- a walk per input cost so much that 26 of 52 properties ran out of time;
+- a pool shared across functions made the result of a function depend on which others were
+  tested, so a define reported a failure the full run never had.
+
+**Why it caught nothing more:** of 300 reached states only 3 held the situation the cancel bugs
+need, an open order of a customer who has paid part of it.
+
+**Verdict:** no measurable gain for about 400 lines and several seconds per test run, so it was
+taken out. The idea is sound, but the walks would need guidance this generic generator does not
+have, e.g. a grammar of the commands or the inputs of the program's tests.
+
+**Kept from it:** the repair puts a path that is bounded on both sides by literals at its lowest
+or highest value a third of the time each. Without this, repaired small inputs crowded out the
+edges where `price * qty * 95` overflows, and an existing test caught that.

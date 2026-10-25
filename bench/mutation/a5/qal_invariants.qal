@@ -1,0 +1,24 @@
+# A5 of the mutation study: the three type invariants of A4 and nothing else - no req, no helper.
+# Inputs of the functions over the state are reached by the program's own functions (reach.rs).
+# The stage-12 examples are the only tests.
+# The two reqs are the ones the property tests asked for on the unmutated code (2 warnings).
+
+fn inv_CustRec(c: CustRec) -> Bool = c.orders >= 0 && c.spent >= 0 && c.taxes >= 0 && c.taxes <= c.spent && c.outstanding >= 0
+
+fn inv_OrderRec(o: OrderRec) -> Bool = o.qty >= 0 && o.returned >= 0 && o.returned <= o.qty && o.total >= 0 && o.tax >= 0 && o.tax <= o.total
+
+fn inv_ProdRec(p: ProdRec) -> Bool = p.stock >= 0 && p.sold >= 0
+
+fn add_product(st: St, n: Int, pid: Str, name: Str, price: Int, stock: Int) -> Step
+  req stock >= 0
+= if map_has(st.products, pid) then err_step(st, n, "duplicate") else Step { st: St { products: map_put(st.products, pid, ProdRec { id: pid, name: name, price: price, stock: stock, sold: 0 }), customers: st.customers, used: st.used, orders: st.orders, bad: st.bad, tax: st.tax, pending: st.pending, promo: st.promo }, out: [] }
+
+fn restock(st: St, n: Int, pid: Str, qty: Int) -> Step
+  req qty > 0
+= match map_get(st.products, pid) { Some(p) => fill_pending(St { products: map_put(st.products, pid, ProdRec { id: p.id, name: p.name, price: p.price, stock: p.stock + qty, sold: p.sold }), customers: st.customers, used: st.used, orders: st.orders, bad: st.bad, tax: st.tax, pending: st.pending, promo: st.promo }), None => err_step(st, n, "unknown_product") }
+
+fn play(st: St, lines: List[Str], n: Int, acc: List[Str]) -> List[Str] = if n > len(lines) then acc else let r = step(st, n, list_at(lines, n - 1)) in play(r.st, lines, n + 1, acc ++ r.out)
+
+test example_one = play(initial(), ["product p1 widget 1000 5", "product p2 gadget 250 20", "customer c1 ann", "customer c2 bob", "order o1 c1 p1:2,p2:8", "order o2 c2 p1:3,p9:1", "order o3 c2 p1:4,p2:1", "restock p1 10", "return o1 3", "report", "top"], 1, []) == ["OK o1 3800", "ERR 6 unknown_product", "BACKORDER o3", "FILLED o3 4250", "RETURNED o1 1140", "--- customers", "c1 1 2660 0 2660", "c2 1 4250 0 4250", "--- products", "p1 11 4", "p2 12 8", "--- top", "p2 8", "p1 4"]
+
+test example_two = play(initial(), ["product p1 a 100 10", "product p2 b 10 10", "customer c1 x silver", "promo p2 40", "tax 10", "order o1 c1 p1:5,p2:5", "order o2 c1 p1 5", "order o3 c1 p1:0", "order o4 c1 p1:1,", "order o5 c1 p1:1,p1:1", "report"], 1, []) == ["OK o1 534", "OK o2 533", "ERR 8 invalid", "ERR 9 invalid", "BACKORDER o5", "--- customers", "c1 2 1067 96 1067", "--- products", "p1 0 10", "p2 5 5"]
