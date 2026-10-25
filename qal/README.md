@@ -38,7 +38,7 @@ The tools it uses most:
 
 | Tool | What it does |
 |---|---|
-| `qal_define` | add or replace definitions; one call type-checks, proves the contracts, runs every test that reaches the change, property-tests each defined function at its edges and relinks all dependents (0.64 s median on a 67-function program, `../bench/loop/report.md`) |
+| `qal_define` | add or replace definitions; one call type-checks, proves the contracts, runs every test that reaches the change, property-tests each defined function at its edges, relinks all dependents and runs your earlier `qal_run` inputs again, reporting any output the change altered (E0807); 0.64 s median on a 67-function program, `../bench/loop/report.md` |
 | `qal_query {"outline": true}` | the project in one view: signatures, contracts, who uses what, tests |
 | `qal_view` | the text of the definitions to edit |
 | `qal_run` | run `main` (or another entry point) on arguments and stdin, or many `cases` in one call |
@@ -86,7 +86,16 @@ A `req` is checked at run time whether or not it is proven. (On the command line
 ## Status (2026-10-25)
 
 Measured with Claude Haiku agents on the living program (12 change requests, thin tickets, hidden
-tests): QAL reached 12/12 stages in three runs in a row; Rust also reaches 12/12. QAL costs
-about 1.4x the tokens of Rust (mean of two runs; single runs vary by about 30 %). The language's
-guarantees (proofs, property tests, effects) have so far not caught a bug that the Rust arm let
-through. Details: `../bench/living/results-pressure-2026-10-24/report.md`.
+tests), runs 7–13:
+
+- **Results:** 83 of 84 stages green. The one failure (run 11) was a regression the agent hid by
+  rewriting the test that pinned the rule; the behaviour memory (E0807) now reports that class in
+  the round that makes it.
+- **Files:** no agent wrote a source file. All code went to the store, and code was read only as
+  nodes.
+- **Cost:** QAL takes 1.32× the tokens of Rust (mean of runs 8–13; single runs vary by about 30 %).
+- **The guarantees:** in a mutation study with thin tests, QAL's contracts, type invariants and
+  property tests caught 5 of 14 injected bugs, Rust's `assert!`s 1. With thorough tests both catch
+  all of them.
+
+Details: `../bench/living/results-pressure-2026-10-24/report.md`, `../bench/mutation/report.md`.
