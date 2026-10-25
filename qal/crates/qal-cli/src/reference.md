@@ -35,6 +35,7 @@ Contracts: fn sqrt_floor(n: Int) -> Int req n >= 0 ens r * r <= n = ...   (`r` i
   from a helper needs the helper's `ens`. Unproven contracts are `unknown` (with a reason), still checked at run time.
   qal_test also runs a generated property test (100 inputs that satisfy `req`) for each pure fn with `ens`; failures
   come with a shrunk counterexample; traps like overflow are counted (`traps`, `trap`), not failures.
+Invariants: a pure `fn inv_T(x: T) -> Bool` is record T's invariant; every pure fn that takes or returns a T (also inside lists, maps, records) gets a property test that it keeps it: state each rule of your data once there.
 Record construction needs every field (`field: value`). There are no list patterns: use len and get.
 
 Built-ins (indices count characters; slice and range are half-open: the end is excluded):

@@ -12,6 +12,7 @@
 //!   `max_size` over the runs.
 
 use crate::gen::{fnv, generatable, random_with, shrink, Rng};
+use crate::inv::Invariants;
 use qal_core::ast::{BinOp, FnDef, Type};
 use qal_core::tast::{TExpr, TFn, TKind, TProgram};
 use qal_run::{RunError, Runner, Value, Values};
@@ -97,11 +98,14 @@ fn has_obligations(tp: &TProgram, f: &TFn) -> bool {
 
 /// The functions with properties, by index into `tp.fns`: pure, generatable parameters, obligations.
 pub fn candidates(tp: &TProgram) -> Vec<usize> {
+    let invs = Invariants::of(tp);
     (0..tp.fns.len())
         .filter(|&i| {
             let f = &tp.fns[i];
+            // A function that takes or returns a type with an invariant must keep it (inv.rs).
+            let keeps = !invs.is_invariant(&f.def.name) && (invs.reach(tp, &f.def.ret) || f.def.params.iter().any(|p| invs.reach(tp, &p.ty)));
             // A stub (`todo()`) has no behaviour to test yet.
-            f.def.effects.is_empty() && f.def.params.iter().all(|p| generatable(tp, &p.ty)) && has_obligations(tp, f) && !f.is_stub()
+            f.def.effects.is_empty() && f.def.params.iter().all(|p| generatable(tp, &p.ty)) && (has_obligations(tp, f) || keeps) && !f.is_stub()
         })
         .collect()
 }
@@ -131,13 +135,20 @@ enum Run {
     Fail(RunError),
 }
 
-fn run_one(runner: &Runner, f: &str, args: &[Value]) -> Run {
+fn run_one(runner: &Runner, invs: &Invariants, f: &str, args: &[Value]) -> Run {
     match runner.call(&req_name(f), args) {
         Ok(Value::Bool(true)) => {}
         _ => return Run::Discard,
     }
+    // Inputs keep the invariants of their types, as they keep `req`.
+    if args.iter().any(|a| invs.broken(runner, a).is_some()) {
+        return Run::Discard;
+    }
     match runner.call(f, args) {
-        Ok(_) => Run::Pass,
+        Ok(v) => match invs.broken(runner, &v) {
+            Some(b) => Run::Fail(Invariants::failure(f, b)),
+            None => Run::Pass,
+        },
         Err(e) if e.kind == "contract_violation" => Run::Fail(e),
         Err(e) => Run::Trap(e),
     }
@@ -186,6 +197,7 @@ fn run_properties(tp: &TProgram, runner: &Runner, fns: &[usize], opts: &PropOpti
         let types: Vec<Type> = f.def.params.iter().map(|p| p.ty.clone()).collect();
         let edges = req_bounds(f);
         let plan = crate::repair::plan(tp, f);
+        let invs = Invariants::of(tp);
         let max_tries = opts.runs.saturating_mul(10).max(1);
         let mut tries = 0;
         let mut out_of_time = false;
@@ -201,10 +213,13 @@ fn run_properties(tp: &TProgram, runner: &Runner, fns: &[usize], opts: &PropOpti
             let Some(mut args) = types.iter().map(|t| random_with(tp, t, size, &mut rng, &edges)).collect::<Option<Vec<Value>>>() else { break };
             // Every other input is repaired towards `req` (it still has to pass it); the others
             // stay as drawn, so inputs the atoms do not describe keep their chance.
-            if tries % 2 == 0 && !plan.is_empty() {
-                crate::repair::repair(&plan, &mut args, &mut rng);
+            if tries % 2 == 0 {
+                invs.repair(&mut args, &mut rng);
+                if !plan.is_empty() {
+                    crate::repair::repair(&plan, &mut args, &mut rng);
+                }
             }
-            match run_one(runner, name, &args) {
+            match run_one(runner, &invs, name, &args) {
                 Run::Discard => report.discarded += 1,
                 Run::Pass => report.runs += 1,
                 Run::Trap(e) => {
@@ -214,7 +229,7 @@ fn run_properties(tp: &TProgram, runner: &Runner, fns: &[usize], opts: &PropOpti
                 }
                 Run::Fail(e) => {
                     report.runs += 1;
-                    let (args, e) = shrink_failure(tp, runner, name, &types, args, e, opts, start);
+                    let (args, e) = shrink_failure(tp, runner, &invs, name, &types, args, e, opts, start);
                     report.status = PropStatus::Failed;
                     report.counterexample = Some(Values(f.def.params.iter().map(|p| p.name.clone()).zip(args).collect()));
                     report.error = Some(e);
@@ -236,7 +251,7 @@ fn run_properties(tp: &TProgram, runner: &Runner, fns: &[usize], opts: &PropOpti
 /// Greedily replaces one argument at a time by a simpler one that still fails the same way, until
 /// `opts.shrink_steps` candidates were tried or the time budget (counted from `start`) is used up.
 #[allow(clippy::too_many_arguments)]
-fn shrink_failure(tp: &TProgram, runner: &Runner, f: &str, types: &[Type], mut args: Vec<Value>, mut err: RunError, opts: &PropOptions, start: Instant) -> (Vec<Value>, RunError) {
+fn shrink_failure(tp: &TProgram, runner: &Runner, invs: &Invariants, f: &str, types: &[Type], mut args: Vec<Value>, mut err: RunError, opts: &PropOptions, start: Instant) -> (Vec<Value>, RunError) {
     let mut steps = 0;
     'outer: loop {
         for k in 0..args.len() {
@@ -247,7 +262,7 @@ fn shrink_failure(tp: &TProgram, runner: &Runner, f: &str, types: &[Type], mut a
                 steps += 1;
                 let mut cand = args.clone();
                 cand[k] = c;
-                if let Run::Fail(e) = run_one(runner, f, &cand) {
+                if let Run::Fail(e) = run_one(runner, invs, f, &cand) {
                     if same_failure(&e, &err) {
                         args = cand;
                         err = e;
@@ -288,3 +303,4 @@ pub(crate) fn children(e: &TExpr) -> Vec<&TExpr> {
         TKind::Match(s, arms) => std::iter::once(&**s).chain(arms.iter().flat_map(|a| a.guard.iter().chain([&a.body]))).collect(),
     }
 }
+

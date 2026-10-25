@@ -1,0 +1,7 @@
+type C = { spent: Int, taxes: Int }
+type S = { cs: Map[Str, C], n: Int }
+fn inv_C(c: C) -> Bool = c.spent >= 0 && c.taxes >= 0 && c.taxes <= c.spent
+fn refund(c: C, x: Int) -> C = if x >= 0 && x <= c.spent - c.taxes then C { spent: c.spent - x, taxes: c.taxes } else c
+fn refund_all_tax_kept(c: C) -> C = C { spent: 0, taxes: c.taxes }
+fn drop_one(s: S, k: Str) -> S = S { cs: map_del(s.cs, k), n: s.n }
+fn zero_all(s: S) -> S = S { cs: map_put(s.cs, "z", C { spent: 0, taxes: 1 }), n: s.n }

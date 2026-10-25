@@ -201,8 +201,9 @@ fn handshake_lists_the_tools_with_the_language_reference() {
     // with its `message` filter), the rerun of 2026-10-24 (`cases` on qal_define) and the pressure run of
     // 2026-10-24 (the property tests define runs) and the fused multiply-divide (`a * b * ... / c`
     // exact, on the Int type) and pressure run 5 (E0806, a change without a test) and pressure run 7 (dependents that still check are relinked,
-    // io needs no grant) add to it; after pressure run 9 the services moved to qal_query's topic "services".
-    assert!(qal_cli::mcp::REFERENCE.lines().count() <= 67 && qal_cli::mcp::REFERENCE.len() <= 9450, "{} lines, {} bytes", qal_cli::mcp::REFERENCE.lines().count(), qal_cli::mcp::REFERENCE.len());
+    // io needs no grant) add to it; after pressure run 9 the services moved to qal_query's topic "services";
+    // the mutation study added type invariants (`inv_T`).
+    assert!(qal_cli::mcp::REFERENCE.lines().count() <= 68 && qal_cli::mcp::REFERENCE.len() <= 9700, "{} lines, {} bytes", qal_cli::mcp::REFERENCE.lines().count(), qal_cli::mcp::REFERENCE.len());
     // An unknown version gets the newest legacy one.
     let r = c.request("initialize", json!({"protocolVersion": "1999-01-01", "capabilities": {}, "clientInfo": {"name": "x", "version": "1"}}));
     assert_eq!(r["result"]["protocolVersion"], "2025-11-25");

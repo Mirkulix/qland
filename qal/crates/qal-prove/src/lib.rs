@@ -25,6 +25,7 @@
 //! **Property tests** (`props`): generated inputs that satisfy `req`, checked for contract violations.
 
 mod gen;
+mod inv;
 pub mod props;
 mod repair;
 mod vc;

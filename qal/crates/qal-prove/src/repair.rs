@@ -77,9 +77,18 @@ impl Plan {
 
 /// Reads the atoms of `f`'s `req`.
 pub fn plan(tp: &TProgram, f: &TFn) -> Plan {
+    plan_of(tp, f, &f.req)
+}
+
+/// Reads the atoms of the body of a Bool function `f` (an invariant, inv.rs).
+pub fn plan_of_body(tp: &TProgram, f: &TFn) -> Plan {
+    plan_of(tp, f, std::slice::from_ref(&f.body))
+}
+
+fn plan_of(tp: &TProgram, f: &TFn, conds: &[TExpr]) -> Plan {
     let env: HashMap<u32, Term> = (0..f.def.params.len()).map(|i| (i as u32, Term::Path(Path { param: i, steps: Vec::new() }))).collect();
     let mut atoms = Vec::new();
-    for r in &f.req {
+    for r in conds {
         collect(tp, r, &env, 0, &mut atoms);
     }
     atoms.truncate(MAX_ATOMS);
@@ -502,3 +511,4 @@ mod tests {
         assert_eq!(args, vec![Value::List(vec![]), Value::Int(1)]);
     }
 }
+

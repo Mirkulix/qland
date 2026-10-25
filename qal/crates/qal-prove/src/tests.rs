@@ -786,3 +786,25 @@ fn proofs_over_strings_and_lists_prove_and_refute_exactly() {
     assert_eq!(rs[1].status, Status::Refuted);
     assert_eq!(rs[1].counterexample, Some(json!({"xs": []})));
 }
+
+#[test]
+fn type_invariants_are_kept_by_every_function_that_returns_the_type() {
+    // `inv_C` is C's invariant: inputs keep it (repaired towards it), and every pure function
+    // that returns a C, also inside a map or a record, must keep it. No `req` or `ens` is written.
+    let rs = props(
+        "type C = { spent: Int, taxes: Int }\n\
+         type S = { cs: Map[Str, C], n: Int }\n\
+         fn inv_C(c: C) -> Bool = c.spent >= 0 && c.taxes >= 0 && c.taxes <= c.spent\n\
+         fn refund(c: C, x: Int) -> C = if x >= 0 && x <= c.spent - c.taxes then C { spent: c.spent - x, taxes: c.taxes } else c\n\
+         fn refund_all_tax_kept(c: C) -> C = C { spent: 0, taxes: c.taxes }\n\
+         fn drop_one(s: S, k: Str) -> S = S { cs: map_del(s.cs, k), n: s.n }\n\
+         fn zero_all(s: S) -> S = S { cs: map_put(s.cs, \"z\", C { spent: 0, taxes: 1 }), n: s.n }",
+    );
+    let st: Vec<(&str, PropStatus)> = rs.iter().map(|r| (r.def.as_str(), r.status)).collect();
+    assert_eq!(st, vec![("refund", PropStatus::Passed), ("refund_all_tax_kept", PropStatus::Failed), ("drop_one", PropStatus::Passed), ("zero_all", PropStatus::Failed)]);
+    assert!(rs.iter().filter(|r| r.status == PropStatus::Passed).all(|r| r.runs == 100), "{rs:?}");
+    let e = rs[1].error.as_ref().unwrap();
+    assert_eq!((e.kind, e.path.as_str(), e.message.as_str()), ("contract_violation", "result", "the result of `refund_all_tax_kept` holds a `C` that breaks `inv_C`"));
+    // The counterexample is shrunk and keeps the invariant itself.
+    assert_eq!(serde_json::to_value(rs[1].counterexample.as_ref().unwrap()).unwrap(), json!({"c": {"spent": 1, "taxes": 1}}));
+}
