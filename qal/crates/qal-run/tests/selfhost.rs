@@ -212,3 +212,29 @@ fn seed_backend_initializes_and_parses_program() {
     let p = qal_compiler::Qal.parse("fn add(x: Int, y: Int) -> Int = x + y").expect("parse via seed");
     assert_eq!(p.defs.len(), 1);
 }
+
+#[test]
+fn check_delta_of_the_seed_equals_the_reference() {
+    // CHECK_DELTA (incremental define): a declared function counts only by its signature, in the
+    // self-hosted compiler exactly as in the Rust reference. `f` has a parameter `todo` (it must
+    // not shadow the declared body) and a contract that must not be checked; `h` is declared and
+    // its body would not check.
+    selfhost::init_seed_backend(4).expect("init seed backend");
+    let src = "type Box = { n: Int }\n\
+               fn f(todo: Int) -> Int\n  req todo > 0\n= todo + g(1)\n\
+               fn g(x: Int) -> Int = x\n\
+               fn h(b: Box) -> Str = b.n\n\
+               fn k(b: Box) -> Int = f(b.n) + len(h(b))\n\
+               test t = k(Box { n: 1 }) > 0\n";
+    let p = qal_compiler::parse_program(src).unwrap();
+    let declared = |n: &str| n == "f" || n == "h";
+    let rust = qal_compiler::Rust.check_delta(&p, &|_| true, &declared).unwrap_or_else(|d| panic!("{d:#?}"));
+    let qal = qal_compiler::Qal.check_delta(&p, &|_| true, &declared).unwrap_or_else(|d| panic!("{d:#?}"));
+    assert_eq!(qal_core::tform::encode(&rust), qal_core::tform::encode(&qal));
+    assert!(rust.fns[0].req.is_empty() && rust.fns[0].def.params[0].name == "qc_p0");
+    // Not declared, `h` does not check, in both.
+    let rust = qal_compiler::Rust.check_delta(&p, &|_| true, &|n| n == "f").unwrap_err();
+    let qal = qal_compiler::Qal.check_delta(&p, &|_| true, &|n| n == "f").unwrap_err();
+    assert_eq!((rust[0].code, &rust[0].def), (qal[0].code, &qal[0].def));
+    assert_eq!(rust[0].def, "h");
+}

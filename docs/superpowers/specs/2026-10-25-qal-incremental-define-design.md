@@ -1,8 +1,12 @@
 # QAL: incremental define — design
 
 **Date:** 2026-10-25
-**Status:** implemented on the host side (approach C below, `qal/crates/qal-store/src/incremental.rs`);
-approaches A and B stay open
+**Status:** implemented, approaches A and C combined (2026-10-26):
+
+- **Compiler side:** the self-hosted compiler has the operation `CHECK_DELTA` (op 11,
+  `qc_proto.qal`, `qc_declare` in `qc_check.qal`), with the bootstrap fixpoint re-established.
+- **Host side:** the store's cache and assembly live in `qal/crates/qal-store/src/incremental.rs`.
+- **Still open:** approach B.
 **Why:** the 1-turn verification loop takes 0.46 s on a 67-function program, but about 2 s at 1520
 definitions (`bench/loop/report.md`, sections "Scaling" and "Why the rest needs the self-hosted
 compiler"). Of those 2 s, about 1.6 s are spent checking and hashing the **whole** codebase in the
@@ -81,6 +85,41 @@ compiler, its protocol or the bootstrap:
   diagnostic, a name or instance missing on either side, a changed signature of a kept function.
   `QAL_INCREMENTAL=off` always takes the full path; `QAL_INCREMENTAL=verify` takes both and reports
   whether they agree.
+
+**As built, A + C:** `CHECK_DELTA` takes three things:
+
+- the text;
+- the names written now;
+- the names of the functions that count only by their signature (*declared*).
+
+**How a declared function is checked.** The compiler reduces it to its signature:
+
+- its parameters are renamed `qc_p0`, `qc_p1`, ...;
+- its contracts are dropped;
+- its body becomes `todo()`.
+
+The Rust reference does the same (`FnDef::declared`). Their bodies are neither resolved nor
+checked, so a parameter named `todo` can no longer shadow anything.
+
+**What the host sends:**
+
+- every type;
+- the changed definitions;
+- the generics and the callers of instances;
+- the functions those refer to, declared.
+
+**What the host does with the result:**
+
+- **Assembly:** it assembles the full typed program from the result and the cache.
+- **Instances:** these are not keyed. Whatever produces them is checked again, which answers the
+  open question of approach A.
+
+**Measured:**
+
+- **Bootstrap:** stage 1 = stage 2 = stage 3, seed `1a86ae72…`.
+- **Seed and reference:** `check_delta_of_the_seed_equals_the_reference` (`qal-run/tests/selfhost.rs`).
+- **Differential:** 318 stores, 2424 defines. 1788 incremental checks and 1788 incremental hashes,
+  all identical to the full path.
 
 ## Verification
 

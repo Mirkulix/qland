@@ -358,6 +358,41 @@ pub struct Program {
     pub defs: Vec<Def>,
 }
 
+impl FnDef {
+    /// The function as `CHECK_DELTA` checks a declared one: only its signature counts. The
+    /// parameters are renamed `qc_p0`, `qc_p1`, ... (so none shadows the body), the contracts are
+    /// dropped and the body is `todo()`. The self-hosted compiler builds the same (`qc_declared`).
+    pub fn declared(&self) -> FnDef {
+        FnDef {
+            name: self.name.clone(),
+            tparams: self.tparams.clone(),
+            eparams: self.eparams.clone(),
+            params: self.params.iter().enumerate().map(|(i, p)| Param { name: format!("qc_p{i}"), ty: p.ty.clone() }).collect(),
+            ret: self.ret.clone(),
+            effects: self.effects.clone(),
+            req: Vec::new(),
+            ens: Vec::new(),
+            body: Expr::Call("todo".into(), Vec::new()),
+        }
+    }
+}
+
+impl Program {
+    /// The program with the functions named by `declared` reduced to [`FnDef::declared`].
+    pub fn declare(&self, declared: &dyn Fn(&str) -> bool) -> Program {
+        Program {
+            defs: self
+                .defs
+                .iter()
+                .map(|d| match d {
+                    Def::Fn(f) if declared(&f.name) => Def::Fn(f.declared()),
+                    _ => d.clone(),
+                })
+                .collect(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

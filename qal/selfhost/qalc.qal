@@ -10252,6 +10252,33 @@ fn qc_check_defs_loop(defs: List[QcDef], g: QcGlobals, diags: List[QcDiag], idx:
 fn qc_check(p: QcProgram) -> Result[QcTProgram, List[QcDiag]] =
   qc_check_stored(p, fn(_: Str) => true)
 
+# CHECK_DELTA (incremental define): a declared function counts only by its signature. Its
+# parameters are renamed qc_p0, qc_p1, ... (so none shadows the body), its contracts are dropped
+# and its body is `todo()`; the Rust reference builds the same (`FnDef::declared`).
+fn qc_declared(f: QcFnDef) -> QcFnDef =
+  QcFnDef { name: f.name, tparams: f.tparams, eparams: f.eparams, params: qc_declared_params_loop(f.params, 0, AccEnd), ret: f.ret, effects: f.effects, reqs: [], enss: [], body: QcECall("todo", []) }
+
+fn qc_declared_params_loop(ps: List[QcFieldType], idx: Int, acc: Accum[QcFieldType]) -> List[QcFieldType] =
+  if idx >= len(ps) then acc_list(acc)
+  else qc_declared_params_loop(ps, idx + 1, AccPush(acc, QcFieldType { name: "qc_p" ++ from_int(idx), ty: list_at(ps, idx).ty }))
+
+# The program with the functions in `declared` reduced to `qc_declared`.
+fn qc_declare(p: QcProgram, declared: Map[Str, Bool]) -> QcProgram =
+  QcProgram { defs: map(p.defs, fn(d: QcDef) => match d {
+    QcDefFn(f) => if map_has(declared, f.name) then QcDefFn(qc_declared(f)) else d,
+    _ => d
+  }) }
+
+test qc_declare_test =
+  match qc_parse("fn f(todo: Int) -> Int\n  req todo > 0\n= todo + g(1)\nfn g(x: Int) -> Int = x\ntest t = f(1) == 2") {
+    Ok(p) =>
+      match qc_check(qc_declare(p, map_put(map_new(), "f", true))) {
+        Ok(tp) => len(tp.fns) == 2 && len(list_at(tp.fns, 0).reqs) == 0,
+        Err(_) => false
+      },
+    Err(_) => false
+  }
+
 # Split checking (phase 5 §4.3): a large program is checked in work items of definition ranges,
 # each in its own execution, so the memory of one execution stays bounded. Only programs whose
 # globals have no diagnostics are split; any diagnostic falls back to the single pass, which
@@ -14926,6 +14953,22 @@ fn qc_main(request: Bytes) -> Bytes =
                 }
               else qc_res_internal("unknown JOIN continuation op")
           }
+      else if op == 11 then
+        # CHECK_DELTA (incremental define): the text with the declared functions reduced to their
+        # signatures, checked in one pass (the host sends only what changed and what it uses)
+        let text_res = qc_reader_str(r0) in
+        let new_res = qc_reader_strs(text_res.r) in
+        let decl_res = qc_reader_strs(new_res.r) in
+        match qc_parse(text_res.val) {
+          Err(d) => qc_res_diagnostics([d]),
+          Ok(p) =>
+            let new_m = fold(new_res.val, map_new(), fn(m: Map[Str, Bool], n: Str) => map_put(m, n, true)) in
+            let decl_m = fold(decl_res.val, map_new(), fn(m: Map[Str, Bool], n: Str) => map_put(m, n, true)) in
+            match qc_check_stored(qc_declare(p, decl_m), fn(n: Str) => map_has(new_m, n)) {
+              Ok(tp) => qc_res_done(qc_tform_encode(tp)),
+              Err(ds) => qc_res_diagnostics(ds)
+            }
+        }
       else if op == 10 then
         # VALIDATE_RANGE: one validation work item of a split CHECK_FILE
         let t_res = qc_reader_bytes(r0) in

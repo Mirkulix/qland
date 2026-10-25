@@ -9,8 +9,8 @@
 //!
 //! 1. checks a reduced program: every type; in full the changed definitions, the generic
 //!    functions and the definitions that call an instance of one (instances come from the bodies
-//!    that need them); the other functions they refer to as signatures with the body `todo()`;
-//!    nothing else.
+//!    that need them); the other functions they refer to as declared, so the self-hosted
+//!    compiler's `CHECK_DELTA` counts only their signatures (`FnDef::declared`); nothing else.
 //! 2. assembles the checked program in the full program's order from the reduced one and, for the
 //!    unchanged definitions, the kept one, with every call renumbered: by name for functions, by
 //!    generic name and type arguments for instances (positions differ from one define to the
@@ -27,7 +27,7 @@
 //! codebase, a diagnostic, any name or instance missing on either side, a kept function whose
 //! definition differs. `QAL_INCREMENTAL=off` always takes the full path.
 
-use qal_core::ast::{Def, Expr, Program, TypeBody};
+use qal_core::ast::{Def, Program, TypeBody};
 use qal_core::canon::{Canon, Hash, Hashed, Kind};
 use qal_core::diag::Diagnostic;
 use qal_core::tast::{TExpr, TFn, TKind, TProgram, TTest};
@@ -125,7 +125,9 @@ fn mode() -> Mode {
 
 /// Checks `combined` (the codebase as the define would write it), reusing `prior` for the
 /// definitions outside `changed`. `input` is what the define writes, `refs_of` gives the names a
-/// stored definition refers to, `full` is the full check.
+/// stored definition refers to, `full` is the full check and `delta` the check of a program with
+/// some functions declared (`CHECK_DELTA`).
+#[allow(clippy::too_many_arguments)]
 pub fn check(
     combined: &Program,
     input: &Program,
@@ -133,6 +135,7 @@ pub fn check(
     changed: &HashSet<String>,
     refs_of: &dyn Fn(&str) -> Option<Vec<String>>,
     full: &dyn Fn(&Program) -> Result<TProgram, Vec<Diagnostic>>,
+    delta: &dyn Fn(&Program, &dyn Fn(&str) -> bool) -> Result<TProgram, Vec<Diagnostic>>,
 ) -> Result<TProgram, Vec<Diagnostic>> {
     let verify = mode() == Mode::Verify;
     let fallback = |why: &str| {
@@ -146,11 +149,6 @@ pub fn check(
         Def::Fn(f) if !f.tparams.is_empty() || !f.eparams.is_empty() => Some(f.name.as_str()),
         _ => None,
     }).collect();
-    // A parameter `todo` would shadow the stub's `todo()`.
-    let shadows: HashSet<&str> = combined.defs.iter().filter_map(|d| match d {
-        Def::Fn(f) if f.params.iter().any(|p| p.name == "todo") => Some(f.name.as_str()),
-        _ => None,
-    }).collect();
     let calls_instance = |e: &TExpr| calls(e, &|i| prior.fns.get(i).is_some_and(|f| f.instance.is_some()));
     let instance_users: HashSet<&str> = prior
         .fns
@@ -159,9 +157,9 @@ pub fn check(
         .map(|f| f.def.name.as_str())
         .chain(prior.tests.iter().filter(|t| calls_instance(&t.body)).map(|t| t.name.as_str()))
         .collect();
-    let kept = |name: &str| !changed.contains(name) && !generic.contains(name) && !instance_users.contains(name) && !shadows.contains(name);
-    // The kept functions the checked ones refer to enter as stubs; the other kept definitions are
-    // left out (at 1520 definitions their stubs were three quarters of the text).
+    let kept = |name: &str| !changed.contains(name) && !generic.contains(name) && !instance_users.contains(name);
+    // The kept functions the checked ones refer to enter as declared; the other kept definitions
+    // are left out (at 1520 definitions their signatures were three quarters of the text).
     let mut stubs: HashSet<String> = HashSet::new();
     let input_names: HashSet<&str> = input.defs.iter().map(|d| d.name()).collect();
     for d in combined.defs.iter().filter(|d| !kept(d.name()) && !matches!(d, Def::Type(_))) {
@@ -180,12 +178,12 @@ pub fn check(
             .filter_map(|d| match d {
                 Def::Type(_) => Some(d.clone()),
                 _ if !kept(d.name()) => Some(d.clone()),
-                Def::Fn(_) if stubs.contains(d.name()) => Some(stub(d)),
+                Def::Fn(f) if stubs.contains(d.name()) => Some(Def::Fn(f.declared())),
                 _ => None,
             })
             .collect(),
     };
-    let new = match full(&reduced) {
+    let new = match delta(&reduced, &|n| kept(n)) {
         Ok(new) => new,
         Err(d) => return fallback(&format!("a diagnostic: {}", d.first().map_or(String::new(), |d| format!("{} {} in `{}`", d.code, d.message, d.def)))),
     };
@@ -293,25 +291,6 @@ pub fn hash(
         return whole;
     }
     Ok(spliced)
-}
-
-/// A definition reduced to what the global environment needs: its signature.
-fn stub(d: &Def) -> Def {
-    match d {
-        Def::Fn(f) => {
-            let mut f = f.clone();
-            f.req.clear();
-            f.ens.clear();
-            f.body = Expr::Call("todo".into(), vec![]);
-            Def::Fn(f)
-        }
-        Def::Test(t) => {
-            let mut t = t.clone();
-            t.body = Expr::Bool(true);
-            Def::Test(t)
-        }
-        Def::Type(_) => d.clone(),
-    }
 }
 
 /// The checked program of `combined` from `new` (the reduced program, checked) and, for the kept

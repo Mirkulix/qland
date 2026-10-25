@@ -274,3 +274,20 @@ incremental hashes, all identical; only first defines and rejected inputs took t
 | 1520 definitions, typical define | 0.61–0.72 s | **0.43–0.47 s** |
 
 The design's target of under 0.5 s is reached at both sizes.
+
+## CHECK_DELTA in the self-hosted compiler (2026-10-26, later)
+
+**What changed:** the reduced check is now the compiler operation `CHECK_DELTA` (op 11). The host
+names the functions that count only by their signature, instead of rewriting them into `todo()`
+stubs itself, so the shadowing workaround for parameters named `todo` is gone.
+
+**Verified:**
+
+- **Bootstrap fixpoint:** re-established, stage 1 = stage 2 = stage 3, 442 655 bytes, seed
+  `1a86ae72…`.
+- **Parity:** the seed and the Rust reference give byte-identical typed programs and the same
+  diagnostics (`check_delta_of_the_seed_equals_the_reference`).
+- **Differential:** again 318 stores and 2424 defines. 1788 checks and 1788 hashes incremental, 0
+  differences.
+- **Speed:** unchanged, 0.41–0.46 s per define at 1520 definitions.
+- **Cache key:** the new compiler module invalidated the old caches, as the key requires.

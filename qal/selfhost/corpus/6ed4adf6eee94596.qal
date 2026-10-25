@@ -1,0 +1,8 @@
+type Box = { n: Int }
+fn f(todo: Int) -> Int
+  req todo > 0
+= todo + g(1)
+fn g(x: Int) -> Int = x
+fn h(b: Box) -> Str = b.n
+fn k(b: Box) -> Int = f(b.n) + len(h(b))
+test t = k(Box { n: 1 }) > 0

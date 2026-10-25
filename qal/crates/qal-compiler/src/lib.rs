@@ -45,6 +45,11 @@ pub trait Backend: Send + Sync {
     /// (`TYPED`, `CHECK_FILE`). `is_new` tells which definitions are written now (see
     /// `qal_check::check_stored`).
     fn check(&self, p: &Program, is_new: &dyn Fn(&str) -> bool) -> Result<TProgram, Vec<Diagnostic>>;
+    /// `check` with the functions in `declared` reduced to their signatures (`CHECK_DELTA`, the
+    /// incremental define): their bodies and contracts are not checked.
+    fn check_delta(&self, p: &Program, is_new: &dyn Fn(&str) -> bool, declared: &dyn Fn(&str) -> bool) -> Result<TProgram, Vec<Diagnostic>> {
+        self.check(&p.declare(declared), is_new)
+    }
     /// Canonical forms and hashes of every definition (the hash part of `DEFINE`).
     fn hash(&self, p: &Program) -> Result<Hashed, HashError>;
     /// The WebAssembly module of the code reachable from `entry` (`BUILD`).
@@ -231,6 +236,23 @@ impl Backend for Qal {
         }
     }
 
+    fn check_delta(&self, p: &Program, is_new: &dyn Fn(&str) -> bool, declared: &dyn Fn(&str) -> bool) -> Result<TProgram, Vec<Diagnostic>> {
+        let req = proto::Request::CheckDelta {
+            text: self.print(p),
+            new_names: p.defs.iter().filter(|d| is_new(d.name())).map(|d| d.name().to_string()).collect(),
+            declared: p.defs.iter().filter(|d| matches!(d, qal_core::ast::Def::Fn(_)) && declared(d.name())).map(|d| d.name().to_string()).collect(),
+        }
+        .encode();
+        let resp_bytes = call_driver(&req).map_err(|d| vec![d])?;
+        match proto::Response::decode(&resp_bytes) {
+            Ok(proto::Response::Done(bytes)) => qal_core::tform::decode(&bytes).map_err(|e| vec![Diagnostic::compiler_failed("qal", "CHECK_DELTA", "main", &e)]),
+            Ok(proto::Response::Diagnostics(ds)) => Err(ds),
+            Ok(proto::Response::Internal(msg)) => Err(vec![Diagnostic::compiler_failed("qal", "CHECK_DELTA", "main", &msg)]),
+            Ok(proto::Response::Fork { .. }) => Err(vec![Diagnostic::compiler_failed("qal", "CHECK_DELTA", "main", "unexpected fork")]),
+            Err(e) => Err(vec![Diagnostic::bad_compiler_response(&e)]),
+        }
+    }
+
     fn hash(&self, p: &Program) -> Result<Hashed, HashError> {
 
         let st = proto::StoreState::default();
@@ -370,6 +392,20 @@ impl Backend for Both {
             }
             _ => Err(vec![Diagnostic::compiler_divergence("CHECK", &format!("Rust: {r1:?}, Qal: {r2:?}"))]),
         }
+    }
+
+    fn check_delta(&self, p: &Program, is_new: &dyn Fn(&str) -> bool, declared: &dyn Fn(&str) -> bool) -> Result<TProgram, Vec<Diagnostic>> {
+        let r1 = Rust.check_delta(p, is_new, declared);
+        let r2 = Qal.check_delta(p, is_new, declared);
+        let same = match (&r1, &r2) {
+            (Ok(a), Ok(b)) => qal_core::tform::encode(a) == qal_core::tform::encode(b),
+            (Err(a), Err(b)) => a.iter().map(|d| (d.code, &d.def, &d.path, &d.message)).eq(b.iter().map(|d| (d.code, &d.def, &d.path, &d.message))),
+            _ => false,
+        };
+        if !same {
+            return Err(vec![Diagnostic::compiler_divergence("CHECK_DELTA", &format!("Rust: {r1:?}, Qal: {r2:?}"))]);
+        }
+        r1
     }
 
     fn hash(&self, p: &Program) -> Result<Hashed, HashError> {
@@ -540,6 +576,11 @@ pub fn check(p: &Program) -> Result<TProgram, Vec<Diagnostic>> {
 /// Checks a stored codebase: `is_new` tells which definitions are written now.
 pub fn check_stored(p: &Program, is_new: &dyn Fn(&str) -> bool) -> Result<TProgram, Vec<Diagnostic>> {
     backend().check(p, is_new)
+}
+
+/// [`check_stored`] with the functions in `declared` reduced to their signatures (`CHECK_DELTA`).
+pub fn check_delta(p: &Program, is_new: &dyn Fn(&str) -> bool, declared: &dyn Fn(&str) -> bool) -> Result<TProgram, Vec<Diagnostic>> {
+    backend().check_delta(p, is_new, declared)
 }
 
 /// Canonical forms and hashes of a program's definitions.

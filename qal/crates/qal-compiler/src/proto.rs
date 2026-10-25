@@ -100,6 +100,9 @@ pub enum Request {
     CheckFile { text: String, entry: Option<Entry>, options: Options, new_names: Option<Vec<String>> },
     Join { continuation: Vec<u8>, results: Vec<Vec<u8>> },
     Signatures { state: StoreState, names: Vec<String> },
+    /// `CHECK_DELTA` (incremental define): checks `text` with the functions in `declared` reduced
+    /// to their signatures (`FnDef::declared`); the result is the typed program (`QALT`).
+    CheckDelta { text: String, new_names: Vec<String>, declared: Vec<String> },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -323,6 +326,7 @@ impl Request {
             Request::CheckFile { .. } => 6,
             Request::Join { .. } => 7,
             Request::Signatures { .. } => 8,
+            Request::CheckDelta { .. } => 11,
         }
     }
 
@@ -384,6 +388,11 @@ impl Request {
                     w.bytes(r);
                 }
             }
+            Request::CheckDelta { text, new_names, declared } => {
+                w.str(text);
+                w.strs(new_names);
+                w.strs(declared);
+            }
         }
         w.out
     }
@@ -417,6 +426,7 @@ impl Request {
                 Request::Join { continuation, results }
             }
             8 => Request::Signatures { state: r.state()?, names: r.strs()? },
+            11 => Request::CheckDelta { text: r.str()?, new_names: r.strs()?, declared: r.strs()? },
             op => return Err(format!("unknown operation {op}")),
         };
         r.finish()?;
@@ -925,6 +935,17 @@ fn serve_request(req: Request) -> Response {
                 }
             }
         }
+        Request::CheckDelta { text, new_names, declared } => match backend.parse(&text) {
+            Err(d) => diagnostics(vec![d]),
+            Ok(p) => {
+                let new: std::collections::HashSet<String> = new_names.into_iter().collect();
+                let declared: std::collections::HashSet<String> = declared.into_iter().collect();
+                match backend.check(&p.declare(&|n| declared.contains(n)), &|n| new.contains(n)) {
+                    Ok(tp) => Response::Done(tform::encode(&tp)),
+                    Err(ds) => diagnostics(ds),
+                }
+            }
+        },
         Request::CheckFile { text, entry, options, new_names } => match backend.parse(&text) {
             Err(d) => diagnostics(vec![d]),
             Ok(p) => {
