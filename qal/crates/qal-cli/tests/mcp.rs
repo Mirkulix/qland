@@ -993,6 +993,13 @@ fn define_runs_the_tests_of_the_defined_names_in(c: &mut Client) {
     // Names no test uses, and types, run nothing.
     let (err, v) = c.call("qal_define", json!({"source": "fn h() -> Int = 1\ntype P = { x: Int }"}));
     assert!(!err && v.get("tests").is_none() && v.get("passed").is_none(), "{v}");
+    // A test that reaches a function through others runs too (the mutation study: the tests of
+    // `cancel` call it through `step`).
+    let (err, v) = c.call("qal_define", json!({"source": "fn leaf(x: Int) -> Int = x\nfn mid(x: Int) -> Int = leaf(x) + 1\nfn top(x: Int) -> Int = mid(x) * 2\ntest t_top = top(1) == 4"}));
+    assert!(!err && v["passed"] == 1, "{v}");
+    let (err, v) = c.call("qal_define", json!({"source": "fn leaf(x: Int) -> Int = x + 1"}));
+    assert!(!err, "{v}");
+    assert_eq!((v["tests"].clone(), v["failed"].as_u64()), (json!([{"name": "t_top", "passed": false}]), Some(1)), "{v}");
 }
 
 /// Runs `body` on a fresh project, and again (Phase 4 §17) as the architect of a team store in its

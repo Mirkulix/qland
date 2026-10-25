@@ -592,8 +592,11 @@ fn untested_changes(defined: &[Defined]) -> Option<Vec<Diagnostic>> {
     (!changed.is_empty()).then_some(changed)
 }
 
-/// The stored tests that refer directly to a function this `define` wrote (as `query` with
-/// `uses` finds them), and the tests it wrote itself; a dependent it only relinked does not count.
+/// The stored tests that reach a function this `define` wrote, directly or through other functions
+/// (as repeated `query`s with `uses` find them), and the tests it wrote itself; a dependent it only
+/// relinked is not a starting point. Only direct users ran before: the mutation study of 2026-10-25
+/// found that a define of a changed `cancel` ran none of the tests that check it, because they
+/// call it through `step` (13 of 14 bugs went unreported until a separate `qal_test`).
 fn tests_of(store: &mut Store, defined: &[Defined]) -> Vec<String> {
     let mut tests: Vec<String> = Vec::new();
     for t in defined.iter().filter(|d| d.kind == "test" && d.status != "relinked") {
@@ -601,13 +604,20 @@ fn tests_of(store: &mut Store, defined: &[Defined]) -> Vec<String> {
             tests.push(t.name.clone());
         }
     }
-    for f in defined.iter().filter(|d| d.kind == "fn" && d.status != "relinked") {
-        let Ok(users) = store.query(&Query { uses: Some(f.name.clone()), ..Query::default() }) else { continue };
-        for u in users.into_iter().filter(|u| u.kind == "test") {
-            if !tests.contains(&u.name) {
-                tests.push(u.name);
+    let mut fns: Vec<String> = defined.iter().filter(|d| d.kind == "fn" && d.status != "relinked").map(|d| d.name.clone()).collect();
+    let mut i = 0;
+    while i < fns.len() {
+        let Ok(users) = store.query(&Query { uses: Some(fns[i].clone()), ..Query::default() }) else {
+            i += 1;
+            continue;
+        };
+        for u in users {
+            let seen = if u.kind == "test" { &mut tests } else if u.kind == "fn" { &mut fns } else { continue };
+            if !seen.contains(&u.name) {
+                seen.push(u.name);
             }
         }
+        i += 1;
     }
     tests
 }
