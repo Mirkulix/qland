@@ -67,6 +67,8 @@ struct Atom {
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Plan {
     atoms: Vec<Atom>,
+    /// Paths bounded on both sides by literals (`x >= 0 && x <= 999999999`): (path, lowest, highest).
+    bounds: Vec<(Path, i64, i64)>,
 }
 
 impl Plan {
@@ -92,7 +94,49 @@ fn plan_of(tp: &TProgram, f: &TFn, conds: &[TExpr]) -> Plan {
         collect(tp, r, &env, 0, &mut atoms);
     }
     atoms.truncate(MAX_ATOMS);
-    Plan { atoms }
+    let bounds = bounds_of(&atoms);
+    Plan { atoms, bounds }
+}
+
+/// The literal bounds of the paths of `atoms` that are bounded on both sides.
+fn bounds_of(atoms: &[Atom]) -> Vec<(Path, i64, i64)> {
+    let mut out: Vec<(Path, Option<i64>, Option<i64>)> = Vec::new();
+    for a in atoms {
+        let (p, op, n) = match (&a.l, &a.r) {
+            (Term::Path(p), Term::Int(n)) => (p, a.op, *n),
+            (Term::Int(n), Term::Path(p)) => (p, mirror(a.op), *n),
+            _ => continue,
+        };
+        if p.steps.iter().any(|s| !matches!(s, Step::Field(_))) {
+            continue;
+        }
+        let (lo, hi) = match op {
+            BinOp::Ge => (Some(n), None),
+            BinOp::Gt => (n.checked_add(1), None),
+            BinOp::Le => (None, Some(n)),
+            BinOp::Lt => (None, n.checked_sub(1)),
+            BinOp::Eq => (Some(n), Some(n)),
+            _ => continue,
+        };
+        match out.iter_mut().find(|(q, _, _)| q == p) {
+            Some((_, l, h)) => {
+                *l = match (*l, lo) { (Some(a), Some(b)) => Some(a.max(b)), (a, b) => a.or(b) };
+                *h = match (*h, hi) { (Some(a), Some(b)) => Some(a.min(b)), (a, b) => a.or(b) };
+            }
+            None => out.push((p.clone(), lo, hi)),
+        }
+    }
+    out.into_iter().filter_map(|(p, l, h)| match (l, h) { (Some(l), Some(h)) if l < h => Some((p, l, h)), _ => None }).collect()
+}
+
+fn mirror(op: BinOp) -> BinOp {
+    match op {
+        BinOp::Lt => BinOp::Gt,
+        BinOp::Le => BinOp::Ge,
+        BinOp::Gt => BinOp::Lt,
+        BinOp::Ge => BinOp::Le,
+        o => o,
+    }
 }
 
 fn collect(tp: &TProgram, e: &TExpr, env: &HashMap<u32, Term>, depth: usize, out: &mut Vec<Atom>) {
@@ -223,6 +267,19 @@ enum CTerm {
 
 /// Changes `args` so that more atoms of `plan` hold.
 pub fn repair(plan: &Plan, args: &mut [Value], rng: &mut Rng) {
+    // A domain is tested at its limits: a bounded path goes to its lowest or highest value a third
+    // of the time each (`price * qty * 95` overflows only near `price, qty <= 999999999`), then the
+    // rounds restore the other atoms. Without this, repaired small inputs crowd out the edges.
+    for (p, lo, hi) in &plan.bounds {
+        let v = match rng.below(3) {
+            0 => *lo,
+            1 => *hi,
+            _ => continue,
+        };
+        if let Some(slot @ Value::Int(_)) = resolve(args, p.param, &p.steps, &[]).and_then(|cp| at_mut(args, &cp)) {
+            *slot = Value::Int(v);
+        }
+    }
     for _ in 0..ROUNDS {
         let mut changed = false;
         for atom in &plan.atoms {
