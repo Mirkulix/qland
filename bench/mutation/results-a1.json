@@ -1,0 +1,615 @@
+[
+ {
+  "id": "none",
+  "what": "the unmutated code",
+  "qal": {
+   "test": {
+    "failed_tests": [],
+    "failed_properties": [],
+    "detected": false
+   },
+   "hidden": {
+    "failed": 0,
+    "total": 50,
+    "error": null
+   }
+  },
+  "rust": {
+   "test": {
+    "detected": false,
+    "failed_tests": []
+   },
+   "hidden": {
+    "failed": 0,
+    "total": 50,
+    "error": null
+   }
+  }
+ },
+ {
+  "id": "cancel_pending_deletes",
+  "what": "cancelling a pending order deletes it, so its id is free again and a second cancel says unknown_order (the bug of pressure run 5)",
+  "qal": {
+   "define": {
+    "refuted": [],
+    "failed_tests": [],
+    "ran_tests": 0,
+    "property_warnings": [],
+    "detected": false
+   },
+   "test": {
+    "failed_tests": [
+     "cancel_backorder_twice"
+    ],
+    "failed_properties": [],
+    "detected": true
+   },
+   "hidden": {
+    "failed": 1,
+    "total": 50,
+    "error": null
+   }
+  },
+  "rust": {
+   "test": {
+    "detected": true,
+    "failed_tests": [
+     "tests::cancelled_backorder_never_fills_and_stays_cancelled"
+    ]
+   },
+   "hidden": {
+    "failed": 1,
+    "total": 50,
+    "error": null
+   }
+  }
+ },
+ {
+  "id": "cancel_after_return",
+  "what": "an order with a return can still be cancelled",
+  "qal": {
+   "define": {
+    "refuted": [],
+    "failed_tests": [],
+    "ran_tests": 0,
+    "property_warnings": [],
+    "detected": false
+   },
+   "test": {
+    "failed_tests": [
+     "return_blocks_cancel"
+    ],
+    "failed_properties": [],
+    "detected": true
+   },
+   "hidden": {
+    "failed": 1,
+    "total": 50,
+    "error": null
+   }
+  },
+  "rust": {
+   "test": {
+    "detected": true,
+    "failed_tests": [
+     "tests::return_example_matches_expected_output",
+     "tests::returned_order_cannot_be_cancelled_and_quantity_is_capped"
+    ]
+   },
+   "hidden": {
+    "failed": 1,
+    "total": 50,
+    "error": null
+   }
+  }
+ },
+ {
+  "id": "cancel_outstanding_negative",
+  "what": "cancelling lets outstanding fall below 0",
+  "qal": {
+   "define": {
+    "refuted": [],
+    "failed_tests": [],
+    "ran_tests": 0,
+    "property_warnings": [],
+    "detected": false
+   },
+   "test": {
+    "failed_tests": [
+     "cancel_owed_not_below_zero"
+    ],
+    "failed_properties": [],
+    "detected": true
+   },
+   "hidden": {
+    "failed": 1,
+    "total": 50,
+    "error": null
+   }
+  },
+  "rust": {
+   "test": {
+    "detected": true,
+    "failed_tests": [
+     "tests::cancel_reduces_outstanding_but_not_below_zero"
+    ]
+   },
+   "hidden": {
+    "failed": 1,
+    "total": 50,
+    "error": null
+   }
+  }
+ },
+ {
+  "id": "no_discount_cap",
+  "what": "the sum of the discounts is not capped at 50",
+  "qal": {
+   "define": {
+    "refuted": [
+     "`ens r >= 0 && r <= 50` (ens[0]) does not hold for the counterexample"
+    ],
+    "failed_tests": [],
+    "ran_tests": 0,
+    "property_warnings": [],
+    "detected": true
+   },
+   "test": {
+    "detected": true,
+    "note": "not stored (E0801)"
+   },
+   "hidden": {
+    "failed": null,
+    "note": "not stored"
+   }
+  },
+  "rust": {
+   "test": {
+    "detected": true,
+    "failed_tests": [
+     "tests::promo_example_matches_expected_output",
+     "tests::promo_is_capped_with_quantity_and_tier_at_fifty",
+     "tests::second_promo_example_matches_expected_output"
+    ]
+   },
+   "hidden": {
+    "failed": 2,
+    "total": 50,
+    "error": null
+   }
+  }
+ },
+ {
+  "id": "fits_per_line",
+  "what": "the stock check looks at each line alone, not at the sum of the lines of one product",
+  "qal": {
+   "define": {
+    "refuted": [],
+    "failed_tests": [],
+    "ran_tests": 0,
+    "property_warnings": [],
+    "detected": false
+   },
+   "test": {
+    "failed_tests": [
+     "lines_same_product_adds_up"
+    ],
+    "failed_properties": [],
+    "detected": true
+   },
+   "hidden": {
+    "failed": 0,
+    "total": 50,
+    "error": null
+   }
+  },
+  "rust": {
+   "test": {
+    "detected": true,
+    "failed_tests": [
+     "tests::multi_line_backorder_sums_repeated_product_and_cancel_restores_lines"
+    ]
+   },
+   "hidden": {
+    "failed": 0,
+    "total": 50,
+    "error": null
+   }
+  }
+ },
+ {
+  "id": "qty_discount_per_line",
+  "what": "the quantity discount looks at each line's quantity instead of the order's total quantity",
+  "qal": {
+   "define": {
+    "refuted": [],
+    "failed_tests": [],
+    "ran_tests": 0,
+    "property_warnings": [],
+    "detected": false
+   },
+   "test": {
+    "failed_tests": [
+     "lines_bulk_total",
+     "lines_exact_fit_bulk",
+     "lines_ok",
+     "lines_return_refund"
+    ],
+    "failed_properties": [],
+    "detected": true
+   },
+   "hidden": {
+    "failed": 3,
+    "total": 50,
+    "error": null
+   }
+  },
+  "rust": {
+   "test": {
+    "detected": true,
+    "failed_tests": [
+     "tests::multi_line_example_matches_expected_output",
+     "tests::multi_line_second_example_matches_expected_output"
+    ]
+   },
+   "hidden": {
+    "failed": 3,
+    "total": 50,
+    "error": null
+   }
+  }
+ },
+ {
+  "id": "cancel_keeps_tax",
+  "what": "cancelling does not take the order's tax out of the customer's tax total",
+  "qal": {
+   "define": {
+    "refuted": [],
+    "failed_tests": [],
+    "ran_tests": 0,
+    "property_warnings": [],
+    "detected": false
+   },
+   "test": {
+    "failed_tests": [
+     "tax_cancel_reverses"
+    ],
+    "failed_properties": [],
+    "detected": true
+   },
+   "hidden": {
+    "failed": 2,
+    "total": 50,
+    "error": null
+   }
+  },
+  "rust": {
+   "test": {
+    "detected": true,
+    "failed_tests": [
+     "tests::spec_tax_example_matches_expected_output",
+     "tests::tax_floors_and_cancel_reverses_order_time_values"
+    ]
+   },
+   "hidden": {
+    "failed": 2,
+    "total": 50,
+    "error": null
+   }
+  }
+ },
+ {
+  "id": "top_ties_reversed",
+  "what": "ties in `top` go by id in reverse byte order",
+  "qal": {
+   "define": {
+    "refuted": [],
+    "failed_tests": [],
+    "ran_tests": 0,
+    "property_warnings": [],
+    "detected": false
+   },
+   "test": {
+    "failed_tests": [
+     "top_tie"
+    ],
+    "failed_properties": [],
+    "detected": true
+   },
+   "hidden": {
+    "failed": 1,
+    "total": 50,
+    "error": null
+   }
+  },
+  "rust": {
+   "test": {
+    "detected": true,
+    "failed_tests": [
+     "tests::top_example_matches_expected_output",
+     "tests::top_lists_at_most_three_and_skips_unsold"
+    ]
+   },
+   "hidden": {
+    "failed": 1,
+    "total": 50,
+    "error": null
+   }
+  }
+ },
+ {
+  "id": "return_one_too_many",
+  "what": "a return may take one item more than is left in the order",
+  "qal": {
+   "define": {
+    "refuted": [],
+    "failed_tests": [],
+    "ran_tests": 0,
+    "property_warnings": [],
+    "detected": false
+   },
+   "test": {
+    "failed_tests": [
+     "return_bad_qty"
+    ],
+    "failed_properties": [],
+    "detected": true
+   },
+   "hidden": {
+    "failed": 1,
+    "total": 50,
+    "error": null
+   }
+  },
+  "rust": {
+   "test": {
+    "detected": true,
+    "failed_tests": [
+     "tests::return_example_matches_expected_output",
+     "tests::returned_order_cannot_be_cancelled_and_quantity_is_capped"
+    ]
+   },
+   "hidden": {
+    "failed": 1,
+    "total": 50,
+    "error": null
+   }
+  }
+ },
+ {
+  "id": "pay_exact_is_overpay",
+  "what": "paying exactly what is owed is an overpay",
+  "qal": {
+   "define": {
+    "refuted": [],
+    "failed_tests": [],
+    "ran_tests": 0,
+    "property_warnings": [],
+    "detected": false
+   },
+   "test": {
+    "failed_tests": [
+     "pay_exact"
+    ],
+    "failed_properties": [],
+    "detected": true
+   },
+   "hidden": {
+    "failed": 1,
+    "total": 50,
+    "error": null
+   }
+  },
+  "rust": {
+   "test": {
+    "detected": true,
+    "failed_tests": [
+     "tests::cancel_reduces_outstanding_but_not_below_zero",
+     "tests::pay_overpay_and_exact_payment"
+    ]
+   },
+   "hidden": {
+    "failed": 1,
+    "total": 50,
+    "error": null
+   }
+  }
+ },
+ {
+  "id": "refund_without_tax",
+  "what": "the refund is computed from the net total (gross minus tax)",
+  "qal": {
+   "define": {
+    "refuted": [],
+    "failed_tests": [],
+    "ran_tests": 0,
+    "property_warnings": [],
+    "detected": false
+   },
+   "test": {
+    "failed_tests": [
+     "return_rounds_down"
+    ],
+    "failed_properties": [],
+    "detected": true
+   },
+   "hidden": {
+    "failed": 2,
+    "total": 50,
+    "error": null
+   }
+  },
+  "rust": {
+   "test": {
+    "detected": true,
+    "failed_tests": [
+     "tests::return_example_matches_expected_output",
+     "tests::return_refund_and_tax_are_floored_per_part"
+    ]
+   },
+   "hidden": {
+    "failed": 2,
+    "total": 50,
+    "error": null
+   }
+  }
+ },
+ {
+  "id": "restock_newest_first",
+  "what": "after a restock the pending orders are filled newest first",
+  "qal": {
+   "define": {
+    "refuted": [],
+    "failed_tests": [],
+    "ran_tests": 0,
+    "property_warnings": [],
+    "detected": false
+   },
+   "test": {
+    "failed_tests": [
+     "restock_fills_oldest_first",
+     "restock_partial_fill"
+    ],
+    "failed_properties": [],
+    "detected": true
+   },
+   "hidden": {
+    "failed": 1,
+    "total": 50,
+    "error": null
+   }
+  },
+  "rust": {
+   "test": {
+    "detected": true,
+    "failed_tests": [
+     "tests::backorder_credit_rejection_at_restock_is_reported_and_sets_exit_flag",
+     "tests::backorders_fill_on_restock_oldest_first_and_skip_what_does_not_fit",
+     "tests::older_backorder_fills_first_when_stock_covers_only_one"
+    ]
+   },
+   "hidden": {
+    "failed": 1,
+    "total": 50,
+    "error": null
+   }
+  }
+ },
+ {
+  "id": "return_keeps_tax",
+  "what": "a return does not lower the customer's tax total",
+  "qal": {
+   "define": {
+    "refuted": [],
+    "failed_tests": [],
+    "ran_tests": 0,
+    "property_warnings": [],
+    "detected": false
+   },
+   "test": {
+    "failed_tests": [
+     "return_rounds_down"
+    ],
+    "failed_properties": [],
+    "detected": true
+   },
+   "hidden": {
+    "failed": 2,
+    "total": 50,
+    "error": null
+   }
+  },
+  "rust": {
+   "test": {
+    "detected": true,
+    "failed_tests": [
+     "tests::return_example_matches_expected_output",
+     "tests::return_refund_and_tax_are_floored_per_part"
+    ]
+   },
+   "hidden": {
+    "failed": 2,
+    "total": 50,
+    "error": null
+   }
+  }
+ },
+ {
+  "id": "promo_up_to_100",
+  "what": "`promo` accepts percentages up to 100 instead of 50",
+  "qal": {
+   "define": {
+    "refuted": [],
+    "failed_tests": [],
+    "ran_tests": 3,
+    "property_warnings": [],
+    "detected": false
+   },
+   "test": {
+    "failed_tests": [
+     "promo_invalid"
+    ],
+    "failed_properties": [],
+    "detected": true
+   },
+   "hidden": {
+    "failed": 1,
+    "total": 50,
+    "error": null
+   }
+  },
+  "rust": {
+   "test": {
+    "detected": true,
+    "failed_tests": [
+     "tests::promo_example_matches_expected_output"
+    ]
+   },
+   "hidden": {
+    "failed": 1,
+    "total": 50,
+    "error": null
+   }
+  }
+ },
+ {
+  "id": "limit_reached_rejects",
+  "what": "an order that brings outstanding exactly to the limit is rejected",
+  "qal": {
+   "define": {
+    "refuted": [],
+    "failed_tests": [],
+    "ran_tests": 0,
+    "property_warnings": [],
+    "detected": false
+   },
+   "test": {
+    "failed_tests": [
+     "credit_at_limit"
+    ],
+    "failed_properties": [],
+    "detected": true
+   },
+   "hidden": {
+    "failed": 2,
+    "total": 50,
+    "error": null
+   }
+  },
+  "rust": {
+   "test": {
+    "detected": true,
+    "failed_tests": [
+     "tests::credit_limit_is_inclusive",
+     "tests::credit_uses_gross_with_tax_and_discount",
+     "tests::second_credit_example_matches_expected_output"
+    ]
+   },
+   "hidden": {
+    "failed": 2,
+    "total": 50,
+    "error": null
+   }
+  }
+ }
+]
