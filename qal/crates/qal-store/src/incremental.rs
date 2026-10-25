@@ -7,13 +7,14 @@
 //! program of the last define next to the database, with the fingerprint of the codebase it
 //! belongs to. A define of the same codebase:
 //!
-//! 1. checks a reduced program: in full the changed definitions, the generic functions and the
-//!    definitions that call an instance of one (instances come from the bodies that need them);
-//!    every other function as its signature with the body `todo()` (and no contracts), every other
-//!    test as `true`.
-//! 2. takes the typed functions and tests of the unchanged definitions from the kept program, with
-//!    their calls renumbered by name, and by generic name and type arguments for instances
-//!    (positions differ from one define to the next).
+//! 1. checks a reduced program: every type; in full the changed definitions, the generic
+//!    functions and the definitions that call an instance of one (instances come from the bodies
+//!    that need them); the other functions they refer to as signatures with the body `todo()`;
+//!    nothing else.
+//! 2. assembles the checked program in the full program's order from the reduced one and, for the
+//!    unchanged definitions, the kept one, with every call renumbered: by name for functions, by
+//!    generic name and type arguments for instances (positions differ from one define to the
+//!    next).
 //!
 //! Hashing works the same way: a definition's hash depends only on the definitions it refers to,
 //! so only the changed definitions and what they refer to (transitively) are hashed again; the
@@ -22,11 +23,11 @@
 //! every variant it names): more definitions only cost time, a missing one fails the hash.
 //!
 //! The results equal the full ones (`QAL_INCREMENTAL=verify` compares them and reports on
-//! stderr). Wherever that is not certain it falls back to the full check: no kept
-//! program for this codebase, a diagnostic, any name or instance missing on either side. `QAL_INCREMENTAL=off` always checks in full.
+//! stderr). Wherever that is not certain it falls back to the full path: no kept program for this
+//! codebase, a diagnostic, any name or instance missing on either side, a kept function whose
+//! definition differs. `QAL_INCREMENTAL=off` always takes the full path.
 
-use qal_core::ast::{Def, Expr, Program};
-use qal_core::ast::TypeBody;
+use qal_core::ast::{Def, Expr, Program, TypeBody};
 use qal_core::canon::{Canon, Hash, Hashed, Kind};
 use qal_core::diag::Diagnostic;
 use qal_core::tast::{TExpr, TFn, TKind, TProgram, TTest};
@@ -123,8 +124,16 @@ fn mode() -> Mode {
 }
 
 /// Checks `combined` (the codebase as the define would write it), reusing `prior` for the
-/// definitions outside `changed`. `full` is the full check.
-pub fn check(combined: &Program, prior: Option<&TProgram>, changed: &HashSet<String>, full: &dyn Fn(&Program) -> Result<TProgram, Vec<Diagnostic>>) -> Result<TProgram, Vec<Diagnostic>> {
+/// definitions outside `changed`. `input` is what the define writes, `refs_of` gives the names a
+/// stored definition refers to, `full` is the full check.
+pub fn check(
+    combined: &Program,
+    input: &Program,
+    prior: Option<&TProgram>,
+    changed: &HashSet<String>,
+    refs_of: &dyn Fn(&str) -> Option<Vec<String>>,
+    full: &dyn Fn(&Program) -> Result<TProgram, Vec<Diagnostic>>,
+) -> Result<TProgram, Vec<Diagnostic>> {
     let verify = mode() == Mode::Verify;
     let fallback = |why: &str| {
         if verify {
@@ -133,9 +142,13 @@ pub fn check(combined: &Program, prior: Option<&TProgram>, changed: &HashSet<Str
         full(combined)
     };
     let Some(prior) = prior.filter(|_| mode() != Mode::Off) else { return fallback("no checked program of this codebase") };
-    // Generic functions, and functions with a parameter `todo` (it would shadow the stub's `todo()`).
     let generic: HashSet<&str> = combined.defs.iter().filter_map(|d| match d {
-        Def::Fn(f) if !f.tparams.is_empty() || !f.eparams.is_empty() || f.params.iter().any(|p| p.name == "todo") => Some(f.name.as_str()),
+        Def::Fn(f) if !f.tparams.is_empty() || !f.eparams.is_empty() => Some(f.name.as_str()),
+        _ => None,
+    }).collect();
+    // A parameter `todo` would shadow the stub's `todo()`.
+    let shadows: HashSet<&str> = combined.defs.iter().filter_map(|d| match d {
+        Def::Fn(f) if f.params.iter().any(|p| p.name == "todo") => Some(f.name.as_str()),
         _ => None,
     }).collect();
     let calls_instance = |e: &TExpr| calls(e, &|i| prior.fns.get(i).is_some_and(|f| f.instance.is_some()));
@@ -146,13 +159,37 @@ pub fn check(combined: &Program, prior: Option<&TProgram>, changed: &HashSet<Str
         .map(|f| f.def.name.as_str())
         .chain(prior.tests.iter().filter(|t| calls_instance(&t.body)).map(|t| t.name.as_str()))
         .collect();
-    let kept = |name: &str| !changed.contains(name) && !generic.contains(name) && !instance_users.contains(name);
-    let reduced = Program { defs: combined.defs.iter().map(|d| if kept(d.name()) { stub(d) } else { d.clone() }).collect() };
+    let kept = |name: &str| !changed.contains(name) && !generic.contains(name) && !instance_users.contains(name) && !shadows.contains(name);
+    // The kept functions the checked ones refer to enter as stubs; the other kept definitions are
+    // left out (at 1520 definitions their stubs were three quarters of the text).
+    let mut stubs: HashSet<String> = HashSet::new();
+    let input_names: HashSet<&str> = input.defs.iter().map(|d| d.name()).collect();
+    for d in combined.defs.iter().filter(|d| !kept(d.name()) && !matches!(d, Def::Type(_))) {
+        let refs = if input_names.contains(d.name()) { None } else { refs_of(d.name()) };
+        match refs {
+            Some(refs) => stubs.extend(refs),
+            None if input_names.contains(d.name()) => {}
+            None => return fallback("a name without stored references"),
+        }
+    }
+    stubs.extend(mentioned(combined, input));
+    let reduced = Program {
+        defs: combined
+            .defs
+            .iter()
+            .filter_map(|d| match d {
+                Def::Type(_) => Some(d.clone()),
+                _ if !kept(d.name()) => Some(d.clone()),
+                Def::Fn(_) if stubs.contains(d.name()) => Some(stub(d)),
+                _ => None,
+            })
+            .collect(),
+    };
     let new = match full(&reduced) {
         Ok(new) => new,
         Err(d) => return fallback(&format!("a diagnostic: {}", d.first().map_or(String::new(), |d| format!("{} {} in `{}`", d.code, d.message, d.def)))),
     };
-    let Some(spliced) = splice(prior, new, &kept) else { return fallback("the kept program does not fit") };
+    let Some(spliced) = assemble(combined, prior, new, &kept) else { return fallback("the kept program does not fit") };
     if verify {
         let whole = full(combined);
         let same = whole.as_ref().ok() == Some(&spliced);
@@ -160,6 +197,39 @@ pub fn check(combined: &Program, prior: Option<&TProgram>, changed: &HashSet<Str
         return whole;
     }
     Ok(spliced)
+}
+
+/// The names of `combined` that `input`'s text may refer to: every identifier (and dotted part of
+/// one) that is a name, and the type of every variant it names. A superset of its references.
+fn mentioned(combined: &Program, input: &Program) -> Vec<String> {
+    let names: HashSet<&str> = combined.defs.iter().map(|d| d.name()).collect();
+    let mut type_of_variant: HashMap<&str, &str> = HashMap::new();
+    for d in &combined.defs {
+        if let Def::Type(t) = d {
+            if let TypeBody::Enum(vs) = &t.body {
+                for v in vs {
+                    type_of_variant.insert(v.name.as_str(), t.name.as_str());
+                }
+            }
+        }
+    }
+    let mut out = Vec::new();
+    let text = qal_compiler::print_program(input);
+    for word in text.split(|c: char| !(c.is_alphanumeric() || c == '_' || c == '.')).filter(|w| !w.is_empty()) {
+        let parts: Vec<&str> = word.split('.').collect();
+        for i in 0..parts.len() {
+            for j in i + 1..=parts.len() {
+                let w = parts[i..j].join(".");
+                if let Some(t) = type_of_variant.get(w.as_str()) {
+                    out.push(t.to_string());
+                }
+                if names.contains(w.as_str()) {
+                    out.push(w);
+                }
+            }
+        }
+    }
+    out
 }
 
 /// Hashes `combined`, reusing `prior` for the definitions outside `changed` that the changed ones
@@ -181,36 +251,11 @@ pub fn hash(
         full(combined)
     };
     let Some(prior) = prior.filter(|_| mode() != Mode::Off) else { return fallback("no hashed program of this codebase") };
-    let names: HashSet<&str> = combined.defs.iter().map(|d| d.name()).collect();
-    let mut type_of_variant: HashMap<&str, &str> = HashMap::new();
-    for d in &combined.defs {
-        if let Def::Type(t) = d {
-            if let TypeBody::Enum(vs) = &t.body {
-                for v in vs {
-                    type_of_variant.insert(v.name.as_str(), t.name.as_str());
-                }
-            }
-        }
-    }
     // The closure: the changed definitions, what the input's text names, and what those refer to.
     let input_names: HashSet<&str> = input.defs.iter().map(|d| d.name()).collect();
     let mut closure: HashSet<String> = HashSet::new();
     let mut todo: Vec<String> = changed.iter().cloned().collect();
-    let text = qal_compiler::print_program(input);
-    for word in text.split(|c: char| !(c.is_alphanumeric() || c == '_' || c == '.')).filter(|w| !w.is_empty()) {
-        let parts: Vec<&str> = word.split('.').collect();
-        for i in 0..parts.len() {
-            for j in i + 1..=parts.len() {
-                let w = parts[i..j].join(".");
-                if let Some(t) = type_of_variant.get(w.as_str()) {
-                    todo.push(t.to_string());
-                }
-                if names.contains(w.as_str()) {
-                    todo.push(w);
-                }
-            }
-        }
-    }
+    todo.extend(mentioned(combined, input));
     while let Some(n) = todo.pop() {
         if !closure.insert(n.clone()) || input_names.contains(n.as_str()) {
             continue;
@@ -269,44 +314,70 @@ fn stub(d: &Def) -> Def {
     }
 }
 
-/// `new` (the reduced program, checked) with the typed functions and tests of the kept names taken
-/// from `prior`, their calls renumbered to `new`'s positions. None if that is not exact.
-fn splice(prior: &TProgram, mut new: TProgram, kept: &dyn Fn(&str) -> bool) -> Option<TProgram> {
-    // Program functions are the ones without an instance; instances follow them.
-    let index_of = |p: &TProgram| -> HashMap<String, usize> { p.fns.iter().enumerate().filter(|(_, f)| f.instance.is_none()).map(|(i, f)| (f.def.name.clone(), i)).collect() };
-    let new_index = index_of(&new);
-    // Instances by generic name and type arguments.
-    let instance_of = |p: &TProgram, f: &TFn| f.instance.as_ref().and_then(|(g, args)| p.generics.get(*g).map(|g| (g.def.name.clone(), args.clone())));
-    let new_instances: Vec<((String, Vec<qal_core::ast::Type>), usize)> = new.fns.iter().enumerate().filter_map(|(i, f)| instance_of(&new, f).map(|k| (k, i))).collect();
-    let image = |i: usize| -> Option<usize> {
+/// The checked program of `combined` from `new` (the reduced program, checked) and, for the kept
+/// names, `prior`: functions in program order then the instances, tests in program order, every
+/// call renumbered to its position here. None if that is not exact.
+fn assemble(combined: &Program, prior: &TProgram, new: TProgram, kept: &dyn Fn(&str) -> bool) -> Option<TProgram> {
+    let plain: Vec<&qal_core::ast::FnDef> = combined.defs.iter().filter_map(|d| match d {
+        Def::Fn(f) if f.tparams.is_empty() && f.eparams.is_empty() => Some(f),
+        _ => None,
+    }).collect();
+    let position: HashMap<&str, usize> = plain.iter().enumerate().map(|(i, f)| (f.name.as_str(), i)).collect();
+    // Instances follow the program functions, in the order the reduced check found them.
+    let new_plain = new.fns.iter().take_while(|f| f.instance.is_none()).count();
+    if new.fns[new_plain..].iter().any(|f| f.instance.is_none()) {
+        return None;
+    }
+    let new_image = |i: usize| -> Option<usize> {
+        let f = new.fns.get(i)?;
+        if f.instance.is_none() { position.get(f.def.name.as_str()).copied() } else { Some(plain.len() + i - new_plain) }
+    };
+    let instance_key = |p: &TProgram, f: &TFn| f.instance.as_ref().and_then(|(g, args)| p.generics.get(*g).map(|g| (g.def.name.clone(), args.clone())));
+    let new_instances: Vec<((String, Vec<qal_core::ast::Type>), usize)> = new.fns.iter().enumerate().filter_map(|(i, f)| instance_key(&new, f).map(|k| (k, i))).collect();
+    let prior_image = |i: usize| -> Option<usize> {
         let f = prior.fns.get(i)?;
-        match instance_of(prior, f) {
-            None if f.instance.is_none() => new_index.get(&f.def.name).copied(),
+        match instance_key(prior, f) {
+            None if f.instance.is_none() => position.get(f.def.name.as_str()).copied(),
             None => None,
-            Some(k) => new_instances.iter().find(|(k2, _)| *k2 == k).map(|(_, j)| *j),
+            Some(k) => new_instances.iter().find(|(k2, _)| *k2 == k).and_then(|(_, j)| new_image(*j)),
         }
     };
+    let renumber_fn = |f: &TFn, map: &dyn Fn(usize) -> Option<usize>| -> Option<TFn> {
+        let mut out = f.clone();
+        out.body = remap(&f.body, map)?;
+        out.req = f.req.iter().map(|e| remap(e, map)).collect::<Option<_>>()?;
+        out.ens = f.ens.iter().map(|e| remap(e, map)).collect::<Option<_>>()?;
+        Some(out)
+    };
     let prior_fns: HashMap<&str, &TFn> = prior.fns.iter().filter(|f| f.instance.is_none()).map(|f| (f.def.name.as_str(), f)).collect();
+    let new_fns: HashMap<&str, &TFn> = new.fns[..new_plain].iter().map(|f| (f.def.name.as_str(), f)).collect();
+    let mut fns = Vec::with_capacity(plain.len() + new.fns.len() - new_plain);
+    for f in &plain {
+        let typed = if kept(&f.name) {
+            let old = prior_fns.get(f.name.as_str())?;
+            if old.def != **f {
+                return None;
+            }
+            renumber_fn(old, &prior_image)?
+        } else {
+            renumber_fn(new_fns.get(f.name.as_str())?, &new_image)?
+        };
+        fns.push(typed);
+    }
+    for f in &new.fns[new_plain..] {
+        fns.push(renumber_fn(f, &new_image)?);
+    }
     let prior_tests: HashMap<&str, &TTest> = prior.tests.iter().map(|t| (t.name.as_str(), t)).collect();
-    let renumber = |e: &TExpr| -> Option<TExpr> { remap(e, &image) };
-    for slot in new.fns.iter_mut().filter(|f| f.instance.is_none() && kept(&f.def.name)) {
-        let old = prior_fns.get(slot.def.name.as_str())?;
-        if old.def.params != slot.def.params || old.def.ret != slot.def.ret || old.def.effects != slot.def.effects {
-            return None;
-        }
-        let mut f = (*old).clone();
-        f.body = renumber(&old.body)?;
-        f.req = old.req.iter().map(&renumber).collect::<Option<_>>()?;
-        f.ens = old.ens.iter().map(&renumber).collect::<Option<_>>()?;
-        *slot = f;
+    let new_tests: HashMap<&str, &TTest> = new.tests.iter().map(|t| (t.name.as_str(), t)).collect();
+    let mut tests = Vec::new();
+    for d in combined.defs.iter().filter(|d| matches!(d, Def::Test(_))) {
+        let (t, map): (&TTest, &dyn Fn(usize) -> Option<usize>) = if kept(d.name()) { (prior_tests.get(d.name())?, &prior_image) } else { (new_tests.get(d.name())?, &new_image) };
+        let mut t2 = t.clone();
+        t2.body = remap(&t.body, map)?;
+        tests.push(t2);
     }
-    for slot in new.tests.iter_mut().filter(|t| kept(&t.name)) {
-        let old = prior_tests.get(slot.name.as_str())?;
-        let mut t = (*old).clone();
-        t.body = renumber(&old.body)?;
-        *slot = t;
-    }
-    Some(new)
+    let generics = new.generics.iter().map(|g| renumber_fn(g, &new_image)).collect::<Option<Vec<_>>>()?;
+    Some(TProgram { types: new.types, fns, tests, generics })
 }
 
 /// True if `e` refers to a function index `i` with `pred(i)`.
@@ -322,8 +393,9 @@ fn remap(e: &TExpr, map: &dyn Fn(usize) -> Option<usize>) -> Option<TExpr> {
     let kind = match &e.kind {
         TKind::FnRef(i) => TKind::FnRef(map(*i)?),
         TKind::Call(i, args) => TKind::Call(map(*i)?, all(args)?),
-        // Typed programs of a define are monomorphic: generic calls do not occur.
-        TKind::CallG(..) | TKind::FnRefG(..) => return None,
+        // Generic calls (in generic bodies) name a generic function, the same in both programs.
+        TKind::CallG(g, targs, args) => TKind::CallG(*g, targs.clone(), all(args)?),
+        TKind::FnRefG(..) => e.kind.clone(),
         TKind::Int(_) | TKind::Float(_) | TKind::Bool(_) | TKind::Str(_) | TKind::Unit | TKind::Local(_) => e.kind.clone(),
         TKind::Bin(op, l, rr, path) => TKind::Bin(*op, b(l)?, b(rr)?, path.clone()),
         TKind::Un(op, x, path) => TKind::Un(*op, b(x)?, path.clone()),

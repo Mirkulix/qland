@@ -369,7 +369,7 @@ fn prepare(tx: &Transaction, input: &Program, rules: &Rules, space: &Space) -> R
     let (typed, hashed) = std::thread::scope(|scope| {
         let hashing = scope.spawn(|| crate::incremental::hash(&combined, input, prior.map(|p| &p.hashed), &affected, &refs_of, &hash));
         let full = |p: &Program| qal_compiler::check_stored(p, &|n| input_names.contains(n) && !legacy_writer());
-        let typed = crate::incremental::check(&combined, prior.map(|p| &p.typed), &affected, &full);
+        let typed = crate::incremental::check(&combined, input, prior.map(|p| &p.typed), &affected, &refs_of, &full);
         (typed, hashing.join().unwrap_or_else(|_| Err(vec![Diagnostic::store_error("hashing the codebase panicked")])))
     });
     let typed = typed.map_err(|d| broken_dependents(&changed, d))?;

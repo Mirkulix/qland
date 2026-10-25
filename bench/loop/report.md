@@ -250,3 +250,27 @@ The self-hosted compiler, its protocol and the bootstrap are unchanged.
 | property tests and replay | 0.08 s |
 
 The goal of the design (under 0.5 s) is reached at 66 functions and nearly at 1520.
+
+## The reduced check without unused stubs (2026-10-26, later)
+
+**The finding:** the reduced program was still 110 KB, three quarters of it signature stubs of
+unchanged functions that nothing checked refers to.
+
+**The change:**
+
+- The reduced program now holds:
+  - every type;
+  - the definitions checked in full;
+  - stubs only for the functions those definitions refer to.
+- The checked program is assembled in the full program's order: functions, then instances, then
+  tests, with every call renumbered.
+
+**Differential:** the same 318 stores and 2424 defines as above. 1788 incremental checks and 1788
+incremental hashes, all identical; only first defines and rejected inputs took the full path.
+
+| codebase | before | now |
+|---|---|---|
+| 66 functions, median define | 0.30 s | **0.28 s** |
+| 1520 definitions, typical define | 0.61–0.72 s | **0.43–0.47 s** |
+
+The design's target of under 0.5 s is reached at both sizes.
