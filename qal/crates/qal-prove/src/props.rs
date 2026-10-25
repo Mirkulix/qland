@@ -11,7 +11,7 @@
 //! - Deterministic: the inputs follow from the seed and the function's name; sizes grow from 0 to
 //!   `max_size` over the runs.
 
-use crate::gen::{fnv, generatable, random_with, shrink, Rng};
+use crate::gen::{fnv, generatable, random_ordinary, random_with, shrink, Rng};
 use crate::inv::Invariants;
 use qal_core::ast::{BinOp, FnDef, Type};
 use qal_core::tast::{TExpr, TFn, TKind, TProgram};
@@ -35,11 +35,15 @@ pub struct PropOptions {
     pub timeout: Duration,
     /// Wall-clock budget of all properties; functions after it are `skipped`.
     pub budget: Duration,
+    /// Every pure function with generatable parameters has a property, not only those with
+    /// obligations: no contract of a callee is violated, and traps at the domain's edges are
+    /// counted (`qal_define` sets it for the functions it wrote).
+    pub every_pure: bool,
 }
 
 impl Default for PropOptions {
     fn default() -> PropOptions {
-        PropOptions { runs: 100, seed: 0, max_size: 30, shrink_steps: 500, fuel: 20_000_000, timeout: Duration::from_secs(2), budget: Duration::from_secs(20) }
+        PropOptions { runs: 100, seed: 0, max_size: 30, shrink_steps: 500, fuel: 20_000_000, timeout: Duration::from_secs(2), budget: Duration::from_secs(20), every_pure: false }
     }
 }
 
@@ -98,6 +102,11 @@ fn has_obligations(tp: &TProgram, f: &TFn) -> bool {
 
 /// The functions with properties, by index into `tp.fns`: pure, generatable parameters, obligations.
 pub fn candidates(tp: &TProgram) -> Vec<usize> {
+    candidates_with(tp, false)
+}
+
+/// `candidates`, or with `every_pure` every pure function with generatable parameters.
+pub fn candidates_with(tp: &TProgram, every_pure: bool) -> Vec<usize> {
     let invs = Invariants::of(tp);
     (0..tp.fns.len())
         .filter(|&i| {
@@ -105,7 +114,7 @@ pub fn candidates(tp: &TProgram) -> Vec<usize> {
             // A function that takes or returns a type with an invariant must keep it (inv.rs).
             let keeps = !invs.is_invariant(&f.def.name) && (invs.reach(tp, &f.def.ret) || f.def.params.iter().any(|p| invs.reach(tp, &p.ty)));
             // A stub (`todo()`) has no behaviour to test yet.
-            f.def.effects.is_empty() && f.def.params.iter().all(|p| generatable(tp, &p.ty)) && (has_obligations(tp, f) || keeps) && !f.is_stub()
+            f.def.effects.is_empty() && f.def.params.iter().all(|p| generatable(tp, &p.ty)) && (every_pure || has_obligations(tp, f) || keeps) && !f.is_stub()
         })
         .collect()
 }
@@ -196,6 +205,7 @@ fn run_properties(tp: &TProgram, runner: &Runner, fns: &[usize], opts: &PropOpti
         let mut rng = Rng::new(seed);
         let types: Vec<Type> = f.def.params.iter().map(|p| p.ty.clone()).collect();
         let edges = req_bounds(f);
+        let obliged = has_obligations(tp, f);
         let plan = crate::repair::plan(tp, f);
         let invs = Invariants::of(tp);
         let max_tries = opts.runs.saturating_mul(10).max(1);
@@ -210,7 +220,10 @@ fn run_properties(tp: &TProgram, runner: &Runner, fns: &[usize], opts: &PropOpti
             // inputs never satisfy does not stall generation at size 0.
             let size = (opts.max_size * tries as u64 / opts.runs.max(1) as u64).min(opts.max_size);
             tries += 1;
-            let Some(mut args) = types.iter().map(|t| random_with(tp, t, size, &mut rng, &edges)).collect::<Option<Vec<Value>>>() else { break };
+            // A function with contracts is tested at the ends of the 64-bit range too; one without
+            // (a property only because `qal_define` wrote it) at 0, ±1, empty values and its `req`.
+            let draw = if obliged { random_with } else { random_ordinary };
+            let Some(mut args) = types.iter().map(|t| draw(tp, t, size, &mut rng, &edges)).collect::<Option<Vec<Value>>>() else { break };
             // Every other input is repaired towards `req` (it still has to pass it); the others
             // stay as drawn, so inputs the atoms do not describe keep their chance.
             if tries % 2 == 0 {
@@ -279,7 +292,7 @@ fn shrink_failure(tp: &TProgram, runner: &Runner, invs: &Invariants, f: &str, ty
 /// Runs the properties of the functions named `only` (every candidate if None) of a checked
 /// program; names that are not candidates are left out.
 pub fn check_properties(tp: &TProgram, only: Option<&[String]>, opts: &PropOptions) -> Result<Vec<PropReport>, RunError> {
-    let fns: Vec<usize> = candidates(tp).into_iter().filter(|&i| only.is_none_or(|ns| ns.iter().any(|n| *n == tp.fns[i].def.name))).collect();
+    let fns: Vec<usize> = candidates_with(tp, opts.every_pure).into_iter().filter(|&i| only.is_none_or(|ns| ns.iter().any(|n| *n == tp.fns[i].def.name))).collect();
     if fns.is_empty() {
         return Ok(Vec::new());
     }

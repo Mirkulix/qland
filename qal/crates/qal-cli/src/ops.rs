@@ -564,9 +564,10 @@ pub fn define(ctx: &Ctx, src: &str, agent: &str, breaking: bool) -> Reply {
             }
             std.report(&mut out);
             team_report(store.last_write(), &mut out);
+            let loaded = store.take_written().map(|(program, typed)| Loaded { program, typed });
             drop(store);
-            run_tests_of_define(ctx, &tests, &mut out);
-            run_properties_of_define(ctx, &fns, &mut out);
+            run_tests_of_define(ctx, loaded.as_ref(), &tests, &mut out);
+            run_properties_of_define(ctx, loaded.as_ref(), &fns, &mut out);
             Reply::new(out, 0)
         }
         Err(d) => std.failed(d),
@@ -625,11 +626,14 @@ fn tests_of(store: &mut Store, defined: &[Defined]) -> Vec<String> {
 /// Runs `tests` as `test` does (same budgets, no property tests) and reports them in `out`.
 /// Their failures do not undo or fail the `define`: the definitions are stored either way. If the
 /// tests cannot run at all, `qal_test` reports why; the `define` stays as it is.
-fn run_tests_of_define(ctx: &Ctx, tests: &[String], out: &mut Output) {
+fn run_tests_of_define(ctx: &Ctx, written: Option<&Loaded>, tests: &[String], out: &mut Output) {
     if tests.is_empty() {
         return;
     }
-    let r = test(ctx, &Source::Store, Permissions::default(), tests, 0);
+    let r = match written {
+        Some(l) => test_with(ctx, &Source::Store, l, Permissions::default(), tests, 0),
+        None => test(ctx, &Source::Store, Permissions::default(), tests, 0),
+    };
     if r.out.tests.is_none() {
         return;
     }
@@ -646,17 +650,27 @@ fn run_tests_of_define(ctx: &Ctx, tests: &[String], out: &mut Output) {
 /// satisfy `req` are the warning E0804: the definitions stay stored and the reply is no error. Without
 /// this, a contract proven under trapping arithmetic and a property nobody runs let an overflow
 /// through (living program, pressure run of 2026-10-24).
-fn run_properties_of_define(ctx: &Ctx, fns: &[String], out: &mut Output) {
+fn run_properties_of_define(ctx: &Ctx, written: Option<&Loaded>, fns: &[String], out: &mut Output) {
     if fns.is_empty() {
         return;
     }
-    let Ok(loaded) = ctx.load(&Source::Store) else { return };
+    let fresh;
+    let loaded = match written {
+        Some(l) => l,
+        None => {
+            let Ok(l) = ctx.load(&Source::Store) else { return };
+            fresh = l;
+            &fresh
+        }
+    };
     unbounded_products(&loaded.typed, fns, out);
-    let names: Vec<String> = qal_prove::props::candidates(&loaded.typed).into_iter().map(|i| loaded.typed.fns[i].def.name.clone()).filter(|n| fns.contains(n)).collect();
+    let names: Vec<String> = qal_prove::props::candidates_with(&loaded.typed, true).into_iter().map(|i| loaded.typed.fns[i].def.name.clone()).filter(|n| fns.contains(n)).collect();
     if names.is_empty() {
         return;
     }
-    let mut opts = PropOptions::default();
+    // Every function the define wrote gets a property at its domain's edges (the "1-turn
+    // verification loop"), not only those with contracts.
+    let mut opts = PropOptions { every_pure: true, ..PropOptions::default() };
     if let Some(t) = ctx.timeout {
         opts.timeout = opts.timeout.min(t);
     }
@@ -1164,10 +1178,14 @@ pub fn history(ctx: &Ctx, name: &str) -> Reply {
 
 /// Runs the named tests and property tests (all if `names` is empty); `seed` varies the generated inputs.
 pub fn test(ctx: &Ctx, source: &Source, perms: Permissions, names: &[String], seed: u64) -> Reply {
-    let loaded = match ctx.load(source) {
-        Ok(l) => l,
-        Err(d) => return Reply::diagnostics(d),
-    };
+    match ctx.load(source) {
+        Ok(l) => test_with(ctx, source, &l, perms, names, seed),
+        Err(d) => Reply::diagnostics(d),
+    }
+}
+
+/// `test` on a program already loaded from `source`.
+fn test_with(ctx: &Ctx, source: &Source, loaded: &Loaded, perms: Permissions, names: &[String], seed: u64) -> Reply {
     let candidates: Vec<String> = qal_prove::props::candidates(&loaded.typed).into_iter().map(|i| loaded.typed.fns[i].def.name.clone()).collect();
     let mut unknown = Vec::new();
     for n in names {
@@ -1188,7 +1206,7 @@ pub fn test(ctx: &Ctx, source: &Source, perms: Permissions, names: &[String], se
     if !unknown.is_empty() {
         return Reply::diagnostics(unknown);
     }
-    let runner = match ctx.runner(&loaded, &Entry::Tests, perms) {
+    let runner = match ctx.runner(loaded, &Entry::Tests, perms) {
         Ok(r) => r,
         Err(e) => return Reply::error(e),
     };

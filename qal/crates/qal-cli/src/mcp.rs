@@ -1277,7 +1277,7 @@ pub fn tools() -> J {
     let read_only = json!({"readOnlyHint": true, "openWorldHint": false});
     let writes = json!({"readOnlyHint": false, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false});
     let define = format!(
-        "Add or replace QAL definitions (types, functions, tests) in the project's store. Nothing is stored unless all of them parse and type-check together with the stored code; then the result lists each name with its status (added, replaced, unchanged, relinked), else `diagnostics` say what to fix. Contracts are proven on the way (`proofs`).\n\n{REFERENCE}"
+        "Add or replace QAL definitions (types, functions, tests) in the project's store. One call checks everything: types and effects; the Z3 proof of the contracts (`proofs`); every stored test that reaches a changed function (`tests`); a property test of each defined pure function at its edges (`properties`, warnings); and the relinking of all dependents (status relinked). Nothing is stored unless all of it type-checks; else `diagnostics` say what to fix.\n\n{REFERENCE}"
     );
     json!([
         {"name": "qal_define", "title": "Define QAL code", "description": define, "annotations": writes,

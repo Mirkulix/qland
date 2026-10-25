@@ -202,8 +202,8 @@ fn handshake_lists_the_tools_with_the_language_reference() {
     // 2026-10-24 (the property tests define runs) and the fused multiply-divide (`a * b * ... / c`
     // exact, on the Int type) and pressure run 5 (E0806, a change without a test) and pressure run 7 (dependents that still check are relinked,
     // io needs no grant) add to it; after pressure run 9 the services moved to qal_query's topic "services";
-    // the mutation study added type invariants (`inv_T`).
-    assert!(qal_cli::mcp::REFERENCE.lines().count() <= 68 && qal_cli::mcp::REFERENCE.len() <= 9700, "{} lines, {} bytes", qal_cli::mcp::REFERENCE.lines().count(), qal_cli::mcp::REFERENCE.len());
+    // the mutation study added type invariants (`inv_T`), the 1-turn loop the property tests of every defined fn.
+    assert!(qal_cli::mcp::REFERENCE.lines().count() <= 68 && qal_cli::mcp::REFERENCE.len() <= 9850, "{} lines, {} bytes", qal_cli::mcp::REFERENCE.lines().count(), qal_cli::mcp::REFERENCE.len());
     // An unknown version gets the newest legacy one.
     let r = c.request("initialize", json!({"protocolVersion": "1999-01-01", "capabilities": {}, "clientInfo": {"name": "x", "version": "1"}}));
     assert_eq!(r["result"]["protocolVersion"], "2025-11-25");
@@ -940,6 +940,36 @@ fn define_runs_the_property_tests_of_what_it_defines_in(c: &mut Client) {
     let w = v["warnings"].as_array().and_then(|ws| ws.iter().find(|w| w["code"] == "E0803" && w["def"] == "settle")).cloned().unwrap_or_default();
     assert_eq!(w["message"], "`settle` calls `fill` with an input that breaks its `req map_size(m) <= 1`", "{v}");
     assert!(w["hints"][0].as_str().unwrap_or("").contains("a `req` on `settle`"), "{v}");
+}
+
+#[test]
+fn one_define_is_the_whole_verification_loop() {
+    both(one_define_is_the_whole_verification_loop_in);
+}
+
+fn one_define_is_the_whole_verification_loop_in(c: &mut Client) {
+    // The "1-turn verification loop": one qal_define reports types, proofs, the tests that reach
+    // the change, a property test of each defined pure fn at its edges, and the relinked dependents.
+    let src = "fn at(xs: List[Int], i: Int) -> Int = list_at(xs, i)\nfn first(xs: List[Int]) -> Int = if len(xs) > 0 then at(xs, 0) else 0\nfn sum2(a: Int, b: Int) -> Int = a + b\nfn half(n: Int) -> Int req n >= 0 ens r >= 0 && r <= n = n / 2\ntest first_works = first([7, 8]) == 7";
+    let (err, v) = c.call("qal_define", json!({"source": src}));
+    assert!(!err && v["passed"] == 1, "{v}");
+    assert_eq!(v["proofs"].as_array().map(|p| p.iter().all(|p| p["status"] == "proven")), Some(true), "{v}");
+    let props: Vec<(&str, &str)> = v["properties"].as_array().unwrap().iter().map(|p| (p["def"].as_str().unwrap(), p["status"].as_str().unwrap())).collect();
+    for f in ["at", "first", "sum2", "half"] {
+        assert!(props.iter().any(|(d, _)| *d == f), "{f}: {v}");
+    }
+    let warns: Vec<(&str, &str)> = v["warnings"].as_array().map(|ws| ws.iter().map(|w| (w["code"].as_str().unwrap(), w["def"].as_str().unwrap())).collect()).unwrap_or_default();
+    // `at` has no contract, but is partial: an index outside the list traps at an edge (-1, 0, empty).
+    assert!(warns.contains(&("E0804", "at")), "{v}");
+    // A plain sum without a domain is not reported: no 64-bit ends are drawn for it.
+    assert!(!warns.iter().any(|(_, d)| *d == "sum2"), "{v}");
+    // A change of `at` relinks `first` and runs the test that reaches it through `first`.
+    let (err, v) = c.call("qal_define", json!({"source": "fn at(xs: List[Int], i: Int) -> Int = match get(xs, i) { Some(x) => x, None => 0 }"}));
+    assert!(!err, "{v}");
+    let st: Vec<(&str, &str)> = v["defined"].as_array().unwrap().iter().map(|d| (d["name"].as_str().unwrap(), d["status"].as_str().unwrap())).collect();
+    assert!(st.contains(&("at", "replaced")) && st.contains(&("first", "relinked")), "{v}");
+    assert_eq!((v["tests"][0]["name"].as_str(), v["passed"].as_u64()), (Some("first_works"), Some(1)), "{v}");
+    assert!(v["properties"].as_array().unwrap().iter().any(|p| p["def"] == "at" && p["status"] == "passed" && p["traps"] == 0), "{v}");
 }
 
 #[test]

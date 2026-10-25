@@ -224,7 +224,15 @@ fn commit(tx: Transaction, start: std::time::Instant) -> Result<(), Vec<Diagnost
 /// `define` in `space`, committed only if `guard` and `check` accept it (after the verification);
 /// `rules` say who may write `std.` names.
 #[allow(clippy::too_many_arguments)]
-pub fn define_checked(conn: &mut Connection, src: &str, agent: &str, rules: &Rules, space: &Space, verify: Option<&mut Verify>, guard: &Guard, check: &Check) -> Result<Vec<Defined>, Vec<Diagnostic>> {
+/// The codebase a `define` wrote, checked: what the tests and property tests that follow run on
+/// (loading and checking it again cost a third of a define's time).
+pub struct Written {
+    pub program: Program,
+    pub typed: TProgram,
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn define_checked(conn: &mut Connection, src: &str, agent: &str, rules: &Rules, space: &Space, verify: Option<&mut Verify>, guard: &Guard, check: &Check, written: &mut Option<Written>) -> Result<Vec<Defined>, Vec<Diagnostic>> {
     let input = qal_compiler::parse_program(src).map_err(|d| vec![d])?;
     let Some(v) = verify else {
         let start = std::time::Instant::now();
@@ -234,6 +242,7 @@ pub fn define_checked(conn: &mut Connection, src: &str, agent: &str, rules: &Rul
         let out = state.write(&tx, &input, agent, space, false)?;
         check(&out, &tx, &crate::team::rows_of(&state.snap))?;
         commit(tx, start)?;
+        *written = Some(state.into_written());
         return Ok(out);
     };
     // The verifier (the prover) may take its whole time budget, longer than another writer waits
@@ -242,21 +251,25 @@ pub fn define_checked(conn: &mut Connection, src: &str, agent: &str, rules: &Rul
     // (results depend only on a definition's hash). A rejection rejects the `define` as it would
     // have been on that snapshot.
     for _ in 0..ATTEMPTS {
-        let (typed, todo) = {
+        let (first, todo) = {
             // A deferred transaction that only reads: a consistent snapshot, no write lock.
             let tx = conn.transaction().map_err(sql)?;
             let state = prepare(&tx, &input, rules, space)?;
             guard(&tx, &state.snap, &input, &state.typed, true)?;
             let out = state.write(&tx, &input, agent, space, true)?;
             let todo = to_verify(&tx, &out, &v.key)?;
-            (state.typed, todo)
+            (state, todo)
         };
-        let rows = if todo.is_empty() { Vec::new() } else { (v.run)(&typed, &todo)? };
+        let rows = if todo.is_empty() { Vec::new() } else { (v.run)(&first.typed, &todo)? };
         // IMMEDIATE takes the write lock before reading, so two concurrent `define`s serialize
         // instead of both deciding on the same old state.
         let start = std::time::Instant::now();
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(sql)?;
-        let state = prepare(&tx, &input, rules, space)?;
+        // Unchanged since the snapshot (the usual case: one agent per store): the checked and
+        // hashed program of the first pass is the one to write. Checking and hashing the whole
+        // codebase again cost half of a define's time (0.28 of 0.74 s on the living program).
+        let now_snap = Snapshot::load(&tx, space)?;
+        let state = if now_snap.same_codebase(&first.snap) { first } else { prepare(&tx, &input, rules, space)? };
         guard(&tx, &state.snap, &input, &state.typed, false)?;
         let out = state.write(&tx, &input, agent, space, false)?;
         let now = to_verify(&tx, &out, &v.key)?;
@@ -265,6 +278,7 @@ pub fn define_checked(conn: &mut Connection, src: &str, agent: &str, rules: &Rul
             store_results(&tx, &v.key, rows.into_iter().filter(|(h, _)| hashes.contains(h.as_str())))?;
             check(&out, &tx, &crate::team::rows_of(&state.snap))?;
             commit(tx, start)?;
+            *written = Some(state.into_written());
             return Ok(out);
         }
         // Another writer changed what has to be verified: drop this transaction and start over.
@@ -280,17 +294,24 @@ pub fn define_checked(conn: &mut Connection, src: &str, agent: &str, rules: &Rul
     }
     check(&out, &tx, &crate::team::rows_of(&state.snap))?;
     commit(tx, start)?;
+    *written = Some(state.into_written());
     Ok(out)
 }
 
 /// The checked and hashed codebase that `define` would write.
 struct Prepared {
     snap: Snapshot,
+    /// The stored definitions with the input, as checked.
+    program: Program,
     typed: TProgram,
     hashed: Hashed,
 }
 
 impl Prepared {
+    fn into_written(self) -> Written {
+        Written { program: self.program, typed: self.typed }
+    }
+
     /// Writes the definitions (`dry`: only computes the results).
     fn write(&self, tx: &Transaction, input: &Program, agent: &str, space: &Space, dry: bool) -> Result<Vec<Defined>, Vec<Diagnostic>> {
         write(tx, &self.snap, input, &self.hashed, agent, space, dry)
@@ -345,7 +366,7 @@ fn prepare(tx: &Transaction, input: &Program, rules: &Rules, space: &Space) -> R
     group_aliases(&hashed.defs)?;
     alias_references(&hashed.defs, &input_names)?;
     canonical_check(&snap, &input_names, &hashed.defs)?;
-    Ok(Prepared { snap, typed, hashed })
+    Ok(Prepared { snap, program: combined, typed, hashed })
 }
 
 /// The (name, hash) of the definitions to verify: the functions and tests that are new, got a new

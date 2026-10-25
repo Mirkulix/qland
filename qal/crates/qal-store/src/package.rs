@@ -281,7 +281,7 @@ pub fn import(conn: &mut Connection, file: &str, verify: Option<&mut Verify>, re
     };
     let rules = Rules { std: if is_std { StdNames::Package } else { StdNames::Unchanged }, release, breaking: false };
     let ours = meta(conn, META_STD_PACKAGE)?;
-    let defined = define::define_checked(conn, &pkg.text, &agent, &rules, &crate::space::Space::Main, verify, &define::no_guard, &check).map_err(|mut d| {
+    let defined = define::define_checked(conn, &pkg.text, &agent, &rules, &crate::space::Space::Main, verify, &define::no_guard, &check, &mut None).map_err(|mut d| {
         // Built against another std: say so first (the hashes or names differ because of it).
         if let Some(theirs) = pkg.std.as_deref().filter(|h| ours.as_deref() != Some(*h)) {
             let mine = ours.as_deref().map_or("none".to_string(), |h| short(h).to_string());

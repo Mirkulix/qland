@@ -40,7 +40,7 @@ impl Row {
 }
 
 /// What the store knows about one name.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct NameEntry {
     pub hash: Hash,
     /// Local-variable names of this name's latest text.
@@ -86,6 +86,12 @@ fn index(names: &BTreeMap<String, NameEntry>) -> (HashMap<Hash, Vec<String>>, Ha
 
 impl Snapshot {
     /// Reads all names of `space` and the definitions they point to.
+    /// True if `other` holds the same names with the same definitions and references: the same
+    /// codebase (rows are content-addressed, so equal hashes are equal definitions).
+    pub fn same_codebase(&self, other: &Snapshot) -> bool {
+        self.names == other.names
+    }
+
     pub fn load(conn: &Connection, space: &Space) -> Result<Snapshot, Vec<Diagnostic>> {
         crate::space::require(conn, space)?;
         let mut names = BTreeMap::new();

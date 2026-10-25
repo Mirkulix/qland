@@ -76,6 +76,8 @@ pub struct Store {
     space: Space,
     /// What the last team write reported besides its result (leases taken, stubs).
     last: team::WriteReport,
+    /// The codebase the last successful `define` wrote, checked (see `take_written`).
+    written: Option<define::Written>,
 }
 
 /// The checked codebase and the (name, hash) of the definitions to verify.
@@ -156,7 +158,7 @@ impl Store {
                 schema::SCHEMA_VERSION
             ))]);
         }
-        Ok(Store { conn, path, release: None, breaking: false, signer: None, space: Space::Main, last: team::WriteReport::default() })
+        Ok(Store { conn, path, release: None, breaking: false, signer: None, space: Space::Main, last: team::WriteReport::default(), written: None })
     }
 
     pub fn path(&self) -> &Path {
@@ -173,6 +175,12 @@ impl Store {
     }
 
     /// The leases the last write took and the stubs it defined (team mode).
+    /// The codebase the last successful `define` wrote, as program and checked program: what the
+    /// define's tests and property tests run on without loading and checking it again.
+    pub fn take_written(&mut self) -> Option<(qal_core::ast::Program, qal_core::tast::TProgram)> {
+        self.written.take().map(|w| (w.program, w.typed))
+    }
+
     pub fn last_write(&self) -> &team::WriteReport {
         &self.last
     }
@@ -232,7 +240,9 @@ impl Store {
             }
             team::record_write(tx, signer, "define", &space, before, &team::Entry::of_defined(out), extra)
         };
-        let out = define::define_checked(&mut self.conn, src, agent, &rules, &self.space, verify, &guard, &record);
+        let mut written = None;
+        let out = define::define_checked(&mut self.conn, src, agent, &rules, &self.space, verify, &guard, &record, &mut written);
+        self.written = written;
         self.last = report.into_inner();
         match out {
             Ok(defined) => {

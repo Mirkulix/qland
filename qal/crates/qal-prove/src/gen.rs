@@ -139,10 +139,22 @@ pub fn random(tp: &TProgram, ty: &Type, size: u64, rng: &mut Rng) -> Option<Valu
 /// `random` that also draws the Int values `edges` (the bounds a function's `req` names, and their
 /// neighbours), as often as the fixed edge values: a domain is tested at its limits.
 pub fn random_with(tp: &TProgram, ty: &Type, size: u64, rng: &mut Rng, edges: &[i64]) -> Option<Value> {
-    random_at(tp, ty, size, rng, 0, &mut { MAX_VALUE_NODES }, edges)
+    random_drawn(tp, ty, size, rng, edges, true)
 }
 
-fn random_at(tp: &TProgram, ty: &Type, size: u64, rng: &mut Rng, depth: usize, left: &mut usize, edges: &[i64]) -> Option<Value> {
+/// `random_with` that draws the Int edges 0, 1 and -1 but not the ends of the 64-bit range: the
+/// edges of a function that declares no domain. Every sum of two such ends overflows, and a
+/// warning about it on `a + b` taught agents to ignore the warnings (pressure run 4).
+pub fn random_ordinary(tp: &TProgram, ty: &Type, size: u64, rng: &mut Rng, edges: &[i64]) -> Option<Value> {
+    random_drawn(tp, ty, size, rng, edges, false)
+}
+
+fn random_drawn(tp: &TProgram, ty: &Type, size: u64, rng: &mut Rng, edges: &[i64], extremes: bool) -> Option<Value> {
+    random_at(tp, ty, size, rng, 0, &mut { MAX_VALUE_NODES }, edges, extremes)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn random_at(tp: &TProgram, ty: &Type, size: u64, rng: &mut Rng, depth: usize, left: &mut usize, edges: &[i64], ext: bool) -> Option<Value> {
     if depth > MAX_DEPTH {
         return smallest_at(tp, ty, 0, left);
     }
@@ -153,7 +165,8 @@ fn random_at(tp: &TProgram, ty: &Type, size: u64, rng: &mut Rng, depth: usize, l
     let s = size as i64;
     Some(match ty {
         Type::Int if !edges.is_empty() && rng.chance(5) => Value::Int(edges[rng.below(edges.len() as u64) as usize]),
-        Type::Int if rng.chance(10) => Value::Int(EDGE_INTS[rng.below(EDGE_INTS.len() as u64) as usize]),
+        // Without `ext`, only 0, 1 and -1 (the first three).
+        Type::Int if rng.chance(10) => Value::Int(EDGE_INTS[rng.below(if ext { EDGE_INTS.len() } else { 3 } as u64) as usize]),
         Type::Int => Value::Int(rng.range(-s, s)),
         Type::Float if rng.chance(10) => Value::Float(EDGE_FLOATS[rng.below(EDGE_FLOATS.len() as u64) as usize]),
         Type::Float => Value::Float(rng.range(-s * 100, s * 100) as f64 / 100.0),
@@ -169,14 +182,14 @@ fn random_at(tp: &TProgram, ty: &Type, size: u64, rng: &mut Rng, depth: usize, l
         }
         Type::List(x) => {
             let n = rng.below(size + 1);
-            Value::List((0..n).map(|_| random_at(tp, x, size / 2, rng, depth + 1, left, edges)).collect::<Option<_>>()?)
+            Value::List((0..n).map(|_| random_at(tp, x, size / 2, rng, depth + 1, left, edges, ext)).collect::<Option<_>>()?)
         }
         Type::Map(k, v) => {
             let n = rng.below(size / 2 + 1);
             let mut entries: Vec<(Value, Value)> = Vec::new();
             for _ in 0..n {
-                let key = random_at(tp, k, size / 2, rng, depth + 1, left, edges)?;
-                let val = random_at(tp, v, size / 2, rng, depth + 1, left, edges)?;
+                let key = random_at(tp, k, size / 2, rng, depth + 1, left, edges, ext)?;
+                let val = random_at(tp, v, size / 2, rng, depth + 1, left, edges, ext)?;
                 if !entries.iter().any(|(e, _)| compare_values(tp, k, e, &key).is_eq()) {
                     entries.push((key, val));
                 }
@@ -186,7 +199,7 @@ fn random_at(tp: &TProgram, ty: &Type, size: u64, rng: &mut Rng, depth: usize, l
         _ if tp.is_record(ty) => {
             let mut fields = Vec::new();
             for (f, ft) in tp.record_fields(ty) {
-                fields.push((f, random_at(tp, &ft, size, rng, depth + 1, left, edges)?));
+                fields.push((f, random_at(tp, &ft, size, rng, depth + 1, left, edges, ext)?));
             }
             Value::Record(ty.to_string(), fields)
         }
@@ -203,7 +216,7 @@ fn random_at(tp: &TProgram, ty: &Type, size: u64, rng: &mut Rng, depth: usize, l
             };
             let fields = tp.variant_fields(ty, tag);
             let sub = size / (fields.len() as u64 + 1);
-            let payload = fields.iter().map(|ft| random_at(tp, ft, sub, rng, depth + 1, left, edges)).collect::<Option<Vec<_>>>()?;
+            let payload = fields.iter().map(|ft| random_at(tp, ft, sub, rng, depth + 1, left, edges, ext)).collect::<Option<Vec<_>>>()?;
             Value::Variant(names.get(tag as usize)?.clone(), payload)
         }
     })

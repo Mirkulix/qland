@@ -1,0 +1,5 @@
+fn at(xs: List[Int], i: Int) -> Int = list_at(xs, i)
+fn first(xs: List[Int]) -> Int = if len(xs) > 0 then at(xs, 0) else 0
+fn sum2(a: Int, b: Int) -> Int = a + b
+fn half(n: Int) -> Int req n >= 0 ens r >= 0 && r <= n = n / 2
+test first_works = first([7, 8]) == 7
