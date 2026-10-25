@@ -185,6 +185,7 @@ fn run_properties(tp: &TProgram, runner: &Runner, fns: &[usize], opts: &PropOpti
         let mut rng = Rng::new(seed);
         let types: Vec<Type> = f.def.params.iter().map(|p| p.ty.clone()).collect();
         let edges = req_bounds(f);
+        let plan = crate::repair::plan(tp, f);
         let max_tries = opts.runs.saturating_mul(10).max(1);
         let mut tries = 0;
         let mut out_of_time = false;
@@ -197,7 +198,12 @@ fn run_properties(tp: &TProgram, runner: &Runner, fns: &[usize], opts: &PropOpti
             // inputs never satisfy does not stall generation at size 0.
             let size = (opts.max_size * tries as u64 / opts.runs.max(1) as u64).min(opts.max_size);
             tries += 1;
-            let Some(args) = types.iter().map(|t| random_with(tp, t, size, &mut rng, &edges)).collect::<Option<Vec<Value>>>() else { break };
+            let Some(mut args) = types.iter().map(|t| random_with(tp, t, size, &mut rng, &edges)).collect::<Option<Vec<Value>>>() else { break };
+            // Every other input is repaired towards `req` (it still has to pass it); the others
+            // stay as drawn, so inputs the atoms do not describe keep their chance.
+            if tries % 2 == 0 && !plan.is_empty() {
+                crate::repair::repair(&plan, &mut args, &mut rng);
+            }
             match run_one(runner, name, &args) {
                 Run::Discard => report.discarded += 1,
                 Run::Pass => report.runs += 1,

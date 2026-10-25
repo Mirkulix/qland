@@ -26,6 +26,7 @@
 
 mod gen;
 pub mod props;
+mod repair;
 mod vc;
 
 pub use gen::{fnv, generatable, random, shrink, smallest, Rng};

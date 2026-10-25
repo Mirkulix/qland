@@ -1,0 +1,5 @@
+type C = { spent: Int, taxes: Int, open: Bool }
+fn ok(c: C) -> Bool = c.taxes >= 0 && c.taxes <= c.spent && c.open
+fn at(m: Map[Str, C], k: Str) -> Bool = match map_get(m, k) { Some(x) => ok(x), None => true }
+fn all(m: Map[Str, C]) -> Bool = fold(map_values(m), true, fn(a: Bool, c: C) => a && ok(c))
+fn f(c: C, q: Int, m: Map[Str, C], k: Str) -> Int req ok(c) && q >= 1 && q <= c.spent - c.taxes && at(m, k) && all(m) = q
