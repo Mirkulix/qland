@@ -14589,6 +14589,17 @@ fn qc_fork_min_defs() -> Int = 256
 
 fn qc_fork_chunk() -> Int = 128
 
+# Work items per split, at most: the host runs at most 8 at a time (phase 5 §4.3), and every
+# CHECK_RANGE item parses the whole text, so items beyond that only repeat the parse (1520
+# definitions: 14 items of 128 took two rounds of full parses). The result does not depend on the
+# split: fragments and validations are joined in item order.
+fn qc_max_items() -> Int = 8
+
+# The size of `n` definitions split into at most `qc_max_items()` items, and at least `least`.
+fn qc_chunk_for(n: Int, least: Int) -> Int =
+  let even = (n + qc_max_items() - 1) / qc_max_items() in
+  if even > least then even else least
+
 fn qc_res_fork(cont: Bytes, items: List[Bytes]) -> Bytes =
   let head = bytes_from([81, 65, 76, 82, 1, 2]) in # "QALR", ver 1, status 2 (FORK)
   let a0 = AccPush(AccPush(AccPush(AccPush(AccEnd, head), qc_varint_bytes(bytes_len(cont))), cont), qc_varint_bytes(len(items))) in
@@ -14598,7 +14609,8 @@ fn qc_res_fork(cont: Bytes, items: List[Bytes]) -> Bytes =
 fn qc_check_items(text: Bytes, n: Int, lo: Int, acc: Accum[Bytes]) -> List[Bytes] =
   if lo >= n then acc_list(acc)
   else
-    let hi = if lo + qc_fork_chunk() > n then n else lo + qc_fork_chunk() in
+    let chunk = qc_chunk_for(n, qc_fork_chunk()) in
+    let hi = if lo + chunk > n then n else lo + chunk in
     let head = bytes_from(acc_list(qc_varint_acc(bytes_len(text), AccPush(AccPush(AccPush(AccPush(AccPush(AccPush(AccEnd, 81), 65), 76), 81), 1), 9)))) in
     let tail = bytes_from(acc_list(qc_varint_acc(hi, qc_varint_acc(lo, AccEnd)))) in
     qc_check_items(text, n, hi, AccPush(acc, bytes_join([head, text, tail])))
