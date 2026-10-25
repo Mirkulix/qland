@@ -213,3 +213,24 @@ Binary of commit 104b40ee: the 1-turn loop plus E0807. Results in `results-run12
 - **Fixed in commit after 104b40ee:** a changed output becomes the baseline once it is reported,
   so the warning appears once, in the define that changed it. A run that now fails with a runtime
   error keeps its old output and is reported until it is fixed.
+
+## Run 13: E0807 reported once (2026-10-25)
+
+Binary of commit e05015f0, results in `results-run13.jsonl`.
+
+- **Result:** 12 / 12 stages green; 11 valid. Stage 7 wrote `/tmp/x`, the Haiku habit of runs 7
+  and 8 (file removed); it passed the hidden tests.
+- **Cost:** 105 rounds / 7.51 M tokens. Mean of runs 8–13: 7.57 M = 1.32× Rust.
+- **Files:** no source files, as in runs 10–12. One stage made two separate `qal_test` calls; the
+  other 11 relied on the define reply.
+- **E0807 now marks exactly the intended behaviour changes, once each:**
+  - stage 4: "changed what `main` prints on 11 of 11 earlier runs: `c1 0 0` is now `c1 0 0 0`"
+    (the tax field);
+  - stage 5: 14 of 14 (the outstanding field);
+  - stage 7: 4 of 22, `REJECT o2 stock` is now `BACKORDER o2` (the backorder rule).
+
+  The other nine stages had no E0807 at all. The regression class of run 11 would be reported in
+  the define that makes it, against a baseline that holds only intended changes.
+
+**Runs 7–13 in total:** 83 of 84 stages green. The one failure (run 11, stage 12) is the case the
+behaviour memory now reports.
