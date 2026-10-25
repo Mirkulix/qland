@@ -144,3 +144,34 @@ Same binary, tickets and protocol (`results-run9.jsonl`). **12 / 12 stages green
 **Reliability:** QAL/Haiku now has three consecutive pressure runs at 12/12 (7, 8, 9) against 0/12, 12/12, 1 failed stage 1 and 6/12 in runs 1–5. The two bug classes found are closed by the language (exact multiply-divide) and by the instructions plus E0806 (tests with every change).
 
 **Open finding:** from stage 3 on, every `qal_test` and define reported the property failure E0803 on `settle` (the generator gives `tier = -1`, which reaches `total`'s `req`; `settle` has no `req` of its own). Five agents reported it and left it alone, rightly for the task, since no real input reaches it; the warning stayed as noise for ten stages. A contract-level fix in the program (a `req` on `settle`) or a way to say "inputs come only from the parser" would remove it.
+
+## Run 10: the tools after the mutation study (2026-10-25)
+
+What changed since run 9:
+
+- define runs every test that reaches a changed function, not only its direct users;
+- inputs of property tests are repaired towards `req`, and the edges of a bounded domain are kept;
+- type invariants (`fn inv_T`) exist, with one line in the reference;
+- E0803 names the callee and the `req` it breaks;
+- the services reference moved behind `qal_query {"topic": "services"}`. TASK.md is 23.3 KB
+  (run 9: 26.7 KB).
+
+Same tickets and protocol (`results-run10.jsonl`). **12 / 12 stages green, all valid**, 0 bugs
+reached the hidden tests: four runs in a row (7–10).
+
+| | run 8 | run 9 | run 10 | **mean 8–10** | Rust mean (runs 1–2) |
+|---|---|---|---|---|---|
+| rounds | 100 | 119 | 101 | **107** | 88.5 |
+| processed tokens | 6.95 M | 9.41 M | 7.28 M | **7.88 M** | 5.75 M |
+
+- **Cost:** 1.37× Rust on the means of runs 8–10 (1.42× for runs 8–9). The shorter TASK.md
+  and the other changes are within the run-to-run spread; nothing here measures them one by one.
+- **Invariants:** the agents wrote 86 `test` lines and 19 `req`/`ens` lines, but **no
+  invariant**: `inv_` occurs only in the reference they were given.
+- **Own verification at work:** during the runs, failing tests in the define replies
+  (stages 4, 5, 7, 11) and one refuted contract (stage 1) showed the agents mistakes they then
+  fixed before delivering.
+
+So the mutation study's result (invariants catch 3 more bugs than Rust's asserts, A4) does not
+reach agent work by itself: a line in the reference does not make Haiku write invariants. The
+tool has to propose them, or the task has to ask for them.
