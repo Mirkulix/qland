@@ -38,7 +38,7 @@ The tools it uses most:
 
 | Tool | What it does |
 |---|---|
-| `qal_define` | add or replace definitions; checks, proves, runs the affected tests and property tests |
+| `qal_define` | add or replace definitions; one call type-checks, proves the contracts, runs every test that reaches the change, property-tests each defined function at its edges and relinks all dependents (0.64 s median on a 67-function program, `../bench/loop/report.md`) |
 | `qal_query {"outline": true}` | the project in one view: signatures, contracts, who uses what, tests |
 | `qal_view` | the text of the definitions to edit |
 | `qal_run` | run `main` (or another entry point) on arguments and stdin, or many `cases` in one call |
