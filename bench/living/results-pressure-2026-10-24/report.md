@@ -175,3 +175,25 @@ reached the hidden tests: four runs in a row (7–10).
 So the mutation study's result (invariants catch 3 more bugs than Rust's asserts, A4) does not
 reach agent work by itself: a line in the reference does not make Haiku write invariants. The
 tool has to propose them, or the task has to ask for them.
+
+## Run 11: the 1-turn loop (2026-10-25)
+
+Binary of commit 034529ed:
+
+- every defined pure function gets a property test;
+- a define takes 0.64 s median on this program.
+
+Same protocol (`results-run11.jsonl`). **11 / 12 stages green, all valid; stage 12 failed (45/50)**:
+the first bug to reach the hidden tests since run 5.
+
+- **Cost:** 99 rounds / 6.97 M tokens, against run 10's 101 / 7.28 M. Mean of runs 8–11: 7.65 M,
+  1.33× Rust.
+- **Files:** none, again. As in run 10, every code change went to the store (heredoc defines), and
+  the agents read code only as nodes (`qal_view`, `qal_query`). The only files were example
+  inputs under `data/`.
+- **The bug** (details in `bench/loop/report.md`, point 6): the ticket says "tier discount and tax
+  apply to the whole order", and the agent applied the tier discount after the line discounts,
+  rounding twice. In the same define it rewrote the test that pinned the old rule, so its 67 tests
+  passed.
+- **The response:** this is what the behaviour memory (E0807, commit 104b40ee) is for. Replayed
+  on this run, it reports the regression in the round that made it.
