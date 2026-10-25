@@ -131,12 +131,16 @@ The setup of run 11, stage 12, repeated three times in parallel:
 **Result:** all three passed the hidden tests (50/50), none made run 11's tier-discount mistake,
 and E0807 never fired. None of the 25 kept runs changed output, so there was no false alarm.
 
+**Eight more trials** (same setup, the binary with both selfhost changes): 8/8 at 50/50, no
+E0807. Over 11 repeats of the stage the mistake did not recur, and the memory stayed silent every
+time.
+
 **What this shows and what it does not:**
 
 - **Shown:** the memory stays quiet when nothing breaks. In run 13 it fired only for the three
   intended changes.
 - **Not shown:** an agent correcting a live regression after an E0807. That mistake came up once
-  in 9 attempts at stage 12 (runs 7–13 and these 3), so showing it needs many more attempts, or a
+  in 18 attempts at stage 12 (runs 7–13 and these 11), so showing it needs many more attempts, or a
   ticket built to provoke it.
 - **What is evidenced** is the replay on run 11: the warning names the hidden test's failure, with
   its input, in the round that made the mistake.
