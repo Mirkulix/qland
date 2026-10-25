@@ -653,8 +653,7 @@ fn run_properties_of_define(ctx: &Ctx, fns: &[String], out: &mut Output) {
         p.error = p.error.take().map(capped);
         p.trap = p.trap.take().map(capped);
         if p.status == PropStatus::Failed {
-            let why = p.error.as_ref().map_or_else(String::new, |e| format!(": {}", e.message));
-            warnings.push(Diagnostic::new("E0803", "property_failed", &p.def, "", format!("the property test of `{}` failed on a generated input{why}", p.def)).hint("the input is in `properties` (counterexample); fix the body or the contract"));
+            warnings.push(property_failed(&p.def, p.error.as_ref()));
         }
         if p.traps > 0 {
             let what = p.trap.as_ref().map_or_else(|| "a trap".to_string(), |t| t.message.clone());
@@ -670,6 +669,20 @@ fn run_properties_of_define(ctx: &Ctx, fns: &[String], out: &mut Output) {
     }
     let existing = out.properties.get_or_insert_with(Vec::new);
     existing.extend(props);
+}
+
+/// The warning E0803 for the failed property of `def`. When the failure is a `req` of a function
+/// `def` calls, the warning says so: `def` reaches the callee with inputs its `req` rejects, which
+/// either `def`'s callers rule out (then `def` needs the same `req`) or nobody does. The general
+/// wording read as noise to the agents of pressure run 9, who left such a warning for ten stages.
+fn property_failed(def: &str, error: Option<&RunError>) -> Diagnostic {
+    if let Some(e) = error.filter(|e| e.kind == "contract_violation" && e.def != def && e.path.starts_with("req")) {
+        let req = e.contract.as_deref().and_then(|c| c.split_once(": ")).map_or(e.path.as_str(), |(_, r)| r);
+        return Diagnostic::new("E0803", "property_failed", def, "", format!("`{def}` calls `{}` with an input that breaks its `req {req}`", e.def))
+            .hint(format!("the input is in `properties` (counterexample); if no caller of `{def}` passes such inputs, state it with a `req` on `{def}`, otherwise check it before calling `{}`", e.def));
+    }
+    let why = error.map_or_else(String::new, |e| format!(": {}", e.message));
+    Diagnostic::new("E0803", "property_failed", def, "", format!("the property test of `{def}` failed on a generated input{why}")).hint("the input is in `properties` (counterexample); fix the body or the contract")
 }
 
 /// The warning E0805 for a function that multiplies `Int` parameters no `req` mentions: a product of

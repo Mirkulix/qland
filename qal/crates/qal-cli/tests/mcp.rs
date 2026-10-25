@@ -924,6 +924,14 @@ fn define_runs_the_property_tests_of_what_it_defines_in(c: &mut Client) {
     let (err, v) = c.call("qal_define", json!({"source": "fn small(m: Map[Int, Int]) -> Int ens r <= 1 = map_size(m)"}));
     assert!(!err && v["defined"][0]["name"] == "small", "{v}");
     assert!(v["warnings"].as_array().unwrap().iter().any(|w| w["code"] == "E0803" && w["def"] == "small"), "{v}");
+    // A property that fails on the `req` of a callee names the callee and its `req` (pressure run 9:
+    // `settle` reached `fill` with lines `fill` rejects; the general wording was ignored for ten stages).
+    let src = "fn fill(m: Map[Int, Int]) -> Int req map_size(m) <= 1 = 0\nfn settle(m: Map[Int, Int]) -> Int = fill(m)";
+    let (err, v) = c.call("qal_define", json!({"source": src}));
+    assert!(!err, "{v}");
+    let w = v["warnings"].as_array().and_then(|ws| ws.iter().find(|w| w["code"] == "E0803" && w["def"] == "settle")).cloned().unwrap_or_default();
+    assert_eq!(w["message"], "`settle` calls `fill` with an input that breaks its `req map_size(m) <= 1`", "{v}");
+    assert!(w["hints"][0].as_str().unwrap_or("").contains("a `req` on `settle`"), "{v}");
 }
 
 #[test]
