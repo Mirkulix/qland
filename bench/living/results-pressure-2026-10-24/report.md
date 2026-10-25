@@ -197,3 +197,19 @@ the first bug to reach the hidden tests since run 5.
   passed.
 - **The response:** this is what the behaviour memory (E0807, commit 104b40ee) is for. Replayed
   on this run, it reports the regression in the round that made it.
+
+## Run 12: with the behaviour memory (2026-10-25)
+
+Binary of commit 104b40ee: the 1-turn loop plus E0807. Results in `results-run12.jsonl`.
+
+- **Result:** 12 / 12 stages green, all valid; 101 rounds / 7.31 M tokens. Mean of runs 8–12:
+  7.58 M = 1.32× Rust.
+- **Files:** no source files; one separate `qal_test` in 12 stages, so agents rely on the define
+  reply.
+- **E0807 was noise in this run.** Stage 4 adds a report field, so all 11 recorded runs changed,
+  as intended. Nobody ran the old inputs again, and the stale outputs were reported at every later
+  stage: "16 of 19", "13 of 48", "12 of 52". The stage-12 change brought no new mismatch and passed
+  the hidden tests.
+- **Fixed in commit after 104b40ee:** a changed output becomes the baseline once it is reported,
+  so the warning appears once, in the define that changed it. A run that now fails with a runtime
+  error keeps its old output and is reported until it is fixed.
