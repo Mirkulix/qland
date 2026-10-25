@@ -166,3 +166,47 @@ Rust's `assert!`s of the same invariants sit on the same paths, but no test runs
 
 **Next:** Phase B, agent runs with trap tickets. These answer whether agents write such
 contracts themselves, and whether the property warnings change what they deliver.
+
+## A4: type invariants instead of function contracts
+
+Source: `a4/qal_invariants.qal`, raw results: `results-a4.json`. `qal-prove/src/inv.rs` makes a
+pure `fn inv_T(x: T) -> Bool` the invariant of the record `T`. The property tests then check it
+for every pure function that takes or returns a `T`, also inside lists, maps and records:
+
+- inputs are repaired towards it and must keep it;
+- a result that holds a `T` breaking it fails the property.
+
+The study's three invariants are three lines, one per record type. The first run reported six
+functions of the **unmutated** program that do not keep them for every input:
+
+- `add_product` takes any `stock`;
+- `restore` and `back_units` can drive `sold` below 0;
+- `put_back` and `take_back` lack the relation between an order and its customer's totals;
+- `settle` accepts negative quantities.
+
+Each warning was answered with the precondition it pointed to, as an agent would. That took six
+`req`s, two helper predicates and one helper record. Two of my answers were wrong at first:
+
+- `take_back` and `back_units` required `sold` to cover the whole order, which is false after a
+  partial return. The hidden tests' run stopped on the first (`contract_violation`), and the
+  property test of `take_back` pointed at the second.
+- The right condition covers only the part that comes back (`sold_covers_part`).
+
+After that, all 52 property tests pass on the unmutated code, and so do the hidden tests.
+
+| | valid mutants caught (of 14) | what was written |
+|---|---|---|
+| Rust (2 example tests, `assert!`s of the invariants) | 1 | 7 `assert!`s |
+| QAL A3 (contracts on 5 functions) | 5 | 6 helpers, 5 `req`/`ens` pairs |
+| QAL A4 (type invariants) | 5 | 3 invariants; 6 `req`s and 3 helpers the warnings asked for |
+
+The same three bugs are caught as in A3, now by the invariant: "the result of `put_back` holds a
+`CustRec` that breaks `inv_CustRec`". The difference to A3 is where the work comes from:
+
+- **A3:** I had to know which functions to give contracts.
+- **A4:** the rules are written once per type, and the tool names every function that does not
+  keep them. The invariant is checked in 52 functions, not 5.
+
+Not caught: `return_one_too_many`. `give_back` would call `take_back` outside its `req`, but the
+generated `st` almost never holds an order under the generated `oid`, so that path is not reached.
+A generator that draws keys from the maps it generates would reach it.

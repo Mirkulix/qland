@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Builds the code of measurement A3 from the code of A1: thin tests plus the same invariants.
 
-Usage: python3 bench/mutation/a3/prepare.py <qal-root> <rust-project> <out-dir>
+Usage: python3 bench/mutation/a3/prepare.py <qal-root> <rust-project> <out-dir> [<qal-source>]
 
-QAL: copies the store, deletes every stored test, then defines `qal_contracts.qal` (invariant
+QAL: copies the store, deletes every stored test, then defines <qal-source> (default
+`qal_contracts.qal`: invariant
 helpers, `req`/`ens` on the functions that write a customer, order or product record, bodies
 unchanged, and the two public examples of stage 12 as the only tests).
 Rust: copies the project, applies `rust_edits.json` (the same invariants as `assert!`s; what the
@@ -28,10 +29,11 @@ def qal(cwd, *args):
 
 
 def main(argv):
-    if len(argv) != 4:
+    if len(argv) not in (4, 5):
         print(__doc__.split("\n\n")[1], file=sys.stderr)
         return 2
-    qal_root, rust_project, out = (os.path.abspath(a) for a in argv[1:])
+    qal_root, rust_project, out = (os.path.abspath(a) for a in argv[1:4])
+    source = os.path.abspath(argv[4]) if len(argv) == 5 else os.path.join(HERE, "qal_contracts.qal")
     q, r = os.path.join(out, "qal"), os.path.join(out, "rust")
     shutil.rmtree(out, ignore_errors=True)
     os.makedirs(q)
@@ -39,7 +41,7 @@ def main(argv):
     tests = [e["name"] for e in qal(q, "query", "--outline")["results"] if e["kind"] == "test"]
     deleted = qal(q, "delete", *tests)
     assert len(deleted.get("deleted", [])) == len(tests), deleted
-    defined = qal(q, "define", os.path.join(HERE, "qal_contracts.qal"))
+    defined = qal(q, "define", source)
     assert "diagnostics" not in defined and defined.get("failed") == 0, defined
     shutil.copytree(rust_project, r, ignore=shutil.ignore_patterns("target", ".git"))
     with open(os.path.join(HERE, "rust_edits.json"), encoding="utf-8") as f:
