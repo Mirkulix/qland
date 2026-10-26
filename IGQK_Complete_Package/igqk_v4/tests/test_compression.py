@@ -4,7 +4,10 @@ Tests for IGQK compression and 2-bit ternary packing.
 
 import torch
 import torch.nn as nn
-from IGQK_Complete_Package.igqk_v4.compression import TernaryBitPacker, LLMWeightCompressor
+try:
+    from igqk_v4.compression import TernaryBitPacker, LLMWeightCompressor
+except ModuleNotFoundError:
+    from IGQK_Complete_Package.igqk_v4.compression import TernaryBitPacker, LLMWeightCompressor
 
 
 def test_ternary_bit_packer_roundtrip():
