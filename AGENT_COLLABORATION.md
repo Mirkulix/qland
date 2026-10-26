@@ -247,7 +247,7 @@ Die 5 Punkte wurden am 26.10.2026 unter `/opt/anaconda3/bin/python3` (Python 3.1
 
 ### Ergebnisse der Nachprüfung (Codex, 2026-10-26)
 
-Alle Befehle im Workspace-Root, sofern nicht anders angegeben; `HEAD` war `2727b57b` auf
+Alle Befehle im Workspace-Root, sofern nicht anders angegeben; `HEAD` war `535f12b6` auf
 `origin/Mac`.
 
 | Prüfung | Befehl | Ergebnis |
@@ -260,7 +260,8 @@ Alle Befehle im Workspace-Root, sofern nicht anders angegeben; `HEAD` war `2727b
 | IGQK root | `python3 -m pytest IGQK_Complete_Package/igqk/tests -q` | **11/11** |
 | SaaS-Backend | `…/igqk_saas/.venv/bin/python -m pytest backend/tests -q` | **12/12** |
 | Fixpunkt | `cargo test -p qal-gen --test full_fixpoint --release` | **2/2**, ca. 33 s |
-| Voller Workspace-Test | `cargo test --workspace --release --no-fail-fast` | **Exit 0** (alle Suiten inkl. Doc-Tests) |
+| Voller Workspace-Test | `cargo test --workspace --release --no-fail-fast` | **Exit 0** (alle Suiten inkl. Doc-Tests, nach dem Seed-Fix wiederholt) |
+| Clippy-Restriktion | `cargo clippy --workspace --lib --bins -- -A clippy::all -D clippy::unwrap_used -D clippy::expect_used -D clippy::panic -D clippy::unreachable -D clippy::todo -D clippy::unimplemented` | **Exit 0**; der letzte Treffer (`selfhost.rs` Seed-Panic) wurde durch `Result` ersetzt |
 
 **Einschränkungen:** Der volle Workspace-Lauf wurde im **Release**-Modus ausgeführt; im
 Debug-Modus ist er wegen der vielen Subprozesse (jeder startet Wasmtime) praktisch zu langsam.
@@ -270,7 +271,7 @@ Projekt-venv (`IGQK_DATA_DIR=/private/tmp/mnist_data`), nicht mit dem System-`py
 `qal/target/release/qal`. Die Replikation ist eine Selbstprüfung auf der Entwicklungsmaschine,
 keine unabhängige Drittmeinung.
 
-**Git:** Working Tree clean; `Mac` == `origin/Mac` nach dem Push von `2727b57b`.
+**Git:** Working Tree clean; `Mac` == `origin/Mac` nach dem Push von `535f12b6`.
 
 ## Zustellung
 
