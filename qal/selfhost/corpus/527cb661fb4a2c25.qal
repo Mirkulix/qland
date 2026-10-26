@@ -1,0 +1,6 @@
+type P = { x: Int, y: Int }
+type Box = { p: P, w: Int }
+fn same(a: P) -> Bool ens r = a == P { x: a.x, y: a.y }
+fn pick(c: Bool, a: P, b: P) -> P ens r.x == a.x || r.x == b.x = if c then a else b
+fn grow(b: Box) -> Box req b.w >= 0 ens r.p.x == b.p.x && r.w > b.w = Box { p: b.p, w: b.w + 1 }
+fn get_y(a: P) -> Int ens r == a.y = match a { P { x: _, y: v } => v }

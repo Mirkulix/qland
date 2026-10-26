@@ -212,7 +212,7 @@ fn results_are_deterministic_and_limited() {
     let only = prove(&typed(src), Some(&["bad".to_string()]), &Options::default());
     assert_eq!(only.iter().map(|r| r.def.as_str()).collect::<Vec<_>>(), vec!["bad"]);
     // 6: the fused `(a * b * …) / c` is modelled exactly; results of version 5 are not reused.
-    assert!(Options::default().key().starts_with("qal-prove/6 z3-"));
+    assert!(Options::default().key().starts_with("qal-prove/7 z3-"));
 }
 
 #[test]
@@ -264,9 +264,10 @@ fn huge_record_source() -> String {
 #[test]
 fn a_refutation_names_the_call_that_fails() {
     // Both calls of `g` have the obligation `req[0] of g`; running f(0) violates it at `g(x)` only.
+    // `g(p.a)` is proven: the prover models the field `p.a = 1`.
     let src = "type P = { a: Int }\nfn g(x: Int) -> Int req x > 0 = x\nfn f(x: Int) -> Int ens r >= 0 = let p = P { a: 1 } in g(p.a) + 0 * g(x)";
     let rs: Vec<(String, Status)> = reports(src).into_iter().filter(|r| r.def == "f").map(|r| (r.path, r.status)).collect();
-    assert_eq!(rs, vec![("body.body.left".to_string(), Status::Unknown), ("body.body.right.right".to_string(), Status::Refuted), ("ens[0]".to_string(), Status::Unknown)]);
+    assert_eq!(rs, vec![("body.body.left".to_string(), Status::Proven), ("body.body.right.right".to_string(), Status::Refuted), ("ens[0]".to_string(), Status::Unknown)]);
 }
 
 #[test]
@@ -807,4 +808,30 @@ fn type_invariants_are_kept_by_every_function_that_returns_the_type() {
     assert_eq!((e.kind, e.path.as_str(), e.message.as_str()), ("contract_violation", "result", "the result of `refund_all_tax_kept` holds a `C` that breaks `inv_C`"));
     // The counterexample is shrunk and keeps the invariant itself.
     assert_eq!(serde_json::to_value(rs[1].counterexample.as_ref().unwrap()).unwrap(), json!({"c": {"spent": 1, "taxes": 1}}));
+}
+
+#[test]
+fn record_fields_are_modelled() {
+    // A record parameter is a tuple of fresh fields, a literal the tuple of its fields, `x.f` the field.
+    let acct = "type Acct = { id: Int, balance: Int }\n";
+    let ok = format!("{acct}fn deposit(a: Acct, n: Int) -> Acct\n  req n >= 1\n  ens r.balance > a.balance\n  ens r.id == a.id\n= Acct {{ id: a.id, balance: a.balance + n }}");
+    let st = statuses(&ok);
+    assert!(st.iter().all(|(_, _, s)| *s == Status::Proven), "{st:?}");
+    // A wrong contract over fields is refuted, with a record in the counterexample (confirmed by running).
+    let bad = format!("{acct}fn deposit(a: Acct, n: Int) -> Acct\n  req n >= 0\n  ens r.balance > a.balance\n= Acct {{ id: a.id, balance: a.balance + n }}");
+    let r = one(&bad, "deposit");
+    assert_eq!(r.status, Status::Refuted, "{r:#?}");
+    let cx = r.counterexample.clone().unwrap();
+    assert_eq!(cx["n"], json!(0), "{cx}");
+    assert!(cx["a"].is_object(), "{cx}");
+    // Equality of records is field-wise; a branch merges records field by field; nested records.
+    let more = "type P = { x: Int, y: Int }\ntype Box = { p: P, w: Int }\n\
+                fn same(a: P) -> Bool ens r = a == P { x: a.x, y: a.y }\n\
+                fn pick(c: Bool, a: P, b: P) -> P ens r.x == a.x || r.x == b.x = if c then a else b\n\
+                fn grow(b: Box) -> Box req b.w >= 0 ens r.p.x == b.p.x && r.w > b.w = Box { p: b.p, w: b.w + 1 }\n\
+                fn get_y(a: P) -> Int ens r == a.y = match a { P { x: _, y: v } => v }";
+    let st = statuses(more);
+    assert!(st.iter().all(|(_, _, s)| *s == Status::Proven), "{st:?}");
+    let wrong = "type P = { x: Int, y: Int }\nfn swap_bad(a: P) -> P ens r.x == a.x = P { x: a.y, y: a.x }";
+    assert_eq!(one(wrong, "swap_bad").status, Status::Refuted);
 }

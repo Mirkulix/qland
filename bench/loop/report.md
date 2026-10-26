@@ -333,3 +333,31 @@ stubs itself, so the shadowing workaround for parameters named `todo` is gone.
 **A violation:** trial 23 called the `qal_view` MCP tool once, outside the Read/Bash rule. It
 returned errors and changed nothing, and the agent reported it itself. No agent wrote outside its
 directory (`/tmp/x` absent).
+
+## Record fields in the prover (2026-10-26)
+
+**What changed:** the Z3 encoding models records field by field (`Term::R` in `qal-prove/src/vc.rs`):
+
+- a record parameter is a tuple of fresh field values;
+- a literal is the tuple of its fields, and `x.f` is that field;
+- `==` holds when every field is equal;
+- branches merge field by field, and record patterns bind the fields;
+- records nest up to 4 deep;
+- a counterexample can hold a record, which is confirmed by running.
+
+The prover version is now `qal-prove/7`, so stored results are proven again.
+
+**Old against new prover, over the same 318 archived stores:**
+
+| obligation | count |
+|---|---|
+| proven → proven | 1421 |
+| **unknown → proven** | **161** |
+| unknown → unknown | 181 |
+| **unknown → refuted** | **6** |
+| refuted → proven or proven → refuted | **0** |
+
+- **Gain:** 161 of the 342 obligations that were `unknown` are now proven.
+- **No unsound change:** no result moved from refuted to proven, or from proven to refuted.
+- **The six refutations are real.** Each is `settle` calling `total` with a `qty` its `req` rejects (counterexample `qty = -1`, confirmed by running). This is the latent violation found by hand in run 9. A define of that code is now rejected with E0801 and the counterexample, instead of storing it with the obligation `unknown`.
+- **The page example:** its `ens r.balance > a.balance` is now proven; it was `unknown`.

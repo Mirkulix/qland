@@ -48,7 +48,7 @@ use z3::{Config, Params, SatResult, Solver};
 
 /// Changes whenever the encoding or the stored form changes (stored results of another version are
 /// not reused).
-pub const PROVER_VERSION: &str = "qal-prove/6";
+pub const PROVER_VERSION: &str = "qal-prove/7";
 
 /// Reasons of results that depend on the machine's speed or load, not only on the definition.
 const NOT_ATTEMPTED: &str = "not attempted:";
@@ -497,20 +497,25 @@ fn solve(s: &Solver, only: &[Bool], vc: &Vc, k: usize, rlimit: u32, timeout_ms: 
         },
         SatResult::Sat => {
             let Some(model) = s.get_model() else { return Solved::Unknown(Why::Solver("the solver found no model".into())) };
-            let eval = |t: &Option<Term>| match t {
-                Some(Term::I(x)) => model.eval(x, true).and_then(|v| v.as_i64()).map(Value::Int),
-                Some(Term::B(b)) => model.eval(b, true).and_then(|v| v.as_bool()).map(Value::Bool),
-                Some(Term::S(s)) => model.eval(&s.s, true).and_then(|v| v.as_string()).map(Value::Str),
-                Some(Term::L(l)) => {
-                    let len = model.eval(&l.len, true).and_then(|v| v.as_i64()).unwrap_or(0);
-                    if len == 0 {
-                        Some(Value::List(Vec::new()))
-                    } else {
-                        None
+            fn eval(model: &z3::Model, t: &Option<Term>) -> Option<Value> {
+                match t {
+                    Some(Term::I(x)) => model.eval(x, true).and_then(|v| v.as_i64()).map(Value::Int),
+                    Some(Term::B(b)) => model.eval(b, true).and_then(|v| v.as_bool()).map(Value::Bool),
+                    Some(Term::S(s)) => model.eval(&s.s, true).and_then(|v| v.as_string()).map(Value::Str),
+                    Some(Term::L(l)) => {
+                        let len = model.eval(&l.len, true).and_then(|v| v.as_i64()).unwrap_or(0);
+                        if len == 0 {
+                            Some(Value::List(Vec::new()))
+                        } else {
+                            None
+                        }
                     }
+                    // A record is a value when every field is.
+                    Some(Term::R(r)) => r.fields.iter().map(|(n, f)| eval(model, f).map(|v| (n.clone(), v))).collect::<Option<Vec<_>>>().map(|fs| Value::Record(r.name.clone(), fs)),
+                    None => None,
                 }
-                None => None,
-            };
+            }
+            let eval = |t: &Option<Term>| eval(&model, t);
             let call = o.args.iter().map(|(n, t)| (n.clone(), eval(t))).collect();
             let others = vc.obligations.iter().enumerate().filter(|(j, p)| *j != k && p.goal == o.goal).map(|(_, p)| p.args.iter().map(|(n, t)| (n.clone(), eval(t))).collect()).collect();
             let params = vc.params.iter().map(|(n, ty, t)| (n.clone(), ty.clone(), eval(t))).collect();

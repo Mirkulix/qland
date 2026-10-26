@@ -314,8 +314,8 @@ footer .wrap { display: flex; justify-content: space-between; gap: 16px; flex-wr
           <div class="panel-head"><span>store → agent, same round</span><span>JSON</span></div>
 <pre><span class="line d">{</span>
 <span class="line">  <span class="k">"defined"</span>: [<span class="s">"Acct"</span>, <span class="s">"deposit"</span>, <span class="s">"deposit_adds"</span>: <span class="s">"added"</span>],</span>
-<span class="line">  <span class="k">"proofs"</span>:  [<span class="s">"req n &gt;= 1"</span> at the call in deposit_adds: <span class="s">"proven"</span>,
-             <span class="s">"ens r.balance &gt; a.balance"</span>: <span class="s">"unknown"</span>, still checked at run time],</span>
+<span class="line">  <span class="k">"proofs"</span>:  [<span class="s">"ens r.balance &gt; a.balance"</span>: <span class="s">"proven"</span>,
+             <span class="s">"req n &gt;= 1"</span> at the call in deposit_adds: <span class="s">"proven"</span>],</span>
 <span class="line">  <span class="k">"tests"</span>:   [<span class="s">"deposit_adds"</span>: passed],</span>
 <span class="line">  <span class="k">"warnings"</span>: [{ <span class="k">"code"</span>: <span class="w">"E0804"</span>, <span class="k">"kind"</span>: <span class="s">"property_traps"</span>,
     <span class="k">"message"</span>: <span class="s">"`deposit` trapped in 3 of 103 generated runs:
@@ -323,7 +323,7 @@ footer .wrap { display: flex; justify-content: space-between; gap: 16px; flex-wr
     <span class="k">"hints"</span>: [<span class="s">"... say so with a `req` on `deposit` that bounds them"</span>] }]</span>
 <span class="line d">}</span></pre>
         </div>
-        <p class="caption">The real reply of <code>qal_define</code> to exactly this code, shortened, in 0.44 s. No test checked the overflow at a balance near the Int maximum; the property tests found it in the same round.</p>
+        <p class="caption">The real reply of <code>qal_define</code> to exactly this code, shortened, in 0.38 s. Both contracts are proven. No test checked the overflow at a balance near the Int maximum; the property tests found it in the same round.</p>
       </div>
     </div>
     <div class="strip">
@@ -470,7 +470,7 @@ footer .wrap { display: flex; justify-content: space-between; gap: 16px; flex-wr
         <div class="domain-head"><span class="count">02 · Verification</span><h3>Prove, test, remember</h3><p>Four nets that run with every write: proofs, tests, property tests and the behaviour memory.</p></div>
         <div class="feats">
           <div class="feat"><b>Contracts</b><span><code>req</code> is the precondition, <code>ens</code> the postcondition, <code>r</code> the result. They always hold at run time too.</span><span class="ex">fn sqrt_floor(n: Int) -&gt; Int req n &gt;= 0 ens r * r &lt;= n</span></div>
-          <div class="feat"><b>Z3 proofs</b><span>Exact for Int and Bool, using the contracts of the functions called. Refuted: not stored, with a counterexample. Not provable: <code>unknown</code> with a reason, checked at run time.</span></div>
+          <div class="feat"><b>Z3 proofs</b><span>Exact for Int, Bool and record fields, using the contracts of the functions called. Refuted: not stored, with a counterexample. Not provable: <code>unknown</code> with a reason, checked at run time.</span></div>
           <div class="feat"><b>Affected tests</b><span>A <code>define</code> runs every stored test that reaches a changed function, also indirectly.</span></div>
           <div class="feat"><b>Edge property tests</b><span>Every defined pure function at 0, ±1, empty values and the bounds of its <code>req</code>. Inputs are built so that they satisfy the precondition.</span></div>
           <div class="feat"><b>Generated property tests</b><span><code>qal_test</code> checks every pure function with an <code>ens</code> on 100 inputs; a failure comes with a shrunk counterexample.</span></div>
@@ -707,7 +707,7 @@ footer .wrap { display: flex; justify-content: space-between; gap: 16px; flex-wr
         <ul class="list limits">
           <li><b>Cost</b><span>Agents use about 1.3 times as many tokens in QAL as in Rust. The biggest item is the language reference every agent reads.</span></li>
           <li><b>No time saved per task</b><span>On small programs the faster checking changes rounds and run time measurably not at all. Its value shows on large programs and as a safety net.</span></li>
-          <li><b>Proofs with limits</b><span>They are exact for integers and booleans. What Z3 cannot prove is checked at run time.</span></li>
+          <li><b>Proofs with limits</b><span>They are exact for integers, booleans and record fields; list contents, maps and floats are only approximated. What Z3 cannot prove is checked at run time.</span></li>
           <li><b>A young language</b><span>QAL is measured on an order system with twelve change stages. Broader experience in use is still missing.</span></li>
         </ul>
       </div>
