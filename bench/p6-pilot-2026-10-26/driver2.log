@@ -1,0 +1,139 @@
+[1/46] 11-prime-factors-rust-run2 prepare
+  11751 ms, 56964 tokens, $0.0745
+  PASS rust 11-prime-factors 8/8 | NEXT: solved
+[2/46] 04-binary-search-rust-run2 prepare
+  10027 ms, 53743 tokens, $0.0688
+  PASS rust 04-binary-search 7/7 | NEXT: solved
+[3/46] 05-brackets-qal-run2 prepare
+  11092 ms, 72960 tokens, $0.1079
+  PASS qal 05-brackets 9/9 | NEXT: solved
+[4/46] 02-roman-qal-run2 prepare
+  17981 ms, 75174 tokens, $0.1211
+  PASS qal 02-roman 9/9 | NEXT: solved
+[5/46] 17-word-wrap-qal-run2 prepare
+  23014 ms, 76401 tokens, $0.1305
+  PASS qal 17-word-wrap 12/12 | NEXT: solved
+[6/46] 23-expense-approval-change-qal-run2 prepare
+  55525 ms, 209845 tokens, $0.2409
+  type Stat = { tot: Int, ac: Int, rc: Int, months: Int } | type Claim = { emp: Str, date: St); dispatch a fresh agent for this entry once (prepare again), else record it as invalid
+[7/46] 09-rle-rust-run2 prepare
+  12996 ms, 57727 tokens, $0.0786
+  PASS rust 09-rle 14/14 | NEXT: solved
+[8/46] 08-expr-eval-qal-run2 prepare
+  24874 ms, 120079 tokens, $0.1529
+   | fn sp); dispatch a fresh agent for this entry once (prepare again), else record it as invalid
+[9/46] 18-date-diff-rust-run2 prepare
+  12275 ms, 57446 tokens, $0.0777
+  PASS rust 18-date-diff 7/7 | NEXT: solved
+[10/46] 10-file-stats-qal-run2 prepare
+  13394 ms, 75220 tokens, $0.1190
+  PASS qal 10-file-stats 12/12 | NEXT: solved
+[11/46] 19-base-convert-qal-run2 prepare
+  17046 ms, 75641 tokens, $0.1239
+  PASS qal 19-base-convert 7/7 | NEXT: solved
+[12/46] 12-sort-words-rust-run2 prepare
+  8326 ms, 56140 tokens, $0.0692
+  PASS rust 12-sort-words 8/8 | NEXT: solved
+[13/46] 14-bst-rust-run2 prepare
+  10640 ms, 57728 tokens, $0.0786
+  PASS rust 14-bst 9/9 | NEXT: solved
+[14/46] 14-bst-qal-run2 prepare
+  13267 ms, 74036 tokens, $0.1136
+  PASS qal 14-bst 9/9 | NEXT: solved
+[15/46] 04-binary-search-qal-run2 prepare
+  12187 ms, 73393 tokens, $0.1101
+  PASS qal 04-binary-search 7/7 | NEXT: solved
+[16/46] 20-ini-query-rust-run2 prepare
+  18766 ms, 86726 tokens, $0.0839
+  PASS rust 20-ini-query 11/11 | NEXT: invalid run (call 2: Bash command does not start with `cd /private/tmp/qal-p6b-work/5e3d854d7de46127 &&`: sed -i '' 's|let mut s = String::new();|let mut s = String::new(); |; s|for raw in s.split(.\\n.) {|let s = s.strip_suff); dispatch a fresh agent for this entry once (prepare again), else record it as invalid
+[17/46] 22-expense-approval-contracts-rust-run2 prepare
+  26577 ms, 65425 tokens, $0.1209
+  PASS rust 22-expense-approval-contracts 12/12 | NEXT: solved
+[18/46] 13-word-freq-qal-run2 prepare
+  18757 ms, 76614 tokens, $0.1286
+  PASS qal 13-word-freq 11/11 | NEXT: solved
+[19/46] 13-word-freq-rust-run2 prepare
+  10982 ms, 57006 tokens, $0.0745
+  PASS rust 13-word-freq 11/11 | NEXT: solved
+[20/46] 09-rle-qal-run2 prepare
+  14524 ms, 76099 tokens, $0.1241
+  PASS qal 09-rle 14/14 | NEXT: solved
+[21/46] 05-brackets-rust-run2 prepare
+  7915 ms, 56357 tokens, $0.0706
+  PASS rust 05-brackets 9/9 | NEXT: solved
+[22/46] 06-bank-qal-run2 prepare
+  20457 ms, 115252 tokens, $0.1344
+  PASS qal 06-bank 8/8 | NEXT: invalid run (call 2: Bash command does not start with `cd /private/tmp/qal-p6b-work/c055a0e7cbe5ec94 &&`: python3 qalc.py call qal_run '{"cases":[{"stdin":"open alice\ndeposit alice 100\nwithdraw alice 30\nopen bob\ntransfer a); dispatch a fresh agent for this entry once (prepare again), else record it as invalid
+[23/46] 16-anagrams-rust-run2 prepare
+  8414 ms, 56176 tokens, $0.0694
+  PASS rust 16-anagrams 8/8 | NEXT: solved
+[24/46] 01-word-count-qal-run2 prepare
+  11738 ms, 72344 tokens, $0.1040
+  PASS qal 01-word-count 9/9 | NEXT: solved
+[25/46] 20-ini-query-qal-run2 prepare
+  18015 ms, 112962 tokens, $0.1276
+  NEXT: invalid run (call 2: Bash command does not start with `cd /private/tmp/qal-p6b-work/f78a48a0a9890e32 &&`: python3 qalc.py define <<'EOF' | fn slice_l(xs: List[Str], n: Int) -> List[Str] = map(range(0, n), fn(i) => list_at(xs, i)); dispatch a fresh agent for this entry once (prepare again), else record it as invalid
+[26/46] 17-word-wrap-rust-run2 prepare
+  10695 ms, 57698 tokens, $0.0787
+  PASS rust 17-word-wrap 12/12 | NEXT: solved
+[27/46] 07-tokenizer-qal-run2 prepare
+  14566 ms, 75939 tokens, $0.1232
+  PASS qal 07-tokenizer 8/8 | NEXT: solved
+[28/46] 21-expense-approval-rust-run2 prepare
+  18091 ms, 61144 tokens, $0.0952
+  PASS rust 21-expense-approval 12/12 | NEXT: solved
+[29/46] 01-word-count-rust-run2 prepare
+  15293 ms, 55854 tokens, $0.0673
+  PASS rust 01-word-count 9/9 | NEXT: solved
+[30/46] 02-roman-rust-run2 prepare
+  10706 ms, 55221 tokens, $0.0781
+  PASS rust 02-roman 9/9 | NEXT: solved
+[31/46] 07-tokenizer-rust-run2 prepare
+  17214 ms, 56988 tokens, $0.0738
+  PASS rust 07-tokenizer 8/8 | NEXT: solved
+[32/46] 18-date-diff-qal-run2 prepare
+  17497 ms, 75902 tokens, $0.1263
+  PASS qal 18-date-diff 7/7 | NEXT: solved
+[33/46] 21-expense-approval-qal-run2 prepare
+  29592 ms, 81423 tokens, $0.1560
+  PASS qal 21-expense-approval 12/12 | NEXT: solved
+[34/46] 12-sort-words-qal-run2 prepare
+  12296 ms, 72563 tokens, $0.1056
+  PASS qal 12-sort-words 8/8 | NEXT: solved
+[35/46] 03-csv-sum-rust-run2 prepare
+  12540 ms, 58132 tokens, $0.0809
+  PASS rust 03-csv-sum 12/12 | NEXT: solved
+[36/46] 22-expense-approval-contracts-qal-run2 prepare
+  59518 ms, 141060 tokens, $0.2199
+  PASS qal 22-expense-approval-contracts 12/12 | NEXT: invalid run (call 2: Bash command does not start with `cd /private/tmp/qal-p6b-work/122d84dd4368a11b &&`: python3 qalc.py define <<'EOF' | python3 -c "import sys,json;t=sys.stdin.read();print(t[:200]);d=json.loads(t[t.index('{); dispatch a fresh agent for this entry once (prepare again), else record it as invalid
+[37/46] 15-caesar-rust-run2 prepare
+  15297 ms, 57320 tokens, $0.0772
+  PASS rust 15-caesar 13/13 | NEXT: solved
+[38/46] 23-expense-approval-change-rust-run2 prepare
+  35537 ms, 125230 tokens, $0.1326
+   | #[derive(Def); dispatch a fresh agent for this entry once (prepare again), else record it as invalid
+[39/46] 08-expr-eval-rust-run2 prepare
+  16313 ms, 58832 tokens, $0.0856
+  PASS rust 08-expr-eval 11/11 | NEXT: solved
+[40/46] 15-caesar-qal-run2 prepare
+  14528 ms, 110983 tokens, $0.1181
+  NEXT: invalid run (call 2: Bash command does not start with `cd /private/tmp/qal-p6b-work/da246362f0a15cc5 &&`: python3 qalc.py define <<'EOF' | fn shift_ch(c: Str, k: Int) -> Str = if c == "" then c else let n = char_code(c) in if n ); dispatch a fresh agent for this entry once (prepare again), else record it as invalid
+[41/46] 03-csv-sum-qal-run2 prepare
+  23998 ms, 76005 tokens, $0.1259
+  PASS qal 03-csv-sum 12/12 | NEXT: solved
+[42/46] 10-file-stats-rust-run2 prepare
+  12680 ms, 57939 tokens, $0.0784
+  PASS rust 10-file-stats 12/12 | NEXT: solved
+[43/46] 11-prime-factors-qal-run2 prepare
+  28466 ms, 154280 tokens, $0.1472
+  type Sr = { rest: Int, k: Int } | fn strip(n: Int, d: Int, k: Int) -> Sr = if n % d == 0 th; call 3: Bash command does not start with `cd /private/tmp/qal-p6b-work/29955d96fea4f7cd &&`: python3 qalc.py call qal_run '{"cases":[{"stdin":"360\n13\n1\n 999999999989 \r\n1000000000000\n1000000000001\nabc\n\n999); dispatch a fresh agent for this entry once (prepare again), else record it as invalid
+[44/46] 06-bank-rust-run2 prepare
+  13175 ms, 59001 tokens, $0.0844
+  PASS rust 06-bank 8/8 | NEXT: solved
+[45/46] 19-base-convert-rust-run2 prepare
+  12206 ms, 54935 tokens, $0.0768
+  PASS rust 19-base-convert 7/7 | NEXT: solved
+[46/46] 16-anagrams-qal-run2 prepare
+  20602 ms, 110830 tokens, $0.1216
+  fn dedup_step(acc: List[Str], w: Str) -> List[Str] = |   match get(acc, len(acc) - 1) { Som); dispatch a fresh agent for this entry once (prepare again), else record it as invalid
+DONE
