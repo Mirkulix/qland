@@ -6,6 +6,8 @@ type-checks is stored; contracts (`req`, `ens`) are proven with Z3 on the way, t
 a changed function run at once, and programs run in a WebAssembly sandbox with explicit effects.
 Every answer is JSON; every error is a diagnostic with a code, a path and hints.
 
+Status, evidence and limits: [`docs/QAL-REPORT.md`](../docs/QAL-REPORT.md).
+
 ## Install
 
 You need a Rust toolchain (https://rustup.rs). From the repository root, one step:
