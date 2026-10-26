@@ -65,3 +65,4 @@ nul
 # Study temporary workdirs
 pilot/escrow/study/workdirs/
 pilot/escrow/ops/runtime/
+.venv/
