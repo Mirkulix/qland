@@ -358,9 +358,10 @@ async def run_compression_job(job_id: str, config: CompressionConfig):
                     compression_jobs[job_id]["progress"] = 0.8
 
                     val = result.get("validation", {})
-                    orig_acc = val.get("original_accuracy", 100.0)
-                    comp_acc = val.get("compressed_accuracy", 99.0)
-                    loss_pct = val.get("accuracy_loss", 1.0)
+                    # None when not measured (never a default accuracy).
+                    orig_acc = val.get("original_accuracy")
+                    comp_acc = val.get("compressed_accuracy")
+                    loss_pct = val.get("accuracy_loss")
 
                     compression_jobs[job_id]["original_accuracy"] = orig_acc
                     compression_jobs[job_id]["compressed_accuracy"] = comp_acc

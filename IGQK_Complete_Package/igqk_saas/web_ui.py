@@ -6,6 +6,11 @@ Simple Gradio-based interface for MVP
 import sys
 import os
 
+
+def _pct(v):
+    """A percentage for display, or N/A when it was not measured."""
+    return f"{v}%" if v is not None else "N/A (not validated)"
+
 # Fix Windows encoding
 if os.name == 'nt':
     import io
@@ -1116,7 +1121,7 @@ Auto-Validate: {"✅ Yes" if auto_validate else "❌ No"}
 |--------|----------|------------|-------------|
 | Size | {results.get('original_size_mb', 'N/A')} MB | {results.get('compressed_size_mb', 'N/A')} MB | **{results.get('compression_ratio', 'N/A')}× smaller** ✨ |
 | Parameters | {results.get('parameters', 'N/A'):,} | {results.get('parameters', 'N/A'):,} | Same |
-| Accuracy | {results.get('original_accuracy', 'N/A')}% | {results.get('compressed_accuracy', 'N/A')}% | {results.get('accuracy_loss', 'N/A')}% loss |
+| Accuracy | {_pct(results.get('original_accuracy'))} | {_pct(results.get('compressed_accuracy'))} | {_pct(results.get('accuracy_loss'))} loss |
 
 ## 💰 Savings
 

@@ -90,6 +90,66 @@ async def get_model_info(model_id: str):
     raise HTTPException(status_code=404, detail=f"Model '{model_id}' not found")
 
 
+def find_model_path(model_id: str):
+    """The path of a model file on disk, or None (the same places `list_user_models` searches)."""
+    import os
+    if os.path.basename(model_id) != model_id:
+        return None
+    for sdir in (os.path.join(os.getcwd(), "compressed_models"), os.path.join(os.getcwd(), "models"), os.getcwd()):
+        p = os.path.join(sdir, model_id)
+        if os.path.isfile(p):
+            return p
+    return None
+
+
+def servable(model_id: str):
+    """(True, identifier) if the model can answer `predict`, else (False, reason). A model can if its
+    file holds a state dict and the HuggingFace identifier of its architecture (what the
+    compression service saves); a bare state dict (a trained custom net) has no architecture."""
+    import torch
+    path = find_model_path(model_id)
+    if path is None:
+        return False, f"model '{model_id}' not found"
+    try:
+        ckpt = torch.load(path, map_location="cpu", weights_only=False)
+    except Exception as e:
+        return False, f"cannot read '{model_id}': {e}"
+    ident = isinstance(ckpt, dict) and ckpt.get("metadata", {}).get("original_identifier")
+    if not ident or "model_state_dict" not in ckpt:
+        return False, f"'{model_id}' holds no architecture to serve (only weights)"
+    return True, ident
+
+
+_loaded = {}
+
+
+class PredictRequest(BaseModel):
+    text: str
+
+
+@router.post("/{model_id}/predict")
+async def predict(model_id: str, req: PredictRequest):
+    """Runs the model on `text`: the mean of its last hidden states (feature extraction, the output
+    of the base architecture the compression service keeps)."""
+    import torch
+    from transformers import AutoConfig, AutoModel, AutoTokenizer
+    ok, info = servable(model_id)
+    if not ok:
+        raise HTTPException(status_code=404 if "not found" in info else 422, detail=info)
+    if model_id not in _loaded:
+        ckpt = torch.load(find_model_path(model_id), map_location="cpu", weights_only=False)
+        model = AutoModel.from_config(AutoConfig.from_pretrained(info))
+        model.load_state_dict(ckpt["model_state_dict"])
+        model.eval()
+        _loaded[model_id] = (model, AutoTokenizer.from_pretrained(info))
+    model, tok = _loaded[model_id]
+    inputs = tok(req.text, return_tensors="pt", truncation=True)
+    with torch.no_grad():
+        hidden = model(**inputs).last_hidden_state[0]
+    emb = hidden.mean(dim=0)
+    return {"model_id": model_id, "architecture": info, "tokens": int(hidden.shape[0]), "embedding_dim": int(emb.shape[0]), "embedding": [round(float(x), 6) for x in emb]}
+
+
 @router.get("/search/huggingface")
 async def search_huggingface_models(query: str, limit: int = 10):
     """Search models on HuggingFace Hub"""

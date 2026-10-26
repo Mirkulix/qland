@@ -138,14 +138,17 @@ class CompressionService:
                 )
 
                 results["validation"] = validation_results
-                print(f"✅ Validation: Original={validation_results['original_accuracy']:.1f}%, "
-                      f"Compressed={validation_results['compressed_accuracy']:.1f}%, "
-                      f"Loss={validation_results['accuracy_loss']:.1f}%")
+                if validation_results.get("original_accuracy") is not None:
+                    print(f"✅ Validation: Original={validation_results['original_accuracy']:.1f}%, "
+                          f"Compressed={validation_results['compressed_accuracy']:.1f}%, "
+                          f"Loss={validation_results['accuracy_loss']:.1f}%")
             else:
+                # Not validated: no accuracy is known.
                 results["validation"] = {
-                    "original_accuracy": 100.0,
-                    "compressed_accuracy": 99.0,
-                    "accuracy_loss": 1.0
+                    "original_accuracy": None,
+                    "compressed_accuracy": None,
+                    "accuracy_loss": None,
+                    "validation_error": "not validated"
                 }
 
             # Step 4: Save compressed model

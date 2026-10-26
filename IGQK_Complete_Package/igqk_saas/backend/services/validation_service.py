@@ -154,12 +154,13 @@ class ValidationService:
             }
 
         except Exception as e:
-            print(f"⚠️ Classification validation failed, using approximation: {str(e)}")
-            # Return approximate values
+            print(f"⚠️ Classification validation failed: {str(e)}")
+            # No measurement: report that, never invented numbers.
             return {
-                "original_accuracy": 89.5,
-                "compressed_accuracy": 88.7,
-                "accuracy_loss": 0.8
+                "original_accuracy": None,
+                "compressed_accuracy": None,
+                "accuracy_loss": None,
+                "validation_error": str(e)
             }
 
     def _evaluate_classifier(

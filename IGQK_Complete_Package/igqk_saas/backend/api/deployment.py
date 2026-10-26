@@ -53,8 +53,16 @@ deployments_store: Dict[str, Deployment] = {}
 @router.post("/deploy")
 async def deploy_model(config: DeploymentConfig):
     """Deploy a model to target environment"""
+    # Only this server can serve (igqk_api); the cloud targets are not connected.
+    if config.target != DeploymentTarget.IGQK_API:
+        raise HTTPException(status_code=501, detail=f"deployment target '{config.target.value}' is not implemented; use 'igqk_api' (this server)")
+    # Only a model that can answer `predict` is deployed; the endpoint is this server's.
+    from api.models import servable
+    ok, info = servable(config.model_id)
+    if not ok:
+        raise HTTPException(status_code=404 if "not found" in info else 422, detail=f"cannot deploy: {info}")
     dep_id = f"dep_{uuid.uuid4().hex[:8]}"
-    endpoint = f"http://localhost:8000/api/models/{config.model_id}/predict"
+    endpoint = f"/api/models/{config.model_id}/predict"
 
     dep = Deployment(
         id=dep_id,
@@ -71,7 +79,7 @@ async def deploy_model(config: DeploymentConfig):
     return {
         "deployment_id": dep_id,
         "status": "running",
-        "message": f"Model '{config.name}' deployed successfully to {config.target}",
+        "message": f"Model '{config.name}' is served by this server at {endpoint}",
         "endpoint_url": endpoint,
         "monitor_url": f"/api/deployment/{dep_id}"
     }
