@@ -234,3 +234,38 @@ Binary of commit e05015f0, results in `results-run13.jsonl`.
 
 **Runs 7–13 in total:** 83 of 84 stages green. The one failure (run 11, stage 12) is the case the
 behaviour memory now reports.
+
+## Run 14: the new world (2026-10-26)
+
+**Binary of merge 3c4d6ac7:**
+
+- the incremental define and `CHECK_DELTA` (define 0.28 s on this program);
+- the behaviour memory E0807;
+- Phase 7: the `model` effect (`std.model`), including tests that ask a model from recorded
+  answers.
+
+Same protocol (`results-run14.jsonl`).
+
+| | run 14 | runs 8–13 |
+|---|---|---|
+| stages green | **12 / 12** | 71 / 72 |
+| rounds | 101 | 99–119 |
+| processed tokens | 7.39 M | 6.95–9.41 M, mean 7.57 M |
+| agent wall time | 19.4 min | 18.7–22.5 min (runs 10–13) |
+
+**Cost:** 1.29× Rust on the mean of the Rust runs (5.73 M).
+
+**E0807:** fired at stages 4, 5 and 7 only, where the tickets change the output (a new report
+field, BACKORDER instead of REJECT), as in run 13. No false alarm. No agent wrote outside its
+directory.
+
+**What this shows and what it does not:**
+
+- **Correctness:** it holds; this is the 7th straight run at 12/12 or 11/12.
+- **Rounds, tokens, wall time:** none moved measurably. A define that is 0.2 s faster saves
+  little against an agent turn of several seconds, and tokens are set by the context an agent
+  carries, not by how fast the store answers.
+- **The new parts:** they pay off as safety (E0807 caught a real regression live, 9ab47ae8)
+  and at larger codebase sizes (0.43 s instead of 1.7 s at 1520 definitions). They do not pay
+  off as cost on a program of this size.
+- **`std.model`:** no stage asked for it, and no agent used it.
