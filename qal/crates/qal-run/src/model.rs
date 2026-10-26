@@ -3,7 +3,8 @@
 //! Provides `model_ask(prompt, schema) -> Result[ModelResponse, ModelError] !model`.
 //! Every call is:
 //! 1. Recorded in SQLite (`model_calls`), so subsequent runs and tests are 100% deterministic and cost 0.
-//! 2. Budget-tracked against `QAL_MODEL_BUDGET_EUR` (default 20 €) in `model_budget`.
+//! 2. Budget-tracked against `QAL_MODEL_BUDGET_EUR` (default 20 €) in `model_budget`. Amounts are
+//!    in millionths of the currency (`cost_microcents` = 1e-6 €, prices taken 1:1 from USD).
 //! 3. Authenticated via `ANTHROPIC_API_KEY` in `~/.config/qal/secrets.env` or the environment.
 
 use std::path::{Path, PathBuf};
@@ -40,16 +41,16 @@ fn sha256_hex(b: &[u8]) -> String {
     s
 }
 
-/// Returns the default path to the SQLite cache/store for model calls.
+/// Returns the default path to the SQLite cache for model calls: `.qal/model.db` next to the
+/// project's store (its own file: the store's schema and write lock stay untouched).
 pub fn default_db_path() -> PathBuf {
     if let Ok(p) = std::env::var("QAL_MODEL_DB") {
         return PathBuf::from(p);
     }
     let mut dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     loop {
-        let candidate = dir.join(".qal").join("store.db");
-        if candidate.exists() {
-            return candidate;
+        if dir.join(".qal").join("store.db").exists() {
+            return dir.join(".qal").join("model.db");
         }
         if !dir.pop() {
             break;
@@ -59,7 +60,7 @@ pub fn default_db_path() -> PathBuf {
         let p = PathBuf::from(home).join(".config/qal/model_cache.sqlite");
         return p;
     }
-    PathBuf::from(".qal/store.db")
+    PathBuf::from(".qal/model.db")
 }
 
 /// Reads the API key and budget limit (in microcents) from environment or `~/.config/qal/secrets.env`.
@@ -211,7 +212,7 @@ pub fn ask(
 
     // 4. Live API Call via ureq
     let mut payload = json!({
-        "model": "claude-haiku-4-5-20251001", // current Haiku endpoint alias
+        "model": model,
         "max_tokens": 4096,
         "messages": [
             {"role": "user", "content": prompt}
@@ -259,11 +260,7 @@ pub fn ask(
     let in_tokens = body["usage"]["input_tokens"].as_i64().unwrap_or(0);
     let out_tokens = body["usage"]["output_tokens"].as_i64().unwrap_or(0);
 
-    // Claude Haiku 5.5: $0.10 / M in, $0.50 / M out
-    // 1 Euro/Dollar = 100 Cents = 1,000,000 Microcents
-    // in: tokens * 100,000 / 1,000,000 = in_tokens / 10 microcents
-    // out: tokens * 500,000 / 1,000,000 = out_tokens / 2 microcents
-    let cost_microcents = (in_tokens / 10).saturating_add(out_tokens / 2);
+    let cost_microcents = cost(in_tokens, out_tokens);
 
     // If schema was required, verify that text is valid JSON
     if !schema.trim().is_empty() {
@@ -288,9 +285,27 @@ pub fn ask(
     Ok(resp)
 }
 
+/// The cost of a call in millionths of a currency unit, rounded up: Claude Haiku 5.5 costs $0.10
+/// per million input tokens and $0.50 per million output tokens for prompts up to 100K tokens,
+/// $0.50 and $2.50 beyond (the only model the host calls).
+pub fn cost(in_tokens: i64, out_tokens: i64) -> i64 {
+    let (per_m_in, per_m_out) = if in_tokens > 100_000 { (500_000, 2_500_000) } else { (100_000, 500_000) };
+    let up = |tokens: i64, per_m: i64| (tokens.max(0).saturating_mul(per_m) + 999_999) / 1_000_000;
+    up(in_tokens, per_m_in).saturating_add(up(out_tokens, per_m_out))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cost_rounds_up_and_charges_long_prompts_more() {
+        assert_eq!(cost(0, 0), 0);
+        assert_eq!(cost(1, 0), 1);
+        assert_eq!(cost(100_000, 1_000_000), 510_000);
+        assert_eq!(cost(1_000_000, 1_000_000), 3_000_000);
+        assert_eq!(cost(100_001, 0), 50_001);
+    }
 
     #[test]
     fn hashing_is_deterministic() {

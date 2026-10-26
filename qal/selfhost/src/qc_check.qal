@@ -1928,7 +1928,8 @@ fn qc_resolve_type_bodies_loop(g: QcGlobals, diags: List[QcDiag], legacy: Bool, 
   if k >= len(g.tp.types) then QcGlobalsDiagsRes { g: g, diags: diags }
   else
     let t = list_at(g.tp.types, k) in
-    let prelude_count = if legacy then 0 else 11 in
+    # The prelude types come first (their own type parameters are not checked against user types).
+    let prelude_count = if legacy then 0 else len(qc_prelude_types()) in
     let diags_tp = if k >= prelude_count then qc_check_tparams(g, t.name, t.params, diags) else diags in
     let body_res = match t.body {
       QcBodyRecord(fs) =>

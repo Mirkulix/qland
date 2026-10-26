@@ -421,8 +421,9 @@ impl Ctx {
         }
         let model_db = std::env::var("QAL_MODEL_DB").ok().map(PathBuf::from).or_else(|| {
             match &self.store {
-                StoreAt::Discover(dir) => qal_store::project_of(dir).map(|p| p.join(qal_store::STORE_DIR).join("store.db")),
-                StoreAt::Root(root) => Some(root.join(qal_store::STORE_DIR).join("store.db")),
+                // Its own file next to the store: the store's schema and write lock stay untouched.
+                StoreAt::Discover(dir) => qal_store::project_of(dir).map(|p| p.join(qal_store::STORE_DIR).join("model.db")),
+                StoreAt::Root(root) => Some(root.join(qal_store::STORE_DIR).join("model.db")),
             }
         }).or_else(|| {
             std::env::var("HOME").ok().map(|h| PathBuf::from(h).join(".config/qal/model_calls.db"))
