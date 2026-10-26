@@ -1,26 +1,40 @@
-# 🎉 LIVE PRODUCTION SYSTEM - READY TO DEPLOY!
+# ⚠️ IGQK SaaS – MVP/DEMO (NICHT PRODUCTION-READY)
 
 **IGQK v3.0 SaaS Platform**
-**Status:** 🟢 PRODUCTION-READY
-**Datum:** 2026-02-04
+**Status:** 🟡 MVP/Demo – not production-ready
+**Datum:** 2026-02-04 (Status-Korrektur: 2026-10-26)
+
+> **Dieses Dokument beschreibt ein Demo-/MVP-System, kein production-ready System.**
+> Der Code widerspricht einem Produktionsstatus an fünf Stellen:
+>
+> | # | Befund | Ort |
+> |---|---|---|
+> | 1 | JWT-`SECRET_KEY` ist im Code hardcodiert und wird nicht aus der Umgebung gelesen | `backend/api/auth.py:19` |
+> | 2 | CORS erlaubt `*` (alle Origins, mit Credentials) | `backend/main.py:26` |
+> | 3 | Trainings-Jobs liegen in einem prozesslokalen Dict (kein Restart, kein Multi-Worker) | `backend/api/training.py:72` |
+> | 4 | Cloud-Deployment-Ziele liefern **501**; nur `igqk_api` (dieser Server) funktioniert | `backend/api/deployment.py:58` |
+> | 5 | Datenbank ist SQLite (eine Datei, kein Server-Backend) | `backend/database.py:3-6` |
+>
+> Die `.env`-Variablen `SECRET_KEY`/`JWT_SECRET_KEY` aus diesem Dokument haben
+> derzeit **keine Wirkung**. Erst nach Behebung von 1–2 (und erneuter Prüfung)
+> ist ein Production-Status vertretbar.
 
 ---
 
-## ✅ ALLES FERTIG! DAS SYSTEM IST PRODUKTIONSREIF!
+## ✅ FERTIG FÜR DEMO/TEST – NICHT FÜR PRODUKTION
 
-Das IGQK SaaS Platform ist jetzt ein vollständiges, production-ready Live-System mit:
-- Docker-Container
-- Automatischem Deployment
-- Monitoring & Logging
-- Skalierbarkeit
-- Security Features
-- Backup-Strategie
+Das IGQK SaaS Platform ist ein lauffähiges Demo-System mit:
+- Docker-Container + docker-compose-Orchestrierung
+- Deployment- und Management-Scripts (lokal)
+- Health Checks
+- Backup-Anleitung (manuell)
+- Konfigurationsvorlage (.env.example)
 
 ---
 
-## 🚀 WIE SIE ES JETZT LIVE BRINGEN
+## 🚀 WIE SIE ES JETZT STARTEN
 
-### **Methode 1: Lokales Production System (EMPFOHLEN)**
+### **Methode 1: Lokales Demo-System (EMPFOHLEN)**
 
 #### Windows
 
@@ -55,7 +69,14 @@ chmod +x deploy.sh
 
 ---
 
-### **Methode 2: Cloud Deployment**
+### **Methode 2: Docker auf einer Cloud-VM**
+
+> **Abgrenzung:** Die App-interne Deployment-API (`POST /api/deployment/deploy`)
+> unterstützt nur `igqk_api` und liefert für AWS/GCP/Azure **501**
+> (`backend/api/deployment.py:58`). Was hier beschrieben wird, ist das Starten
+> des Docker-Stacks auf einer VM per `deploy.sh` – nicht das API-Feature
+> „Multi-Cloud-Deployment“. Ein Production-Betrieb bleibt wegen der fünf
+> Blockpunkte am Dokumentanfang ausgeschlossen.
 
 #### AWS EC2
 
@@ -233,6 +254,10 @@ curl -fsSL https://get.docker.com | sh
 - [ ] Mindestens 8GB RAM verfügbar
 - [ ] 50GB freier Speicherplatz
 
+> ⚠️ **Hinweis:** `SECRET_KEY` / `JWT_SECRET_KEY` haben derzeit keine Wirkung,
+> weil `backend/api/auth.py:19` einen hardcodierten Key verwendet. Diese Punkte
+> sind erst nach dem Code-Fix sinnvoll abhakbar.
+
 ### **Deployment:**
 
 - [ ] `deploy.bat` oder `./deploy.sh` ausgeführt
@@ -250,7 +275,7 @@ curl -fsSL https://get.docker.com | sh
 
 ---
 
-## 📊 FEATURES IM PRODUCTION SYSTEM
+## 📊 FEATURES IM DEMO-SETUP
 
 ### **1. Automatisches Health Monitoring**
 
@@ -296,19 +321,25 @@ networks:
 
 ---
 
-## 🔒 SECURITY FEATURES
+## 🔒 SECURITY – AKTUELLER STAND (TEILWEISE NUR DOKUMENTIERT)
 
 ### **1. Environment Variables**
 
-- Secrets nicht im Code
-- Konfigurierbare Credentials
-- API Keys geschützt
+- `.env.example` ist vorhanden
+- ⚠️ **Aber:** `backend/api/auth.py:19` hardcodet
+  `SECRET_KEY = "igqk_secret_key_change_in_production_2024"` und liest **keine**
+  Umgebungsvariable. Jede Installation dieses Codes nutzt denselben Signing-Key.
 
 ### **2. CORS Protection**
+
+Geplant:
 
 ```python
 ALLOWED_ORIGINS=http://localhost:7860,https://your-domain.com
 ```
+
+⚠️ **Aber:** `backend/main.py:26` setzt `allow_origins=["*"]` (mit
+`allow_credentials=True`). Die Variable `ALLOWED_ORIGINS` wird nicht ausgewertet.
 
 ### **3. Rate Limiting**
 
@@ -317,17 +348,28 @@ MAX_CONCURRENT_JOBS=5
 JOB_TIMEOUT_MINUTES=60
 ```
 
-### **4. JWT Authentication** (vorbereitet)
+### **4. JWT Authentication**
+
+Implementiert (`backend/api/auth.py`), aber mit hardcodiertem Key:
 
 ```env
-JWT_SECRET_KEY=your-secret
+JWT_SECRET_KEY=your-secret   # wird derzeit nicht gelesen
 JWT_ALGORITHM=HS256
 JWT_EXPIRATION_HOURS=24
 ```
 
+**Fazit:** Für eine echte Produktion müssen 1, 2 und 4 zuerst im Code behoben
+und danach erneut geprüft werden – nicht nur in `.env` gesetzt werden.
+
 ---
 
-## 📈 SCALING-OPTIONEN
+## 📈 SCALING-OPTIONEN (EINGESCHRÄNKT)
+
+> ⚠️ Mehrere Backend-Replicas sind mit dem aktuellen Code **nicht** sicher:
+> Trainings-Jobs liegen in einem prozesslokalen Dict
+> (`backend/api/training.py:72`), d. h. Status/Ergebnisse eines Jobs sind nur in
+> der Instanz sichtbar, die ihn gestartet hat. Horizontal Scaling erst nach
+> Job-Persistenz (DB/Queue).
 
 ### **Horizontal Scaling**
 
@@ -515,15 +557,15 @@ docker-compose build --no-cache
 - [x] Management-Tools bereit
 - [x] Dokumentation vollständig
 - [x] Health Checks implementiert
-- [x] Monitoring vorbereitet
-- [x] Backup-Strategie definiert
-- [x] Security konfiguriert
+- [ ] Monitoring implementiert (nur vorbereitet)
+- [x] Backup-Strategie definiert (manuell)
+- [ ] Security konfiguriert (Produktionsblocker offen, siehe oben)
 
 ---
 
-## 🎉 READY TO GO LIVE!
+## 🚀 DEMO STARTKLAR – KEIN PRODUCTION-GO-LIVE
 
-**Ihr System ist JETZT bereit für Production Deployment!**
+**Das System ist als Demo/MVP startklar, nicht als Production-System.**
 
 ### **Quick Start:**
 
@@ -557,6 +599,8 @@ nano .env  # WICHTIG: Secrets ändern!
 
 ---
 
-**🚀 Viel Erfolg mit Ihrem Live Production System!**
+**🚀 Viel Erfolg beim Testen Ihres Demo-Systems!**
 
-Das IGQK SaaS Platform ist production-ready und wartet darauf, live zu gehen!
+Das IGQK SaaS Platform ist ein MVP/Demo (nicht production-ready) und startklar
+für lokale Tests. Vor einem echten Go-Live zuerst die fünf Blockpunkte am
+Dokumentanfang beheben.

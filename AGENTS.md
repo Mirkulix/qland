@@ -22,9 +22,13 @@ The theory unifies three mathematical approaches:
 
 ## Current State
 
-This repository contains mathematical documentation only (no implementation yet):
+The repository contains the mathematical foundations **and** a PyTorch implementation:
+- `IGQK_Complete_Package/` — implementation, tests (21 `igqk_v4`, 11 root, 12 SaaS) and measured compression
+  (15.6× file / 16.0× payload; accuracy loss 3.8–7.9 pp depending on model)
 - `Entwicklung_der_IGQK-Theorie_Mathematische_Details.pdf` - Complete mathematical formalization
 - `KI-Analyse_Welche_mathematischen_Wege_machen_Sinn.pdf` - Meta-analysis and evaluation
+
+The implementation is a research prototype, not production-ready; see `IGQK_Complete_Package/README.md`.
 
 ## Build Requirements
 

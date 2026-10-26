@@ -216,12 +216,15 @@ def run_replication():
 
 def generate_markdown_report(report_file, telemetry, results, discrepancies):
     md = [
-        "# Unabhängiger Replikationsbericht: QAL Core & Escrow Engine",
+        "# Replikationsbericht (Selbstprüfung): QAL Core & Escrow Engine",
         "",
-        f"**Datum (UTC):** {telemetry['timestamp']}  ",
-        f"**Git Commit:** `{telemetry['git_commit']}`  ",
+        f"**Datum (UTC):** {telemetry['timestamp']}",
+        f"**Git Commit:** `{telemetry['git_commit']}`",
         f"**Plattform:** {telemetry['platform']} ({telemetry['machine']})  ",
         f"**Compiler / Toolchain:** `{telemetry.get('rustc_version', 'N/A')}` | Python `{telemetry['python_version']}`  ",
+        "",
+        "**Art des Berichts:** Selbstprüfung. Dieser Bericht wird vom Runner selbst aus einer festen Vorlage erzeugt; eine **unabhängige** Replikation liegt erst vor, wenn eine externe Person den Lauf auf ihrer Maschine wiederholt und ihren eigenen Bericht beilegt.",
+        "**Hinweis zu Claims 3–4:** Nur auf einer Maschine mit vorhandenem Pilot-Zustand reproduzierbar. Benötigt werden der nicht versionierte Store `pilot/escrow/qal/.qal/store.db` und die Trust-Datei `~/.config/qal/sessions/escrow/trust.json`; ein frischer Clone muss dieses Fixture erst selbst erzeugen (siehe `replication/README.md` §1.1).",
         "",
         "---",
         "",
@@ -230,10 +233,12 @@ def generate_markdown_report(report_file, telemetry, results, discrepancies):
         "| Formale Behauptung | Gegenstand | Soll | Gemessen | Status |",
         "|---|---|---|---|---|",
         f"| **Claim 1: Wasm-Fixpunkt** | Selbstgehosteter Compiler | Byte-identisch | Byte-identisch ({results['claim_1_fixpoint']['duration_s']} s) | {'✅ Bestanden' if results['claim_1_fixpoint']['passed'] else '❌ Fehlgeschlagen'} |",
-        f"| **Claim 2: 23 Z3-Beweise** | Escrow Kontrakte | 23 bewiesen, 0 refuted, 0 unknown | {results['claim_2_proofs']['proven']} proven, {results['claim_2_proofs']['refuted']} refuted, {results['claim_2_proofs']['unknown']} unknown ({results['claim_2_proofs']['duration_s']} s) | {'✅ Bestanden' if results['claim_2_proofs']['passed'] else '❌ Fehlgeschlagen'} |",
-        f"| **Claim 3: Audit-Integrität** | SHA-256 Merkle-Kette mit Ed25519-Signaturen | Ungebrochen, 0 Warnungen | 19 Records, Head fixiert ({results['claim_3_audit']['duration_s']*1000:.1f} ms) | {'✅ Bestanden' if results['claim_3_audit']['passed'] else '❌ Fehlgeschlagen'} |",
-        f"| **Claim 4: Truncation-Detection** | Abgeschnittene Historie | `E0922 chain_broken` | Erkannt und abgewiesen ({results['claim_4_truncation']['duration_s']} s) | {'✅ Bestanden' if results['claim_4_truncation']['passed'] else '❌ Fehlgeschlagen'} |",
+        f"| **Claim 2: 23 Z3-Beweise** | Escrow-Obligations (10 `ens` + 13 Aufruf-`req`) | 23 bewiesen, 0 refuted, 0 unknown | {results['claim_2_proofs']['proven']} proven, {results['claim_2_proofs']['refuted']} refuted, {results['claim_2_proofs']['unknown']} unknown ({results['claim_2_proofs']['duration_s']} s) | {'✅ Bestanden' if results['claim_2_proofs']['passed'] else '❌ Fehlgeschlagen'} |",
+        f"| **Claim 3: Audit-Integrität** | SHA-256 Merkle-Kette mit Ed25519-Signaturen¹ | Ungebrochen, 0 Warnungen | 19 Records, Head fixiert ({results['claim_3_audit']['duration_s']*1000:.1f} ms) | {'✅ Bestanden' if results['claim_3_audit']['passed'] else '❌ Fehlgeschlagen'} |",
+        f"| **Claim 4: Truncation-Detection** | Abgeschnittene Historie¹ | `E0922 chain_broken` | Erkannt und abgewiesen ({results['claim_4_truncation']['duration_s']} s) | {'✅ Bestanden' if results['claim_4_truncation']['passed'] else '❌ Fehlgeschlagen'} |",
         f"| **Claim 5: Zero-Sum Invariante** | 50 parallele Payouts + Recovery | $\\sum Balances + Escrow + Disbursed == Deposited$ | Invariante erhalten, 0 Overdrafts ({results['claim_5_ops']['duration_s']} s) | {'✅ Bestanden' if results['claim_5_ops']['passed'] else '❌ Fehlgeschlagen'} |",
+        "",
+        "¹ **Nur Entwicklungsmaschine:** Claim 3 und 4 laufen gegen den nicht versionierten Store `pilot/escrow/qal/.qal/store.db` und die Trust-Datei `~/.config/qal/sessions/escrow/trust.json` (beide gitignored). Aus einem frischen Clone sind sie ohne selbst erzeugtes Fixture nicht reproduzierbar.",
         "",
         "---",
         "",
@@ -243,10 +248,11 @@ def generate_markdown_report(report_file, telemetry, results, discrepancies):
 
     if not discrepancies:
         md.extend([
-            "**Keine inhaltlichen oder mathematischen Diskrepanzen festgestellt.**",
+            "**Keine inhaltlichen oder mathematischen Diskrepanzen bei den auf dieser Maschine ausgeführten Prüfungen festgestellt.**",
             "",
-            "* **Mathematische Soundness:** Der Z3-SMT-Solver lieferte exakt 23 formal bewiesene Obligations ohne Approximations-Unknowns.",
-            "* **Kryptographische Kette:** Die Hash-Kette mit Head `4be3934dda9f5a96e207cd9773af5814f5fd66c0c6ac573c0ab1ce63860e9ab7` ist byte-genau konsistent.",
+            "* **Mathematische Soundness:** Der Z3-SMT-Solver lieferte exakt 23 formal bewiesene Obligations (10 `ens` + 13 Aufruf-`req`) ohne Approximations-Unknowns.",
+            "* **Kryptographische Kette:** Die Hash-Kette mit Head `4be3934dda9f5a96e207cd9773af5814f5fd66c0c6ac573c0ab1ce63860e9ab7` ist auf dieser Maschine byte-genau konsistent. Der Store ist nicht versioniert; der Head ist ein Schnappschuss des lokalen Pilot-Verlaufs.",
+            "* **Claims 3–4:** Beide prüfen lokalen, nicht versionierten Zustand (Store + Trust-Datei). Ihre Ergebnisse sind nur mit diesem Fixture reproduzierbar, nicht aus einem frischen Clone heraus.",
             "* **Laufzeit-Varianz:** Geringfügige Zeitabweichungen im Millisekundenbereich resultieren aus CPU-Taktung und I/O-Latenzen des Zielrechners, berühren jedoch nicht die logische Äquivalenz."
         ])
     else:
@@ -260,8 +266,8 @@ def generate_markdown_report(report_file, telemetry, results, discrepancies):
         "",
         "## 3. Fazit für externe Auditoren",
         "",
-        "Alle fünf zentralen Kern-Behauptungen von QAL sind auf dieser Maschine unabhängig, vollständig und ohne Diskrepanzen reproduziert.",
-        "Der Code ist frei von verborgenen Abhängigkeiten, externen Telemetrie-Calls oder hardcodierten Ergebnissen."
+        "Alle fünf zentralen Kern-Behauptungen von QAL wurden auf dieser Maschine ohne Diskrepanzen nachvollzogen. Das ist eine **Selbstprüfung**: Der Bericht wird vom Runner selbst erzeugt, und die Claims 3–4 setzen den lokalen Pilot-Store samt Trust-Datei voraus (beide nicht versioniert).",
+        "Die Soll-Werte sind im Runner hinterlegt (`EXPECTED_PROOFS = 23`, fixierter Head); die gemessenen Ergebniswerte übernimmt der Bericht aus dem jeweiligen Lauf. Der Runner führt keine externen Telemetrie-Calls aus. Eine **unabhängige** Replikation liegt erst vor, wenn eine externe Person den Lauf auf ihrer Maschine wiederholt und ihren Bericht beilegt."
     ])
 
     with open(report_file, "w") as f:

@@ -1,8 +1,25 @@
-# 🚀 IGQK SaaS Platform - Production Deployment Guide
+# 🚀 IGQK SaaS Platform – Deployment Guide (MVP/Demo, nicht production-ready)
 
 **Version:** 3.0
-**Status:** Production-Ready
-**Last Updated:** 2026-02-04
+**Status:** MVP/Demo (not production-ready)
+**Last Updated:** 2026-02-04 (Status-Korrektur: 2026-10-26)
+
+> ## ⚠️ Production-Blocker (Stand Code, 2026-10-26)
+>
+> Die Anleitung zeigt, **wie man den Docker-Stack startet** – sie macht das
+> System nicht production-ready. Fünf Befunde im Code widersprechen dem:
+>
+> | # | Befund | Ort |
+> |---|---|---|
+> | 1 | JWT-`SECRET_KEY` hardcodiert, liest **keine** Umgebungsvariable | `backend/api/auth.py:19` |
+> | 2 | CORS `allow_origins=["*"]` (mit Credentials) | `backend/main.py:26` |
+> | 3 | Trainings-Jobs nur im Prozess-Dict (kein Restart/Multi-Worker) | `backend/api/training.py:72` |
+> | 4 | Deployment-API liefert **501** für alle Cloud-Ziele außer `igqk_api` | `backend/api/deployment.py:58` |
+> | 5 | SQLite statt Server-Datenbank | `backend/database.py:3-6` |
+>
+> **Konsequenz:** Die `SECRET_KEY` / `JWT_SECRET_KEY`-Einstellungen weiter unten
+> sind derzeit wirkungslos. Punkte 1–2 müssen zuerst im Code behoben und danach
+> erneut auditiert werden.
 
 ---
 
@@ -177,9 +194,13 @@ GRADIO_SHARE=false
 DATABASE_URL=sqlite:///./igqk_saas.db
 
 # Security
-SECRET_KEY=<generate-random-key>
-JWT_SECRET_KEY=<generate-random-key>
+SECRET_KEY=<generate-random-key>          # wird derzeit NICHT vom Backend gelesen
+JWT_SECRET_KEY=<generate-random-key>      # wird derzeit NICHT vom Backend gelesen
 ```
+
+> ⚠️ `backend/api/auth.py:19` verwendet einen hardcodierten `SECRET_KEY` und
+> ignoriert diese Variablen. Sie vor dem Deployment zu setzen ist trotzdem
+> sinnvoll (Vorbereitung), ändert aber aktuell nichts am Verhalten.
 
 #### **Generate Secret Keys**
 
@@ -239,7 +260,7 @@ chmod +x deploy.sh
 ./deploy.sh
 ```
 
-### Production Deployment
+### Docker-Compose Deployment (Demo/Testbetrieb)
 
 #### 1. Build Images
 
@@ -366,14 +387,17 @@ backend:
 
 ### Load Balancing
 
-Use Nginx reverse proxy (included):
+Use Nginx reverse proxy:
 
 ```bash
 # Enable nginx profile
 docker-compose --profile production up -d
 ```
 
-Access via: http://localhost
+> ⚠️ `docker-compose.yml` bindet `./nginx/nginx.conf` und `./nginx/ssl` ein,
+> aber ein `nginx/`-Verzeichnis liegt **nicht** im Repo. Der Profil-Start
+> schlägt daher fehl bzw. mountet leere Verzeichnisse. Nginx-Config + Zertifikate
+> müssen erst erstellt werden.
 
 ---
 
@@ -461,7 +485,9 @@ docker-compose restart
 
 ### 1. Change Default Secrets
 
-**CRITICAL:** Change these before production:
+**Wichtig:** Diese Variablen haben derzeit **keine Wirkung** – der Key steht
+hardcodiert in `backend/api/auth.py:19`. Erst nach dem Code-Fix (Key aus Env,
+Fail-Closed bei Platzhalter) und Key-Rotation ist dieser Schritt wirksam.
 
 ```env
 SECRET_KEY=<your-random-secret>
@@ -572,6 +598,11 @@ docker-compose up -d
 
 ## 🌐 CLOUD DEPLOYMENT
 
+> **Abgrenzung:** Die App-interne Deployment-API unterstützt nur das Ziel
+> `igqk_api`; AWS/GCP/Azure liefern **501** (`backend/api/deployment.py:58`).
+> Die folgenden Schritte beschreiben das Starten des Docker-Stacks auf einer
+> Cloud-VM – nicht das API-Feature.
+
 ### AWS EC2
 
 ```bash
@@ -610,7 +641,9 @@ docker-compose up -d
 
 ### Kubernetes (Advanced)
 
-See `kubernetes/` directory for manifests.
+Es liegen **keine** Kubernetes-Manifeste im Repo (`kubernetes/` existiert nicht,
+Stand 2026-10-26). Kubernetes wäre erst nach eigener Erstellung der Manifeste
+möglich.
 
 ---
 
@@ -676,20 +709,23 @@ find compressed_models -mtime +30 -delete
 
 ---
 
-## ✅ PRODUCTION CHECKLIST
+## ✅ CHECKLIST VOR EINEM ECHTEN PRODUCTION-GO-LIVE
 
-Before going live:
+**Nicht abhakbar mit dem aktuellen Code:** Punkte 1 und 2 erfordern zuerst
+Code-Änderungen (Env-Key, CORS). Der Rest setzt eine funktionierende
+Betriebsumgebung voraus, die dieses Repo nicht mitbringt.
 
-- [ ] Changed all secret keys
-- [ ] Configured HTTPS/SSL
-- [ ] Set up firewall rules
-- [ ] Configured backups
-- [ ] Tested disaster recovery
-- [ ] Set up monitoring
-- [ ] Reviewed logs
-- [ ] Load tested system
-- [ ] Documented custom configuration
-- [ ] Trained team on management tools
+- [ ] Secret-Key aus Env gelesen + rotiert (**Code-Fix nötig**, `auth.py:19`)
+- [ ] CORS auf konkrete Origins beschränkt (**Code-Fix nötig**, `main.py:26`)
+- [ ] Job-Persistenz statt Prozess-Dict (`training.py:72`)
+- [ ] Server-DB statt SQLite (`database.py:3-6`)
+- [ ] Deployment-Ziele außer `igqk_api` implementiert (`deployment.py:58`)
+- [ ] Nginx-Config + SSL-Zertifikate erstellt (`nginx/` fehlt)
+- [ ] Firewall-Regeln gesetzt
+- [ ] Backups konfiguriert und Wiederherstellung getestet
+- [ ] Monitoring eingerichtet
+- [ ] Lasttest durchgeführt
+- [ ] Team geschult
 
 ---
 
@@ -702,9 +738,10 @@ Before going live:
 
 ---
 
-## 🎉 SUCCESS!
+## 🎉 DEMO-DEPLOYMENT LÄUFT (NICHT PRODUCTION-READY)
 
-Your IGQK SaaS Platform is now production-ready!
+Der Docker-Stack läuft als Demo/MVP-Deployment. Ein Production-Status ist erst
+nach den Blockpunkten am Dokumentanfang vertretbar.
 
 **Access Points:**
 - **Frontend UI:** http://localhost:7860

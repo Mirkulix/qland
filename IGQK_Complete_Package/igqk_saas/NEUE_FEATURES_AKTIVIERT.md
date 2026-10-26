@@ -37,7 +37,11 @@ Ich habe die 3 kritischen Verbesserungen erfolgreich implementiert:
 **Was ist neu:**
 - Backend FastAPI Server läuft auf Port 8000
 - Frontend kommuniziert jetzt mit echtem Backend
-- Keine Mock-Daten mehr - alles ist ECHT!
+- Training, Kompression und Model-Hub laufen über das Backend statt über
+  statische UI-Daten
+- ⚠️ **Nicht „alles ECHT“:** Die Validierung liefert für GPT-/generische Modelle
+  nur eine **Parameter-Ähnlichkeit** unter den Accuracy-Feldern – siehe
+  [Validierung: was gemessen wird](#1-validierung-was-gemessen-wird-offener-punkt).
 
 **Wie es funktioniert:**
 1. Wenn Sie auf "Start Compression" klicken:
@@ -123,13 +127,17 @@ def start_compression_job(..., progress=gr.Progress()):
    - Von Backend API (wenn verfügbar)
    - Oder aus lokalem Filesystem
 
-**Anzeige:**
+**Anzeige (Beispiel – Zahlen sind illustrativ, keine Messung):**
 ```
 | Name | Size | Compression | Accuracy | Created |
 |------|------|-------------|----------|---------|
 | bert-base-uncased | 27.5 MB | 16× | 88.7% | 2026-02-04 |
 | distilbert-base-uncased | 16.8 MB | 16× | 92.1% | 2026-02-04 |
 ```
+
+> Für GPT-/generische Modelle ist die „Accuracy“-Spalte in Wahrheit eine
+> Parameter-Ähnlichkeit (siehe Einschränkungen). Die Werte oben sind reine
+> Layout-Beispiele.
 
 **Fallback-Modus:**
 - Wenn Backend nicht läuft: Liest direkt aus `compressed_models/`
@@ -203,7 +211,7 @@ Taste drücken: F5 (Seite neu laden)
    │ Name: distilbert-base-uncased          │
    │ Size: 16.8 MB                          │
    │ Compression: 16×                       │
-   │ Accuracy: 92.1%                        │
+   │ Accuracy: 92.1%                        │  ← Beispielwert (s. o.)
    │ Created: 2026-02-04                    │
    └─────────────────────────────────────────┘
    ```
@@ -212,7 +220,9 @@ Taste drücken: F5 (Seite neu laden)
 - Alle komprimierten Modelle
 - Größe (MB)
 - Compression Ratio (16×, 32×, etc.)
-- Accuracy (wenn validiert)
+- Accuracy – **nur wenn ein echter Test-Split gelaufen ist**
+  (Klassifikation/Training); bei GPT-/generischen Modellen ist der Wert eine
+  Parameter-Ähnlichkeit
 - Erstellungsdatum
 
 ---
@@ -328,58 +338,43 @@ Erwartung: UI lädt korrekt
 
 ## ⚠️ BEKANNTE EINSCHRÄNKUNGEN
 
-### **1. IGQK Core noch nicht vollständig integriert**
+### **1. Validierung: was gemessen wird (offener Punkt)**
 
-**Status:** Mock-Implementierung in `compression_service.py`
+Die Validierung läuft, aber die Zahlen sind je nach Modelltyp **nicht** das,
+wonach sie heißen:
 
-**Was funktioniert:**
-- ✅ HuggingFace Download
-- ✅ Model Loading
-- ✅ Metadaten-Extraktion
+| Pfad | Was tatsächlich passiert | Aussagekraft |
+|---|---|---|
+| GPT / generische Modelle (`_validate_generic`) | `validation_service.py:307` setzt `original_acc = 100.0` und meldet `cosine_similarity(original_params, compressed_params) * 100` als `compressed_accuracy` | **Parameter-Ähnlichkeit, keine Accuracy.** Der Wert 100 % ist eine gesetzte Konstante, kein gemessener Baseline-Wert. |
+| Masked-LM (`_validate_masked_lm`) | `validation_service.py:215-221`: **5 hardcodierte Sätze**, Bewertung über Max-Softmax | Sehr kleiner, nicht repräsentativer Stichprobenumfang |
+| Text-Klassifikation (`_validate_classification`) | GLUE/SST-2-Validation-Split, echte Accuracy; lädt `datasets` nicht, greift `quick_validate` (Parameter-Statistik, `original_accuracy = 100.0`, `:363`) | echte Accuracy nur, wenn der Datensatz lädt |
+| Training (CREATE Mode) | echter Held-out-Test-Split, `test_accuracy` (`backend/api/training.py:365-422`) | Messung im üblichen Sinn |
 
-**Was noch fehlt:**
-- ❌ Echte Ternary/Binary Projectors
-- ❌ Quantum Gradient Flow
-- ❌ Fisher Metric Berechnung
+**Open finding (Code):** `_validate_generic` sollte für „accuracy“ `None`
+zurückgeben und die Kosinus-Ähnlichkeit unter einem eigenen Key
+(z. B. `parameter_similarity`) melden; `original_accuracy = 100.0` ist zu
+entfernen (gleiches gilt für `quick_validate`). Bis dahin gilt: **Für
+GPT-/generische Modelle keine Accuracy-Zahlen aus der UI zitieren.**
 
-**Nächste Schritte:**
-```python
-# In compression_service.py:
-# AKTUELL: Mock
-from igqk_mock import TernaryProjector
+### **2. Datenbank fehlt**
 
-# SOLLTE SEIN:
-sys.path.insert(0, '../igqk')
-from core.projection import TernaryProjector
-from core.quantum_state import QuantumOptimizer
-```
-
----
-
-### **2. Validierung noch nicht implementiert**
-
-**Status:** "Auto-validate" Checkbox tut nichts
-
-**Nächste Schritte:**
-- Test-Datensätze laden (z.B. GLUE für BERT)
-- Original-Modell evaluieren
-- Komprimiertes Modell evaluieren
-- Accuracy-Verlust berechnen
-
----
-
-### **3. Datenbank fehlt**
-
-**Status:** Alle Daten nur im RAM
+**Status:** Alle Job-Daten nur im Prozess-RAM (`backend/api/training.py:72`)
 
 **Auswirkung:**
 - Bei Neustart gehen alle Job-Infos verloren
+- Bei mehreren Workern/Replicas sieht jede Instanz nur ihre eigenen Jobs
 - Nur komprimierte Dateien bleiben erhalten
 
 **Nächste Schritte:**
-- SQLite-Datenbank hinzufügen
 - Jobs-Tabelle persistieren
 - Models-Tabelle persistieren
+
+### **3. Weitere Demo-Grenzen**
+
+- Deployment-API: nur Ziel `igqk_api`, Cloud-Ziele liefern **501**
+  (`backend/api/deployment.py:58`)
+- Auth: `SECRET_KEY` hardcodiert, `.env` wird nicht gelesen
+  (`backend/api/auth.py:19`)
 
 ---
 
@@ -400,13 +395,14 @@ from core.quantum_state import QuantumOptimizer
 
 ### **Was als NÄCHSTES kommen sollte:**
 
-🔲 **IGQK Core vollständig integrieren**
-🔲 **Validierung implementieren**
-🔲 **Datenbank hinzufügen**
+🔲 **Validierung korrigieren** (`_validate_generic`: `None` statt 100 %,
+   Kosinus-Ähnlichkeit als eigener Key; mehr als 5 Masked-LM-Sätze)
+🔲 **Datenbank hinzufügen** (Job-Persistenz statt Prozess-Dict)
+🔲 **Deployment-Ziele** außer `igqk_api` implementieren (derzeit 501)
+🔲 **Auth-Key aus Env** lesen + CORS einschränken
 🔲 **Export-Formate** (ONNX, TFLite)
 🔲 **Visualisierungen** (Grafiken, Charts)
 🔲 **CREATE Mode** funktional machen
-🔲 **Authentication** hinzufügen
 🔲 **Docker-Deployment**
 
 ---
