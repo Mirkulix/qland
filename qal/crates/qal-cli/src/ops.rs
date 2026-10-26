@@ -409,6 +409,10 @@ impl Ctx {
                 perms = perms.with_db_dir(project.join(qal_store::STORE_DIR).join("db"));
             }
         }
+        // Tests may ask a model, always from recorded answers (replay below).
+        if matches!(entry, Entry::Tests) {
+            perms.model = true;
+        }
         let mut r = loaded.runner(entry, perms)?;
         if let Some(t) = self.timeout {
             r = r.with_timeout(t);
@@ -844,7 +848,10 @@ pub(crate) fn merging<T>(change: &str, budget: Duration, timeout: Option<Duratio
         let rows: Vec<(String, String)> = changed.iter().filter_map(|(n, h)| proofs.iter().find(|p| p.def == *n)?.record.as_ref().map(|r| (h.clone(), record_json(r)))).collect();
         // Every test of the new main view (the project's own; std tests itself).
         let loaded = Loaded { program: program.clone(), typed: tp.clone() };
-        let mut runner = loaded.runner(&Entry::Tests, Permissions::default()).map_err(|e| vec![tests_failed(change, format!("the tests cannot run: {}", e.message), serde_json::json!({"error": e.kind}))])?;
+        // Tests may ask a model, only from recorded answers (none here: such a test fails).
+        let mut test_perms = Permissions::default();
+        test_perms.model = true;
+        let mut runner = loaded.runner(&Entry::Tests, test_perms).map(|r| r.with_replay(true)).map_err(|e| vec![tests_failed(change, format!("the tests cannot run: {}", e.message), serde_json::json!({"error": e.kind}))])?;
         if let Some(t) = timeout {
             runner = runner.with_timeout(t);
         }

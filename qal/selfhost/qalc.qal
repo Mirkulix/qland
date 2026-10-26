@@ -10276,7 +10276,9 @@ fn qc_check_defs_loop(defs: List[QcDef], g: QcGlobals, diags: List[QcDiag], idx:
           None => qc_check_defs_loop(defs, g, fn_check.diags, idx + 1, acc_fns, acc_gens, acc_tests)
         },
       QcDefTest(t) =>
-        let cx0 = qc_cx_new(g, t.name, [], diags) in
+        # A test may ask a model: tests always run in replay mode (recorded answers, no network),
+        # so the `model` effect keeps them deterministic. No other effect.
+        let cx0 = qc_cx_new(g, t.name, ["model"], diags) in
         let body_res = qc_cx_expect(cx0, t.body, QcTBool, "body") in
         let fin = qc_cx_finish(body_res.cx, [body_res.expr]) in
         match fin.res {

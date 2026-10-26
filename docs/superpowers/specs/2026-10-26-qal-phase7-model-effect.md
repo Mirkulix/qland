@@ -153,3 +153,11 @@ abspielen lässt sich ein KI-Ablauf heute nur über `qal run --replay`.
 
 - erlaubte Effekte für Tests (`test t !model = ...`), immer im Replay-Modus;
 - ein Test-Harness, das `run --replay` mit erwarteter Ausgabe vergleicht.
+
+**Geschlossen (Branch `test-model`):**
+
+- **Prüfer:** Ein `test` darf `!model` nutzen, sonst keinen Effekt; Rust-Prüfer und QAL-Compiler
+  sind gleich, Seed `5e5814aa`.
+- **Laufzeit:** Tests laufen immer im Replay-Modus, auch vor einem Team-Merge, und sehen nur
+  aufgezeichnete Antworten; selbst `QAL_MODEL_MOCK` antwortet ihnen nicht.
+- **Test:** `a_test_asks_a_model_from_recorded_answers` (`qal-cli/tests/cli.rs`).

@@ -26,7 +26,7 @@ Expressions (everything is an expression, there are no statements):
   [1, 2]  f(x)  p.x  -x  !b  * / %  + -  ++ (Str or List concatenation)  == != (any type)  < <= > >= (Int, Float, Str)  && ||
   / truncates toward zero; % has the sign of the left operand. Str order compares Unicode code points ("B" < "a" < "é").
 Effects: a fn that uses the system declares it after the result type and callers declare the union:
-  !io print, read_line, read_all   !fs read_file, write_file   !time now_ms   !rand rand_int   !net http   !db db_exec, db_query.  Several: `-> Int !io !fs`. Tests and contracts are pure.
+  !io print, read_line, read_all   !fs read_file, write_file   !time now_ms   !rand rand_int   !net http   !db db_exec, db_query   !model std.model.ask.  Several: `-> Int !io !fs`. Contracts are pure; tests too, except !model (replayed).
   Effect parameter (one per fn): `fn each[T, !e](xs: List[T], f: fn(T) -> Unit !e) -> Unit !e`; a call needs its callbacks' effects, a pure callback none.
 Contracts: fn sqrt_floor(n: Int) -> Int req n >= 0 ens r * r <= n = ...   (`r` is the result inside `ens`; `r` cannot be a definition name, nor a parameter of a fn with `ens`; elsewhere parameters and locals named `r` are fine; always checked at run time)
   qal_define proves them with Z3: each `ens`, and the `req` of every function at each call. A function whose contract
@@ -77,4 +77,4 @@ Merge gate: the owner submits; a verifier's `verified` and a reviewer's `approve
 After E0910, E0911 or the notice needs_rebase, the owner runs qal_rebase: main becomes the base, conflicting names keep your version with a mark (compare `n` with `n@main`, then define `n` again); a merge refuses marks (E0908).
 Your identity is the server's session, not an argument (`agent` is ignored). Every write is an Ed25519-signed record (qal_verify checks the chain).
 qal_whoami {"wait_s": 30} shows your role, change set and leases and waits for notices instead of polling; every result carries unseen `notices`.
-`allow` is limited to the team's grants (default io, time, rand, db:mem, model; more is E0915). A refusal names the role that may (E0903).
+`allow` is limited to the team's grants (default io, time, rand, db:mem; more is E0915). A refusal names the role that may (E0903).

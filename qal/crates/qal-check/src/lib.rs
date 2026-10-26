@@ -111,7 +111,10 @@ pub fn check_stored(p: &Program, is_new: &dyn Fn(&str) -> bool) -> Result<TProgr
                 }
             }
             Def::Test(t) => {
-                let mut cx = Cx::new(&g, &t.name, &[], &mut diags);
+                // A test may ask a model: tests always run in replay mode (recorded answers, no
+                // network), so the `model` effect keeps them deterministic. No other effect.
+                let test_effects = ["model".to_string()];
+                let mut cx = Cx::new(&g, &t.name, &test_effects, &mut diags);
                 let body = cx.expect(&t.body, &Type::Bool, "body");
                 if let Some((locals, mut exprs)) = cx.finish(vec![body]) {
                     out.tests.push(TTest { name: t.name.clone(), locals, body: exprs.remove(0) });

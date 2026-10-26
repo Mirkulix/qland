@@ -1,0 +1,2 @@
+test recorded = match std.model.ask("say pong", "") { Ok(t) => t == "pong", Err(_) => false }
+test unrecorded = match std.model.ask("never asked", "") { Ok(_) => false, Err(_) => true }
