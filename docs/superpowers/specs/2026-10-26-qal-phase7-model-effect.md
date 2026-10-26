@@ -129,3 +129,27 @@ fn std.model.ask_full(prompt: Str, schema: Str) -> Result[ModelResponse, ModelEr
 - [ ] **Aufgabe 5: Standardbibliothek & Tests (`std.model`)**
   - `std.model` Modul mit Tests für deterministisches Replay, Offline-Mocks und Budgetgrenzen.
   - Erster Einsatz: Benchmark-Auswerter-Skript.
+
+---
+
+## 6. Verifikation (2026-10-26, nach `4ac0e50b`)
+
+**Ein echter Aufruf**, von `std.model.ask_full` aus einem QAL-Programm mit `--allow io,model`:
+
+- **Antwort:** `pong` von `claude-haiku-5-5`, 20 Eingabe- und 4 Ausgabe-Tokens.
+- **Kosten:** 4 Millionstel € (0,0004 Cent); das Budget in `.qal/model.db` steht auf 4.
+- **Wiederholung:** Der zweite Aufruf kommt aus der Aufzeichnung. Das Budget bleibt bei 4, es gibt
+  genau einen Eintrag in `model_calls`, und `store.db` enthält keine Modell-Tabellen.
+- **`--replay`:** Ohne Schlüssel und ohne `HOME` liefert er die aufgezeichnete Antwort; ein nicht
+  aufgezeichneter Aufruf endet mit `ModelFailed("no recorded model response found for replay")`.
+- **Ohne `--allow model`:** E0508 `permission_denied`.
+
+**Offene Lücke:** §1.3 verspricht, `qal test` spiele Modellantworten aus der Aufzeichnung ab. Ein
+`test` darf in QAL aber keine Effekte haben: `std.model.ask` in einem Test ergibt E0301, und der
+Hinweis, `!model` zur Signatur hinzuzufügen, ist für einen Test nicht umsetzbar. Deterministisch
+abspielen lässt sich ein KI-Ablauf heute nur über `qal run --replay`.
+
+**Möglichkeiten:**
+
+- erlaubte Effekte für Tests (`test t !model = ...`), immer im Replay-Modus;
+- ein Test-Harness, das `run --replay` mit erwarteter Ausgabe vergleicht.
