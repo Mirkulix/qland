@@ -100,6 +100,12 @@ fn usage() -> ExitCode {
     bad_usage(USAGE)
 }
 
+/// `--help`: the same text, but on stdout and with success (the usage error is for a bad call).
+fn usage_ok() -> ExitCode {
+    let _ = writeln!(std::io::stdout(), "{USAGE}");
+    ExitCode::SUCCESS
+}
+
 fn bad_usage(message: &str) -> ExitCode {
     let _ = writeln!(std::io::stderr(), "{message}");
     ExitCode::from(2)
@@ -147,7 +153,11 @@ fn main() -> ExitCode {
         return usage();
     };
     if cmd == "--help" || cmd == "-h" || cmd == "help" {
-        return usage();
+        return usage_ok();
+    }
+    if cmd == "--version" || cmd == "-v" || cmd == "version" {
+        let _ = writeln!(std::io::stdout(), "qal {}", env!("CARGO_PKG_VERSION"));
+        return ExitCode::SUCCESS;
     }
     // The seed compiler is instantiated only when the QAL backend can run: always without the
     // reference compiler, otherwise only when `--compiler` or QAL_COMPILER asks for qal or both

@@ -77,7 +77,9 @@ Drittmeinung liegt erst vor, wenn jemand anderes das Paket auf einer anderen Mas
   teurer.
 - **Keine vollständige formale Verifikation.** Der Prover deckt Int/Bool und seit Kurzem
   Record-Felder exakt ab; Str/List/Map/Float und Termination bleiben offen. Unbewiesene Verträge
-  werden zur Laufzeit geprüft.
+  werden zur Laufzeit geprüft. **Ein bewiesenes `ens` heißt nicht trap-frei:** der Prover rechnet
+  mit unbeschränkten Ints, während `*` auf 64 Bit überlaufen kann. Die Property-Tests melden das
+  als `E0804`; wer Trap-Freiheit behauptet, braucht obere `req`-Schranken.
 - **Kein fertiges Produkt für offene Mehr-Mandanten-Systeme.** Single-Node-SQLite, kein TLS im
   Gateway, externe Nutzer fehlen.
 

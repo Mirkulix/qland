@@ -33,7 +33,7 @@ Contracts: fn sqrt_floor(n: Int) -> Int req n >= 0 ens r * r <= n = ...   (`r` i
   is refuted is not stored; the diagnostic (E0801) has a counterexample. Proofs are exact for Int and Bool (overflow
   traps, so `if x < 0 then -x else x` is >= 0) and use callees' contracts, not their bodies: a fn whose result comes
   from a helper needs the helper's `ens`. Unproven contracts are `unknown` (with a reason), still checked at run time.
-  qal_test also runs a generated property test (100 inputs that satisfy `req`) for each pure fn with `ens`; failures
+  qal_test also runs a generated property test (100 inputs that satisfy `req`) for each pure fn with `ens`; a proven `ens` does not imply trap-freedom: the prover uses unbounded Ints, so a product can still overflow at run time (E0804) — bound the inputs with `req` if you claim safety. Failures
   come with a shrunk counterexample; traps like overflow are counted (`traps`, `trap`), not failures.
 Invariants: a pure `fn inv_T(x: T) -> Bool` is record T's invariant; every pure fn that takes or returns a T (also inside lists, maps, records) gets a property test that it keeps it: state each rule of your data once there.
 Record construction needs every field (`field: value`). There are no list patterns: use len and get.

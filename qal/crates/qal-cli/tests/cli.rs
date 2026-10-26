@@ -31,6 +31,16 @@ fn qal_json(args: &[&str]) -> (i32, Value) {
 }
 
 #[test]
+fn help_and_version_succeed_on_stdout() {
+    let (code, out) = qal(&["--version"]);
+    assert_eq!(code, 0);
+    assert!(out.starts_with("qal "), "{out}");
+    let (code, out) = qal(&["--help"]);
+    assert_eq!(code, 0);
+    assert!(out.contains("usage: qal"), "{out}");
+}
+
+#[test]
 fn check_ok_and_call() {
     let math = example("math.qal");
     assert_eq!(qal_json(&["check", &math]), (0, json!({"ok": true})));
