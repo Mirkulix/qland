@@ -21,67 +21,104 @@ class Dataset(BaseModel):
     format: str  # images, text, audio
 
 
+# Standard machine learning benchmark catalog
+KNOWN_DATASETS = {
+    "mnist": {
+        "id": "mnist",
+        "name": "MNIST",
+        "description": "Handwritten digits dataset (0-9)",
+        "source": "torchvision",
+        "size": "11 MB",
+        "num_samples": 70000,
+        "task": "classification",
+        "format": "images",
+        "train_size": 60000,
+        "test_size": 10000,
+        "image_size": "28x28",
+        "channels": 1,
+        "classes": 10,
+    },
+    "cifar10": {
+        "id": "cifar10",
+        "name": "CIFAR-10",
+        "description": "10-class natural image classification",
+        "source": "torchvision",
+        "size": "163 MB",
+        "num_samples": 60000,
+        "task": "classification",
+        "format": "images",
+        "train_size": 50000,
+        "test_size": 10000,
+        "image_size": "32x32",
+        "channels": 3,
+        "classes": 10,
+    },
+    "fashion_mnist": {
+        "id": "fashion_mnist",
+        "name": "Fashion-MNIST",
+        "description": "Zalando article image classification",
+        "source": "torchvision",
+        "size": "30 MB",
+        "num_samples": 70000,
+        "task": "classification",
+        "format": "images",
+        "train_size": 60000,
+        "test_size": 10000,
+        "image_size": "28x28",
+        "channels": 1,
+        "classes": 10,
+    },
+    "imdb": {
+        "id": "imdb",
+        "name": "IMDB Reviews",
+        "description": "Binary sentiment classification on movie reviews",
+        "source": "huggingface",
+        "size": "80 MB",
+        "num_samples": 50000,
+        "task": "text-classification",
+        "format": "text",
+        "train_size": 25000,
+        "test_size": 25000,
+        "classes": 2,
+    }
+}
+
+
 @router.get("/public", response_model=List[Dataset])
 async def list_public_datasets(
     task: Optional[str] = None,
     source: Optional[str] = None,
     limit: int = 10
 ):
-    """List public datasets from HuggingFace, Kaggle, etc."""
+    """List public datasets with optional task or source filter"""
+    results = list(KNOWN_DATASETS.values())
 
-    # Mock data
-    datasets = [
+    if task:
+        results = [d for d in results if d["task"] == task]
+    if source:
+        results = [d for d in results if d["source"] == source]
+
+    return [
         Dataset(
-            id="mnist",
-            name="MNIST",
-            description="Handwritten digits dataset",
-            source="huggingface",
-            size="11 MB",
-            num_samples=70000,
-            task="classification",
-            format="images"
-        ),
-        Dataset(
-            id="cifar10",
-            name="CIFAR-10",
-            description="10-class image classification",
-            source="huggingface",
-            size="163 MB",
-            num_samples=60000,
-            task="classification",
-            format="images"
-        ),
-        Dataset(
-            id="imdb",
-            name="IMDB Reviews",
-            description="Sentiment analysis dataset",
-            source="huggingface",
-            size="80 MB",
-            num_samples=50000,
-            task="classification",
-            format="text"
+            id=d["id"],
+            name=d["name"],
+            description=d["description"],
+            source=d["source"],
+            size=d["size"],
+            num_samples=d["num_samples"],
+            task=d["task"],
+            format=d["format"]
         )
+        for d in results[:limit]
     ]
-
-    return datasets
 
 
 @router.get("/{dataset_id}")
 async def get_dataset_info(dataset_id: str):
     """Get detailed dataset information"""
+    dataset_id_clean = dataset_id.lower().replace("-", "").replace("_", "")
+    for k, v in KNOWN_DATASETS.items():
+        if k.replace("-", "").replace("_", "") == dataset_id_clean:
+            return v
 
-    if dataset_id == "mnist":
-        return {
-            "id": "mnist",
-            "name": "MNIST",
-            "description": "Handwritten digits dataset (0-9)",
-            "samples": 70000,
-            "train_size": 60000,
-            "test_size": 10000,
-            "image_size": "28x28",
-            "channels": 1,
-            "classes": 10,
-            "download_size": "11 MB"
-        }
-
-    raise HTTPException(status_code=404, detail="Dataset not found")
+    raise HTTPException(status_code=404, detail=f"Dataset '{dataset_id}' not found in registry")

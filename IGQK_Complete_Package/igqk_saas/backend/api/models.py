@@ -87,15 +87,7 @@ async def get_model_info(model_id: str):
                 "download_url": f"/api/models/download/{model_id}"
             }
 
-    return {
-        "id": model_id,
-        "name": model_id,
-        "architecture": "unknown",
-        "size_mb": 0.0,
-        "accuracy": None,
-        "parameters": 0,
-        "download_url": f"/api/models/download/{model_id}"
-    }
+    raise HTTPException(status_code=404, detail=f"Model '{model_id}' not found")
 
 
 @router.get("/search/huggingface")
@@ -117,14 +109,8 @@ async def search_huggingface_models(query: str, limit: int = 10):
             for model in results
         ]
     except Exception as e:
-        # Fallback to mock data if search fails
         print(f"⚠️ HuggingFace search failed: {e}")
-        return [
-            {
-                "id": "bert-base-uncased",
-                "name": "bert-base-uncased",
-                "size_mb": 0,
-                "downloads": 100_000_000,
-                "task": "fill-mask"
-            }
-        ]
+        raise HTTPException(
+            status_code=502,
+            detail=f"HuggingFace search failed: {str(e)}"
+        )
