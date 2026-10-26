@@ -84,14 +84,20 @@ def main():
     with open(out, "w", encoding="utf-8") as f:
         for record in records:
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
+    corrections_path = os.path.join(args.out, "corrections.jsonl")
+    corrections = 0
+    if os.path.exists(corrections_path):
+        with open(corrections_path, encoding="utf-8") as f:
+            corrections = sum(1 for line in f if line.strip())
     summary = {
         "programs": len(records),
         "ok": sum(1 for r in records if r["status"] == "ok"),
         "error": sum(1 for r in records if r["status"] == "error"),
+        "corrections": corrections,
         "sources": sorted({r["origin"].split("/")[0] for r in records}),
         "phase8_target": [5000, 20000],
         "model_written_solutions": 0,
-        "note": "Repo-side seed; model-written solutions and LoRA traces are not part of this file yet.",
+        "note": "Repo-side seed; model-written solutions and LoRA traces are not part of this file yet. corrections.jsonl holds the real fixes from the benchmark transcripts.",
     }
     with open(os.path.join(args.out, "summary.json"), "w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2)

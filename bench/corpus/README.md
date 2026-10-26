@@ -23,7 +23,8 @@ The builder reads `qal/selfhost/corpus/*.qal`, `bench/solutions/qal/*.qal` and
   and those diagnostics are the error side of a training pair.
 - `summary.json` — counts and the Phase 8 target.
 
-The last run (2026-10-26) produced **933 programs: 596 ok, 337 with diagnostics**. That is a
+The last run (2026-10-26) produced **933 programs: 596 ok, 337 with diagnostics**, plus
+**10 real correction traces** in `corrections.jsonl` (from the benchmark transcripts). That is a
 seed, not the target. The builder takes about 3.5 minutes because it starts the CLI per file.
 
 ## What is still missing for Phase 8
