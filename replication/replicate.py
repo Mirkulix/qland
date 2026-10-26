@@ -3,7 +3,7 @@
 Autonomous Replication Runner for QAL (QLANG Agent Language).
 Enables external auditors and independent researchers to reproduce:
   1. Full self-hosted Wasm Fixpoint
-  2. 22 Z3 SMT mathematical proofs on financial escrow contracts
+  2. 23 Z3 SMT mathematical proofs on financial escrow contracts
   3. Cryptographic Merkle chain with pinned head
   4. Truncation attack rejection
   5. End-to-end operational readiness and concurrency load testing
@@ -19,7 +19,11 @@ import time
 
 REPL_DIR = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.dirname(REPL_DIR)
-QAL_BIN = os.path.join(REPO_ROOT, "bin", "qal")
+# Use the binary built from this checkout, not the older repository copy:
+# bin/qal is kept for the escrow pilot and can lag behind the prover.
+_release_bin = os.path.join(REPO_ROOT, "qal", "target", "release", "qal")
+QAL_BIN = os.environ.get("QAL_BIN") or (_release_bin if os.path.exists(_release_bin) else os.path.join(REPO_ROOT, "bin", "qal"))
+EXPECTED_PROOFS = 23
 
 
 def get_cmd_output(cmd, cwd=REPO_ROOT):
@@ -89,9 +93,9 @@ def run_replication():
         discrepancies.append(f"Claim 1 Fixpoint failed: {err}")
 
     # --------------------------------------------------------------------------
-    # Claim 2: 22 Z3 SMT Mathematical Contract Proofs
+    # Claim 2: 23 Z3 SMT Mathematical Contract Proofs
     # --------------------------------------------------------------------------
-    print("\n[2/5] Replicating Claim 2: 22 Z3 Mathematical Contract Proofs...")
+    print("\n[2/5] Replicating Claim 2: 23 Z3 Mathematical Contract Proofs...")
     escrow_qal = os.path.join(REPO_ROOT, "pilot", "escrow", "qal", "escrow.qal")
     t0 = time.time()
     code, out, err = get_cmd_output([QAL_BIN, "prove", escrow_qal])
@@ -101,7 +105,7 @@ def run_replication():
         proven = data.get("proven", 0)
         refuted = data.get("refuted", 0)
         unknown = data.get("unknown", 0)
-        passed_prove = (code == 0 and proven == 22 and refuted == 0 and unknown == 0)
+        passed_prove = (code == 0 and proven == EXPECTED_PROOFS and refuted == 0 and unknown == 0)
     except Exception:
         passed_prove = False
         proven, refuted, unknown = 0, 0, 0
@@ -115,9 +119,9 @@ def run_replication():
         "stdout": out
     }
     if passed_prove:
-        print(f"      [✓] PASSED: 22/22 mathematical obligations proven in {dur_prove} s (0 refuted, 0 unknown).")
+        print(f"      [✓] PASSED: 23/23 mathematical obligations proven in {dur_prove} s (0 refuted, 0 unknown).")
     else:
-        print(f"      [!] FAILED: Expected 22 proven, got {proven} (refuted: {refuted}, unknown: {unknown})")
+        print(f"      [!] FAILED: Expected 23 proven, got {proven} (refuted: {refuted}, unknown: {unknown})")
         discrepancies.append(f"Claim 2 Z3 proofs mismatch: {out}")
 
     # --------------------------------------------------------------------------
@@ -226,7 +230,7 @@ def generate_markdown_report(report_file, telemetry, results, discrepancies):
         "| Formale Behauptung | Gegenstand | Soll | Gemessen | Status |",
         "|---|---|---|---|---|",
         f"| **Claim 1: Wasm-Fixpunkt** | Selbstgehosteter Compiler | Byte-identisch | Byte-identisch ({results['claim_1_fixpoint']['duration_s']} s) | {'✅ Bestanden' if results['claim_1_fixpoint']['passed'] else '❌ Fehlgeschlagen'} |",
-        f"| **Claim 2: 22 Z3-Beweise** | Escrow Kontrakte | 22 bewiesen, 0 refuted, 0 unknown | {results['claim_2_proofs']['proven']} proven, {results['claim_2_proofs']['refuted']} refuted, {results['claim_2_proofs']['unknown']} unknown ({results['claim_2_proofs']['duration_s']} s) | {'✅ Bestanden' if results['claim_2_proofs']['passed'] else '❌ Fehlgeschlagen'} |",
+        f"| **Claim 2: 23 Z3-Beweise** | Escrow Kontrakte | 23 bewiesen, 0 refuted, 0 unknown | {results['claim_2_proofs']['proven']} proven, {results['claim_2_proofs']['refuted']} refuted, {results['claim_2_proofs']['unknown']} unknown ({results['claim_2_proofs']['duration_s']} s) | {'✅ Bestanden' if results['claim_2_proofs']['passed'] else '❌ Fehlgeschlagen'} |",
         f"| **Claim 3: Audit-Integrität** | SHA-256 Merkle-Kette mit Ed25519-Signaturen | Ungebrochen, 0 Warnungen | 19 Records, Head fixiert ({results['claim_3_audit']['duration_s']*1000:.1f} ms) | {'✅ Bestanden' if results['claim_3_audit']['passed'] else '❌ Fehlgeschlagen'} |",
         f"| **Claim 4: Truncation-Detection** | Abgeschnittene Historie | `E0922 chain_broken` | Erkannt und abgewiesen ({results['claim_4_truncation']['duration_s']} s) | {'✅ Bestanden' if results['claim_4_truncation']['passed'] else '❌ Fehlgeschlagen'} |",
         f"| **Claim 5: Zero-Sum Invariante** | 50 parallele Payouts + Recovery | $\\sum Balances + Escrow + Disbursed == Deposited$ | Invariante erhalten, 0 Overdrafts ({results['claim_5_ops']['duration_s']} s) | {'✅ Bestanden' if results['claim_5_ops']['passed'] else '❌ Fehlgeschlagen'} |",
@@ -241,7 +245,7 @@ def generate_markdown_report(report_file, telemetry, results, discrepancies):
         md.extend([
             "**Keine inhaltlichen oder mathematischen Diskrepanzen festgestellt.**",
             "",
-            "* **Mathematische Soundness:** Der Z3-SMT-Solver lieferte exakt 22 formal bewiesene Obligations ohne Approximations-Unknowns.",
+            "* **Mathematische Soundness:** Der Z3-SMT-Solver lieferte exakt 23 formal bewiesene Obligations ohne Approximations-Unknowns.",
             "* **Kryptographische Kette:** Die Hash-Kette mit Head `4be3934dda9f5a96e207cd9773af5814f5fd66c0c6ac573c0ab1ce63860e9ab7` ist byte-genau konsistent.",
             "* **Laufzeit-Varianz:** Geringfügige Zeitabweichungen im Millisekundenbereich resultieren aus CPU-Taktung und I/O-Latenzen des Zielrechners, berühren jedoch nicht die logische Äquivalenz."
         ])

@@ -18,9 +18,9 @@ This document defines the operational directives for AI agents interacting with 
 
 ---
 
-## 2. The 12 Native MCP Tools
+## 2. The 13 Native MCP Tools
 
-QAL provides exactly **12 native Model Context Protocol (MCP) tools**. Parameter names and constraints match the exact schema delivered by `tools/list`:
+QAL provides exactly **13 native Model Context Protocol (MCP) tools**. Parameter names and constraints match the exact schema delivered by `tools/list`:
 
 | Tool | Parameters (Schema) | Purpose & Required Arguments |
 | :--- | :--- | :--- |
@@ -36,6 +36,7 @@ QAL provides exactly **12 native Model Context Protocol (MCP) tools**. Parameter
 | **`qal_delete`** | `name`: Str **[req]**<br>`with`: Opt[List[Str]]<br>`agent`: Opt[Str] | Delete an unused definition. Fails with `has_dependents` if referenced by others. |
 | **`qal_history`**| `name`: Str **[req]** | Query immutable audit trail (actions, agent signatures, timestamps, SHA-256 hashes). |
 | **`qal_build`**  | `entry`: Str **[req]** | Compile a definition into a standalone WebAssembly module `.qal/build/<entry>.wasm`. |
+| **`qal_recall`** | `code`: Opt[Str]<br>`message`: Opt[Str]<br>`name`: Opt[Str]<br>`type`: Opt[Str] | Recall earlier fixes for a diagnostic code/message (up to 5, before/after) or definitions by name prefix/signature pattern. |
 
 ---
 

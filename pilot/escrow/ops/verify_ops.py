@@ -18,6 +18,7 @@ Automates the full operational readiness test suite:
 import json
 import os
 import shutil
+import socket
 import subprocess
 import sys
 import time
@@ -28,7 +29,8 @@ OPS_DIR = os.path.dirname(os.path.abspath(__file__))
 PILOT_DIR = os.path.abspath(os.path.join(OPS_DIR, ".."))
 REPO_ROOT = os.path.abspath(os.path.join(PILOT_DIR, "..", ".."))
 
-QAL_BIN = os.path.join(REPO_ROOT, "bin", "qal")
+_release = os.path.join(REPO_ROOT, "qal", "target", "release", "qal")
+QAL_BIN = os.environ.get("QAL_BIN") or (_release if os.path.exists(_release) else os.path.join(REPO_ROOT, "bin", "qal"))
 RUNTIME_DIR = os.path.join(OPS_DIR, "runtime")
 BACKUP_DIR = os.path.join(RUNTIME_DIR, "backups")
 
@@ -67,6 +69,18 @@ def setup_clean_runtime():
     print(f"[✓] Project store copied from: {src_qal}")
 
 
+def wait_for_port(port: int, timeout: float = 10.0) -> bool:
+    """Wait until the TCP port accepts connections; never rely on a fixed sleep."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=0.25):
+                return True
+        except OSError:
+            time.sleep(0.05)
+    return False
+
+
 def start_services() -> Tuple[subprocess.Popen, subprocess.Popen]:
     log_step("2. Booting QAL Serve and API Gateway Sidecar")
     # 1. Start QAL serve
@@ -80,7 +94,8 @@ def start_services() -> Tuple[subprocess.Popen, subprocess.Popen]:
     p_backend = subprocess.Popen(serve_cmd, cwd=RUNTIME_DIR, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
     # Wait for backend to listen
-    time.sleep(0.6)
+    if not wait_for_port(BACKEND_PORT):
+        raise RuntimeError(f"backend did not listen on {BACKEND_PORT}")
 
     # 2. Start Gateway
     env = os.environ.copy()
@@ -93,7 +108,8 @@ def start_services() -> Tuple[subprocess.Popen, subprocess.Popen]:
     print(f"[*] Starting gateway sidecar on port {GATEWAY_PORT} (upstream: {BACKEND_URL})...")
     p_gateway = subprocess.Popen([sys.executable, gateway_script], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
-    time.sleep(0.6)
+    if not wait_for_port(GATEWAY_PORT):
+        raise RuntimeError(f"gateway did not listen on {GATEWAY_PORT}")
     return p_backend, p_gateway
 
 

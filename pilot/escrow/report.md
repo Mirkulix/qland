@@ -26,7 +26,7 @@ All three implementations passed all 20 tests. However, the mechanisms by which 
 |---|---|---|---|---|
 | **Lines of Code (LOC)** | 318 | 481 | 587 | Python (lowest LOC) |
 | **Escaped Defects / 1k LOC** | **6.29** (2 / 318 LOC) | **4.16** (2 / 481 LOC) | **0.00** (0 / 587 LOC) | **QAL (100% prevention)** |
-| **Verification / Proof Time** | N/A (None) | N/A (Type check only) | **84 ms** (22 Z3 obligations) | **QAL** |
+| **Verification / Proof Time** | N/A (None) | N/A (Type check only) | **84 ms** (23 Z3 obligations) | **QAL** |
 | **Benchmark Latency (20 tests)** | 0.116 s | 0.072 s | **0.071 s** | **QAL & Rust tied** |
 | **Time to First Deploy / Cold Start** | 1.20 s | 25.44 s (build) + 12 ms | **15 ms** (pre-checked store) | **QAL** |
 | **Audit & Governance Time** | ~45 min (manual review) | ~60 min (manual review) | **6.4 ms** (`qal verify`) | **QAL (cryptographic)** |

@@ -3,9 +3,9 @@
 
 ---
 
-## 1. Die 12 MCP-Werkzeuge (Model Context Protocol)
+## 1. Die 13 MCP-Werkzeuge (Model Context Protocol)
 
-Der native QAL MCP-Server stellt exakt **12 Werkzeuge** bereit. Die Parameter entsprechen exakt dem von `tools/list` ausgelieferten JSON-Schema:
+Der native QAL MCP-Server stellt exakt **13 Werkzeuge** bereit. Die Parameter entsprechen exakt dem von `tools/list` ausgelieferten JSON-Schema:
 
 | Werkzeug | Parameter (Schema) | Funktion & Pflichtfelder |
 | :--- | :--- | :--- |
@@ -21,6 +21,7 @@ Der native QAL MCP-Server stellt exakt **12 Werkzeuge** bereit. Die Parameter en
 | **`qal_delete`** | `name`: Str **[req]**<br>`with`: Opt[List[Str]]<br>`agent`: Opt[Str] | Entfernt eine ungenutzte Definition. Schlägt fehl (`has_dependents`), wenn andere Namen sie nutzen. |
 | **`qal_history`**| `name`: Str **[req]** | Gibt die chronologische Änderungshistorie des Namens mit Hashes, Agent und Zeitstempel aus. |
 | **`qal_build`**  | `entry`: Str **[req]** | Kompiliert eine Funktion zu einem eigenständigen Wasm-Artefakt (`.qal/build/<entry>.wasm`). |
+| **`qal_recall`** | `code`: Opt[Str]<br>`message`: Opt[Str]<br>`name`: Opt[Str]<br>`type`: Opt[Str] | Ruft frühere Korrekturen zu einem Diagnose-Code/einer Meldung ab (max. 5, mit Vorher/Nachher) oder Definitionen nach Namenspräfix/Signaturmuster. |
 
 ---
 

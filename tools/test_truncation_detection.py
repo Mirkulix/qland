@@ -13,8 +13,10 @@ import subprocess
 import sys
 import tempfile
 
-QAL_BIN = os.path.abspath("bin/qal")
-PROJECT = os.path.abspath("pilot/escrow/qal")
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_release = os.path.join(REPO_ROOT, "qal", "target", "release", "qal")
+QAL_BIN = os.environ.get("QAL_BIN") or (_release if os.path.exists(_release) else os.path.join(REPO_ROOT, "bin", "qal"))
+PROJECT = os.path.join(REPO_ROOT, "pilot", "escrow", "qal")
 TRUST_FILE = os.path.expanduser("~/.config/qal/sessions/escrow/trust.json")
 
 def main():

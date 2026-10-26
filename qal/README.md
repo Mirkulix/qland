@@ -83,7 +83,7 @@ A `req` is checked at run time whether or not it is proven. (On the command line
 - `../bench/`: the agent benchmarks; `../bench/living/` keeps one program alive through 12 change
   requests and compares QAL with Rust.
 
-## Status (2026-10-25)
+## Status (2026-10-26)
 
 Measured with Claude Haiku agents on the living program (12 change requests, thin tickets, hidden
 tests), runs 7–13:

@@ -10,7 +10,7 @@
 | Behauptung | Gegenstand | Prüfwerkzeug / Soll-Ergebnis |
 |---|---|---|
 | **Claim 1: Wasm-Fixpunkt** | Der selbstgehostete Wasm-Compiler erzeugt byte-identischen Bytecode zur Rust-Referenz | `cargo test -p qal-gen --test full_fixpoint --release` $\rightarrow$ 2/2 tests OK |
-| **Claim 2: 22 Z3-Beweise** | Der Escrow-Kernel beweist 22 Kontrakte (Erhaltungssatz, Schwellen, Nicht-Negativität) | `qal prove pilot/escrow/qal/escrow.qal` $\rightarrow$ `proven: 22, refuted: 0, unknown: 0` |
+| **Claim 2: 23 Z3-Beweise** | Der Escrow-Kernel beweist 23 Kontrakte (Erhaltungssatz, Schwellen, Nicht-Negativität) | `qal/target/release/qal prove pilot/escrow/qal/escrow.qal` $\rightarrow$ `proven: 23, refuted: 0, unknown: 0` |
 | **Claim 3: Audit-Integrität** | SHA-256 Merkle-Kette mit Ed25519-Signaturen und fixiertem Head | `qal verify --trust <trust.json> --head <hash>` $\rightarrow$ 0 Warnungen |
 | **Claim 4: Truncation-Detection** | Das unbemerkte Abschneiden neuerer Records wird strikt verhindert | `python3 tools/test_truncation_detection.py` $\rightarrow$ Abbruch mit `E0922 chain_broken` |
 | **Claim 5: Zero-Sum Invariante** | Die Geldsumme bleibt unter 50 parallelen Transaktionen und Backups exakt erhalten | `python3 pilot/escrow/ops/load_test.py` $\rightarrow$ 0 Overdrafts, Saldo $\ge 0$ |
@@ -58,18 +58,18 @@ test seed_module_is_the_fixpoint ... ok
 test full_selfhosted_fixpoint ... ok
 ```
 
-### Schritt 2: 22 Z3-Kontrakte formal beweisen
+### Schritt 2: 23 Z3-Kontrakte formal beweisen
 ```bash
-bin/qal prove pilot/escrow/qal/escrow.qal
+qal/target/release/qal prove pilot/escrow/qal/escrow.qal
 ```
 *Erwartetes Ergebnis:*
 ```json
-{"proven": 22, "refuted": 0, "unknown": 0}
+{"proven": 23, "refuted": 0, "unknown": 0}
 ```
 
 ### Schritt 3: Kryptographischen Audit-Head prüfen
 ```bash
-(cd pilot/escrow/qal && ../../../bin/qal verify --trust ~/.config/qal/sessions/escrow/trust.json --head 4be3934dda9f5a96e207cd9773af5814f5fd66c0c6ac573c0ab1ce63860e9ab7)
+(cd pilot/escrow/qal && ../../../qal/target/release/qal verify --trust ~/.config/qal/sessions/escrow/trust.json --head 4be3934dda9f5a96e207cd9773af5814f5fd66c0c6ac573c0ab1ce63860e9ab7)
 ```
 *Erwartetes Ergebnis:*
 ```json

@@ -23,7 +23,7 @@ QAL implementiert ein content-addressiertes, beweisbares Substrat:
    │      (Interaktion via MCP: Model Context Protocol)          │
    └──────────────┬──────────────────────────┬───────────────────┘
                   │                          │
-                  ▼ (12 MCP-Werkzeuge)       ▼
+                  ▼ (13 MCP-Werkzeuge)       ▼
    ┌─────────────────────────────────────────────────────────────┐
    │                  QAL CORE SUBSTRAT                          │
    │                                                             │
