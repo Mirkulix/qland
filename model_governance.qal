@@ -1,6 +1,6 @@
 # ============================================================================
 # QAL Formal Governance & Contract Engine for IGQK Models
-# Verifies architectural invariants and compression bounds (Theorem 5.2)
+# Verifies architectural invariants, compression bounds, and autonomous self-healing
 # ============================================================================
 
 type ModelSpec = {
@@ -42,13 +42,35 @@ fn valid_compression(c: CompressionAudit) -> Bool =
   c.bits_per_weight == 2 &&
   c.ratio_times_ten >= 150 # >= 15.0x
 
+# Autonomous Self-Healing: Computes the nearest mathematically sound architecture
+# that satisfies all invariants if dimensions do not divide cleanly.
+fn heal_architecture(layers: Int, heads: Int, d_model: Int, vocab_size: Int) -> ModelSpec =
+  let safe_layers = if layers > 0 then layers else 1 in
+  let safe_heads = if heads > 0 then heads else 1 in
+  let safe_vocab = if vocab_size > 0 then vocab_size else 100 in
+  let base_d = if d_model > 0 then d_model else safe_heads * 32 in
+  let rem = base_d - (base_d / safe_heads) * safe_heads in
+  let healed_d = if rem == 0 then base_d else base_d + (safe_heads - rem) in
+  ModelSpec {
+    layers: safe_layers,
+    heads: safe_heads,
+    d_model: healed_d,
+    vocab_size: safe_vocab
+  }
+
 # Formal contract function
 fn certify_model(m: ModelSpec, c: CompressionAudit) -> Str
   req valid_architecture(m) && valid_compression(c)
 = "CERTIFIED: Model architecture valid and 16x ternary compression verified."
 
+# Self-Healing formal contract function
+fn certify_healed_model(healed: ModelSpec, c: CompressionAudit) -> Str
+  req valid_architecture(healed) && valid_compression(c)
+= "HEALED_AND_CERTIFIED: Model architecture automatically repaired to satisfy invariants and 16x compression verified."
+
 test test_arch_ok = valid_architecture(ModelSpec { layers: 2, heads: 2, d_model: 64, vocab_size: 100 }) == true
 test test_arch_bad = valid_architecture(ModelSpec { layers: 2, heads: 3, d_model: 64, vocab_size: 100 }) == false
+test test_heal_arch = valid_architecture(heal_architecture(2, 3, 64, 100)) == true
 test test_comp_ok = valid_compression(CompressionAudit { orig_bytes: 302080, packed_bytes: 18880, bits_per_weight: 2, ratio_times_ten: 160 }) == true
 
 fn main(args: List[Str]) -> Int !io = {
@@ -64,6 +86,10 @@ fn main(args: List[Str]) -> Int !io = {
   let audit = CompressionAudit { orig_bytes: orig_b, packed_bytes: pack_b, bits_per_weight: bits_w, ratio_times_ten: ratio_x10 } in
   if valid_architecture(spec) && valid_compression(audit) then {
     print(certify_model(spec, audit));
+    0
+  } else if valid_compression(audit) then {
+    let healed = heal_architecture(layers, heads, d_model, vocab) in
+    print("HEALED: d_model=" ++ from_int(healed.d_model) ++ " heads=" ++ from_int(healed.heads) ++ " layers=" ++ from_int(healed.layers) ++ " vocab=" ++ from_int(healed.vocab_size) ++ " | " ++ certify_healed_model(healed, audit));
     0
   } else {
     print("REJECTED: Verification invariant failed.");

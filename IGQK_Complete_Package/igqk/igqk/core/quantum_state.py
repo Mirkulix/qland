@@ -218,9 +218,12 @@ class QuantumGradientFlow:
         else:
             nat_gradient = gradient
         
-        # Unitary evolution (exploration): adds spread
-        # Approximate [H, ρ] by adding random fluctuations
-        unitary_noise = torch.randn_like(state.eigenvectors) * np.sqrt(self.hbar * dt)
+        # Unitary evolution (exploration): adds quantum spread to fluctuation modes
+        # Approximate [H, ρ] by adding quantum fluctuations
+        unitary_noise = torch.randn_like(state.eigenvectors) * (self.hbar * dt)
+        if state.eigenvectors.shape[1] > 1:
+            fluc_noise = torch.randn_like(state.eigenvectors[:, 1:]) * np.sqrt(self.hbar * dt)
+            unitary_noise[:, 1:] = fluc_noise
         
         # Dissipative evolution (exploitation): moves toward -gradient
         dissipative_update = -self.gamma * dt * nat_gradient.unsqueeze(1)
