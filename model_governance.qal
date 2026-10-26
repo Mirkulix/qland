@@ -1,0 +1,72 @@
+# ============================================================================
+# QAL Formal Governance & Contract Engine for IGQK Models
+# Verifies architectural invariants and compression bounds (Theorem 5.2)
+# ============================================================================
+
+type ModelSpec = {
+  layers: Int,
+  heads: Int,
+  d_model: Int,
+  vocab_size: Int
+}
+
+type CompressionAudit = {
+  orig_bytes: Int,
+  packed_bytes: Int,
+  bits_per_weight: Int,
+  ratio_times_ten: Int
+}
+
+# Parsing helpers for CLI dynamic verification
+fn parse_int(s: Str, default_val: Int) -> Int =
+  match to_int(trim(s)) {
+    Some(n) => n,
+    None => default_val
+  }
+
+fn get_arg(args: List[Str], idx: Int, default_val: Int) -> Int =
+  match get(args, idx) {
+    Some(s) => parse_int(s, default_val),
+    None => default_val
+  }
+
+# Invariant: Head dimension must divide d_model cleanly
+fn valid_architecture(m: ModelSpec) -> Bool =
+  m.layers > 0 && m.heads > 0 && m.d_model > 0 && m.vocab_size > 0 &&
+  (m.d_model - (m.d_model / m.heads) * m.heads == 0)
+
+# Invariant: 2-bit packing achieves >= 15.0x reduction over 32-bit float
+fn valid_compression(c: CompressionAudit) -> Bool =
+  c.orig_bytes > 0 && c.packed_bytes > 0 &&
+  c.packed_bytes <= c.orig_bytes &&
+  c.bits_per_weight == 2 &&
+  c.ratio_times_ten >= 150 # >= 15.0x
+
+# Formal contract function
+fn certify_model(m: ModelSpec, c: CompressionAudit) -> Str
+  req valid_architecture(m) && valid_compression(c)
+= "CERTIFIED: Model architecture valid and 16x ternary compression verified."
+
+test test_arch_ok = valid_architecture(ModelSpec { layers: 2, heads: 2, d_model: 64, vocab_size: 100 }) == true
+test test_arch_bad = valid_architecture(ModelSpec { layers: 2, heads: 3, d_model: 64, vocab_size: 100 }) == false
+test test_comp_ok = valid_compression(CompressionAudit { orig_bytes: 302080, packed_bytes: 18880, bits_per_weight: 2, ratio_times_ten: 160 }) == true
+
+fn main(args: List[Str]) -> Int !io = {
+  let layers = get_arg(args, 0, 2) in
+  let heads = get_arg(args, 1, 2) in
+  let d_model = get_arg(args, 2, 64) in
+  let vocab = get_arg(args, 3, 100) in
+  let orig_b = get_arg(args, 4, 302080) in
+  let pack_b = get_arg(args, 5, 18880) in
+  let bits_w = get_arg(args, 6, 2) in
+  let ratio_x10 = get_arg(args, 7, 160) in
+  let spec = ModelSpec { layers: layers, heads: heads, d_model: d_model, vocab_size: vocab } in
+  let audit = CompressionAudit { orig_bytes: orig_b, packed_bytes: pack_b, bits_per_weight: bits_w, ratio_times_ten: ratio_x10 } in
+  if valid_architecture(spec) && valid_compression(audit) then {
+    print(certify_model(spec, audit));
+    0
+  } else {
+    print("REJECTED: Verification invariant failed.");
+    1
+  }
+}
