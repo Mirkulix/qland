@@ -12,7 +12,7 @@ expliziten Effekten. Jede Antwort ist JSON, jeder Fehler eine Diagnose mit Code,
 
 | Eigenschaft | Beleg |
 |---|---|
-| **Geschlossener Kreis** | Ein `qal_define` prüft, beweist, testet, property-testet und verlinkt in einem Aufruf (Median 0,64 s auf 67 Funktionen) |
+| **Geschlossener Kreis** | Ein `qal_define` prüft, beweist, testet, property-testet und verlinkt in einem Aufruf (Median 0,46 s auf 67 Funktionen) |
 | **Nur Geprüftes existiert** | Typen, Effekte, Verträge, Tests; widerlegte Verträge werden nicht gespeichert (`E0801`) |
 | **Inhaltsadressierung** | SHA-256 je Definition; Umbenennen ändert keinen Hash; Paketimport reproduziert Hashes |
 | **Effekte als Berechtigungen** | `!io`, `!fs`, `!db`, `!net`, `!time`, `!rand`, `!model`; ohne Grant startet das Programm nicht |
@@ -39,16 +39,16 @@ Drittmeinung liegt erst vor, wenn jemand anderes das Paket auf einer anderen Mas
 ### Agenten-Benchmark (20 Aufgaben, QAL vs. Rust)
 
 - Beide Arme lösen **40/40** Läufe.
-- QAL verarbeitet **1,42–1,52×** so viele Tokens wie Rust (je nach Rerun); im Living-Programm
-  **1,32×** (Mittel der Runs 8–13).
-- QAL gewinnt **0/20** Aufgaben nach Tokens.
+- QAL verarbeitet **1,42–1,92×** so viele Tokens wie Rust (Reruns 22.–24.10.: 1,92 / 1,42 / 1,52); im Living-Programm
+  **1,32×** (Mittel der Runs 8–13), Run 14 bei 1,29×.
+- Nach Tokens gewinnt QAL **5 von 20** Aufgaben (Rust 15/20; im älteren Rerun vom 22.10. waren es 0/20).
 - Die These „QAL macht Agenten billiger“ ist für Aufgaben dieser Größe **nicht bestätigt**.
 - Was QAL liefert, ist ein geprüfter, gespeicherter, hash-adressierter Codebestand – nicht weniger
   Tokens.
 
 ### Living-Programm (12 Änderungsaufträge, dünne Tickets)
 
-- **83 von 84** Stages grün (Runs 7–13).
+- **95 von 96** Stages grün (Runs 7–14; Run 14: 12/12, 1,29×).
 - Der eine Fehlschlag war ein Agent, der den Test umschrieb, der die Regel festhielt; das
   Verhaltensgedächtnis `E0807` meldet diese Klasse jetzt im selben Define.
 - Ein Overflow-Bug aus Run 1 ist durch exakte Multiply-Divide-Arithmetik (128-Bit-Zwischenprodukt)
@@ -57,7 +57,7 @@ Drittmeinung liegt erst vor, wenn jemand anderes das Paket auf einer anderen Mas
 ### Mutationsstudie
 
 - Bei **dünnen Tests**: QAL fängt **5 von 14** Mutanten, Rust **1 von 14** (Typinvarianten-Setup);
-  im A3-Setup **2 vs. 1**.
+  der ältere A3-Lauf (2 vs. 1) ist überholt.
 - Bei **gründlichen Tests**: **beide 14/14**.
 - Der Assurance-Vorteil ist also **bedingt**: Er greift dort, wo Tests dünn sind. QAL ersetzt keine
   Tests.
@@ -88,11 +88,11 @@ Drittmeinung liegt erst vor, wenn jemand anderes das Paket auf einer anderen Mas
 | Phase | Stand |
 |---|---|
 | 5 — Self-Hosting | **☑** |
-| 6 — Kosten | **◐** 1,32× (Living), 1,42–1,52× (Benchmark); Ziel ≤ 1,2× nicht erreicht |
+| 6 — Kosten | **◐** 1,32× (Living), 1,42–1,92× (Benchmark-Reruns), 1,313× (92-Dispatch-Pilot); Ziel ≤ 1,2× nicht erreicht |
 | 6b — Erfahrungsgedächtnis | **◐** gebaut, im Benchmark unbewiesen |
 | 7 — `!model` | **◐** implementiert und getestet; Abnahme (vier Wochen Einsatz) offen |
-| 8 — Modell lernt QAL | **☐** Korpus/LoRA/Harness nicht im Repo |
-| 9 — Verbreitung | **◐** Installer und dieser Bericht; externe Nutzer und Lizenz offen |
+| 8 — Modell lernt QAL | **◐** Seed-Korpus 933 Programme + 105 SFT-Beispiele; LoRA-Lauf und Drei-Arm-Harness fehlen |
+| 9 — Verbreitung | **◐** Installer, Bericht und MIT-Lizenz; externe Nutzer offen |
 
 ## 5. Fazit
 

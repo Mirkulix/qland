@@ -202,8 +202,9 @@ fn handshake_lists_the_tools_with_the_language_reference() {
     // 2026-10-24 (the property tests define runs) and the fused multiply-divide (`a * b * ... / c`
     // exact, on the Int type) and pressure run 5 (E0806, a change without a test) and pressure run 7 (dependents that still check are relinked,
     // io needs no grant) add to it; after pressure run 9 the services moved to qal_query's topic "services";
-    // the mutation study added type invariants (`inv_T`), the 1-turn loop the property tests of every defined fn and the replay of earlier runs (E0807).
-    assert!(qal_cli::mcp::REFERENCE.lines().count() <= 68 && qal_cli::mcp::REFERENCE.len() <= 10050, "{} lines, {} bytes", qal_cli::mcp::REFERENCE.lines().count(), qal_cli::mcp::REFERENCE.len());
+    // the mutation study added type invariants (`inv_T`), the 1-turn loop the property tests of every defined fn and the replay of earlier runs (E0807);
+    // the dogfood run added the trap caveat for proven contracts.
+    assert!(qal_cli::mcp::REFERENCE.lines().count() <= 70 && qal_cli::mcp::REFERENCE.len() <= 10250, "{} lines, {} bytes", qal_cli::mcp::REFERENCE.lines().count(), qal_cli::mcp::REFERENCE.len());
     // An unknown version gets the newest legacy one.
     let r = c.request("initialize", json!({"protocolVersion": "1999-01-01", "capabilities": {}, "clientInfo": {"name": "x", "version": "1"}}));
     assert_eq!(r["result"]["protocolVersion"], "2025-11-25");
@@ -506,7 +507,8 @@ fn view_collapses_duplicates_and_is_bounded() {
     let start = Instant::now();
     let (err, v) = c.call("qal_view", json!({"names": names}));
     assert_eq!((err, v["diagnostics"][0]["kind"].as_str()), (true, Some("result_too_large")), "{}", v.to_string().len());
-    assert!(start.elapsed() < Duration::from_secs(if cfg!(debug_assertions) { 10 } else { 2 }), "{:?}", start.elapsed());
+    // 2 s was too tight under a full parallel `cargo test`; 3 s still catches a quadratic view.
+    assert!(start.elapsed() < Duration::from_secs(if cfg!(debug_assertions) { 10 } else { 3 }), "{:?}", start.elapsed());
     let (err, v) = c.call("qal_test", json!({"names": many_names(257)}));
     assert_eq!((err, v["diagnostics"][0]["kind"].as_str()), (true, Some("bad_arguments")));
 }

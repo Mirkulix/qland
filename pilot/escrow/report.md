@@ -111,9 +111,9 @@ The benchmark suite (`pilot/escrow/bench/test_escrow.py`) validates both functio
   2. **Mathematischer Invariantenbeweis (`qal prove`):**
      ```bash
      qal prove pilot/escrow/qal/escrow.qal
-     # output: {"proven":22,"refuted":0,"unknown":0}
+     # output: {"proven":23,"refuted":0,"unknown":0}
      ```
-     In **84 Millisekunden** beweist der integrierte Z3-SMT-Solver alle 22 mathematischen Obligations (Kontrakte für Balance-Erhaltungssatz, Nicht-Negativität, Multi-Sig-Schwellen).
+     In **84 Millisekunden** beweist der integrierte Z3-SMT-Solver alle 23 mathematischen Obligations (Kontrakte für Balance-Erhaltungssatz, Nicht-Negativität, Multi-Sig-Schwellen).
   
   > [!NOTE]
   > `qal verify` prüft die kryptographische Signatur- und Rechte-Kette der Historie; `qal prove` führt den Z3-Theorembeweis für die semantischen Sprachkontrakte durch. Die beiden Systeme sind orthogonal und ergänzen sich.

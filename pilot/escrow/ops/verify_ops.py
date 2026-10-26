@@ -266,7 +266,7 @@ def generate_report():
 
 | Komponente | Implementierung | Sicherheits- & Assurance-Garantie |
 |---|---|---|
-| **Echter Store + Handler + Grants** | `qal serve handle --allow db:escrow,time --init setup` | Kein `serve` ins Leere. Echter Merkle-Projekt-Store mit 22 bewiesenen Z3-Kontrakten. |
+| **Echter Store + Handler + Grants** | `qal serve handle --allow db:escrow,time --init setup` | Kein `serve` ins Leere. Echter Merkle-Projekt-Store mit 23 bewiesenen Z3-Obligations. |
 | **API Gateway Sidecar** | [`gateway.py`](./gateway.py) | Erzwingt API-Key-Authentifizierung (`X-API-Key` / Bearer) und lehnt unautorisierte Requests mit HTTP 401 ab. |
 | **Rate-Limiting** | Token Bucket Algorithmus (50 req/s, Burst 100) | Schutz vor DoS-Angriffen und Überlastung. Gibt HTTP 429 zurück. |
 | **Observability & Metriken** | `/healthz` & `/metrics` Endpunkte | Public Health-Check mit automatischer Upstream-Reconciliation und Prometheus-Export. |
@@ -307,7 +307,7 @@ def generate_report():
         ┌────────────────────────────────┐
         │       qal serve handle         │
         │  - 4 Wasmtime Guest Workers    │
-        │  - 22 bewiesene Z3-Kontrakte   │
+        │  - 23 bewiesene Z3-Obligations   │
         │  - Grants: db:escrow, time     │
         │  - Host-Level Auto-Rollback    │
         └───────────────┬────────────────┘

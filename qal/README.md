@@ -54,7 +54,7 @@ The tools it uses most:
 
 | Tool | What it does |
 |---|---|
-| `qal_define` | add or replace definitions; one call type-checks, proves the contracts, runs every test that reaches the change, property-tests each defined function at its edges, relinks all dependents and runs your earlier `qal_run` inputs again, reporting any output the change altered (E0807); 0.64 s median on a 67-function program, `../bench/loop/report.md` |
+| `qal_define` | add or replace definitions; one call type-checks, proves the contracts, runs every test that reaches the change, property-tests each defined function at its edges, relinks all dependents and runs your earlier `qal_run` inputs again, reporting any output the change altered (E0807); 0.46 s median on a 67-function program, `../bench/loop/report.md` |
 | `qal_query {"outline": true}` | the project in one view: signatures, contracts, who uses what, tests |
 | `qal_view` | the text of the definitions to edit |
 | `qal_run` | run `main` (or another entry point) on arguments and stdin, or many `cases` in one call |
@@ -102,9 +102,9 @@ A `req` is checked at run time whether or not it is proven. (On the command line
 ## Status (2026-10-26)
 
 Measured with Claude Haiku agents on the living program (12 change requests, thin tickets, hidden
-tests), runs 7–13:
+tests), runs 7–14:
 
-- **Results:** 83 of 84 stages green. The one failure (run 11) was a regression the agent hid by
+- **Results:** 95 of 96 stages green (run 14: 12/12 at 1.29×). The one failure (run 11) was a regression the agent hid by
   rewriting the test that pinned the rule; the behaviour memory (E0807) now reports that class in
   the round that makes it.
 - **Files:** no agent wrote a source file. All code went to the store, and code was read only as
