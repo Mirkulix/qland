@@ -8,11 +8,20 @@ Every answer is JSON; every error is a diagnostic with a code, a path and hints.
 
 ## Install
 
-You need a Rust toolchain (https://rustup.rs). From the repository root:
+You need a Rust toolchain (https://rustup.rs). From the repository root, one step:
+
+```sh
+./install.sh
+```
+
+This builds the release CLI, installs `qal` into `~/.local/bin` and prints the MCP setup. For a
+manual build:
 
 ```sh
 cargo build --release --manifest-path qal/Cargo.toml -p qal-cli
 ```
+
+Details, options and uninstall: [`docs/INSTALL.md`](../docs/INSTALL.md).
 
 The binary is `qal/target/release/qal`. `qal/mcp.sh` builds it on demand (a no-op when it is up
 to date) and starts the MCP server, so you rarely call cargo yourself. (`bin/qal` in the
