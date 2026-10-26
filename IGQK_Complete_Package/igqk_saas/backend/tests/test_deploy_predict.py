@@ -28,6 +28,10 @@ def client(tmp_path, monkeypatch):
     (tmp_path / "compressed_models").mkdir()
     torch.save({"model_state_dict": model.state_dict(), "metadata": {"original_identifier": str(arch)}}, tmp_path / "compressed_models" / "tiny_compressed.pt")
     torch.save(model.state_dict(), tmp_path / "compressed_models" / "bare.pt")
+    # As the compression service saves now: ternary weights 2-bit packed, the rest as they are.
+    from services.packing import save_packed
+    ternary = {k: (v.sign() * 0.5 if k.endswith("dense.weight") else v) for k, v in model.state_dict().items()}
+    save_packed(ternary, str(tmp_path / "compressed_models" / "tiny_packed.pt"), metadata={"original_identifier": str(arch)})
     monkeypatch.chdir(tmp_path)
     from api import models
     models._loaded.clear()
@@ -42,6 +46,12 @@ def test_predict_runs_the_model(client):
     assert body["embedding_dim"] == 16 and len(body["embedding"]) == 16 and body["tokens"] == 4
     again = client.post("/api/models/tiny_compressed.pt/predict", json={"text": "hello world"}).json()
     assert again["embedding"] == body["embedding"]
+
+
+def test_a_packed_model_is_served(client):
+    r = client.post("/api/models/tiny_packed.pt/predict", json={"text": "hello world"})
+    assert r.status_code == 200, r.text
+    assert r.json()["embedding_dim"] == 16
 
 
 def test_only_a_servable_model_is_deployed(client):

@@ -148,7 +148,7 @@ async def get_compression_status(job_id: str):
         original_accuracy=results.get("original_accuracy"),
         compressed_accuracy=results.get("compressed_accuracy"),
         accuracy_loss_percent=results.get("accuracy_loss"),
-        inference_speedup=results.get("inference_speedup", 15.0),
+        inference_speedup=results.get("inference_speedup"),
         estimated_time_remaining=None,
         message=job.get("error") if job["status"] == "failed" else None
     )
@@ -179,7 +179,7 @@ async def get_compression_result(job_id: str):
     acc_loss = (original_acc - compressed_acc) if (original_acc is not None and compressed_acc is not None) else None
 
     param_count = job.get("parameters") or int((original_size * 1024 * 1024) / 4)
-    bits_per_weight = 2 if "ternary" in str(job.get("compression_method", "ternary")).lower() else (1 if "binary" in str(job.get("compression_method")).lower() else 4)
+    bits_per_weight = 2 if "ternary" in str(job.get("compression_method", "ternary")).lower() else (1 if "binary" in str(job.get("compression_method")).lower() else None)
 
     return CompressionResult(
         job_id=job_id,
@@ -200,7 +200,7 @@ async def get_compression_result(job_id: str):
             "compression_ratio": f"{compression_ratio:.1f}×",
             "memory_saved_percent": f"{memory_saved:.1f}%",
             "accuracy_loss_percent": f"{acc_loss:.2f}%" if acc_loss is not None else "N/A",
-            "inference_speedup": f"{compression_ratio:.1f}×",
+            "inference_speedup": "N/A (not measured)",
             "quality_retained": f"{(compressed_acc/original_acc)*100:.1f}%" if (original_acc and compressed_acc) else "N/A"
         },
         recommendation=f"✅ Compressed model recommended: {compression_ratio:.1f}× smaller ({memory_saved:.1f}% memory saved)",
@@ -366,7 +366,6 @@ async def run_compression_job(job_id: str, config: CompressionConfig):
                     compression_jobs[job_id]["original_accuracy"] = orig_acc
                     compression_jobs[job_id]["compressed_accuracy"] = comp_acc
                     compression_jobs[job_id]["accuracy_loss_percent"] = loss_pct
-                    compression_jobs[job_id]["inference_speedup"] = result["comparison"]["compression_ratio"]
                     compression_jobs[job_id]["message"] = f"Validation complete (Loss: {loss_pct:.1f}%)"
 
                 # Completed

@@ -163,8 +163,9 @@ class HuggingFaceService:
             return results
 
         except Exception as e:
+            # Raised, not swallowed: an unreachable Hub is an error (HTTP 502), not "no results".
             print(f"⚠️ Search failed: {e}")
-            return []
+            raise
 
     def get_model_size(self, model: torch.nn.Module) -> Dict[str, Any]:
         """

@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import List, Optional
 from services.huggingface_service import HuggingFaceService
+from services.packing import is_packed, load_packed
 
 router = APIRouter()
 
@@ -115,9 +116,16 @@ def servable(model_id: str):
     except Exception as e:
         return False, f"cannot read '{model_id}': {e}"
     ident = isinstance(ckpt, dict) and ckpt.get("metadata", {}).get("original_identifier")
-    if not ident or "model_state_dict" not in ckpt:
+    if not ident or state_dict_of(ckpt) is None:
         return False, f"'{model_id}' holds no architecture to serve (only weights)"
     return True, ident
+
+
+def state_dict_of(ckpt):
+    """The weights of a saved checkpoint: 2-bit packed (compression service) or plain."""
+    if is_packed(ckpt):
+        return load_packed(ckpt)
+    return ckpt.get("model_state_dict") if isinstance(ckpt, dict) else None
 
 
 _loaded = {}
@@ -139,7 +147,7 @@ async def predict(model_id: str, req: PredictRequest):
     if model_id not in _loaded:
         ckpt = torch.load(find_model_path(model_id), map_location="cpu", weights_only=False)
         model = AutoModel.from_config(AutoConfig.from_pretrained(info))
-        model.load_state_dict(ckpt["model_state_dict"])
+        model.load_state_dict(state_dict_of(ckpt))
         model.eval()
         _loaded[model_id] = (model, AutoTokenizer.from_pretrained(info))
     model, tok = _loaded[model_id]
@@ -162,7 +170,7 @@ async def search_huggingface_models(query: str, limit: int = 10):
             {
                 "id": model["id"],
                 "name": model["name"],
-                "size_mb": 0,  # Size not available from search
+                "size_mb": None,  # not available from search
                 "downloads": model["downloads"] or 0,
                 "task": model["task"]
             }

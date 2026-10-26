@@ -11,6 +11,19 @@ def _pct(v):
     """A percentage for display, or N/A when it was not measured."""
     return f"{v}%" if v is not None else "N/A (not validated)"
 
+def _packed_ratio(path):
+    """FP32 size / file size of a packed checkpoint (both recorded or measured), else None."""
+    if not path or not os.path.exists(path):
+        return None
+    try:
+        import torch
+        ckpt = torch.load(path, map_location="cpu", weights_only=False)
+        if isinstance(ckpt, dict) and ckpt.get("fp32_bytes"):
+            return ckpt["fp32_bytes"] / os.path.getsize(path)
+    except Exception:
+        pass
+    return None
+
 # Fix Windows encoding
 if os.name == 'nt':
     import io
@@ -74,13 +87,23 @@ def get_real_platform_stats():
     models_dir = os.path.join(os.path.dirname(__file__), "compressed_models")
     if os.path.exists(models_dir):
         files = [f for f in os.listdir(models_dir) if f.endswith(('.pt', '.pth'))]
-        total_mb = sum(os.path.getsize(os.path.join(models_dir, f)) / (1024*1024) for f in files)
+        # Saved storage only where a packed checkpoint records its FP32 size; nothing is extrapolated.
+        saved_bytes = 0
+        for f in files:
+            path = os.path.join(models_dir, f)
+            try:
+                import torch
+                ckpt = torch.load(path, map_location="cpu", weights_only=False)
+                if isinstance(ckpt, dict) and ckpt.get("fp32_bytes"):
+                    saved_bytes += ckpt["fp32_bytes"] - os.path.getsize(path)
+            except Exception:
+                pass
         return {
             "total_compressions": len(files),
             "completed_jobs": len(files),
             "active_jobs": 0,
             "failed_jobs": 0,
-            "storage_saved_mb": round(total_mb * 15.0, 2),
+            "storage_saved_mb": round(saved_bytes / (1024*1024), 2),
             "jobs": []
         }
 
@@ -291,12 +314,13 @@ def get_job_history():
     if not jobs:
         # Check files on disk as real history
         models_dir = os.path.join(os.path.dirname(__file__), "compressed_models")
-        disk_models = []
+        disk_models, path_of = [], {}
         if os.path.exists(models_dir):
             for f in sorted(os.listdir(models_dir), reverse=True):
                 if f.endswith(('.pt', '.pth')):
                     p = os.path.join(models_dir, f)
                     disk_models.append((f, os.path.getsize(p)/(1024*1024), os.path.getmtime(p)))
+                    path_of[f] = p
 
         if not disk_models:
             return """
@@ -309,7 +333,8 @@ Sobald du im Reiter **„Model komprimieren“** oder **„CREATE Mode“** eine
         table_rows = ""
         for name, sz, mtime in disk_models[:15]:
             t_str = time.strftime('%Y-%m-%d %H:%M', time.localtime(mtime))
-            table_rows += f"| {t_str} | `{name}` | Ternary (2-Bit) | 16.0× | ✅ Auf Festplatte | {sz:.2f} MB |\n"
+            r = _packed_ratio(path_of.get(name))
+            table_rows += f"| {t_str} | `{name}` | Ternary (2-Bit) | {f'{r:.1f}×' if r else 'N/A'} | ✅ Auf Festplatte | {sz:.2f} MB |\n"
 
         return f"""
 # 📋 Gespeicherte Modell-Artefakte
@@ -326,7 +351,7 @@ Sobald du im Reiter **„Model komprimieren“** oder **„CREATE Mode“** eine
         model = j.get("model_identifier", "Custom")
         method = str(j.get("compression_method", "ternary")).capitalize()
         status = j.get("status", "unknown")
-        ratio = j.get("compression_ratio", "16.0×")
+        ratio = j.get("compression_ratio", "N/A")
         status_icon = "✅" if status == "completed" else ("⏳" if status in ["running", "compressing"] else "❌")
         created = j.get("created_at", "N/A")
         table_rows += f"| {created} | `{j_id}` | {model} | {method} | {ratio} | {status_icon} {status} |\n"
@@ -367,24 +392,20 @@ Sobald du Modelle trainierst oder komprimierst, berechnet dieses Modul automatis
 - **Gesamtzahl Aufträge:** {total}
 - **Erfolgreich abgeschlossen:** {completed}
 - **Echte Speicher-Einsparung:** {saved_mb:,.2f} MB ({saved_mb/1024:,.2f} GB)
-- **Kompressions-Architektur:** IGQK 2-Bit Ternary Bit-Packer (Standard: 16× Reduktion)
-
-## Effizienz-Bewertung
-- **Theoretischer Speicherbedarf FP32:** ~{saved_mb * (16/15):,.2f} MB
-- **Tatsächlicher Speicherbedarf komprimiert:** ~{saved_mb / 15:,.2f} MB
-- **Netto-Speicherreduktion:** **93.75%** des Modellvolumens freigegeben
+- **Kompressions-Architektur:** IGQK, ternäre Gewichte mit 2 Bit pro Gewicht gespeichert
 """
 
 
 def compare_models():
     """Side-by-side comparison of actual models on disk"""
     models_dir = os.path.join(os.path.dirname(__file__), "compressed_models")
-    available_models = []
+    available_models, path_of = [], {}
     if os.path.exists(models_dir):
         for f in os.listdir(models_dir):
             if f.endswith(('.pt', '.pth')):
                 p = os.path.join(models_dir, f)
                 available_models.append((f, os.path.getsize(p)/(1024*1024)))
+                path_of[f] = p
 
     if len(available_models) < 1:
         return """
@@ -397,8 +418,9 @@ Trainiere oder komprimiere Modelle über die Reiter **„CREATE Mode“** oder *
 
     rows = ""
     for name, sz in available_models[:10]:
-        orig_est = sz * 16.0
-        rows += f"| `{name}` | ~{orig_est:.2f} MB | **{sz:.2f} MB** | **16.0×** | 2 Bit |\n"
+        r = _packed_ratio(path_of.get(name))
+        orig = f"{sz * r:.2f} MB" if r else "N/A"
+        rows += f"| `{name}` | {orig} | **{sz:.2f} MB** | **{f'{r:.1f}×' if r else 'N/A'}** | 2 Bit |\n"
 
     return f"""
 # 🔍 Modell-Vergleichs-Werkzeug
@@ -729,8 +751,6 @@ def start_training_job(
     dataset_map = {
         "MNIST": "mnist",
         "CIFAR-10": "cifar10",
-        "ImageNet": "imagenet",
-        "Custom Upload": "custom"
     }
 
     payload = {
@@ -776,7 +796,7 @@ def start_training_job(
                         if loss is not None:
                             metrics_str += f" | Loss: {loss:.4f}"
                         if acc is not None:
-                            metrics_str += f" | Acc: {acc:.2f}%"
+                            metrics_str += f" | Test-Acc: {acc:.2f}%"
                         if entropy is not None and entropy > 0:
                             metrics_str += f" | Entropy: {entropy:.3f}"
 
@@ -784,7 +804,13 @@ def start_training_job(
 
                         if cur_status == "completed":
                             progress(1.0, desc="✅ Training erfolgreich abgeschlossen!")
-                            log_output += f"\n🎉 TRAINING ERFOLGREICH ABGESCHLOSSEN!\nGespeichert als Checkpoint: models/{job_id}.pt\n"
+                            log_output += f"\n🎉 TRAINING ERFOLGREICH ABGESCHLOSSEN!\nCheckpoint: {st.get('checkpoint_path')}\n"
+                            if st.get("compressed_path"):
+                                log_output += (
+                                    f"Komprimiert (2 Bit): {st.get('compressed_path')}\n"
+                                    f"Größe: {st.get('model_size_mb', 0):.3f} MB (FP32) → {st.get('compressed_size_mb', 0):.3f} MB (Datei)\n"
+                                    f"Test-Genauigkeit: {st.get('test_accuracy')}% → {st.get('compressed_test_accuracy')}% nach der Kompression\n"
+                                )
                             SYSTEM_NOTIFICATIONS.insert(0, {
                                 "time": time.strftime("%H:%M:%S"),
                                 "type": "success",
@@ -1294,7 +1320,6 @@ def show_compression_results():
 | Metrik | Original | Komprimiert | Ergebnis |
 |---|---|---|---|
 | **Dateigröße** | {orig_sz:.2f} MB | {comp_sz:.2f} MB | **{ratio} kleiner** ({saved_pct} Ersparnis) |
-| **Bits pro Gewicht** | 32 Bit (FP32) | {comp.get('bits_per_weight', 2)} Bit (Ternary) | 16× Reduktion |
 | **Parameter** | {orig.get('parameters', 0):,} | {comp.get('parameters', 0):,} | Identisch |
 | **Validierungs-Güte** | {f"{orig_acc:.1f}%" if orig_acc is not None else "N/A"} | {f"{comp_acc:.1f}%" if comp_acc is not None else "N/A"} | {cmp.get('accuracy_loss_percent', 'N/A')} Delta |
 
@@ -1326,9 +1351,28 @@ def show_compression_results():
         comp_bytes = os.path.getsize(latest_file)
         comp_mb = comp_bytes / (1024 * 1024)
 
-        orig_mb = comp_mb * 16.0
-        ratio = 16.0
+        # The original size is recorded in packed checkpoints (FP32 bytes of the weights); a file
+        # without it has no known original size.
+        orig_bytes = None
+        try:
+            import torch
+            ckpt = torch.load(latest_file, map_location="cpu", weights_only=False)
+            if isinstance(ckpt, dict):
+                orig_bytes = ckpt.get("fp32_bytes")
+        except Exception:
+            pass
+        if not orig_bytes:
+            return f"""
+# ✅ Letztes auf der Festplatte gefundenes Modell
+
+**Datei:** `{fname}` ({comp_mb:.2f} MB, erstellt {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(mtime))})
+
+Die Originalgröße ist in dieser Datei nicht gespeichert; ein Kompressionsverhältnis ist daher nicht bekannt.
+"""
+        orig_mb = orig_bytes / (1024 * 1024)
+        ratio = orig_bytes / comp_bytes
         saved_mb = orig_mb - comp_mb
+        saved_pct = (1 - comp_bytes / orig_bytes) * 100
 
         return f"""
 # ✅ Letztes auf der Festplatte gefundenes Modell
@@ -1340,11 +1384,10 @@ def show_compression_results():
 ## 📊 Gemessene Dateigrößen
 | Metrik | Original (FP32) | Komprimiert (IGQK 2-Bit) | Reduktion |
 |---|---|---|---|
-| **Größe auf Disk** | ~{orig_mb:.2f} MB | **{comp_mb:.2f} MB** | **{ratio:.1f}× kleiner** ✨ |
-| **Bits pro Gewicht** | 32 Bit | 2 Bit | 16× Reduktion |
-| **Gesparter Speicher** | - | **{saved_mb:.2f} MB** | 93.8% gespart |
+| **Größe** | {orig_mb:.2f} MB (FP32-Gewichte) | **{comp_mb:.2f} MB** (Datei) | **{ratio:.1f}× kleiner** |
+| **Gesparter Speicher** | - | **{saved_mb:.2f} MB** | {saved_pct:.1f}% gespart |
 
-*Echte Messung direkt aus dem Dateisystem.*
+*Komprimierte Größe gemessen an der Datei; Originalgröße aus dem Checkpoint.*
 """
 
     return """
@@ -1576,7 +1619,7 @@ with gr.Blocks(
 
                     train_dataset = gr.Dropdown(
                         label="Dataset",
-                        choices=["MNIST", "CIFAR-10", "ImageNet", "Custom Upload"],
+                        choices=["MNIST", "CIFAR-10"],
                         value="CIFAR-10"
                     )
 
@@ -1850,31 +1893,23 @@ with gr.Blocks(
             - One-click publishing to HuggingFace
 
             #### 🗜️ COMPRESS Mode
-            - Compress existing models 16× smaller
-            - Support for PyTorch, HuggingFace, ONNX
-            - Only ~0.5-1% accuracy loss
-            - 15× faster inference
+            - Ternary weights stored with 2 bits instead of 32 (file size measured after saving)
+            - Support for PyTorch and HuggingFace models
+            - Accuracy before and after compression measured on a test split
 
             ### 💎 Why IGQK?
 
-            **Traditional Compression:**
-            - 4-8× compression at best
-            - Significant accuracy loss (3-5%)
-            - Slow compression process
-
             **IGQK Quantum Compression:**
-            - **16× compression** 🎉
-            - Only 0.5-1% accuracy loss
-            - Fast compression (<5 minutes)
+            - Up to **16×** smaller weights (2-bit ternary storage; small tensors such as biases stay FP32)
+            - The accuracy cost depends on the model and is reported per job, not promised
             - Quantum-optimized training
 
             ### 🚀 Use Cases
 
             1. **Mobile Apps** - Deploy ML models on smartphones
             2. **IoT Devices** - Run AI on Raspberry Pi, Arduino
-            3. **Cloud Cost Reduction** - Save 93.8% on storage & compute
+            3. **Cloud Cost Reduction** - Smaller model files to store and transfer
             4. **Edge AI** - Offline AI applications
-            5. **Fast Inference** - 15× faster predictions
 
             ### 📖 Getting Started
 
