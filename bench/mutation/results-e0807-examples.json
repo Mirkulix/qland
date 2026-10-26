@@ -1,0 +1,179 @@
+{
+ "observed_runs": 36,
+ "results": [
+  {
+   "id": "cancel_pending_deletes",
+   "stored": true,
+   "e0807": [],
+   "changed_runs": 0,
+   "failed_tests": [
+    "cancel_backorder_twice"
+   ],
+   "hidden_failed": 1
+  },
+  {
+   "id": "cancel_after_return",
+   "stored": true,
+   "e0807": [
+    "this define changed what `main` prints on 1 of 43 earlier runs: `ERR 10 not_open` is now `CANCELLED o1 2612`"
+   ],
+   "changed_runs": 0,
+   "failed_tests": [
+    "return_blocks_cancel"
+   ],
+   "hidden_failed": 1
+  },
+  {
+   "id": "cancel_outstanding_negative",
+   "stored": true,
+   "e0807": [],
+   "changed_runs": 0,
+   "failed_tests": [
+    "cancel_owed_not_below_zero"
+   ],
+   "hidden_failed": 1
+  },
+  {
+   "id": "no_discount_cap",
+   "stored": false,
+   "e0807": [],
+   "changed_runs": 0,
+   "failed_tests": [],
+   "hidden_failed": null
+  },
+  {
+   "id": "fits_per_line",
+   "stored": true,
+   "e0807": [],
+   "changed_runs": 0,
+   "failed_tests": [
+    "lines_same_product_adds_up"
+   ],
+   "hidden_failed": 0
+  },
+  {
+   "id": "qty_discount_per_line",
+   "stored": true,
+   "e0807": [
+    "this define changed what `main` prints on 2 of 43 earlier runs: `OK o1 534` is now `OK o1 564`"
+   ],
+   "changed_runs": 0,
+   "failed_tests": [
+    "lines_bulk_total",
+    "lines_exact_fit_bulk",
+    "lines_ok",
+    "lines_return_refund"
+   ],
+   "hidden_failed": 3
+  },
+  {
+   "id": "cancel_keeps_tax",
+   "stored": true,
+   "e0807": [
+    "this define changed what `main` prints on 1 of 43 earlier runs: `c1 1 250 0 250` is now `c1 1 250 190 250`"
+   ],
+   "changed_runs": 0,
+   "failed_tests": [
+    "tax_cancel_reverses"
+   ],
+   "hidden_failed": 2
+  },
+  {
+   "id": "top_ties_reversed",
+   "stored": true,
+   "e0807": [
+    "this define changed what `main` prints on 1 of 43 earlier runs: `p1 3` is now `p2 3`"
+   ],
+   "changed_runs": 0,
+   "failed_tests": [
+    "top_tie"
+   ],
+   "hidden_failed": 1
+  },
+  {
+   "id": "return_one_too_many",
+   "stored": true,
+   "e0807": [
+    "this define changed what `main` prints on 1 of 43 earlier runs: `ERR 9 bad_qty` is now `RETURNED o1 261`"
+   ],
+   "changed_runs": 0,
+   "failed_tests": [
+    "return_bad_qty"
+   ],
+   "hidden_failed": 1
+  },
+  {
+   "id": "pay_exact_is_overpay",
+   "stored": true,
+   "e0807": [
+    "this define changed what `main` prints on 1 of 43 earlier runs: `--- customers` is now `ERR 5 overpay`"
+   ],
+   "changed_runs": 0,
+   "failed_tests": [
+    "pay_exact"
+   ],
+   "hidden_failed": 1
+  },
+  {
+   "id": "refund_without_tax",
+   "stored": true,
+   "e0807": [
+    "this define changed what `main` prints on 1 of 43 earlier runs: `RETURNED o1 783` is now `RETURNED o1 712`"
+   ],
+   "changed_runs": 0,
+   "failed_tests": [
+    "return_rounds_down"
+   ],
+   "hidden_failed": 2
+  },
+  {
+   "id": "restock_newest_first",
+   "stored": true,
+   "e0807": [
+    "this define changed what `main` prints on 1 of 43 earlier runs: `FILLED o1 100` is now `FILLED o2 100`"
+   ],
+   "changed_runs": 0,
+   "failed_tests": [
+    "restock_fills_oldest_first",
+    "restock_partial_fill"
+   ],
+   "hidden_failed": 1
+  },
+  {
+   "id": "return_keeps_tax",
+   "stored": true,
+   "e0807": [
+    "this define changed what `main` prints on 1 of 43 earlier runs: `c1 1 1 1 1` is now `c1 1 1 237 1`"
+   ],
+   "changed_runs": 0,
+   "failed_tests": [
+    "return_rounds_down"
+   ],
+   "hidden_failed": 2
+  },
+  {
+   "id": "promo_up_to_100",
+   "stored": true,
+   "e0807": [
+    "this define changed what `main` prints on 1 of 43 earlier runs: `ERR 12 invalid` is now `ERR 13 unknown_product`"
+   ],
+   "changed_runs": 0,
+   "failed_tests": [
+    "promo_invalid"
+   ],
+   "hidden_failed": 1
+  },
+  {
+   "id": "limit_reached_rejects",
+   "stored": true,
+   "e0807": [
+    "this define changed what `main` prints on 3 of 43 earlier runs: `OK o2 100` is now `REJECT o2 credit`"
+   ],
+   "changed_runs": 0,
+   "failed_tests": [
+    "credit_at_limit"
+   ],
+   "hidden_failed": 2
+  }
+ ]
+}

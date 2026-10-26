@@ -5,6 +5,7 @@ Only `qal_run` calls whose JSON is in the command itself are recovered (inputs b
 are not), so the result is a lower bound.
 
 Usage: python3 bench/mutation/e0807.py <qal-root> <transcripts-glob> <out.json>
+       E0807_EXAMPLES=1 ...   also fills the memory with the tickets' public examples
 
 <qal-root> is the final store of a QAL line (pressure run 9, as in mutate.py); <transcripts-glob>
 matches the agent transcripts of that line's 12 stages. Every io-only `qal_run` input the agents
@@ -54,12 +55,25 @@ def runs_of(pattern):
     return cases
 
 
+def examples_of(tasks):
+    """The public examples of the change tickets (what every agent runs): their standard inputs."""
+    out = []
+    for d in sorted(glob.glob(os.path.join(tasks, "*", "task.md"))):
+        text = open(d, encoding="utf-8").read()
+        for m in re.finditer(r"Arguments: none\n\nStandard input:\n\n```\n(.*?)```", text, re.S):
+            out.append({"args": [], "stdin": m.group(1)})
+    return out
+
+
 def main(argv):
     if len(argv) != 4:
         print(__doc__.split("\n\n")[1], file=sys.stderr)
         return 2
     root, pattern, out = os.path.abspath(argv[1]), argv[2], os.path.abspath(argv[3])
     cases = runs_of(pattern)
+    if os.environ.get("E0807_EXAMPLES"):
+        # Also the public examples of the tickets of stages 1-11 (not the hidden tests).
+        cases += [{"cases": [e]} for e in examples_of(os.environ["BENCH_TASKS"]) if e not in cases]
     with open(os.path.join(HERE, "mutants.json"), encoding="utf-8") as f:
         mutants = json.load(f)
     check.ensure_qal_binary()

@@ -283,3 +283,12 @@ edges where `price * qty * 95` overflows, and an existing test caught that.
 - **Live trial 12:** the agent's tests missed the regression, and E0807 alone reported it
   (`bench/loop/report.md`).
 - **Coverage:** it grows with the inputs observed, so more runs in the memory mean more coverage.
+
+**With the tickets' public examples in the memory as well** (`E0807_EXAMPLES=1`, raw results
+`results-e0807-examples.json`; 36 calls):
+
+- **Which inputs:** the examples of stages 1–11 that every agent runs, not the hidden tests.
+- **Result:** E0807 alone reports **11 of 13** mutants. It misses `cancel_pending_deletes` and
+  `cancel_outstanding_negative`, which no example exercises.
+- **Counter-check:** four defines that change the form but not the behaviour (`cancel`, `fill`,
+  `restock`, `pay`) leave E0807 silent.
