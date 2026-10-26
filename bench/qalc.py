@@ -66,7 +66,14 @@ class Client:
             return True, "PROTOCOL ERROR: " + json.dumps(r["error"]), None
         res = r["result"]
         text = "\n".join(c.get("text", "") for c in res.get("content", []))
-        return bool(res.get("isError", False)), text, res.get("structuredContent")
+        structured = res.get("structuredContent")
+        if structured is None:
+            # The server sends the JSON once, in content; structuredContent is opt-in.
+            try:
+                structured = json.loads(text)
+            except json.JSONDecodeError:
+                structured = None
+        return bool(res.get("isError", False)), text, structured
 
     def close(self):
         self.p.stdin.close()
