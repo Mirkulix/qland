@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="description" content="QAL ist eine Programmiersprache für KI-Agenten: Ein Agent schreibt Code und weiß in derselben Runde, ob er stimmt.">
+<meta name="description" content="QAL (Query &amp; Agent Language) ist eine Programmiersprache für KI-Agenten: Ein Agent schreibt Code und weiß in derselben Runde, ob er stimmt.">
 <title>QAL Sprache</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -175,6 +175,7 @@ footer .wrap { display: flex; justify-content: space-between; gap: 16px; flex-wr
   <div class="wrap">
     <div class="mark">QAL <span>Query &amp; Agent Language</span></div>
     <nav aria-label="Abschnitte">
+      <a href="#name">Der Name</a>
       <a href="#runde">Die eine Runde</a>
       <a href="#kann">Was sie kann</a>
       <a href="#zahlen">Zahlen</a>
@@ -224,6 +225,28 @@ footer .wrap { display: flex; justify-content: space-between; gap: 16px; flex-wr
       </div>
     </div>
   </div>
+
+  <section id="name">
+    <div class="wrap">
+      <div class="sec-head">
+        <div class="eyebrow">Der Name</div>
+        <h2>QAL steht für Query &amp; Agent Language</h2>
+        <p>Beide Hälften des Namens beschreiben, wie die Sprache arbeitet.</p>
+      </div>
+      <div class="two">
+        <div class="cap">
+          <span class="tag">Q · Query</span>
+          <h3>Code wird abgefragt, nicht durchsucht</h3>
+          <p>Der Code liegt nicht in Dateien, sondern in einem Speicher. Ein Agent fragt ihn ab: wer eine Funktion verwendet (<code>qal_query</code>), wie eine Definition aussieht (<code>qal_view</code>) und wie sie sich verändert hat (<code>qal_history</code>). Jede Antwort ist strukturiertes JSON statt Text, den man erst auswerten muss.</p>
+        </div>
+        <div class="cap">
+          <span class="tag">A · Agent</span>
+          <h3>Gebaut für den, der schreibt</h3>
+          <p>Die Sprache ist für KI-Agenten entworfen, nicht für Menschen am Editor. Deshalb prüft jeder Schreibvorgang sofort alles, jeder Fehler hat einen Code, einen Pfad und einen Hinweis zur Behebung, und jede Wirkung nach außen muss ausdrücklich freigegeben werden.</p>
+        </div>
+      </div>
+    </div>
+  </section>
 
   <section id="runde">
     <div class="wrap">
