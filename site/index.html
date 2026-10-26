@@ -125,6 +125,35 @@ section { padding-block: 72px; border-top: 1px solid var(--line); }
   .shift-step + .shift-step { padding-top: 20px; border-top: 1px solid var(--line); }
 }
 
+
+/* Spielplatz */
+.play { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr); gap: 18px; align-items: stretch; }
+.editor { display: grid; grid-template-rows: auto 1fr auto; background: var(--code-bg); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; min-width: 0; }
+.ex-bar { display: flex; gap: 6px; flex-wrap: wrap; padding: 10px 12px; border-bottom: 1px solid rgba(255,255,255,0.07); }
+.ex-bar button { font: 500 0.8rem var(--body); color: var(--code-fg); background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.09); border-radius: 999px; padding: 5px 11px; cursor: pointer; }
+.ex-bar button:hover, .ex-bar button[aria-pressed="true"] { border-color: var(--proof); color: var(--proof); }
+#code { width: 100%; min-height: 300px; resize: vertical; border: 0; outline: 0; background: transparent; color: var(--code-fg); font-family: var(--mono); font-size: 0.84rem; line-height: 1.6; padding: 14px 16px; tab-size: 2; white-space: pre; overflow: auto; }
+#code:focus-visible { box-shadow: inset 0 0 0 2px var(--proof-soft); }
+.ed-foot { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 12px; border-top: 1px solid rgba(255,255,255,0.07); font-family: var(--mono); font-size: 0.74rem; color: var(--code-dim); flex-wrap: wrap; }
+.ed-foot button { font: 600 0.84rem var(--body); color: var(--bg); background: var(--proof); border: 0; border-radius: 8px; padding: 8px 16px; cursor: pointer; }
+.ed-foot button:disabled { opacity: 0.5; cursor: default; }
+.result { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 18px; display: grid; gap: 12px; align-content: start; min-width: 0; }
+.verdict { display: flex; align-items: center; gap: 10px; font-family: var(--display); font-weight: 700; font-size: 1.25rem; }
+.verdict .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); flex: none; }
+.verdict.ok .dot { background: var(--proof); box-shadow: 0 0 12px var(--proof); }
+.verdict.bad .dot { background: var(--warn); box-shadow: 0 0 12px var(--warn); }
+.meta { font-family: var(--mono); font-size: 0.76rem; color: var(--muted); }
+.diag { border: 1px solid var(--line); border-left: 3px solid var(--warn); border-radius: 0 8px 8px 0; padding: 12px 14px; display: grid; gap: 6px; background: var(--sunk); min-width: 0; }
+.diag .head { display: flex; gap: 10px; flex-wrap: wrap; align-items: baseline; font-family: var(--mono); font-size: 0.8rem; }
+.diag .head b { color: var(--warn); }
+.diag .where { color: var(--muted); }
+.diag .msg { font-size: 0.95rem; overflow-wrap: anywhere; }
+.diag ul { margin: 0; padding-left: 1.1em; color: var(--proof); font-size: 0.88rem; }
+.raw summary { cursor: pointer; font-size: 0.85rem; color: var(--muted); }
+.raw pre { margin: 8px 0 0; padding: 12px; background: var(--code-bg); border-radius: 8px; overflow-x: auto; font-family: var(--mono); font-size: 0.74rem; color: var(--code-fg); max-height: 260px; }
+.play-note { margin-top: 14px; font-size: 0.88rem; color: var(--muted); }
+@media (max-width: 960px) { .play { grid-template-columns: 1fr; } }
+
 /* Die eine Runde */
 .loop { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); border: 1px solid var(--line); border-radius: 12px; background: var(--surface); overflow: hidden; counter-reset: step; }
 .step { padding: 22px 18px; border-right: 1px solid var(--line); display: grid; gap: 8px; align-content: start; min-width: 0; }
@@ -233,6 +262,7 @@ footer .wrap { display: flex; justify-content: space-between; gap: 16px; flex-wr
       <a href="#name">Der Name</a>
       <a href="#jetzt">Warum jetzt</a>
       <a href="#runde">Die eine Runde</a>
+      <a href="#probieren">Ausprobieren</a>
       <a href="#atlas">Alles, was QAL kann</a>
       <a href="#codes">Diagnosen</a>
       <a href="#zahlen">Zahlen</a>
@@ -359,6 +389,35 @@ footer .wrap { display: flex; justify-content: space-between; gap: 16px; flex-wr
         <div class="step"><span class="n">Neu verknüpfen</span><h3>Stimmt der Rest?</h3><p>Alle abhängigen Definitionen bekommen neue Hashes und werden mitgeprüft.</p></div>
       </div>
       <div class="plus"><span class="badge">+ E0807</span><p>Das Verhaltensgedächtnis: Frühere echte Programmläufe werden wiederholt. Ändert ein <code>define</code> ihre Ausgabe, meldet die Antwort genau diese Läufe, einmal, mit alter und neuer Ausgabe.</p></div>
+    </div>
+  </section>
+
+  <section id="probieren">
+    <div class="wrap">
+      <div class="sec-head">
+        <div class="eyebrow">Selbst ausprobieren</div>
+        <h2>Der echte Compiler, hier in deinem Browser</h2>
+        <p>Der QAL-Compiler ist in QAL geschrieben und zu WebAssembly übersetzt. Genau dieses Modul, 444 KB, läuft jetzt auf deinem Rechner. Schreib Code oder nimm ein Beispiel: Die Antwort ist dieselbe, die ein Agent bekommt.</p>
+      </div>
+      <div class="play">
+        <div class="editor">
+          <div class="ex-bar" role="group" aria-label="Beispiele">
+            <button type="button" data-ex="ok" aria-pressed="true">Gültig</button>
+            <button type="button" data-ex="type">Typfehler</button>
+            <button type="button" data-ex="match">Fehlender Fall</button>
+            <button type="button" data-ex="effect">Effekt fehlt</button>
+            <button type="button" data-ex="parse">Syntaxfehler</button>
+          </div>
+          <label for="code" class="sr" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)">QAL-Code</label>
+          <textarea id="code" spellcheck="false" autocomplete="off" autocapitalize="off"></textarea>
+          <div class="ed-foot"><span id="cstate">Compiler wird geladen …</span><button type="button" id="run" disabled>Prüfen</button></div>
+        </div>
+        <div class="result" id="result" aria-live="polite">
+          <div class="verdict"><span class="dot"></span><span>Noch nicht geprüft</span></div>
+          <p class="meta">Sobald der Compiler geladen ist, wird geprüft, während du tippst.</p>
+        </div>
+      </div>
+      <p class="play-note">Im Browser laufen Parser, Typprüfung, Effektprüfung und Vollständigkeit der <code>match</code>-Ausdrücke. Die Z3-Beweise, die Tests und der Speicher laufen im vollständigen Werkzeug <code>qal</code>.</p>
     </div>
   </section>
 
@@ -670,6 +729,75 @@ footer .wrap { display: flex; justify-content: space-between; gap: 16px; flex-wr
 </footer>
 
 <script>
+// QAL in the browser: runs the real self-hosted compiler (qalc.wasm) on a program and returns its
+// diagnostics. The compiler is a pure function qc_main(Bytes) -> Bytes speaking QALQ/QALR; the host
+// supplies five functions. Bytes live in guest memory as [len: u32 LE][bytes].
+(function (global) {
+  "use strict";
+  var enc = new TextEncoder(), dec = new TextDecoder("utf-8", { fatal: false });
+  function varint(n, out) { do { var b = n & 127; n = Math.floor(n / 128); out.push(n ? b | 128 : b); } while (n); }
+  function strBytes(s, out) { var b = enc.encode(s); varint(b.length, out); for (var i = 0; i < b.length; i++) out.push(b[i]); }
+  // CHECK_FILE (op 6): text, no entry, default options, no new_names list (every name is new).
+  function checkRequest(text) { var out = [81, 65, 76, 81, 1, 6]; strBytes(text, out); out.push(0); varint(0, out); out.push(0); return new Uint8Array(out); }
+  function rustFloat(x) {
+    if (Number.isNaN(x)) return "NaN";
+    if (!Number.isFinite(x)) return x > 0 ? "inf" : "-inf";
+    var s = String(x);
+    if (/e/.test(s)) { var m = s.split("e"); return m[0] + "e" + (m[1][0] === "+" ? m[1].slice(1) : m[1]); }
+    return /\./.test(s) ? s : s + ".0";
+  }
+  function Reader(b, pos) { this.b = b; this.p = pos; }
+  Reader.prototype.byte = function () { if (this.p >= this.b.length) throw new Error("truncated response"); return this.b[this.p++]; };
+  Reader.prototype.varint = function () { var r = 0, m = 1, x; do { x = this.byte(); r += (x & 127) * m; m *= 128; } while (x & 128); return r; };
+  Reader.prototype.str = function () { var n = this.varint(); var s = dec.decode(this.b.subarray(this.p, this.p + n)); this.p += n; return s; };
+  function decodeResponse(b) {
+    if (b.length < 6 || String.fromCharCode(b[0], b[1], b[2], b[3]) !== "QALR") throw new Error("bad response");
+    var status = b[5], r = new Reader(b, 6);
+    if (status === 0) return { ok: true };
+    if (status === 1) {
+      var n = r.varint(), ds = [];
+      for (var i = 0; i < n; i++) {
+        var d = { code: r.str(), kind: r.str(), def: r.str(), path: r.str(), message: r.str() };
+        if (r.byte()) r.str(); if (r.byte()) r.str();
+        var h = r.varint(); d.hints = []; for (var j = 0; j < h; j++) d.hints.push(r.str());
+        var deps = r.varint(); for (var k = 0; k < deps; k++) r.str();
+        if (r.byte()) r.str();
+        ds.push(d);
+      }
+      return { ok: false, diagnostics: ds };
+    }
+    if (status === 2) return { ok: false, internal: "the program is too large for the browser demo (the compiler splits it into work items)" };
+    return { ok: false, internal: r.str() };
+  }
+  function QalCompiler(module) { this.module = module; }
+  QalCompiler.prototype.call = function (req) {
+    var inst, mem;
+    function bytesAt(p) { var v = new DataView(mem.buffer); var n = v.getUint32(p, true); return new Uint8Array(mem.buffer, p + 4, n); }
+    function newBytes(b) { var p = Number(inst.exports.qal_alloc(BigInt(4 + b.length))); new DataView(mem.buffer).setUint32(p, b.length, true); new Uint8Array(mem.buffer).set(b, p + 4); return p; }
+    var imports = { qal_host: {
+      fail: function () { throw new Error("the compiler stopped (a contract or bound inside it)"); },
+      str_to_float: function (p) { var s = dec.decode(bytesAt(p)); var x = /^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$|^[+-]?(inf|infinity|nan)$/i.test(s) ? Number(s.replace(/inf(inity)?/i, "Infinity")) : NaN; return Number.isNaN(x) && !/nan/i.test(s) ? [0, 0] : [1, x]; },
+      float_to_str: function (x) { return newBytes(enc.encode(rustFloat(x))); },
+      utf8_valid: function (p) { try { new TextDecoder("utf-8", { fatal: true }).decode(bytesAt(p)); return 1; } catch (e) { return 0; } },
+      sha256: function () { throw new Error("hashing is not part of the browser demo"); }
+    } };
+    inst = new WebAssembly.Instance(this.module, imports);
+    mem = inst.exports.memory;
+    var out = inst.exports.qc_main(newBytes(req));
+    return bytesAt(out).slice();
+  };
+  QalCompiler.prototype.check = function (text) {
+    var t0 = (global.performance || Date).now();
+    var res = decodeResponse(this.call(checkRequest(text)));
+    res.ms = (global.performance || Date).now() - t0;
+    return res;
+  };
+  QalCompiler.load = function (bytes) { return WebAssembly.compile(bytes).then(function (m) { return new QalCompiler(m); }); };
+  global.QalCompiler = QalCompiler;
+})(typeof window !== "undefined" ? window : globalThis);
+
+</script>
+<script>
 // The store as a graph: definitions are nodes, references are edges; a define sends pulses along
 // the edges it relinks. Drawn once at rest; animated only when motion is allowed and in view.
 (function () {
@@ -732,6 +860,71 @@ footer .wrap { display: flex; justify-content: space-between; gap: 16px; flex-wr
   if ("IntersectionObserver" in window) new IntersectionObserver(function (es) { visible = es[0].isIntersecting; setRunning(true); }).observe(c);
   document.addEventListener("visibilitychange", function () { setRunning(true); });
   setRunning(true);
+})();
+
+// The playground: loads qalc.wasm (published next to the page) and checks the editor's text.
+(function () {
+  var EX = {
+    ok: "type Acct = { id: Int, balance: Int }\n\nfn deposit(a: Acct, n: Int) -> Acct\n  req n >= 1\n  ens r.balance > a.balance\n= Acct { id: a.id, balance: a.balance + n }\n\ntest deposit_adds =\n  deposit(Acct { id: 1, balance: 5 }, 3).balance == 8\n",
+    type: "type Acct = { id: Int, balance: Int }\n\nfn deposit(a: Acct, n: Int) -> Acct\n= Acct { id: a.id, balance: a.balance + \"n\" }\n",
+    match: "type Shape = Circle(Int) | Rect(Int, Int) | Dot\n\nfn area(s: Shape) -> Int = match s {\n  Circle(r) => 3 * r * r,\n  Rect(w, h) => w * h\n}\n",
+    effect: "fn greet(name: Str) -> Str = {\n  print(\"hello \" ++ name);\n  name\n}\n",
+    parse: "fn total(xs: List[Int]) -> Int =\n  fold(xs, 0, fn(acc, x) => acc + x\n"
+  };
+  var code = document.getElementById("code"), out = document.getElementById("result"), run = document.getElementById("run"), state = document.getElementById("cstate");
+  if (!code) return;
+  code.value = EX.ok;
+  var compiler = null, timer = null;
+  function esc(t) { return String(t).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; }); }
+  function count(text) {
+    var n = { type: 0, fn: 0, test: 0 };
+    text.split("\n").forEach(function (l) { var m = /^(type|fn|test)\s/.exec(l); if (m) n[m[1]]++; });
+    var parts = [];
+    if (n.type) parts.push(n.type + (n.type === 1 ? " Typ" : " Typen"));
+    if (n.fn) parts.push(n.fn + (n.fn === 1 ? " Funktion" : " Funktionen"));
+    if (n.test) parts.push(n.test + (n.test === 1 ? " Test" : " Tests"));
+    return parts.join(", ") || "keine Definitionen";
+  }
+  function show(res, text) {
+    var ms = res.ms < 1 ? "unter 1 ms" : Math.round(res.ms) + " ms";
+    if (res.ok) {
+      out.innerHTML = '<div class="verdict ok"><span class="dot"></span><span>Geprüft, kein Fehler</span></div>' +
+        '<p class="meta">' + esc(count(text)) + ' · Typen, Effekte und match vollständig · ' + ms + '</p>' +
+        '<p>Ein Agent könnte das jetzt speichern. Im vollständigen Werkzeug folgen in derselben Runde der Z3-Beweis von <code>req</code> und <code>ens</code>, die Tests und die Property-Tests.</p>' +
+        '<details class="raw"><summary>Antwort als JSON</summary><pre>' + esc(JSON.stringify({ ok: true }, null, 2)) + '</pre></details>';
+      return;
+    }
+    if (res.internal) { out.innerHTML = '<div class="verdict bad"><span class="dot"></span><span>Nicht geprüft</span></div><p class="meta">' + esc(res.internal) + '</p>'; return; }
+    var ds = res.diagnostics, html = '<div class="verdict bad"><span class="dot"></span><span>' + ds.length + (ds.length === 1 ? ' Diagnose' : ' Diagnosen') + '</span></div><p class="meta">Der Code würde nicht gespeichert · ' + ms + '</p>';
+    ds.forEach(function (d) {
+      html += '<div class="diag"><div class="head"><b>' + esc(d.code) + '</b><span>' + esc(d.kind) + '</span><span class="where">' + (d.def ? 'in <code>' + esc(d.def) + '</code> · ' : '') + esc(d.path) + '</span></div><div class="msg">' + esc(d.message) + '</div>' +
+        (d.hints.length ? '<ul>' + d.hints.map(function (h) { return '<li>' + esc(h) + '</li>'; }).join("") + '</ul>' : '') + '</div>';
+    });
+    html += '<details class="raw"><summary>Antwort als JSON, so wie ein Agent sie bekommt</summary><pre>' + esc(JSON.stringify({ diagnostics: ds }, null, 2)) + '</pre></details>';
+    out.innerHTML = html;
+  }
+  function check() {
+    if (!compiler) return;
+    try { show(compiler.check(code.value), code.value); }
+    catch (e) { out.innerHTML = '<div class="verdict bad"><span class="dot"></span><span>Der Compiler hat abgebrochen</span></div><p class="meta">' + esc(e.message) + '</p>'; }
+  }
+  code.addEventListener("input", function () { clearTimeout(timer); timer = setTimeout(check, 250); });
+  code.addEventListener("keydown", function (e) {
+    if (e.key === "Tab" && !e.shiftKey) { e.preventDefault(); var a = code.selectionStart, b = code.selectionEnd; code.value = code.value.slice(0, a) + "  " + code.value.slice(b); code.selectionStart = code.selectionEnd = a + 2; clearTimeout(timer); timer = setTimeout(check, 250); }
+    if ((e.metaKey || e.ctrlKey) && e.key === "Enter") { e.preventDefault(); check(); }
+  });
+  run.addEventListener("click", check);
+  document.querySelectorAll(".ex-bar button").forEach(function (b) {
+    b.addEventListener("click", function () {
+      document.querySelectorAll(".ex-bar button").forEach(function (x) { x.setAttribute("aria-pressed", x === b ? "true" : "false"); });
+      code.value = EX[b.getAttribute("data-ex")]; check();
+    });
+  });
+  if (!window.WebAssembly || !window.fetch) { state.textContent = "Dieser Browser kann kein WebAssembly ausführen."; return; }
+  fetch("qalc.wasm").then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.arrayBuffer(); })
+    .then(function (buf) { return QalCompiler.load(buf); })
+    .then(function (c) { compiler = c; state.textContent = "QAL-Compiler geladen · 444 KB WebAssembly · Strg/⌘ + Enter prüft"; run.disabled = false; check(); })
+    .catch(function (e) { state.textContent = "Der Compiler konnte nicht geladen werden (" + e.message + ")."; });
 })();
 
 document.querySelectorAll("button[data-copy]").forEach(function (b) {
