@@ -1,8 +1,16 @@
 # LoRA scaffold (Phase 8, item 2)
 
-This directory holds the Phase 8 training scaffold. **No LoRA run has happened yet.** The seed
-data is `bench/corpus/sft.jsonl`: 105 examples (10 repairs, 95 test-first syntheses), about
-27k approximate tokens. A model trained on that alone is a smoke test, not the Phase 8 result.
+This directory holds the Phase 8 training scaffold. **A one-step smoke run was executed on
+2026-10-26; a full training/evaluation run has not.** The seed data is `bench/corpus/sft.jsonl`:
+105 examples (10 repairs, 95 test-first syntheses), about 27k approximate tokens. A model trained
+on that alone is a smoke test, not the Phase 8 result.
+
+## Smoke run (2026-10-26)
+
+`train.py --cpu --max-steps 1 --max-length 256` loaded TinyLlama-1.1B-Chat, attached a rank-8 LoRA
+(1,126,400 trainable params, 0.1023 %) and ran one step on all 105 examples: loss **1.9108**,
+11.8 s, adapter written to `/tmp/qal-lora-cpu` (not committed). The MPS path hung during model
+loading on this machine, hence `--cpu`. This proves the harness, not the model quality.
 
 ## Check the data
 
