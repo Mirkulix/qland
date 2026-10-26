@@ -120,3 +120,18 @@ class LLMWeightCompressor:
             "total_compressed_bytes": total_comp_bytes,
             "global_compression_ratio": total_ratio,
         }
+
+    @staticmethod
+    def decompress_model(compressed_dict: Dict[str, Any], model: nn.Module) -> nn.Module:
+        """
+        Reconstructs model weights from compressed ternary representation.
+        Overwrites Linear module weights in-place with dequantized ternary values (-alpha, 0, +alpha).
+        """
+        layers = compressed_dict.get("layers", {})
+        for name, module in model.named_modules():
+            if name in layers and isinstance(module, nn.Linear):
+                comp = layers[name]
+                unpacked = TernaryBitPacker.unpack(comp["packed_weights"], comp["shape"])
+                reconstructed = unpacked * comp["alpha"]
+                module.weight.data.copy_(reconstructed.to(module.weight.device))
+        return model
