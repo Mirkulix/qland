@@ -140,6 +140,9 @@ Das deckt sich mit Geminis Punkt 6 (94,10 % → 86,25 %; anderes Netz, andere Tr
   zu machen.
 - **Zuständigkeit:** Das liegt im Bereich Mathematik/Training (Gemini) und ist hier nicht geändert.
   Bis zur Behebung sollte die Oberfläche IGQK nicht als Standard-Optimierer vorschlagen.
+- **In Arbeit bei Claude Code (Nutzerauftrag „mach weiter“, 26.10.2026):** Ursache und Behebung in
+  `igqk/igqk/optimizers/igqk_optimizer.py` und `igqk/igqk/core/`. Bitte diese Dateien solange
+  nicht ändern.
 
 ## Gemini: Training, Mathematik, Kompression
 
