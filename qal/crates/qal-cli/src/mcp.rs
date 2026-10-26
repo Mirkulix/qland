@@ -186,15 +186,16 @@ struct Text {
     text: String,
 }
 
-/// A `tools/call` result: the operation's JSON as text (for clients that only read `content`) and
-/// as `structuredContent`.
+/// A `tools/call` result: the operation's JSON as text. `structuredContent` is opt-in
+/// (`QAL_MCP_STRUCTURED=1`), because it duplicates the same JSON and every API round pays for it.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ToolResult<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     result_type: Option<&'static str>,
     content: [Text; 1],
-    structured_content: &'a ops::Output,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    structured_content: Option<&'a ops::Output>,
     is_error: bool,
     #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
     meta: Option<J>,
@@ -445,16 +446,17 @@ impl Server {
                     Err(p) => return Err(rpc(INTERNAL_ERROR, format!("internal error in {name}: {}", panic_message(&p)))),
                 };
                 let modern = era == Era::Modern;
-                // The output is serialized once; the response holds it twice (as text and as
-                // structured content), so its size follows from the text.
+                // `content` always carries the JSON. `structuredContent` is the same JSON
+                // again, so only include it when a client explicitly asks for it.
+                let structured = std::env::var_os("QAL_MCP_STRUCTURED").is_some();
                 let mut text = to_line(&reply.out);
-                let mut size = text.len() + to_line(&text).len();
+                let mut size = text.len() + if structured { to_line(&text).len() } else { 0 };
                 if size > MAX_RESULT_BYTES && reply.out.defined.is_some() {
                     // A `define` has committed: its result keeps `defined` and only counts the
                     // proof results it cannot show.
                     reply.out.omit_proofs();
                     text = to_line(&reply.out);
-                    size = text.len() + to_line(&text).len();
+                    size = text.len() + if structured { to_line(&text).len() } else { 0 };
                 }
                 if size > MAX_RESULT_BYTES {
                     let d = Diagnostic::new("E0702", "result_too_large", "", "", format!("the result of {name} is about {size} bytes of JSON, more than {MAX_RESULT_BYTES}"))
@@ -466,7 +468,7 @@ impl Server {
                     let result = ToolResult {
                         result_type: modern.then_some("complete"),
                         content: [Text { kind: "text", text }],
-                        structured_content: &reply.out,
+                        structured_content: if structured { Some(&reply.out) } else { None },
                         is_error: reply.is_error(),
                         meta: modern.then(|| json!({ META_SERVER: server_info() })),
                     };

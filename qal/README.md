@@ -44,6 +44,11 @@ Any other MCP client: run `sh /path/to/qland/qal/mcp.sh <project-dir>` as a stdi
 repository `.mcp.json` already registers `qal` (the repository root) and `qal-std` (the standard
 library project).
 
+Every tool result carries its JSON once, in `content`. `structuredContent` is the same JSON again
+and is **off by default**; a client that needs it sets `QAL_MCP_STRUCTURED=1`. On a large
+`qal_query` the default response is about half the bytes (39.5 KB vs. 77.1 KB in the check on
+2026-10-26), and every API round would otherwise pay for the duplicate.
+
 The agent needs nothing else: `qal_define`'s description is the language reference (≈ 9 KB).
 The tools it uses most:
 

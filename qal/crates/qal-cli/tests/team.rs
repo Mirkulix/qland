@@ -148,7 +148,8 @@ impl Client {
         let r = self.request("tools/call", json!({"name": tool, "arguments": args}));
         let result = &r["result"];
         assert!(result.is_object(), "{r}");
-        (result["isError"].as_bool().unwrap(), result["structuredContent"].clone())
+        let text: Value = serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
+        (result["isError"].as_bool().unwrap(), text)
     }
 
     fn code(&mut self, tool: &str, args: Value) -> String {
@@ -835,8 +836,14 @@ fn a_team_reviews_and_merges_over_mcp() {
     assert_eq!(t.qal(&["team", "export-trust", "--out", trust.to_str().unwrap()]).0, 0);
     let (code, v) = t.qal(&["verify", "--trust", trust.to_str().unwrap()]);
     assert_eq!((code, v["ok"].as_bool()), (0, Some(true)), "{v}");
-    // Everyone was told of the merges (notices ride along with every result).
-    let told = t.transcript.lock().unwrap().iter().filter(|l| l.contains("\"kind\":\"merged\"")).count();
+    // Everyone was told of the merges (notices ride along with every result). The notice JSON is
+    // inside the text content, so parse it instead of matching the escaped string.
+    let told = t.transcript.lock().unwrap().iter().filter(|line| {
+        let Ok(envelope) = serde_json::from_str::<Value>(line) else { return false };
+        let Some(text) = envelope["result"]["content"][0]["text"].as_str() else { return false };
+        let Ok(body) = serde_json::from_str::<Value>(text) else { return false };
+        body["notices"].as_array().is_some_and(|a| a.iter().any(|n| n["kind"] == "merged"))
+    }).count();
     assert!(told >= 3, "{told}");
 }
 

@@ -133,14 +133,14 @@ impl Client {
         r
     }
 
-    /// Calls a tool; returns (isError, structuredContent) and checks that the text content is the same JSON.
+    /// Calls a tool; returns (isError, the JSON in the text content). `structuredContent` is
+    /// opt-in (`QAL_MCP_STRUCTURED`), so the text is the source of truth.
     fn call(&mut self, tool: &str, args: Value) -> (bool, Value) {
         let r = self.request("tools/call", json!({"name": tool, "arguments": args}));
         let result = &r["result"];
         assert_eq!(result["content"][0]["type"], "text", "{r}");
         let text: Value = serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
-        assert_eq!(text, result["structuredContent"]);
-        let mut out = result["structuredContent"].clone();
+        let mut out = text.clone();
         if let (Some(c), Value::Object(m)) = (&self.change, &mut out) {
             // Team mode adds the space and the notices to every result (Phase 4 §10.2).
             if tool != "qal_change" {
@@ -383,7 +383,8 @@ fn modern_requests_are_stateless_and_versioned() {
     let r = c.request("tools/call", json!({"_meta": meta, "name": "qal_define", "arguments": {"source": "fn two() -> Int = 2"}}));
     assert_eq!((r["result"]["resultType"].as_str(), r["result"]["isError"].as_bool()), (Some("complete"), Some(false)));
     let r = c.request("tools/call", json!({"_meta": meta, "name": "qal_history", "arguments": {"name": "two"}}));
-    assert_eq!(r["result"]["structuredContent"]["history"][0]["agent"], "mcp:modern");
+    let history: Value = serde_json::from_str(r["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(history["history"][0]["agent"], "mcp:modern");
     let r = c.request("tools/list", json!({"_meta": {"io.modelcontextprotocol/protocolVersion": "1900-01-01", "io.modelcontextprotocol/clientCapabilities": {}}}));
     assert_eq!(r["error"]["code"], -32022);
     assert_eq!(r["error"]["data"]["requested"], "1900-01-01");
@@ -396,13 +397,16 @@ fn modern_requests_are_stateless_and_versioned() {
 
 #[test]
 fn runaway_programs_time_out_and_the_server_survives() {
+    // This test covers the opt-in structured response as well: its duplicate JSON is what
+    // pushes the huge `many` result over the 4 MiB cap.
+    std::env::set_var("QAL_MCP_STRUCTURED", "1");
     let mut c = Client::start();
     c.initialize();
     let src = "fn spin(n: Int) -> Int = spin(n + 1)\nfn main(args: List[Str]) -> Int = spin(0)\n\
                fn shout(n: Int) -> Int !io = { print(\"0123456789abcdef\"); shout(n + 1) }\nfn loud(args: List[Str]) -> Int !io = shout(0)\n\
                fn grow(s: Str) -> Int = grow(s ++ s)\nfn hog(args: List[Str]) -> Int = grow(\"x\")\n\
                fn double(s: Str, n: Int) -> Str = if n == 0 then s else double(s ++ s, n - 1)\nfn huge() -> Str = double(\"x\", 25)\n\
-               fn quotes(i: Int) -> Str = \"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\"\nfn many() -> List[Str] = map(range(0, 90000), quotes)\n\
+               fn quotes(i: Int) -> Str = \"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\"\nfn many() -> List[Str] = map(range(0, 150000), quotes)\n\
                fn short(s: Str) -> Bool req len(s) < 10 = true\ntest big_value = short(double(\"y\", 22))\ntest fine = 1 == 1\n\
                fn talk(n: Int) -> Int !io = if n == 0 then 0 else { print(\"0123456789abcdef\"); talk(n - 1) }\nfn chatty(args: List[Str]) -> Int !io = talk(100000)\n\
                test forever = spin(0) == 1";
@@ -425,7 +429,7 @@ fn runaway_programs_time_out_and_the_server_survives() {
     // Much output from a program that then succeeds: cut for the agent, not an error.
     let (err, v) = c.call("qal_run", json!({"entry": "chatty", "allow": ["io"]}));
     assert_eq!((err, v["exit_code"].as_i64(), v["stdout"].as_str().map(str::len), v["stdout_truncated"].as_u64()), (false, Some(0), Some(64 << 10), Some(1_700_000)));
-    // A result whose JSON would exceed 4 MiB (here 90 000 strings of escaped quotes) is replaced.
+    // A result whose JSON would exceed 4 MiB (here 150 000 strings of escaped quotes) is replaced.
     let (err, v) = c.call("qal_call", json!({"fn": "many"}));
     assert_eq!((err, v["diagnostics"][0]["kind"].as_str()), (true, Some("result_too_large")));
     let (err, v) = c.call("qal_test", json!({"names": ["forever"]}));

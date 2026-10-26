@@ -121,7 +121,8 @@ impl Client {
         let r = self.receive();
         let result = &r["result"];
         assert!(result.is_object(), "{r}");
-        (result["isError"].as_bool().unwrap(), result["structuredContent"].clone())
+        let text: Value = serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
+        (result["isError"].as_bool().unwrap(), text)
     }
 
     fn call(&mut self, tool: &str, args: Value) -> (bool, Value) {
