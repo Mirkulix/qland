@@ -8,6 +8,7 @@
 <link rel="alternate" hreflang="de" href="https://qalang.de/">
 <link rel="alternate" hreflang="en" href="https://qalang.de/en/">
 <title>QAL Sprache</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCIgZmlsbD0ibm9uZSI+CiAgPGNpcmNsZSBjeD0iMzAiIGN5PSIzMCIgcj0iMTkiIHN0cm9rZT0iIzYyZDZjNCIgc3Ryb2tlLXdpZHRoPSI1IiBzdHJva2UtZGFzaGFycmF5PSIxMDkuNDUgOS45NSIgc3Ryb2tlLWRhc2hvZmZzZXQ9Ijk5LjUiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPgogIDxwYXRoIGQ9Ik00My40IDQzLjQgTDU1IDU1IiBzdHJva2U9IiM2MmQ2YzQiIHN0cm9rZS13aWR0aD0iNS41IiBzdHJva2UtbGluZWNhcD0icm91bmQiLz4KICA8Y2lyY2xlIGN4PSIzMCIgY3k9IjExIiByPSI1IiBmaWxsPSIjMDYwZjBkIiBzdHJva2U9IiNlNGYwZWIiIHN0cm9rZS13aWR0aD0iMyIvPgogIDxjaXJjbGUgY3g9IjEzLjUiIGN5PSIzOS41IiByPSI1IiBmaWxsPSIjMDYwZjBkIiBzdHJva2U9IiNlNGYwZWIiIHN0cm9rZS13aWR0aD0iMyIvPgogIDxjaXJjbGUgY3g9IjQ2LjQ1IiBjeT0iMzkuNSIgcj0iNSIgZmlsbD0iI2YwYTM1YSIvPgo8L3N2Zz4=">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
@@ -61,6 +62,8 @@ body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-a
 .top .wrap { display: flex; align-items: center; gap: 22px; padding-block: 12px; }
 .mark { font-family: var(--display); font-weight: 800; font-size: 1.3rem; letter-spacing: -0.02em; white-space: nowrap; text-decoration: none; color: var(--ink); }
 .mark span { color: var(--proof); }
+.mark { display: inline-flex; align-items: center; gap: 9px; }
+.mark .logo { width: 30px; height: 30px; flex: none; }
 .top nav { display: flex; gap: 4px; overflow-x: auto; scrollbar-width: none; min-width: 0; flex: 1; }
 .top nav::-webkit-scrollbar { display: none; }
 .top nav a { white-space: nowrap; color: var(--muted); text-decoration: none; font-size: 0.9rem; padding: 6px 10px; border-radius: 6px; }
@@ -259,7 +262,13 @@ footer .wrap { display: flex; justify-content: space-between; gap: 16px; flex-wr
 <body>
 <header class="top">
   <div class="wrap">
-    <a class="mark" href="#start-top">QAL<span>.</span></a>
+    <a class="mark" href="#start-top"><svg class="logo" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" aria-hidden="true">
+  <circle cx="30" cy="30" r="19" stroke="#62d6c4" stroke-width="5" stroke-dasharray="109.45 9.95" stroke-dashoffset="99.5" stroke-linecap="round"/>
+  <path d="M43.4 43.4 L55 55" stroke="#62d6c4" stroke-width="5.5" stroke-linecap="round"/>
+  <circle cx="30" cy="11" r="5" fill="#060f0d" stroke="#e4f0eb" stroke-width="3"/>
+  <circle cx="13.5" cy="39.5" r="5" fill="#060f0d" stroke="#e4f0eb" stroke-width="3"/>
+  <circle cx="46.45" cy="39.5" r="5" fill="#f0a35a"/>
+</svg>QAL<span>.</span></a>
     <nav aria-label="Abschnitte">
       <a href="#name">Der Name</a>
       <a href="#jetzt">Warum jetzt</a>
