@@ -249,3 +249,34 @@ have, e.g. a grammar of the commands or the inputs of the program's tests.
 **Kept from it:** the repair puts a path that is bounded on both sides by literals at its lowest
 or highest value a third of the time each. Without this, repaired small inputs crowded out the
 edges where `price * qty * 95` overflows, and an existing test caught that.
+
+## E0807 on the mutants (2026-10-26)
+
+**Setup** (`e0807.py`, raw results `results-e0807.json`):
+
+- the final store of QAL pressure run 9;
+- its behaviour memory, filled with every io-only `qal_run` input its agents made over the 12
+  stages: **10 runs**;
+- each of the 15 mutants defined once.
+
+**Counted:** 13 mutants.
+
+- `no_discount_cap` is refuted by Z3 and never stored.
+- `fits_per_line` fails no hidden test.
+
+**Results:**
+
+| | mutants reported (of 13) |
+|---|---|
+| E0807 alone (10 observed runs) | **5** (cancel_keeps_tax, top_ties_reversed, pay_exact_is_overpay, restock_newest_first, limit_reached_rejects) |
+| the tests the define runs | 13 |
+
+**Reading:**
+
+- **Behaviour memory:** it catches regressions without any test, only from the runs the agent
+  made anyway. With 10 example runs that is 5 of 13 bugs.
+- **Tests:** on this program the agents' own tests already catch every mutant, so here E0807 is a
+  second net.
+- **Live trial 12:** the agent's tests missed the regression, and E0807 alone reported it
+  (`bench/loop/report.md`).
+- **Coverage:** it grows with the inputs observed, so more runs in the memory mean more coverage.
