@@ -37,6 +37,16 @@ python3 bench/corpus/verify.py --all      # all programs, about 3.5 minutes
 The checker compares only the status (`ok` vs. at least one diagnostic), not the diagnostic
 text, so a better checker does not invalidate the corpus.
 
+## SFT seed
+
+```sh
+python3 bench/corpus/sft.py
+```
+
+Writes `sft.jsonl` with **105 instruction/response examples**: 10 repairs (diagnostic + failed code ->
+the fix) and 95 test-first synthesis examples (signatures + tests -> the verified source). This is
+usable seed data, still far below the 5,000-20,000 target and without a LoRA run.
+
 ## What is still missing for Phase 8
 
 1. **5,000–20,000 verified programs**, written by strong models from the task types, the
