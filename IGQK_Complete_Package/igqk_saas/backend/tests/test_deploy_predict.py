@@ -55,3 +55,20 @@ def test_only_a_servable_model_is_deployed(client):
     assert missing.status_code == 404
     cloud = client.post("/api/deployment/deploy", json={"model_id": "tiny_compressed.pt", "name": "c", "target": "aws_sagemaker"})
     assert cloud.status_code == 501
+
+
+def test_dataset_search_asks_the_hub(client, monkeypatch):
+    from types import SimpleNamespace
+    import huggingface_hub
+    asked = {}
+
+    def fake_list_datasets(search, limit):
+        asked.update(search=search, limit=limit)
+        return [SimpleNamespace(id="org/imdb-like", description="reviews", tags=["task_categories:text-classification"])]
+
+    # The Hub is replaced only here (no network in tests); the endpoint calls list_datasets.
+    monkeypatch.setattr(huggingface_hub, "list_datasets", fake_list_datasets)
+    r = client.get("/api/datasets/search/huggingface", params={"query": "imdb", "limit": 3})
+    assert r.status_code == 200, r.text
+    assert asked == {"search": "imdb", "limit": 3}
+    assert r.json()[0]["id"] == "org/imdb-like" and r.json()[0]["task"] == "text-classification" and r.json()[0]["size"] is None
