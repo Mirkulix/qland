@@ -1135,3 +1135,25 @@ fn main(args: List[Str]) -> Int !model !io =
     assert_eq!(v_replay["stdout"], "lang.type\n");
 }
 
+
+/// A test may ask a model and sees only recorded answers (Phase 7: tests always run in replay
+/// mode). The answer is recorded by a run under `QAL_MODEL_MOCK`, so no network is involved.
+#[test]
+fn a_test_asks_a_model_from_recorded_answers() {
+    let dir = project("model-test");
+    assert_eq!(qal_in(&dir, &["init"]).0, 0);
+    let main = write(&dir, "main.qal", "fn main(args: List[Str]) -> Int !io !model = match std.model.ask(\"say pong\", \"\") { Ok(t) => { print(t); 0 }, Err(_) => 1 }\n");
+    assert_eq!(qal_in(&dir, &["define", &main]).0, 0);
+    let out = Command::new(env!("CARGO_BIN_EXE_qal")).args(["run", "main", "--allow", "io,model"]).current_dir(&dir).env("QAL_MODEL_MOCK", "pong").stdin(Stdio::null()).output().unwrap();
+    assert!(String::from_utf8_lossy(&out.stdout).contains("pong"), "{}", String::from_utf8_lossy(&out.stdout));
+    assert!(dir.join(".qal/model.db").is_file());
+    let tests = write(&dir, "t.qal", "test recorded = match std.model.ask(\"say pong\", \"\") { Ok(t) => t == \"pong\", Err(_) => false }\ntest unrecorded = match std.model.ask(\"never asked\", \"\") { Ok(_) => false, Err(_) => true }\n");
+    // The mock must not answer the test: tests replay, whatever the environment says.
+    let out = Command::new(env!("CARGO_BIN_EXE_qal")).args(["define", &tests]).current_dir(&dir).env("QAL_MODEL_MOCK", "wrong").stdin(Stdio::null()).output().unwrap();
+    let v: Value = serde_json::from_slice(&out.stdout).unwrap();
+    let passed: Vec<(String, bool)> = v["tests"].as_array().unwrap_or_else(|| panic!("{v}")).iter().map(|t| (t["name"].as_str().unwrap().to_string(), t["passed"].as_bool().unwrap())).collect();
+    assert_eq!(passed, [("recorded".to_string(), true), ("unrecorded".to_string(), true)], "{v}");
+    // Any other effect stays forbidden in a test.
+    let (code, v) = qal_in(&dir, &["define", &write(&dir, "bad.qal", "test noisy = { print(\"x\"); true }\n")]);
+    assert_eq!((code, v["diagnostics"][0]["code"].as_str()), (1, Some("E0301")), "{v}");
+}
