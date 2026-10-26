@@ -100,6 +100,47 @@ im Browser und die Genauigkeit eines komprimierten Modells auf echten Daten.
 5. die Speicher-Meldung im Training korrigieren;
 6. Fehler der HuggingFace-Suche nicht schlucken.
 
+**Umgesetzt (Nutzerauftrag „weiter“, Commit `cae79b0d`):** alle sechs Punkte, dazu entfernt:
+15× Inferenz-Beschleunigung, „93,8 %/93,75 % gespart“, „0,5–1 % Genauigkeitsverlust“ und
+hochgerechnete Größen (×15, ×16).
+
+- **Speichern:** Komprimierte Modelle werden 2-Bit-gepackt gespeichert (`backend/services/packing.py`
+  über `TernaryBitPacker`). Die Größe ist die der geschriebenen Datei.
+- **Fallstrick beim Packen:** `torch.save` pickelt `bytes` als Text, dabei wird jedes Byte ≥ 128
+  doppelt so groß (11,9× statt 15,8×). Deshalb werden die gepackten Daten als `uint8`-Tensor
+  gespeichert.
+- **Tests:** `IGQK_DATA_DIR=/private/tmp/mnist_data …/igqk_saas/.venv/bin/python -m pytest backend/tests`
+  → **12 passed**, dreimal hintereinander. Sie decken ab:
+  - Packen verlustfrei und 15–16×;
+  - eine ausgefallene Suche ergibt 502;
+  - GPT und BERT trainieren auf Text;
+  - GPT lernt das nächste Byte (> 50 % bei Zufall 1/256);
+  - ImageNet lässt den Job scheitern;
+  - MNIST > 80 %;
+  - ein gepacktes Modell wird bereitgestellt.
+
+**Gemessen über den Plattform-Trainingspfad** (MNIST, 60.000 Trainings- und 10.000 Testbilder, MLP
+3072-128-64-10, 3 Epochen):
+
+| Optimierer | Test-Genauigkeit je Epoche | nach ternärer Kompression | Datei |
+|---|---|---|---|
+| Adam, lr 0,001 | 95,66 / 97,26 / 97,45 % | **93,68 %** (−3,77 Pp.) | 1,53 MB → 0,099 MB (15,6×) |
+| IGQK, lr 0,01 | 10,71 / 8,52 / 13,55 % | 11,33 % | 15,6× |
+
+Das deckt sich mit Geminis Punkt 6 (94,10 % → 86,25 %; anderes Netz, andere Trainingsmenge).
+
+**Neuer offener Befund: Der IGQK-Optimierer lernt nicht.**
+
+- MNIST, 20.000 Bilder, 1 Epoche, gleicher Seed. Test-Genauigkeit:
+  - IGQK: **11,85 %** (lr 1,0, Loss 52,6), **16,12 %** (lr 0,1), **9,30 %** (lr 0,001);
+  - SGD: **66,6 %** (lr 0,01), **88,7 %** (lr 0,1);
+  - Zufall: 10 %.
+- **Ursache, vermutet und nicht geprüft:** `IGQKOptimizer.step` mit `use_quantum=True` setzt
+  `p.data` auf `quantum_state.to_classical()` aus `self.qgf.step(...)`, statt einen Gradientenschritt
+  zu machen.
+- **Zuständigkeit:** Das liegt im Bereich Mathematik/Training (Gemini) und ist hier nicht geändert.
+  Bis zur Behebung sollte die Oberfläche IGQK nicht als Standard-Optimierer vorschlagen.
+
 ## Gemini: Training, Mathematik, Kompression
 
 Bitte im aktuellen Stand überprüfen:
