@@ -15,6 +15,9 @@ class QuantumState:
     Represents a quantum state (density matrix) on a statistical manifold.
     
     For efficiency, we use a low-rank representation: ρ = Σᵢ λᵢ |ψᵢ⟩⟨ψᵢ|
+
+    Column 0 of `eigenvectors` is the mean parameter vector θ; columns 1.. are unit-norm fluctuation
+    modes around it (directions with zero mean), weighted by their eigenvalues.
     """
     
     def __init__(
@@ -59,9 +62,8 @@ class QuantumState:
         Returns:
             Scalar expectation value
         """
-        # E[O] = Σᵢ λᵢ ⟨ψᵢ|O|ψᵢ⟩ = Σᵢ λᵢ (ψᵢᵀ O ψᵢ)
-        values = torch.sum(self.eigenvectors * observable.unsqueeze(1), dim=0)  # (rank,)
-        return torch.sum(self.eigenvalues * values)
+        # For a linear observable the fluctuation modes (zero mean) cancel: E[O] = Oᵀθ
+        return torch.sum(observable * self.to_classical())
     
     def von_neumann_entropy(self) -> torch.Tensor:
         """
@@ -83,12 +85,14 @@ class QuantumState:
     def to_classical(self) -> torch.Tensor:
         """
         Collapse to classical state (expectation value).
-        
+
+        The fluctuation modes have zero mean, so the expectation is the mean θ (column 0). Mixing
+        the unit-norm modes into it (Σᵢ λᵢ ψᵢ) shrank θ by λ₀ and added random directions.
+
         Returns:
             (n_params,) tensor of parameter values
         """
-        # Classical state = Σᵢ λᵢ ψᵢ
-        return torch.sum(self.eigenvectors * self.eigenvalues.unsqueeze(0), dim=1)
+        return self.eigenvectors[:, 0]
     
     def sample(self, n_samples: int = 1) -> torch.Tensor:
         """
@@ -100,11 +104,13 @@ class QuantumState:
         Returns:
             (n_samples, n_params) tensor
         """
-        # Sample eigenstate indices according to eigenvalue probabilities
-        indices = torch.multinomial(self.eigenvalues, n_samples, replacement=True)
-        
-        # Return corresponding eigenvectors
-        return self.eigenvectors[:, indices].T  # (n_samples, n_params)
+        # θ + Σₖ √λₖ ξₖ ψₖ with ξₖ ~ N(0, 1): the mean plus Gaussian spread along the fluctuation modes
+        mean = self.to_classical()
+        if self.rank == 1:
+            return mean.unsqueeze(0).repeat(n_samples, 1)
+        xi = torch.randn(n_samples, self.rank - 1, device=self.device)
+        spread = (xi * self.eigenvalues[1:].sqrt()) @ self.eigenvectors[:, 1:].T
+        return mean.unsqueeze(0) + spread  # (n_samples, n_params)
     
     @classmethod
     def from_classical(
@@ -218,18 +224,16 @@ class QuantumGradientFlow:
         else:
             nat_gradient = gradient
         
-        # Unitary evolution (exploration): adds quantum spread to fluctuation modes
-        # Approximate [H, ρ] by adding quantum fluctuations
-        unitary_noise = torch.randn_like(state.eigenvectors) * (self.hbar * dt)
-        if state.eigenvectors.shape[1] > 1:
-            fluc_noise = torch.randn_like(state.eigenvectors[:, 1:]) * np.sqrt(self.hbar * dt)
-            unitary_noise[:, 1:] = fluc_noise
-        
-        # Dissipative evolution (exploitation): moves toward -gradient
-        dissipative_update = -self.gamma * dt * nat_gradient.unsqueeze(1)
-        
-        # Update eigenvectors
-        new_eigenvectors = state.eigenvectors + dissipative_update + unitary_noise
+        new_eigenvectors = state.eigenvectors.clone()
+
+        # Dissipative evolution (exploitation): the mean moves toward -gradient
+        new_eigenvectors[:, 0] -= self.gamma * dt * nat_gradient
+
+        # Unitary evolution (exploration): approximate [H, ρ] by rotating the fluctuation modes.
+        # The mean gets no noise: noise of ħ·dt per step and weight is a random walk that, over a
+        # few thousand steps, is as large as the weights themselves (training stayed at chance).
+        if new_eigenvectors.shape[1] > 1:
+            new_eigenvectors[:, 1:] += torch.randn_like(new_eigenvectors[:, 1:]) * np.sqrt(self.hbar * dt)
         
         # Normalize fluctuation eigenvectors only (col 1:), preserving classical parameter scale (col 0)
         if new_eigenvectors.shape[1] > 1:
