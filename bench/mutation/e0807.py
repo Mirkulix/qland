@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """E0807 on the mutation study: how many of the 15 mutants does the behaviour memory report?
 
+Only `qal_run` calls whose JSON is in the command itself are recovered (inputs built by scripts
+are not), so the result is a lower bound.
+
 Usage: python3 bench/mutation/e0807.py <qal-root> <transcripts-glob> <out.json>
 
 <qal-root> is the final store of a QAL line (pressure run 9, as in mutate.py); <transcripts-glob>

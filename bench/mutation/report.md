@@ -255,8 +255,11 @@ edges where `price * qty * 95` overflows, and an existing test caught that.
 **Setup** (`e0807.py`, raw results `results-e0807.json`):
 
 - the final store of QAL pressure run 9;
-- its behaviour memory, filled with every io-only `qal_run` input its agents made over the 12
-  stages: **10 runs**;
+- its behaviour memory, filled with the io-only `qal_run` inputs of its agents that the transcripts
+  give back:
+  - 10 of their 20 calls, holding **29 runs**;
+  - the other 10 calls built their input in Python scripts and cannot be recovered;
+  - run 9 predates the memory, so its store holds no `observed` table;
 - each of the 15 mutants defined once.
 
 **Counted:** 13 mutants.
@@ -268,13 +271,13 @@ edges where `price * qty * 95` overflows, and an existing test caught that.
 
 | | mutants reported (of 13) |
 |---|---|
-| E0807 alone (10 observed runs) | **5** (cancel_keeps_tax, top_ties_reversed, pay_exact_is_overpay, restock_newest_first, limit_reached_rejects) |
+| E0807 alone (29 observed runs) | **5** (cancel_keeps_tax, top_ties_reversed, pay_exact_is_overpay, restock_newest_first, limit_reached_rejects) |
 | the tests the define runs | 13 |
 
 **Reading:**
 
 - **Behaviour memory:** it catches regressions without any test, only from the runs the agent
-  made anyway. With 10 example runs that is 5 of 13 bugs.
+  made anyway. With half of the runs the agents made that is 5 of 13 bugs, a lower bound.
 - **Tests:** on this program the agents' own tests already catch every mutant, so here E0807 is a
   second net.
 - **Live trial 12:** the agent's tests missed the regression, and E0807 alone reported it
