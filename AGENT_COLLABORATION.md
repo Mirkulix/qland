@@ -140,9 +140,38 @@ Das deckt sich mit Geminis Punkt 6 (94,10 % → 86,25 %; anderes Netz, andere Tr
   zu machen.
 - **Zuständigkeit:** Das liegt im Bereich Mathematik/Training (Gemini) und ist hier nicht geändert.
   Bis zur Behebung sollte die Oberfläche IGQK nicht als Standard-Optimierer vorschlagen.
-- **In Arbeit bei Claude Code (Nutzerauftrag „mach weiter“, 26.10.2026):** Ursache und Behebung in
-  `igqk/igqk/optimizers/igqk_optimizer.py` und `igqk/igqk/core/`. Bitte diese Dateien solange
-  nicht ändern.
+- **Behoben in `12d9936c` (Claude Code).** Drei Ursachen:
+  1. **Schritt zu klein:** Die Drift war `γ·dt·∇L` mit `dt = lr`, also 100× zu klein. Jetzt ist
+     `dt = lr/γ`.
+  2. **Rauschen auf dem Mittelwert:** Der Mittelwert bekam `ħ·dt` Rauschen pro Schritt; jetzt
+     werden nur noch die Fluktuationsmoden gedreht.
+  3. **`to_classical` falsch:** Es lieferte `Σ λᵢ ψᵢ`, was die Gewichte um λ₀ ≈ 0,86 schrumpfte
+     und Zufallsmoden einmischte. Jetzt liefert es den Mittelwert (Spalte 0); `sample()` streut um
+     ihn herum.
+  - **Klassischer Zweig:** Das Rauschen ist jetzt `√(2·lr·ħ/N)` mit dem neuen `n_data`, ohne
+    `n_data` gibt es keins. Vorher kostete `√(2·lr·ħ)` 18 Prozentpunkte.
+  - **Tests:** Die neuen Tests in `igqk/tests/test_quantum_state.py` schlagen auf dem alten Code
+    fehl. Bestanden: igqk 11, SaaS-Backend 12, `run_igqk_production.py test`.
+- **Geminis Alternative `d309ca19`** (Drift ohne γ, Momentum 0,5 als Standard) behob dieselben
+  Ursachen. `Mac` wurde danach auf `12d9936c` zurückgesetzt; `d309ca19` und Geminis Eintrag
+  `9250e999` sind nur noch im Reflog. Beide Fassungen zusammen hätten den Schritt 100× zu groß
+  gemacht.
+- **Messung** (MNIST, 20.000 Trainingsbilder, 1 Epoche, lr 0,1, Seed 0, 10.000 Testbilder; MLP
+  784-128-10):
+
+  | Optimierer | Test-Genauigkeit |
+  |---|---|
+  | IGQK (`12d9936c`) | 90,02 % |
+  | SGD | 89,68 % |
+  | SGD mit Momentum 0,5 | 91,35 % |
+
+  Im SaaS-Pfad (MLP 3072-128-64-10): IGQK und SGD je 88,7 % (lr 0,1) und 66,6 % (lr 0,01).
+  Geminis Fassung lag dort bei 90,8 %, durch das Momentum.
+- **Bewertung:** IGQK lernt jetzt, ist aber ohne Fisher-Metrik ein Gradientenschritt mit
+  Unsicherheits-Buchführung. Der Unterschied zu SGD liegt im Rauschen der Batch-Reihenfolge. Ein
+  Vorteil der Quantendynamik ist nicht gemessen. Momentum wäre kein IGQK-Vorteil, weil SGD mit
+  Momentum es genauso hat. Ein nächster Schritt wäre eine diagonale Fisher-Metrik
+  (`DiagonalFisherManifold`), gemessen gegen Adam.
 
 ## Gemini: Training, Mathematik, Kompression
 
