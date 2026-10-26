@@ -291,3 +291,45 @@ stubs itself, so the shadowing workaround for parameters named `todo` is gone.
   differences.
 - **Speed:** unchanged, 0.41–0.46 s per define at 1520 definitions.
 - **Cache key:** the new compiler module invalidated the old caches, as the key requires.
+
+## Live catch by E0807 (2026-10-26)
+
+**Setup:** twelve more trials, the same as above:
+
+- the stage-11 store of run 11, with its 25 real `qal_run` inputs in the behaviour memory;
+- the stage-12 ticket, with no hint about the mistake;
+- twelve fresh Haiku agents;
+- **one change:** the current binary, with the incremental define and `CHECK_DELTA`.
+
+**Result:** 12/12 at 50/50 hidden tests. E0807 fired in two trials.
+
+**Trial 12, the live catch:**
+
+1. **The first define of the change:** every test of the agent's own passed. E0807 alone reported
+   that a one-line order of a gold customer now printed `OK o1 8835` instead of `OK o1 8800` (3 of
+   25 earlier runs). This is the class of run 11's mistake: the tier discount applied the wrong way.
+2. **The agent's next step,** verbatim: "The existing tests all pass, but the E0807 warning shows
+   a single-line order with a tier now prices differently ... The task says the old form 'means one
+   line', so one-line results must stay as they were." It redefined `fill_line` and the order was
+   back to 8800.
+3. **Counter-check:** the intermediate store, the stage-11 store plus that first define replayed,
+   fails **5 of the 50 hidden tests** (`s2_example`, `s2_tier_rounding`,
+   `s3_cancel_restores_discounted`, `s4_second`, `s11_example`). Without the warning the agent
+   would have delivered a regression its own tests did not see.
+
+**Trial 16:**
+
+- E0807 fired together with three failing tests (a sign error in `cancel_order`); the tests led
+  the fix.
+- The second warning compared against the broken intermediate output, and the agent correctly
+  took it as the fix.
+
+**Over 30 live attempts at stage 12** (runs 7–13, the 11 repeats of yesterday and these 12):
+
+- the mistake class came up twice;
+- in run 11, before the behaviour memory existed, it reached the hidden tests;
+- in trial 12 it was caught live and corrected in the next round.
+
+**A violation:** trial 23 called the `qal_view` MCP tool once, outside the Read/Bash rule. It
+returned errors and changed nothing, and the agent reported it itself. No agent wrote outside its
+directory (`/tmp/x` absent).
