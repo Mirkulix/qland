@@ -784,7 +784,7 @@ fn prelude_types_exist_in_every_program() {
                fn call() -> HttpCall = HttpCall { method: \"GET\", url: \"http://127.0.0.1:9/\", headers: [], body: \"\" }";
     assert_eq!(check_src(src), vec![]);
     let tp = typed(src);
-    assert_eq!(&tp.types[..8].iter().map(|t| t.name.as_str()).collect::<Vec<_>>(), &qal_core::prelude::TYPE_NAMES);
+    assert_eq!(&tp.types[..10].iter().map(|t| t.name.as_str()).collect::<Vec<_>>(), &qal_core::prelude::TYPE_NAMES);
     let d = one("fn f(e: DbError) -> Int = match e { DbBusy => 1 }");
     assert_eq!(d.kind, "non_exhaustive_match");
 }

@@ -333,6 +333,8 @@ pub struct Ctx {
     pub space: Option<String>,
     /// Team mode: the agent's session (what it views is recorded as seen, §5.3).
     pub session: Option<String>,
+    /// Replay-only mode for model calls (determinism and offline tests).
+    pub replay: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -361,7 +363,7 @@ impl Ctx {
     /// The CLI context: the store around the current directory, no limits beyond the runtime's.
     pub fn cli() -> Result<Ctx, Vec<Diagnostic>> {
         let cwd = std::env::current_dir().map_err(|e| vec![Diagnostic::store_error(format!("no current directory: {e}"))])?;
-        Ok(Ctx { store: StoreAt::Discover(cwd), stdin: None, timeout: None, test_budget: None, max_stdout: None, signer: None, space: None, session: None })
+        Ok(Ctx { store: StoreAt::Discover(cwd), stdin: None, timeout: None, test_budget: None, max_stdout: None, signer: None, space: None, session: None, replay: false })
     }
 
     /// The store; `create` makes it under `Root` if it does not exist yet (only `define` does,
@@ -416,6 +418,20 @@ impl Ctx {
         }
         if let Some(max) = self.max_stdout {
             r = r.with_stdout_limit(max);
+        }
+        let model_db = std::env::var("QAL_MODEL_DB").ok().map(PathBuf::from).or_else(|| {
+            match &self.store {
+                StoreAt::Discover(dir) => qal_store::project_of(dir).map(|p| p.join(qal_store::STORE_DIR).join("store.db")),
+                StoreAt::Root(root) => Some(root.join(qal_store::STORE_DIR).join("store.db")),
+            }
+        }).or_else(|| {
+            std::env::var("HOME").ok().map(|h| PathBuf::from(h).join(".config/qal/model_calls.db"))
+        });
+        if let Some(p) = model_db {
+            r = r.with_model_db(&p);
+        }
+        if self.replay || matches!(entry, Entry::Tests) {
+            r = r.with_replay(true);
         }
         Ok(r)
     }

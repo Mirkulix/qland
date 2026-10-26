@@ -488,6 +488,7 @@ impl Server {
             signer: team.and_then(|t| t.signer.clone()),
             space: team.map(|t| t.space.id().to_string()),
             session: team.map(|t| t.session.clone()),
+            replay: false,
         }
     }
 
@@ -1268,7 +1269,7 @@ fn tool_params(tool: &str) -> &'static [&'static str] {
 pub fn tools() -> J {
     let s = |d: &str| json!({"type": "string", "description": d});
     let list = |d: &str| json!({"type": "array", "items": {"type": "string"}, "description": d});
-    let allow = list("Effects to grant beyond io (always granted): \"time\", \"rand\", \"fs:<dir>\" (a project directory; hidden entries are never reachable), \"db:mem\", \"db\", \"db:<name>\", \"net:<host>[:port]\" (see the topic services).");
+    let allow = list("Effects to grant beyond io (always granted): \"time\", \"rand\", \"model\", \"fs:<dir>\" (a project directory; hidden entries are never reachable), \"db:mem\", \"db\", \"db:<name>\", \"net:<host>[:port]\" (see the topic services).");
     // The full list once (qal_run); the other tools that run code point to it.
     let allow_short = list("Effects to grant, as for qal_run (io is always granted).");
     let allow_request = allow_short.clone();

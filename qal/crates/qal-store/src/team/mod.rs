@@ -40,7 +40,7 @@ pub const META_OWNER: &str = "owner";
 /// The largest `history.id` when the team began: later rows each belong to a record.
 pub const META_TEAM_HISTORY: &str = "team_history_from";
 /// The effects agents may grant in a team store unless the owner changes `meta.team_allow`.
-pub const DEFAULT_ALLOW: &str = "io,time,rand,db:mem";
+pub const DEFAULT_ALLOW: &str = "io,time,rand,db:mem,model";
 /// The first line of every record body.
 pub const RECORD_PREFIX: &str = "qal-record-v1\n";
 /// The `prev` of the first record.

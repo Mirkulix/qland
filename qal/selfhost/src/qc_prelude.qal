@@ -84,6 +84,28 @@ fn qc_prelude_types() -> List[QcTypeDef] =
       QcVariant { name: "DbTooLarge", fields: [] }
     ])
   } in
+  let model_resp = QcTypeDef {
+    name: "ModelResponse",
+    params: [],
+    body: QcBodyRecord([
+      QcFieldType { name: "text", ty: str_ty },
+      QcFieldType { name: "model", ty: str_ty },
+      QcFieldType { name: "in_tokens", ty: int_ty },
+      QcFieldType { name: "out_tokens", ty: int_ty },
+      QcFieldType { name: "cost_microcents", ty: int_ty }
+    ])
+  } in
+  let model_error = QcTypeDef {
+    name: "ModelError",
+    params: [],
+    body: QcBodyEnum([
+      QcVariant { name: "ModelDenied", fields: [str_ty] },
+      QcVariant { name: "ModelBudgetExceeded", fields: [int_ty] },
+      QcVariant { name: "ModelFailed", fields: [str_ty] },
+      QcVariant { name: "ModelInvalid", fields: [str_ty] },
+      QcVariant { name: "ModelTimeout", fields: [] }
+    ])
+  } in
   let accum_t = QcTypeDef {
     name: "Accum",
     params: ["T"],
@@ -92,12 +114,12 @@ fn qc_prelude_types() -> List[QcTypeDef] =
       QcVariant { name: "AccPush", fields: [QcTApp("Accum", [QcTNamed("T")]), QcTNamed("T")] }
     ])
   } in
-  [http_header, http_req, http_resp, http_call, net_error, sql_val, db_rows, db_error, accum_t]
+  [http_header, http_req, http_resp, http_call, net_error, sql_val, db_rows, db_error, model_resp, model_error, accum_t]
 
 fn qc_prelude_is_type(name: Str) -> Bool =
   name == "HttpHeader" || name == "HttpRequest" || name == "HttpResponse" ||
   name == "HttpCall" || name == "NetError" || name == "SqlValue" ||
-  name == "DbRows" || name == "DbError" || name == "Accum"
+  name == "DbRows" || name == "DbError" || name == "ModelResponse" || name == "ModelError" || name == "Accum"
 
 fn qc_prelude_arity(name: Str) -> Option[Int] =
   if name == "Accum" then Some(1)
@@ -261,13 +283,13 @@ fn qc_diag_instantiation_limit(def: Str, path: Str, instance: Str, max_inst: Int
 fn qc_diag_reserved_name(def: Str, path: Str, name: Str) -> QcDiag =
   qc_diag_hint(
     qc_diag_new("E0240", "reserved_name", def, path, "`" ++ name ++ "` is a built-in prelude name"),
-    "prelude types (HttpHeader, HttpRequest, HttpResponse, HttpCall, NetError, SqlValue, DbRows, DbError, Accum) and their variants exist in every program; choose another name"
+    "prelude types (HttpHeader, HttpRequest, HttpResponse, HttpCall, NetError, SqlValue, DbRows, DbError, ModelResponse, ModelError, Accum) and their variants exist in every program; choose another name"
   )
 
 fn qc_diag_prelude_shadowed(def: Str, path: Str, callee: Str) -> QcDiag =
   qc_diag_hint(
     qc_diag_new("E0240", "reserved_name", def, path, "`" ++ callee ++ "` needs the prelude types, but this codebase defines prelude names itself"),
-    "rename the stored types (qal_rename) or redefine the enums whose names or variants are prelude names (HttpHeader, HttpRequest, HttpResponse, HttpCall, NetError, SqlValue, DbRows, DbError, Accum and their variants)"
+    "rename the stored types (qal_rename) or redefine the enums whose names or variants are prelude names (HttpHeader, HttpRequest, HttpResponse, HttpCall, NetError, SqlValue, DbRows, DbError, ModelResponse, ModelError, Accum and their variants)"
   )
 
 fn qc_diag_sql_not_literal(def: Str, path: Str, callee: Str) -> QcDiag =
@@ -290,8 +312,11 @@ fn qc_diag_missing_field(def: Str, path: Str, record_name: Str, field_name: Str)
 
 test qc_prelude_test =
   let ts = qc_prelude_types() in
-  len(ts) == 9 &&
+  len(ts) == 11 &&
   qc_prelude_is_type("Accum") &&
+  qc_prelude_is_type("ModelResponse") &&
   qc_prelude_is_reserved("SqlInt") &&
+  qc_prelude_is_reserved("ModelDenied") &&
   qc_prelude_variant_owner("AccPush") == Some("Accum") &&
+  qc_prelude_variant_owner("ModelDenied") == Some("ModelError") &&
   qc_foreign_name_hint("String") == Some("QAL has no type `String`; use `Str`")

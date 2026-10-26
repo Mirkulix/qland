@@ -330,6 +330,9 @@ fn with_ctx(f: impl FnOnce(&Ctx) -> Reply) -> ExitCode {
 }
 
 fn run_command(cmd: &str, args: &[String]) -> ExitCode {
+    let replay = args.iter().any(|a| a == "--replay");
+    let filtered: Vec<String> = args.iter().filter(|a| *a != "--replay").cloned().collect();
+    let args = filtered.as_slice();
     // Targets: `call` needs a file and a function, or a stored function; `run` one file or name;
     // `test` one file or any number of names (and no program arguments).
     let targets = |t: &[String]| match cmd {
@@ -370,10 +373,11 @@ fn run_command(cmd: &str, args: &[String]) -> ExitCode {
         Some(src) => Source::Text(src),
         None => Source::Store,
     };
-    let c = match ctx() {
+    let mut c = match ctx() {
         Ok(c) => c,
         Err(code) => return code,
     };
+    c.replay = replay;
     emit(match cmd {
         "test" => ops::test(&c, &source, perms, if from_file { &[] } else { &s.targets }, seed),
         "call" => {

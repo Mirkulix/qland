@@ -13,7 +13,7 @@ impl Cx<'_> {
         }
         let (a, b) = (self.sub.fresh(), self.sub.fresh());
         let (builtin, params, ret) = signature(name, a, b)?;
-        if !self.g.prelude && matches!(builtin, Builtin::Http | Builtin::DbExec | Builtin::DbQuery | Builtin::AccList) {
+        if !self.g.prelude && matches!(builtin, Builtin::Http | Builtin::DbExec | Builtin::DbQuery | Builtin::AccList | Builtin::ModelAsk) {
             self.diags.push(Diagnostic::prelude_shadowed(self.def, path, name));
             self.infer_all(args, path);
             return Some(self.poison());
@@ -165,6 +165,7 @@ fn signature(name: &str, a: Type, b: Type) -> Option<(Builtin, Vec<Type>, Type)>
         "http" => (B::Http, vec![named("HttpCall")], Type::result(named("HttpResponse"), named("NetError"))),
         "db_exec" => (B::DbExec, vec![Type::Str, list(named("SqlValue"))], Type::result(Type::Int, named("DbError"))),
         "db_query" => (B::DbQuery, vec![Type::Str, list(named("SqlValue"))], Type::result(named("DbRows"), named("DbError"))),
+        "model_ask" => (B::ModelAsk, vec![Type::Str, Type::Str], Type::result(named("ModelResponse"), named("ModelError"))),
         // Phase 5a (self-hosting spec §5.2): pure, allocation-free or linear building blocks.
         "bit_and" => (B::BitAnd, vec![Type::Int, Type::Int], Type::Int),
         "bit_or" => (B::BitOr, vec![Type::Int, Type::Int], Type::Int),

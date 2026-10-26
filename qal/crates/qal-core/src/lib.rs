@@ -14,5 +14,5 @@ pub mod tform;
 
 pub use printer::{print_expr, print_pat, print_program};
 
-pub const KNOWN_EFFECTS: &[&str] = &["io", "fs", "time", "rand", "net", "db"];
+pub const KNOWN_EFFECTS: &[&str] = &["io", "fs", "time", "rand", "net", "db", "model"];
 pub const MAX_INSTANCES: usize = 1000;

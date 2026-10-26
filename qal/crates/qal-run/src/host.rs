@@ -42,10 +42,12 @@ pub struct Permissions {
     pub db_dir: Option<PathBuf>,
     /// Hosts outgoing HTTP may reach (`net:<host>[:port]`, repeatable). Empty = no `net`.
     pub net: Vec<NetGrant>,
+    /// Whether the `model` effect is granted.
+    pub model: bool,
 }
 
 /// Known grants, for error messages.
-const KNOWN_GRANTS: &str = "io, time, rand, fs:<dir>, net:<host>[:port], db, db:<name>, db:mem";
+const KNOWN_GRANTS: &str = "io, time, rand, fs:<dir>, net:<host>[:port], db, db:<name>, db:mem, model";
 
 /// Adds a database grant (only one per execution).
 fn grant_db(p: &mut Permissions, item: &str) -> Result<(), String> {
@@ -70,6 +72,7 @@ impl Permissions {
                 "io" => p.io = true,
                 "time" => p.time = true,
                 "rand" => p.rand = true,
+                "model" => p.model = true,
                 "fs" => return Err("`fs` needs a directory: `fs:<dir>`, e.g. `fs:./data`".into()),
                 _ if is_db_item(item) => grant_db(&mut p, item)?,
                 _ if item == "net" || item.starts_with("net:") => p.net.push(NetGrant::parse(item)?),
@@ -94,6 +97,7 @@ impl Permissions {
                 "io" => p.io = true,
                 "time" => p.time = true,
                 "rand" => p.rand = true,
+                "model" => p.model = true,
                 "fs" => return Err("`fs` needs a directory: `fs:<dir>` relative to the project root, e.g. `fs:data` or `fs:.`".into()),
                 _ if is_db_item(item) => grant_db(&mut p, item)?,
                 _ if item == "net" || item.starts_with("net:") => p.net.push(NetGrant::parse(item)?),
@@ -133,6 +137,7 @@ impl Permissions {
             "fs" => !self.fs.is_empty(),
             "db" => self.db.is_some(),
             "net" => !self.net.is_empty(),
+            "model" => self.model,
             _ => false,
         }
     }
@@ -176,11 +181,13 @@ pub struct Limits {
     pub db_max_mib: usize,
     /// Outgoing `http` calls per execution.
     pub net_calls: usize,
+    /// Model calls per execution.
+    pub model_calls: usize,
 }
 
 impl Default for Limits {
     fn default() -> Limits {
-        Limits { fs_write_bytes: 64 << 20, fs_writes: 256, db_max_rows: 10_000, db_max_mib: 1024, net_calls: 16 }
+        Limits { fs_write_bytes: 64 << 20, fs_writes: 256, db_max_rows: 10_000, db_max_mib: 1024, net_calls: 16, model_calls: 50 }
     }
 }
 
@@ -227,6 +234,9 @@ pub struct HostState {
     /// The execution's database connection (inside its transaction), if `db` is granted and used.
     pub db: Option<Db>,
     pub net_calls: usize,
+    pub model_calls: usize,
+    pub replay_only: bool,
+    pub model_db_path: Option<PathBuf>,
     /// When the execution's wall-clock limit ends (outgoing requests never wait longer).
     pub deadline: Option<std::time::Instant>,
     /// Name resolution for `net` (the system resolver; replaced in tests).
@@ -257,6 +267,9 @@ impl HostState {
             fs_writes: 0,
             db: None,
             net_calls: 0,
+            model_calls: 0,
+            replay_only: false,
+            model_db_path: None,
             deadline: None,
             lookup: net::system_lookup,
             mem_bytes: 0,
@@ -498,6 +511,45 @@ fn net_call(c: &mut Caller<'_, HostState>, ptr: i32) -> Result<i32, wasmtime::Er
     write_value(c, &Type::result(named("HttpResponse"), named("NetError")), &v)
 }
 
+/// Runs `model_ask` for the guest: checks budget, executes or replays call, and writes Result into guest memory.
+fn model_call(c: &mut Caller<'_, HostState>, prompt_ptr: i32, schema_ptr: i32) -> Result<i32, wasmtime::Error> {
+    let budget = c.data().budgets.model_calls;
+    let calls = c.data().model_calls + 1;
+    if calls > budget {
+        return Err(budget_exceeded(c, "model_calls", budget, calls));
+    }
+    c.data_mut().model_calls = calls;
+    let prompt = guest_str(c, prompt_ptr)?;
+    let schema = guest_str(c, schema_ptr)?;
+    let db_path = c.data().model_db_path.clone().unwrap_or_else(crate::model::default_db_path);
+    let replay_only = c.data().replay_only;
+
+    let result = crate::model::ask(&prompt, &schema, None, Some(&db_path), replay_only);
+    let v = match result {
+        Ok(resp) => {
+            charge(c, resp.text.len() + resp.model.len() + 64)?;
+            ok(Value::Record(
+                "ModelResponse".into(),
+                vec![
+                    ("text".into(), Value::Str(resp.text)),
+                    ("model".into(), Value::Str(resp.model)),
+                    ("in_tokens".into(), Value::Int(resp.in_tokens)),
+                    ("out_tokens".into(), Value::Int(resp.out_tokens)),
+                    ("cost_microcents".into(), Value::Int(resp.cost_microcents)),
+                ],
+            ))
+        }
+        Err(e) => err(match e {
+            crate::model::ModelErr::Denied(m) => variant("ModelDenied", vec![Value::Str(m)]),
+            crate::model::ModelErr::BudgetExceeded(cents) => variant("ModelBudgetExceeded", vec![Value::Int(cents)]),
+            crate::model::ModelErr::Failed(m) => variant("ModelFailed", vec![Value::Str(m)]),
+            crate::model::ModelErr::Invalid(m) => variant("ModelInvalid", vec![Value::Str(m)]),
+            crate::model::ModelErr::Timeout => variant("ModelTimeout", vec![]),
+        }),
+    };
+    write_value(c, &Type::result(named("ModelResponse"), named("ModelError")), &v)
+}
+
 /// Allocates a Str in guest memory via the exported allocator (which may fail with out_of_memory).
 pub fn new_str(c: &mut Caller<'_, HostState>, s: &str) -> Result<i32, wasmtime::Error> {
     new_bytes(c, s.as_bytes())
@@ -705,6 +757,9 @@ pub fn link(linker: &mut Linker<HostState>, perms: &Permissions) -> Result<(), w
             let offset = if span == 0 { r } else { r % span };
             lo.wrapping_add(offset as i64)
         })?;
+    }
+    if perms.model {
+        linker.func_wrap(HOST_MODULE, host::MODEL_ASK, |mut c: Caller<'_, HostState>, prompt: i32, schema: i32| model_call(&mut c, prompt, schema))?;
     }
     Ok(())
 }

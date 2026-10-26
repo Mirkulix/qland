@@ -1548,7 +1548,7 @@ fn qc_resolve_inner(g: QcGlobals, t: QcType, tps: List[Str], eps: List[Str], def
       let ps_res = qc_resolve_list_loop(g, ps, tps, eps, def_name, path, r_res.diags, 0, AccEnd) in
       let diags_effs = fold(effs, ps_res.diags, fn(st: List[QcDiag], ef: Str) =>
         if !qc_is_known_effect(ef) && !qc_contains_str_loop(eps, ef, 0) then
-          let d = qc_diag_hint(qc_diag_unknown_name(def_name, path, ef), "known effects: io, fs, time, rand, net, db; an effect parameter is declared in the function's brackets: `fn f[!" ++ ef ++ "](...)`") in
+          let d = qc_diag_hint(qc_diag_unknown_name(def_name, path, ef), "known effects: io, fs, time, rand, net, db, model; an effect parameter is declared in the function's brackets: `fn f[!" ++ ef ++ "](...)`") in
           push(st, d)
         else st
       ) in
@@ -1567,7 +1567,7 @@ fn qc_resolve_list_loop(g: QcGlobals, xs: List[QcType], tps: List[Str], eps: Lis
     qc_resolve_list_loop(g, xs, tps, eps, def_name, path, res.diags, idx + 1, AccPush(acc, res.ty))
 
 fn qc_is_known_effect(e: Str) -> Bool =
-  e == "io" || e == "fs" || e == "time" || e == "rand" || e == "net" || e == "db"
+  e == "io" || e == "fs" || e == "time" || e == "rand" || e == "net" || e == "db" || e == "model"
 
 # Checking functions and tests
 fn qc_check_fn(f: QcFnDef, g: QcGlobals, diags: List[QcDiag]) -> QcCheckFnRes =
@@ -1675,7 +1675,7 @@ fn qc_check_fn_effects_loop(def_name: Str, effs: List[Str], eparams: List[Str], 
   else
     let ef = list_at(effs, idx) in
     let next_diags = if !qc_is_known_effect(ef) && !qc_contains_str_loop(eparams, ef, 0) then
-      push(diags, qc_diag_hint(qc_diag_unknown_name(def_name, "effects[" ++ from_int(idx) ++ "]", ef), "known effects: io, fs, time, rand, net, db; an effect parameter is declared in the brackets: `fn " ++ def_name ++ "[!" ++ ef ++ "](...)`"))
+      push(diags, qc_diag_hint(qc_diag_unknown_name(def_name, "effects[" ++ from_int(idx) ++ "]", ef), "known effects: io, fs, time, rand, net, db, model; an effect parameter is declared in the brackets: `fn " ++ def_name ++ "[!" ++ ef ++ "](...)`"))
     else diags in
     qc_check_fn_effects_loop(def_name, effs, eparams, next_diags, idx + 1)
 
@@ -1928,7 +1928,7 @@ fn qc_resolve_type_bodies_loop(g: QcGlobals, diags: List[QcDiag], legacy: Bool, 
   if k >= len(g.tp.types) then QcGlobalsDiagsRes { g: g, diags: diags }
   else
     let t = list_at(g.tp.types, k) in
-    let prelude_count = if legacy then 0 else 9 in
+    let prelude_count = if legacy then 0 else 11 in
     let diags_tp = if k >= prelude_count then qc_check_tparams(g, t.name, t.params, diags) else diags in
     let body_res = match t.body {
       QcBodyRecord(fs) =>

@@ -1,5 +1,5 @@
 # qal-pkg 1
-# package std 7df6acc501ea929b95e67df267f4e4a5d54fc356891be34903be794c04cacf96
+# package std 157299b76ea5a1e74bcc3a0bb266d916f478495c0eec487c6481c604da08b62e
 # def std.db.bool c29298b8d26ca83a23809a69e66cfd5d0bd07963ee88e9730f59dd0b95d4d2f2 std-db-1
 # def std.db.cell 2ca80971ee113fe8ecc534b59b6293dff9f4f901f74e54e98e968eaa1f27d208 std-db-1
 # def std.db.col 272fc8a8cc034d273733e12569a7bd0da217a2da0480d25045004b5ab52db090 std-db-1
@@ -127,6 +127,10 @@
 # def std.json.test_roundtrip2 5e03ccb8cabb0738b9a05ff13da7ba7cfa3e3d9ac16b82d503826d2ed80646ae std-json-1
 # def std.json.test_strings 27fbd77a8d0a2c311195b8798db724aa9713d2dd631cef5840ba9f1384248999 std-json-1
 # def std.json.test_ws eb79bf403715741d5069a32538be534b04e05318738caa1abf54f10cb2127174 std-json-1
+# def std.model.ask bc0489ecc220891671e49d0feabae80781df82be91f67676a14455394ec431f8 std-model-1
+# def std.model.ask_full 7f43929528a19ff0b335bb86e4a37e6fbe148b0c3ce8c857d319822c39214d6d std-model-1
+# def std.model.ask_json 10d2194fead2fd36afa12a88f94f98b48d8c66c6fdbbc2dadc92ed75c699894a std-model-1
+# def std.model.test_ask_syntax e8ba2858c3e82f85d8df09800fd9c428fa2efc0b97ab365754b8ac0a650088c3 std-model-1
 # def std.route.Result d11e6cc6c8515e35a8751a6fcab87f6d125f018b84c45fb722b059ff29da6a02 std-route-1
 # def std.route.Route 0a4952d716186a1287e22ae1ac0aa5df5d77696d869b5cb1a2760cb82a80101a std-route-1
 # def std.route.all_ok 0a792e2563e07a46a9175047c11363214a35858989cfce66d97f0049dde8fa29 std-route-1
@@ -261,6 +265,14 @@ fn std.json.nest(n: Int, open: Str, close: Str) -> Str
 
 fn std.json.simple_esc(e: Str) -> Str
 = if e == "\"" then "\"" else if e == "\\" then "\\" else if e == "/" then "/" else if e == "b" then from_char_code(8) else if e == "f" then from_char_code(12) else if e == "n" then "\n" else if e == "r" then "\r" else if e == "t" then "\t" else ""
+
+fn std.model.ask(prompt: Str, schema: Str) -> Result[Str, ModelError] !model
+= match model_ask(prompt, schema) { Ok(resp) => Ok(resp.text), Err(err) => Err(err) }
+
+fn std.model.ask_full(prompt: Str, schema: Str) -> Result[ModelResponse, ModelError] !model
+= model_ask(prompt, schema)
+
+test std.model.test_ask_syntax = true
 
 type std.route.Route[A] = { method: Str, pattern: Str, tag: A }
 
@@ -783,6 +795,9 @@ test std.json.test_roundtrip2 = let j = std.json.obj([std.json.field("a", std.js
 test std.json.test_strings = std.json.parse("\"\\\"\\\\\\/\\b\\f\\n\\r\\t\\u0000\\u00E9\\uD83D\\uDE00\\u007f\"") == Ok(std.json.Str("\"\\/\u{8}\u{c}\n\r\t\0é😀\u{7f}")) && std.json.parse("\"😀é\"") == Ok(std.json.Str("😀é")) && std.json.epos("\"😀\\x\"") == 3 && std.json.parse("\"\"") == Ok(std.json.Str("")) && std.json.epos("\"\\ud83d\\u0041\"") == 1 && std.json.epos("\"\\ud83d\\ude0\"") == 12 && std.json.epos("\"\\ud83d") == 7
 
 test std.json.test_ws = std.json.parse(" \t\n\r[ 1 , 2 ] \n") == Ok(std.json.arr([std.json.int(1), std.json.int(2)])) && std.json.epos(" 1") == 0 && std.json.epos("\u{c}1") == 0 && std.json.epos("1\u{b}") == 1 && std.json.epos("// c\n1") == 0 && std.json.epos("[1,/*x*/2]") == 3 && std.json.epos("'a'") == 0 && std.json.epos("{\"a\":1,}") == 7
+
+fn std.model.ask_json(prompt: Str, schema: Str) -> Result[std.json.Json, ModelError] !model
+= match model_ask(prompt, schema) { Ok(resp) => match std.json.parse(resp.text) { Ok(j) => Ok(j), Err(e) => Err(ModelInvalid(e.message)) }, Err(err) => Err(err) }
 
 fn std.json.parse_value(cs: List[Str], i: Int, depth: Int) -> Result[std.json.Parsed, std.json.Error]
 = let c = std.json.ch(cs, i) in if c == "{" then std.json.parse_obj(cs, i, depth) else if c == "[" then std.json.parse_arr(cs, i, depth) else if c == "\"" then match std.json.str_loop(cs, i + 1, map_new(), 0) { Ok(r) => Ok(std.json.Parsed { value: std.json.Str(r.text), next: r.next }), Err(e) => Err(e) } else if c == "t" then std.json.lit_loop(cs, i, chars("true"), 0, std.json.Bool(true)) else if c == "f" then std.json.lit_loop(cs, i, chars("false"), 0, std.json.Bool(false)) else if c == "n" then std.json.lit_loop(cs, i, chars("null"), 0, std.json.Null) else if c == "-" || std.json.dig(c) then std.json.parse_number(cs, i) else Err(std.json.err_at(i, if c == "" then "unexpected end of input" else "unexpected character"))

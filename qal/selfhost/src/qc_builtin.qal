@@ -34,6 +34,8 @@ fn qc_builtin_signature(name: Str, a: QcType, b: QcType) -> Option[QcBuiltinSig]
   let sql_val_ty = QcTNamed("SqlValue") in
   let db_rows_ty = QcTNamed("DbRows") in
   let db_err_ty = QcTNamed("DbError") in
+  let model_resp_ty = QcTNamed("ModelResponse") in
+  let model_err_ty = QcTNamed("ModelError") in
   let accum_a_ty = QcTApp("Accum", [a]) in
 
   if name == "slice" then Some(QcBuiltinSig { builtin: QcBSlice, params: [t_str, t_int, t_int], ret: t_str })
@@ -106,6 +108,7 @@ fn qc_builtin_signature(name: Str, a: QcType, b: QcType) -> Option[QcBuiltinSig]
   else if name == "bytes_join" then Some(QcBuiltinSig { builtin: QcBBytesJoin, params: [QcTList(t_bytes)], ret: t_bytes })
   else if name == "sha256" then Some(QcBuiltinSig { builtin: QcBSha256, params: [t_bytes], ret: t_bytes })
   else if name == "todo" then Some(QcBuiltinSig { builtin: QcBTodo, params: [], ret: a })
+  else if name == "model_ask" then Some(QcBuiltinSig { builtin: QcBModelAsk, params: [t_str, t_str], ret: QcTResult(model_resp_ty, model_err_ty) })
   else None
 
 fn qc_builtin_arity(name: Str) -> Option[Int] =
@@ -135,6 +138,7 @@ fn qc_builtin_effect(b: QcBuiltin) -> Option[Str] =
     QcBHttp => Some("net"),
     QcBDbExec => Some("db"),
     QcBDbQuery => Some("db"),
+    QcBModelAsk => Some("model"),
     _ => None
   }
 
@@ -144,6 +148,7 @@ fn qc_builtin_needs_prelude(b: QcBuiltin) -> Bool =
     QcBDbExec => true,
     QcBDbQuery => true,
     QcBAccList => true,
+    QcBModelAsk => true,
     _ => false
   }
 
@@ -151,6 +156,9 @@ test qc_builtin_test =
   qc_builtin_is_name("len") &&
   qc_builtin_is_name("map") &&
   qc_builtin_is_name("sha256") &&
+  qc_builtin_is_name("model_ask") &&
   qc_builtin_arity("slice") == Some(3) &&
+  qc_builtin_arity("model_ask") == Some(2) &&
   qc_builtin_effect(QcBPrint) == Some("io") &&
+  qc_builtin_effect(QcBModelAsk) == Some("model") &&
   qc_builtin_effect(QcBSha256) == None

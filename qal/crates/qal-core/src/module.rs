@@ -81,8 +81,10 @@ pub mod host {
     pub const DB_EXEC: &str = "db.exec";
     /// `(sql: Str ptr, params: List[SqlValue] ptr) -> Result[DbRows, DbError] ptr`
     pub const DB_QUERY: &str = "db.query";
+    /// `(prompt: Str ptr, schema: Str ptr) -> Result[ModelResponse, ModelError] ptr`
+    pub const MODEL_ASK: &str = "model.ask";
     /// Every effect host function (the index is reported for a denied call: append only).
-    pub const EFFECT_FNS: [&str; 10] = [PRINT, READ_LINE, READ_FILE, WRITE_FILE, NOW_MS, RAND_INT, READ_ALL, NET_HTTP, DB_EXEC, DB_QUERY];
+    pub const EFFECT_FNS: [&str; 11] = [PRINT, READ_LINE, READ_FILE, WRITE_FILE, NOW_MS, RAND_INT, READ_ALL, NET_HTTP, DB_EXEC, DB_QUERY, MODEL_ASK];
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub enum ValType {
@@ -101,7 +103,7 @@ pub mod host {
             UTF8_VALID | SHA256 => (&[I32], &[I32]),
             PRINT => (&[I32], &[]),
             NET_HTTP => (&[I32], &[I32]),
-            DB_EXEC | DB_QUERY => (&[I32, I32], &[I32]),
+            DB_EXEC | DB_QUERY | MODEL_ASK => (&[I32, I32], &[I32]),
             READ_LINE | READ_ALL => (&[], &[I32]),
             READ_FILE => (&[I32], &[I32, I32]),
             WRITE_FILE => (&[I32, I32], &[I32, I32]),

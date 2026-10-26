@@ -46,7 +46,7 @@ fn define_holds_the_write_lock_briefly() {
     let c = store.change_open(&arch, &qal_store::team::change::OpenArgs { title: "lock".into(), ..Default::default() }).unwrap();
     let change = c["change"].as_str().unwrap().to_string();
     let signer = Arc::new(arch);
-    let ctx = Ctx { store: StoreAt::Root(project.clone()), stdin: None, timeout: None, test_budget: None, max_stdout: None, signer: Some(signer), space: Some(change), session: Some("s000000000001".into()) };
+    let ctx = Ctx { store: StoreAt::Root(project.clone()), stdin: None, timeout: None, test_budget: None, max_stdout: None, signer: Some(signer), space: Some(change), session: Some("s000000000001".into()), replay: false };
     let r = ops::define(&ctx, &project_source(), "x", false);
     assert_eq!(r.code, 0, "{:?}", r.out.diagnostics);
     let names = store.query(&qal_store::Query::default()).unwrap().len();

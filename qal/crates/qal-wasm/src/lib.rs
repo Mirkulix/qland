@@ -95,6 +95,7 @@ pub fn compile_with(p: &TProgram, entry: &Entry, opts: &CompileOptions) -> Resul
             Builtin::Http => host::NET_HTTP,
             Builtin::DbExec => host::DB_EXEC,
             Builtin::DbQuery => host::DB_QUERY,
+            Builtin::ModelAsk => host::MODEL_ASK,
             _ => continue,
         };
         imports.push(name);

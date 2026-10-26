@@ -1072,3 +1072,66 @@ fn incremental_define_equals_the_full_one() {
     assert_eq!(hashes(&verified), hashes(&full));
     assert!(hashes(&full).iter().any(|(n, _)| n == "day_of"));
 }
+
+#[test]
+fn model_effect_run_and_replay_offline() {
+    let dir = project("model-eval");
+    assert_eq!(qal_in(&dir, &["init"]).0, 0);
+
+    let src = r#"
+type Eval = { category: Str, reason: Str }
+
+fn classify(q: Str) -> Result[Eval, Str] !model =
+  match std.model.ask_json(q, "{\"type\":\"object\"}") {
+    Ok(j) => Ok(Eval {
+      category: match std.json.get(j, "category") { Some(v) => match std.json.as_str(v) { Some(s) => s, None => "" }, None => "" },
+      reason: match std.json.get(j, "reason") { Some(v) => match std.json.as_str(v) { Some(s) => s, None => "" }, None => "" }
+    }),
+    Err(_) => Err("error")
+  }
+
+fn main(args: List[Str]) -> Int !model !io =
+  match classify("sample input") {
+    Ok(e) => { print(e.category); 0 },
+    Err(_) => 1
+  }
+"#;
+    let file = write(&dir, "main.qal", src);
+    let (code, def_res) = qal_in(&dir, &["define", &file, "--agent", "eval-agent"]);
+    assert_eq!(code, 0, "define failed: {def_res}");
+
+    // 1. Run without --allow model: must fail / refuse ungranted effect
+    let out_refused = Command::new(env!("CARGO_BIN_EXE_qal"))
+        .args(["run", "main", "--allow", "io"])
+        .current_dir(&dir)
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    assert_ne!(out_refused.status.code(), Some(0));
+
+    // 2. Run with mock response: executes and records into SQLite store
+    let out_mock = Command::new(env!("CARGO_BIN_EXE_qal"))
+        .args(["run", "main", "--allow", "model,io"])
+        .current_dir(&dir)
+        .env("QAL_MODEL_MOCK", "{\"category\": \"lang.type\", \"reason\": \"type mismatch\"}")
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    assert_eq!(out_mock.status.code(), Some(0));
+    let v_mock: Value = serde_json::from_slice(&out_mock.stdout).unwrap();
+    assert_eq!(v_mock["exit_code"], 0);
+    assert_eq!(v_mock["stdout"], "lang.type\n");
+
+    // 3. Offline replay without QAL_MODEL_MOCK: succeeds from cache
+    let out_replay = Command::new(env!("CARGO_BIN_EXE_qal"))
+        .args(["run", "main", "--allow", "model,io", "--replay"])
+        .current_dir(&dir)
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    assert_eq!(out_replay.status.code(), Some(0));
+    let v_replay: Value = serde_json::from_slice(&out_replay.stdout).unwrap();
+    assert_eq!(v_replay["exit_code"], 0);
+    assert_eq!(v_replay["stdout"], "lang.type\n");
+}
+

@@ -109,6 +109,7 @@ builtins! {
     BytesJoin => "bytes_join",
     Sha256 => "sha256",
     Todo => "todo",
+    ModelAsk => "model_ask",
 }
 
 impl Builtin {
@@ -121,6 +122,7 @@ impl Builtin {
             Builtin::RandInt => Some("rand"),
             Builtin::Http => Some("net"),
             Builtin::DbExec | Builtin::DbQuery => Some("db"),
+            Builtin::ModelAsk => Some("model"),
             _ => None,
         }
     }
@@ -134,7 +136,7 @@ impl Builtin {
             | B::CharCode | B::FromCharCode | B::ToUpper | B::ToLower | B::MapSize | B::MapKeys | B::MapValues | B::ToBytes | B::BytesLen | B::BytesFrom | B::BytesToList | B::BytesToStr | B::Http
             | B::BitNot | B::FloatBits | B::FloatOfBits | B::AccList | B::BytesJoin | B::Sha256 => 1,
             B::Split | B::Join | B::Contains | B::StartsWith | B::Get | B::Push | B::Concat | B::Map | B::Filter | B::Range | B::WriteFile | B::RandInt | B::IndexOf | B::MapGet | B::MapDel | B::MapHas
-            | B::BytesGet | B::Compare | B::DbExec | B::DbQuery | B::BitAnd | B::BitOr | B::BitXor | B::Shl | B::Shr | B::Ushr | B::ListAt | B::BytesAt => 2,
+            | B::BytesGet | B::Compare | B::DbExec | B::DbQuery | B::BitAnd | B::BitOr | B::BitXor | B::Shl | B::Shr | B::Ushr | B::ListAt | B::BytesAt | B::ModelAsk => 2,
             B::Slice | B::Fold | B::Replace | B::MapPut | B::BytesSlice => 3,
         }
     }
@@ -148,7 +150,7 @@ impl Builtin {
         "map_del", "map_has", "map_size", "map_keys", "map_values", "to_bytes", "bytes_len", "bytes_get", "bytes_slice",
         "bytes_from", "bytes_to_list", "bytes_to_str", "compare", "http", "db_exec", "db_query", "bit_and", "bit_or",
         "bit_xor", "bit_not", "shl", "shr", "ushr", "float_bits", "float_of_bits", "list_at", "bytes_at", "acc_list",
-        "bytes_join", "sha256", "todo",
+        "bytes_join", "sha256", "todo", "model_ask",
     ];
 }
 
@@ -469,11 +471,11 @@ mod tests {
         assert_eq!(names, from_variants);
         // 57 up to Phase 4, plus the 14 self-hosting built-ins of Phase 5a and `todo` of Phase 4b (appended, so the
         // order of the earlier ones, which fixes import order in modules, is unchanged).
-        assert_eq!(Builtin::ALL.len(), 72);
+        assert_eq!(Builtin::ALL.len(), 73);
         assert_eq!(Builtin::ALL[57], Builtin::BitAnd);
         assert_eq!(Builtin::ALL[0], Builtin::StrLen);
         assert_eq!(Builtin::ReadAll.effect(), Some("io"));
         assert_eq!((Builtin::SortStr.effect(), Builtin::Replace.effect()), (None, None));
-        assert_eq!((Builtin::Http.effect(), Builtin::DbExec.effect(), Builtin::DbQuery.effect()), (Some("net"), Some("db"), Some("db")));
+        assert_eq!((Builtin::Http.effect(), Builtin::DbExec.effect(), Builtin::DbQuery.effect(), Builtin::ModelAsk.effect()), (Some("net"), Some("db"), Some("db"), Some("model")));
     }
 }

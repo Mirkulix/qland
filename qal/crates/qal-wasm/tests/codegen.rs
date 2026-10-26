@@ -404,6 +404,7 @@ fn net_and_db_calls_import_their_host_functions() {
     assert_eq!(m.imports, vec![host::FAIL, host::NET_HTTP, host::DB_EXEC, host::DB_QUERY]);
     assert_eq!(host::signature(host::DB_QUERY), Some((&[host::ValType::I32, host::ValType::I32][..], &[host::ValType::I32][..])));
     assert_eq!(host::effect(host::NET_HTTP), Some("net"));
+    assert_eq!(host::effect(host::MODEL_ASK), Some("model"));
     // The prelude types travel with the module (the host decodes and encodes them).
     assert!(m.types.iter().any(|t| t.name == "HttpResponse") && m.types.iter().any(|t| t.name == "SqlValue"));
     wasmparser::Validator::new().validate_all(&m.wasm).unwrap();

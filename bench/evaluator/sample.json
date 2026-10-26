@@ -1,0 +1,5 @@
+{
+  "arm": "qal",
+  "tool": "Bash",
+  "text": "error[E0203]: type mismatch: expected Int, found Str"
+}

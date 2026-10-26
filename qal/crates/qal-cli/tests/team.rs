@@ -197,7 +197,7 @@ fn the_owner_sets_up_a_team_on_the_command_line() {
     assert_eq!(members, ["arch-1", "boss", "impl-1", "rev-1", "ver-1"]);
     assert_eq!(status["status"]["sessions"].as_array().unwrap().len(), 1);
     assert_eq!(status["status"]["records"], 5);
-    assert_eq!(status["status"]["allow"], json!(["io", "time", "rand", "db:mem"]));
+    assert_eq!(status["status"]["allow"], json!(["io", "time", "rand", "db:mem", "model"]));
     // The key files: one per member, outside the project, 0600 in a 0700 directory.
     assert_eq!(std::fs::metadata(&t.keys).unwrap().permissions().mode() & 0o777, 0o700);
     let key_files: Vec<_> = std::fs::read_dir(&t.keys).unwrap().flatten().collect();

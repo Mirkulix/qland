@@ -10,14 +10,14 @@
 
 use crate::ast::{Type, TypeBody, TypeDef, Variant};
 
-/// The service prelude type names (Phase 3), in declaration order.
-pub const TYPE_NAMES: [&str; 8] = ["HttpHeader", "HttpRequest", "HttpResponse", "HttpCall", "NetError", "SqlValue", "DbRows", "DbError"];
+/// The service prelude type names (Phase 3 & 7), in declaration order.
+pub const TYPE_NAMES: [&str; 10] = ["HttpHeader", "HttpRequest", "HttpResponse", "HttpCall", "NetError", "SqlValue", "DbRows", "DbError", "ModelResponse", "ModelError"];
 
 /// The accumulator type of Phase 5a: `type Accum[T] = AccEnd | AccPush(Accum[T], T)`.
 pub const ACCUM: &str = "Accum";
 
 /// Every prelude type name, in declaration order (the service types, then `Accum`).
-pub const ALL_TYPE_NAMES: [&str; 9] = ["HttpHeader", "HttpRequest", "HttpResponse", "HttpCall", "NetError", "SqlValue", "DbRows", "DbError", ACCUM];
+pub const ALL_TYPE_NAMES: [&str; 11] = ["HttpHeader", "HttpRequest", "HttpResponse", "HttpCall", "NetError", "SqlValue", "DbRows", "DbError", "ModelResponse", "ModelError", ACCUM];
 
 fn named(n: &str) -> Type {
     Type::Named(n.to_string())
@@ -55,6 +55,8 @@ pub fn types() -> Vec<TypeDef> {
         enumeration("SqlValue", &[("SqlNull", &[]), ("SqlInt", &[Type::Int]), ("SqlFloat", &[Type::Float]), ("SqlText", &[Type::Str])]),
         record("DbRows", &[("columns", Type::list(Type::Str)), ("rows", Type::list(Type::list(named("SqlValue"))))]),
         enumeration("DbError", &[("DbConstraint", &[Type::Str]), ("DbSql", &[Type::Str]), ("DbBusy", &[]), ("DbFull", &[]), ("DbTooLarge", &[])]),
+        record("ModelResponse", &[("text", Type::Str), ("model", Type::Str), ("in_tokens", Type::Int), ("out_tokens", Type::Int), ("cost_microcents", Type::Int)]),
+        enumeration("ModelError", &[("ModelDenied", &[Type::Str]), ("ModelBudgetExceeded", &[Type::Int]), ("ModelFailed", &[Type::Str]), ("ModelInvalid", &[Type::Str]), ("ModelTimeout", &[])]),
         TypeDef {
             name: ACCUM.into(),
             params: vec!["T".into()],
@@ -86,6 +88,7 @@ pub fn variant_owner(name: &str) -> Option<&'static str> {
         "NetDenied" | "NetInvalid" | "NetConnect" | "NetTimeout" | "NetTooLarge" => "NetError",
         "SqlNull" | "SqlInt" | "SqlFloat" | "SqlText" => "SqlValue",
         "DbConstraint" | "DbSql" | "DbBusy" | "DbFull" | "DbTooLarge" => "DbError",
+        "ModelDenied" | "ModelBudgetExceeded" | "ModelFailed" | "ModelInvalid" | "ModelTimeout" => "ModelError",
         "AccEnd" | "AccPush" => ACCUM,
         _ => return None,
     })
@@ -104,7 +107,7 @@ mod tests {
     fn names_and_variants_match_the_definitions() {
         let ts = types();
         assert_eq!(ts.iter().map(|t| t.name.as_str()).collect::<Vec<_>>(), ALL_TYPE_NAMES.to_vec());
-        assert_eq!(&ALL_TYPE_NAMES[..8], &TYPE_NAMES);
+        assert_eq!(&ALL_TYPE_NAMES[..10], &TYPE_NAMES);
         for t in &ts {
             assert!(is_type(&t.name) && is_reserved(&t.name));
             if let TypeBody::Enum(vs) = &t.body {
@@ -114,7 +117,7 @@ mod tests {
             }
         }
         let variants: usize = ts.iter().map(|t| if let TypeBody::Enum(vs) = &t.body { vs.len() } else { 0 }).sum();
-        assert_eq!(variants, 16);
+        assert_eq!(variants, 21);
         assert_eq!((arity("Accum"), arity("DbRows"), arity("Option")), (Some(1), Some(0), None));
         for t in &ts {
             assert_eq!(arity(&t.name), Some(t.params.len()));

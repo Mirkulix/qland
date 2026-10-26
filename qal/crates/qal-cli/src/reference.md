@@ -77,4 +77,4 @@ Merge gate: the owner submits; a verifier's `verified` and a reviewer's `approve
 After E0910, E0911 or the notice needs_rebase, the owner runs qal_rebase: main becomes the base, conflicting names keep your version with a mark (compare `n` with `n@main`, then define `n` again); a merge refuses marks (E0908).
 Your identity is the server's session, not an argument (`agent` is ignored). Every write is an Ed25519-signed record (qal_verify checks the chain).
 qal_whoami {"wait_s": 30} shows your role, change set and leases and waits for notices instead of polling; every result carries unseen `notices`.
-`allow` is limited to the team's grants (default io, time, rand, db:mem; more is E0915). A refusal names the role that may (E0903).
+`allow` is limited to the team's grants (default io, time, rand, db:mem, model; more is E0915). A refusal names the role that may (E0903).

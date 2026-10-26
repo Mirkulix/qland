@@ -51,12 +51,13 @@ fn qc_hash_short(h: Bytes) -> Str =
 fn qc_is_prelude_type(name: Str) -> Bool =
   name == "HttpHeader" || name == "HttpRequest" || name == "HttpResponse" ||
   name == "HttpCall" || name == "NetError" || name == "SqlValue" ||
-  name == "DbRows" || name == "DbError" || name == "Accum"
+  name == "DbRows" || name == "DbError" || name == "ModelResponse" || name == "ModelError" || name == "Accum"
 
 fn qc_prelude_variant_owner(name: Str) -> Option[Str] =
   if name == "NetDenied" || name == "NetInvalid" || name == "NetConnect" || name == "NetTimeout" || name == "NetTooLarge" then Some("NetError")
   else if name == "SqlNull" || name == "SqlInt" || name == "SqlFloat" || name == "SqlText" then Some("SqlValue")
   else if name == "DbConstraint" || name == "DbSql" || name == "DbBusy" || name == "DbFull" || name == "DbTooLarge" then Some("DbError")
+  else if name == "ModelDenied" || name == "ModelBudgetExceeded" || name == "ModelFailed" || name == "ModelInvalid" || name == "ModelTimeout" then Some("ModelError")
   else if name == "AccEnd" || name == "AccPush" then Some("Accum")
   else None
 
@@ -79,7 +80,7 @@ fn qc_is_builtin_name(name: Str) -> Bool =
   name == "bit_and" || name == "bit_or" || name == "bit_xor" || name == "bit_not" ||
   name == "shl" || name == "shr" || name == "ushr" || name == "float_bits" ||
   name == "float_of_bits" || name == "list_at" || name == "bytes_at" || name == "acc_list" ||
-  name == "bytes_join" || name == "sha256" || name == "todo"
+  name == "bytes_join" || name == "sha256" || name == "todo" || name == "model_ask"
 
 type QcCanonEnv = {
   fns: Map[Str, Bool],

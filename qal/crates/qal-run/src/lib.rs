@@ -5,6 +5,7 @@ mod db;
 mod fs;
 mod guest;
 mod host;
+pub mod model;
 mod net;
 pub mod selfhost;
 mod value;
@@ -12,6 +13,7 @@ mod value;
 pub use db::{Db, DbGrant};
 pub use fs::FsRoot;
 pub use host::{Limits, Permissions};
+pub use model::{ModelErr, ModelResponse};
 pub use net::NetGrant;
 pub use value::{compare as compare_values, from_json, Value, Values};
 
@@ -23,6 +25,7 @@ use qal_compiler::print_expr;
 use qal_compiler::{CompiledModule, FuncMeta, FAIL_BUILTIN, FAIL_DIV_ZERO, FAIL_ENS, FAIL_INDEX, FAIL_OOM, FAIL_OVERFLOW, FAIL_REQ, FAIL_TODO, OOM_SCRATCH};
 use serde::Serialize;
 use std::io::Cursor;
+use std::path::PathBuf;
 use std::sync::mpsc;
 use std::time::Duration;
 use std::sync::Arc;
@@ -216,6 +219,8 @@ pub struct Runner {
     pooled: bool,
     /// Results are decoded exactly up to this many bytes (else with display limits).
     exact_results: Option<usize>,
+    replay_only: bool,
+    model_db: Option<PathBuf>,
 }
 
 /// The engine settings every runner uses.
@@ -262,7 +267,7 @@ impl Runner {
         let engine = Engine::new(&base_config()).map_err(|e| e.to_string())?;
         let module = load_module(&engine, &meta.wasm)?;
         let types = TProgram { types: meta.types.clone(), ..TProgram::default() };
-        Ok(Runner { engine, module, meta, types, fuel: DEFAULT_FUEL, memory_limit: DEFAULT_MEMORY_LIMIT, perms: Permissions::default(), stdin: None, timeout: None, stdout_limit: None, budgets: Limits::default(), pre: None, ticker: None, pooled: false, exact_results: None })
+        Ok(Runner { engine, module, meta, types, fuel: DEFAULT_FUEL, memory_limit: DEFAULT_MEMORY_LIMIT, perms: Permissions::default(), stdin: None, timeout: None, stdout_limit: None, budgets: Limits::default(), pre: None, ticker: None, pooled: false, exact_results: None, replay_only: false, model_db: None })
     }
 
     /// A runner for a server (spec Phase 3 §2.2-§2.4): the module is compiled and linked once with
@@ -310,6 +315,8 @@ impl Runner {
             ticker: Some(Arc::new(ticker)),
             pooled,
             exact_results: None,
+            replay_only: false,
+            model_db: None,
         })
     }
 
@@ -321,6 +328,18 @@ impl Runner {
     /// Decodes results exactly (no shortened strings) up to `bytes`; larger results are `bad_response`.
     pub fn with_exact_results(mut self, bytes: usize) -> Runner {
         self.exact_results = Some(bytes);
+        self
+    }
+
+    /// When true, `model` effect calls will only replay from cache; unrecorded calls fail.
+    pub fn with_replay(mut self, replay: bool) -> Runner {
+        self.replay_only = replay;
+        self
+    }
+
+    /// Sets the SQLite database path for `model` effect recording and caching.
+    pub fn with_model_db(mut self, path: impl Into<PathBuf>) -> Runner {
+        self.model_db = Some(path.into());
         self
     }
 
@@ -475,6 +494,8 @@ impl Runner {
         state.deadline = timeout.map(|t| std::time::Instant::now() + t);
         state.timeout = timeout;
         state.host_used = input.host_used;
+        state.replay_only = self.replay_only;
+        state.model_db_path = self.model_db.clone();
         let early = |outcome: Outcome, db: Option<Db>| ExecOut { outcome, db, fuel: 0, mem_bytes: 0 };
         let uses_db = self.meta.func(export).is_some_and(|m| m.effects.iter().any(|e| e == "db"));
         let mut given = input.db;

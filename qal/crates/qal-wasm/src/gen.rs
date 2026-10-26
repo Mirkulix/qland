@@ -558,6 +558,7 @@ impl<'g, 'p> FnGen<'g, 'p> {
             B::Http => self.a.i(I::Call(self.m.import(host::NET_HTTP))),
             B::DbExec => self.a.i(I::Call(self.m.import(host::DB_EXEC))),
             B::DbQuery => self.a.i(I::Call(self.m.import(host::DB_QUERY))),
+            B::ModelAsk => self.a.i(I::Call(self.m.import(host::MODEL_ASK))),
             B::RandInt => {
                 let site = self.site(path, "rand_int: req lo <= hi", &[("lo", Type::Int), ("hi", Type::Int)], None);
                 self.site_args(site);
