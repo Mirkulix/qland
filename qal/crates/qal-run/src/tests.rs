@@ -1242,14 +1242,14 @@ fn todo_traps_with_todo_reached() {
 
 #[test]
 fn seed_module_checksum_verifies() {
-    let m = crate::selfhost::seed_module();
+    let m = crate::selfhost::seed_module().expect("the embedded seed verifies");
     assert_eq!(qal_core::canon::Hash::of(&m.wasm).to_hex(), crate::selfhost::SEED_SHA256.trim());
     assert!(crate::selfhost::verify_seed(&m.wasm).is_ok());
 }
 
 #[test]
 fn tampered_seed_module_fails_with_seed_mismatch() {
-    let mut wasm = crate::selfhost::seed_module().wasm;
+    let mut wasm = crate::selfhost::seed_module().expect("the embedded seed verifies").wasm;
     if let Some(b) = wasm.last_mut() {
         *b = b.wrapping_add(1);
     }

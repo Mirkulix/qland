@@ -319,11 +319,9 @@ pub fn verify_seed(wasm: &[u8]) -> Result<(), Diagnostic> {
 }
 
 /// The versioned fixpoint compiler module (`selfhost/qalc.wasm`).
-pub fn seed_module() -> CompiledModule {
+pub fn seed_module() -> Result<CompiledModule, Diagnostic> {
     let wasm = include_bytes!("../../../selfhost/qalc.wasm").to_vec();
-    if let Err(d) = verify_seed(&wasm) {
-        panic!("{}", d.message);
-    }
+    verify_seed(&wasm)?;
     let func = qal_compiler::FuncMeta {
         name: ENTRY.into(),
         export: ENTRY.into(),
@@ -335,18 +333,19 @@ pub fn seed_module() -> CompiledModule {
         ens: Vec::new(),
         sites: Vec::new(),
     };
-    CompiledModule {
+    Ok(CompiledModule {
         wasm,
         funcs: vec![func],
         types: Vec::new(),
         imports: vec!["fail", "str_to_float", "float_to_str", "utf8_valid", "sha256"],
         table_len: 256,
         memory_max_pages: qal_compiler::COMPILER_MAX_PAGES,
-    }
+    })
 }
 
 /// Initializes the `Qal` backend in `qal-compiler` using the embedded seed fixpoint module.
 pub fn init_seed_backend(jobs: usize) -> Result<(), String> {
-    init_qal_backend(seed_module(), jobs)
+    let module = seed_module().map_err(|d| d.message)?;
+    init_qal_backend(module, jobs)
 }
 
