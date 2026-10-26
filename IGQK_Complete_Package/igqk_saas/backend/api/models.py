@@ -28,46 +28,72 @@ class Model(BaseModel):
 
 @router.get("/my-models", response_model=List[Model])
 async def list_user_models(limit: int = 10):
-    """List models owned by current user"""
+    """List models owned by current user (dynamically discovered from disk)"""
+    import os
+    import time
+    user_models = []
 
-    # Mock data
-    return [
-        Model(
-            id="model_1",
-            name="My CIFAR-10 Model",
-            description="Custom trained on CIFAR-10",
-            architecture="resnet18",
-            size_mb=42.0,
-            accuracy=92.5,
-            task="classification",
-            created_at="2026-02-04",
-            source="trained"
-        ),
-        Model(
-            id="model_2",
-            name="CIFAR-10 Compressed",
-            description="Compressed version with IGQK",
-            architecture="resnet18",
-            size_mb=2.6,
-            accuracy=91.8,
-            task="classification",
-            created_at="2026-02-04",
-            source="compressed"
-        )
+    search_dirs = [
+        os.path.join(os.getcwd(), "compressed_models"),
+        os.path.join(os.getcwd(), "models"),
+        os.getcwd()
     ]
+    seen_files = set()
+
+    for sdir in search_dirs:
+        if not os.path.exists(sdir):
+            continue
+        for fname in os.listdir(sdir):
+            if fname.endswith(('.pt', '.pth', '.bin')) and fname not in seen_files:
+                seen_files.add(fname)
+                fpath = os.path.join(sdir, fname)
+                try:
+                    fsize = os.path.getsize(fpath) / (1024 * 1024)
+                    mtime = time.strftime('%Y-%m-%d', time.localtime(os.path.getmtime(fpath)))
+                    is_compressed = "compress" in fname.lower() or "ternary" in fname.lower()
+                    user_models.append(Model(
+                        id=fname,
+                        name=fname.replace('.pt', '').replace('.pth', ''),
+                        description=f"{'IGQK 16× Compressed' if is_compressed else 'PyTorch'} model on disk",
+                        architecture="transformer" if "gpt" in fname.lower() or "bert" in fname.lower() else "custom_net",
+                        size_mb=round(fsize, 2),
+                        accuracy=None,
+                        task="language-modeling" if "gpt" in fname.lower() or "bert" in fname.lower() else "classification",
+                        created_at=mtime,
+                        source="compressed" if is_compressed else "trained"
+                    ))
+                except Exception:
+                    pass
+
+    return user_models[:limit]
 
 
 @router.get("/{model_id}")
 async def get_model_info(model_id: str):
-    """Get detailed model information"""
+    """Get detailed model information from disk or registry"""
+    import os
+    search_dirs = [os.path.join(os.getcwd(), "compressed_models"), os.path.join(os.getcwd(), "models"), os.getcwd()]
+    for sdir in search_dirs:
+        p = os.path.join(sdir, model_id)
+        if os.path.exists(p):
+            sz = round(os.path.getsize(p) / (1024 * 1024), 2)
+            return {
+                "id": model_id,
+                "name": model_id.replace('.pt', '').replace('.pth', ''),
+                "architecture": "transformer" if "gpt" in model_id.lower() or "bert" in model_id.lower() else "custom_net",
+                "size_mb": sz,
+                "accuracy": None,
+                "parameters": 0,
+                "download_url": f"/api/models/download/{model_id}"
+            }
 
     return {
         "id": model_id,
-        "name": "My CIFAR-10 Model",
-        "architecture": "resnet18",
-        "size_mb": 42.0,
-        "accuracy": 92.5,
-        "parameters": 11_000_000,
+        "name": model_id,
+        "architecture": "unknown",
+        "size_mb": 0.0,
+        "accuracy": None,
+        "parameters": 0,
         "download_url": f"/api/models/download/{model_id}"
     }
 

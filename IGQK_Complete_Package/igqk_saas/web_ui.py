@@ -586,55 +586,24 @@ All systems idle. Ready to compress!
 
             return result
         else:
-            # Fallback to simulated data
             return """
 # 🔄 Live Job Updates
 
-## Currently Processing
+Keine aktiven Kompressions- oder Trainings-Jobs in Bearbeitung.
 
-### meta-llama/Llama-2-7b
-- **Job ID:** job_abc123
-- **Progress:** 67%
-- **Status:** Compressing
-- **ETA:** 2 minutes
+Starte einen Job über den Reiter **„Model komprimieren“** oder **„Neues Modell trainieren“**.
 
 ---
-
-### facebook/opt-1.3b
-- **Job ID:** job_def456
-- **Progress:** 45%
-- **Status:** Downloading
-- **ETA:** 5 minutes
-
----
-
-### google/flan-t5-base
-- **Job ID:** job_ghi789
-- **Progress:** 89%
-- **Status:** Validating
-- **ETA:** 30 seconds
-
----
-
-**🔄 Updates every 5 seconds**
+**Status:** System bereit
 """
 
     except Exception as e:
-        # Fallback if API not available
-        return """
+        return f"""
 # 🔄 Live Job Updates
 
-## Currently Processing
+Backend-Dienst nicht aktiv oder keine Verbindung ({str(e)}).
 
-### meta-llama/Llama-2-7b
-- **Job ID:** job_abc123
-- **Progress:** 67%
-- **Status:** Compressing
-- **ETA:** 2 minutes
-
----
-
-**⚠️ API connection unavailable. Showing cached data.**
+Starte das Backend via `./START_SAAS.bat` oder nutze die direkte Python-Schnittstelle.
 """
 
 

@@ -35,6 +35,7 @@ compressed_models/
 models_cache/
 datasets_cache/
 *.pth
+*.pt
 *.safetensors
 *.bin
 data/

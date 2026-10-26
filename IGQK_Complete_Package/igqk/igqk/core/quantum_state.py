@@ -228,8 +228,10 @@ class QuantumGradientFlow:
         # Update eigenvectors
         new_eigenvectors = state.eigenvectors + dissipative_update + unitary_noise
         
-        # Normalize
-        new_eigenvectors = new_eigenvectors / torch.norm(new_eigenvectors, dim=0, keepdim=True)
+        # Normalize fluctuation eigenvectors only (col 1:), preserving classical parameter scale (col 0)
+        if new_eigenvectors.shape[1] > 1:
+            fluc_norms = torch.norm(new_eigenvectors[:, 1:], dim=0, keepdim=True)
+            new_eigenvectors[:, 1:] = new_eigenvectors[:, 1:] / (fluc_norms + 1e-8)
         
         # Eigenvalues decay slightly (entropy increase)
         entropy_factor = 1.0 + dt * 0.01  # Slow entropy increase
