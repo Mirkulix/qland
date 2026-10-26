@@ -92,7 +92,7 @@ h1 .hl { color: var(--proof); }
 .panel.reply { border-color: var(--proof-soft); box-shadow: 0 18px 60px -28px var(--glow), 0 0 0 1px rgba(98,214,196,0.08); }
 .panel-head { display: flex; justify-content: space-between; gap: 12px; padding: 9px 14px; font-family: var(--mono); font-size: 0.72rem; color: var(--code-dim); border-bottom: 1px solid rgba(255,255,255,0.08); }
 .panel pre { margin: 0; padding: 14px 16px; overflow-x: auto; font-family: var(--mono); font-size: 0.8rem; line-height: 1.55; }
-.k { color: var(--code-key); } .s { color: var(--code-str); } .d { color: var(--code-dim); }
+.k { color: var(--code-key); } .s { color: var(--code-str); } .d { color: var(--code-dim); } .w { color: var(--warn); font-weight: 600; }
 .caption { font-size: 0.8rem; color: var(--muted); }
 
 /* Abschnitte */
@@ -301,13 +301,17 @@ footer .wrap { display: flex; justify-content: space-between; gap: 16px; flex-wr
         <div class="panel reply">
           <div class="panel-head"><span>Speicher → Agent, dieselbe Runde</span><span>JSON</span></div>
 <pre><span class="line d">{</span>
-<span class="line">  <span class="k">"defined"</span>:    [<span class="s">"Acct"</span> added, <span class="s">"deposit"</span> replaced, 3 relinked],</span>
-<span class="line">  <span class="k">"proofs"</span>:     [<span class="s">"ens[0] of deposit"</span>: <span class="s">proven</span>],</span>
-<span class="line">  <span class="k">"tests"</span>:      [<span class="s">"deposit_adds"</span>: passed, 4 more reached: passed],</span>
-<span class="line">  <span class="k">"properties"</span>: [<span class="s">"deposit"</span>: passed at 0, ±1, req bounds],</span>
-<span class="line">  <span class="k">"warnings"</span>:   [] <span class="d">}</span></span></pre>
+<span class="line">  <span class="k">"defined"</span>: [<span class="s">"Acct"</span>, <span class="s">"deposit"</span>, <span class="s">"deposit_adds"</span>: <span class="s">"added"</span>],</span>
+<span class="line">  <span class="k">"proofs"</span>:  [<span class="s">"req n &gt;= 1"</span> at the call in deposit_adds: <span class="s">"proven"</span>,
+             <span class="s">"ens r.balance &gt; a.balance"</span>: <span class="s">"unknown"</span>, still checked at run time],</span>
+<span class="line">  <span class="k">"tests"</span>:   [<span class="s">"deposit_adds"</span>: passed],</span>
+<span class="line">  <span class="k">"warnings"</span>: [{ <span class="k">"code"</span>: <span class="w">"E0804"</span>, <span class="k">"kind"</span>: <span class="s">"property_traps"</span>,
+    <span class="k">"message"</span>: <span class="s">"`deposit` trapped in 3 of 103 generated runs:
+      Int overflow in `+` (64-bit) {left: 1, right: 9223372036854775807}"</span>,
+    <span class="k">"hints"</span>: [<span class="s">"... say so with a `req` on `deposit` that bounds them"</span>] }]</span>
+<span class="line d">}</span></pre>
         </div>
-        <p class="caption">Gekürzt. Felder und Form entsprechen der Antwort von <code>qal_define</code>; die Zahlen in diesem Beispiel sind zur Veranschaulichung gewählt.</p>
+        <p class="caption">Echte Antwort von <code>qal_define</code> auf genau diesen Code, gekürzt, in 0,44 s. Kein Test prüfte den Überlauf bei einem Kontostand nahe dem Int-Maximum; die Property-Tests haben ihn in derselben Runde gefunden.</p>
       </div>
     </div>
     <div class="strip">
