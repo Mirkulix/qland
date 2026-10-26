@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#060f0d">
 <meta name="description" content="QAL (Query &amp; Agent Language) ist eine Programmiersprache für KI-Agenten: Ein Agent schreibt Code und weiß in derselben Runde, ob er stimmt.">
 <title>QAL Sprache</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -11,37 +12,26 @@
 <style>
 /* Layout: ein Prüfprotokoll. Oben die eine Runde (Agent schreibt, Speicher antwortet), darunter ein Atlas aller Fähigkeiten als Register mit Begriff, Erklärung und Beleg, dann Codes, Zahlen und Grenzen. */
 :root {
-  --bg: #f4f6f3;
-  --surface: #ffffff;
-  --sunk: #eaeee9;
-  --ink: #14201b;
-  --muted: #53625a;
-  --line: #d5ddd7;
-  --proof: #0d6e5e;
-  --proof-soft: #d9eee8;
-  --warn: #985210;
-  --warn-soft: #f5e7d6;
-  --code-bg: #0f1f19;
+  /* One dark world, by choice: the page is the machine's view of a codebase. */
+  --bg: #060f0d;
+  --surface: #0c1916;
+  --sunk: #10211d;
+  --ink: #e4f0eb;
+  --muted: #8ea69d;
+  --line: #1b2d28;
+  --proof: #62d6c4;
+  --proof-soft: #12332d;
+  --warn: #f0a35a;
+  --warn-soft: #2d2014;
+  --glow: rgba(98, 214, 196, 0.16);
+  --code-bg: #040b09;
   --code-fg: #d9ece4;
-  --code-dim: #8db0a2;
-  --code-key: #7fd6bf;
+  --code-dim: #7d9b8f;
+  --code-key: #7fe0cf;
   --code-str: #f2c58f;
   --display: "Bricolage Grotesque", "Avenir Next", "Segoe UI", sans-serif;
   --body: "IBM Plex Sans", "Helvetica Neue", Arial, sans-serif;
   --mono: "JetBrains Mono", "SFMono-Regular", Menlo, Consolas, monospace;
-}
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    --bg: #0c1411; --surface: #121e19; --sunk: #0f1915; --ink: #e3ece7; --muted: #9bafa5; --line: #25352e;
-    --proof: #5ccab3; --proof-soft: #163a31; --warn: #e8a561; --warn-soft: #3a2a19;
-    --code-bg: #07100d; --code-fg: #d9ece4; --code-dim: #7d9b8f; --code-key: #7fd6bf; --code-str: #f2c58f;
-    color-scheme: dark;
-  }
-}
-:root[data-theme="dark"] {
-  --bg: #0c1411; --surface: #121e19; --sunk: #0f1915; --ink: #e3ece7; --muted: #9bafa5; --line: #25352e;
-  --proof: #5ccab3; --proof-soft: #163a31; --warn: #e8a561; --warn-soft: #3a2a19;
-  --code-bg: #07100d; --code-fg: #d9ece4; --code-dim: #7d9b8f; --code-key: #7fd6bf; --code-str: #f2c58f;
   color-scheme: dark;
 }
 * { box-sizing: border-box; }
@@ -65,7 +55,7 @@ code { font-family: var(--mono); font-size: 0.86em; background: var(--sunk); pad
 
 /* Kopfleiste */
 body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 10; background: var(--bg); }
-.top { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5; background: color-mix(in srgb, var(--bg) 92%, transparent); backdrop-filter: blur(8px); border-bottom: 1px solid var(--line); }
+.top { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5; background: color-mix(in srgb, var(--bg) 80%, transparent); backdrop-filter: blur(8px); border-bottom: 1px solid var(--line); }
 .top .wrap { display: flex; align-items: center; gap: 22px; padding-block: 12px; }
 .mark { font-family: var(--display); font-weight: 800; font-size: 1.3rem; letter-spacing: -0.02em; white-space: nowrap; text-decoration: none; color: var(--ink); }
 .mark span { color: var(--proof); }
@@ -75,21 +65,31 @@ body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-a
 .top nav a:hover { color: var(--ink); background: var(--sunk); }
 
 /* Hero */
-.hero { padding-block: 64px 48px; }
+.hero-band { position: relative; overflow: hidden; }
+#graph { position: absolute; inset: 0; width: 100%; height: 100%; display: block; opacity: 0.9;
+  -webkit-mask-image: radial-gradient(ellipse 85% 75% at 70% 40%, #000 30%, transparent 78%);
+          mask-image: radial-gradient(ellipse 85% 75% at 70% 40%, #000 30%, transparent 78%); }
+.hero { padding-block: 72px 52px; position: relative; }
+.status { display: inline-flex; align-items: center; gap: 10px; width: fit-content; font-family: var(--mono); font-size: 0.78rem; color: var(--proof); border: 1px solid var(--proof-soft); background: rgba(98, 214, 196, 0.06); padding: 6px 12px; border-radius: 999px; }
+.status i { width: 7px; height: 7px; border-radius: 50%; background: var(--proof); box-shadow: 0 0 0 0 var(--glow); }
+@media (prefers-reduced-motion: no-preference) { .status i { animation: pulse 2.4s ease-out infinite; } }
+@keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(98,214,196,0.55); } 70% { box-shadow: 0 0 0 9px rgba(98,214,196,0); } 100% { box-shadow: 0 0 0 0 rgba(98,214,196,0); } }
+h1 .hl { color: var(--proof); }
 .hero-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr); gap: 48px; align-items: start; }
 .hero-text { display: flex; flex-direction: column; gap: 22px; min-width: 0; }
 .lede { font-size: 1.16rem; color: var(--muted); }
 .lede strong { color: var(--ink); font-weight: 600; }
 .acro { font-family: var(--mono); font-size: 0.92rem; color: var(--muted); display: flex; gap: 14px; flex-wrap: wrap; }
 .acro b { color: var(--proof); font-weight: 600; }
-.strip { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); margin-top: 48px; }
+.strip { background: color-mix(in srgb, var(--bg) 70%, transparent); backdrop-filter: blur(4px); display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); margin-top: 48px; }
 .strip div { padding: 16px 18px; border-right: 1px solid var(--line); display: grid; gap: 2px; min-width: 0; }
 .strip div:last-child { border-right: 0; }
 .strip b { font-family: var(--display); font-size: 1.7rem; font-weight: 800; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
 .strip span { font-size: 0.86rem; color: var(--muted); }
 
 .exchange { display: grid; gap: 12px; min-width: 0; }
-.panel { background: var(--code-bg); color: var(--code-fg); border-radius: 10px; overflow: hidden; min-width: 0; }
+.panel { background: color-mix(in srgb, var(--code-bg) 88%, transparent); color: var(--code-fg); border-radius: 12px; overflow: hidden; min-width: 0; border: 1px solid var(--line); box-shadow: 0 18px 50px -24px rgba(0,0,0,0.8), 0 0 0 1px rgba(98,214,196,0.04); backdrop-filter: blur(6px); }
+.panel.reply { border-color: var(--proof-soft); box-shadow: 0 18px 60px -28px var(--glow), 0 0 0 1px rgba(98,214,196,0.08); }
 .panel-head { display: flex; justify-content: space-between; gap: 12px; padding: 9px 14px; font-family: var(--mono); font-size: 0.72rem; color: var(--code-dim); border-bottom: 1px solid rgba(255,255,255,0.08); }
 .panel pre { margin: 0; padding: 14px 16px; overflow-x: auto; font-family: var(--mono); font-size: 0.8rem; line-height: 1.55; }
 .k { color: var(--code-key); } .s { color: var(--code-str); } .d { color: var(--code-dim); }
@@ -144,7 +144,8 @@ section { padding-block: 72px; border-top: 1px solid var(--line); }
 .domain-head .count { font-family: var(--mono); font-size: 0.78rem; color: var(--muted); }
 .domain-head p { color: var(--muted); font-size: 0.95rem; }
 .feats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 22px 30px; min-width: 0; }
-.feat { display: grid; gap: 5px; align-content: start; min-width: 0; padding-top: 14px; border-top: 2px solid var(--proof-soft); }
+.feat { display: grid; gap: 5px; align-content: start; min-width: 0; padding-top: 14px; border-top: 2px solid var(--proof-soft); transition: border-color 0.25s ease; }
+.feat:hover { border-top-color: var(--proof); }
 .feat b { font-weight: 600; font-size: 1rem; }
 .feat span { font-size: 0.94rem; color: var(--muted); }
 .feat .ex { font-family: var(--mono); font-size: 0.78rem; color: var(--ink); background: var(--sunk); border-radius: 6px; padding: 6px 9px; overflow-x: auto; white-space: pre; margin-top: 4px; }
@@ -243,11 +244,13 @@ footer .wrap { display: flex; justify-content: space-between; gap: 16px; flex-wr
 </header>
 
 <main id="start-top">
+  <div class="hero-band">
+  <canvas id="graph" aria-hidden="true"></canvas>
   <div class="wrap hero">
     <div class="hero-grid">
       <div class="hero-text">
-        <div class="eyebrow">Eine Programmiersprache für KI-Agenten</div>
-        <h1>Ein Agent schreibt Code und weiß in derselben Runde, ob er stimmt.</h1>
+        <span class="status"><i></i>eine Runde · alle Prüfungen · 0,28 s</span>
+        <h1>Ein Agent schreibt Code und weiß <span class="hl">in derselben Runde</span>, ob er stimmt.</h1>
         <p class="lede">In QAL liegt Code nicht in Dateien, sondern als geprüfte Funktionsknoten in einem Speicher. Jeder Schreibvorgang wird sofort <strong>getypt, bewiesen, getestet und mit dem ganzen Programm neu verknüpft</strong>. Die Antwort kommt in unter einer halben Sekunde, als JSON.</p>
         <div class="acro"><span><b>Q</b>uery</span><span>&amp;</span><span><b>A</b>gent</span><span><b>L</b>anguage</span></div>
       </div>
@@ -283,6 +286,7 @@ footer .wrap { display: flex; justify-content: space-between; gap: 16px; flex-wr
       <div><b>95 / 96</b><span>Stufen mit allen verborgenen Tests grün</span></div>
       <div><b>11 / 13</b><span>eingebaute Fehler, die E0807 ohne Tests meldet</span></div>
     </div>
+  </div>
   </div>
 
   <section id="name">
@@ -666,6 +670,70 @@ footer .wrap { display: flex; justify-content: space-between; gap: 16px; flex-wr
 </footer>
 
 <script>
+// The store as a graph: definitions are nodes, references are edges; a define sends pulses along
+// the edges it relinks. Drawn once at rest; animated only when motion is allowed and in view.
+(function () {
+  var c = document.getElementById("graph");
+  if (!c || !c.getContext) return;
+  var ctx = c.getContext("2d"), nodes = [], edges = [], pulses = [], w = 0, h = 0, dpr = 1, running = false, visible = true;
+  var still = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  var rnd = (function (seed) { return function () { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; }; })(42);
+  var hex = "0123456789abcdef";
+  function hash() { var s = "#"; for (var i = 0; i < 4; i++) s += hex[Math.floor(rnd() * 16)]; return s; }
+  function build() {
+    var r = c.getBoundingClientRect(); w = r.width; h = r.height; dpr = Math.min(window.devicePixelRatio || 1, 2);
+    c.width = Math.round(w * dpr); c.height = Math.round(h * dpr); ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    nodes = []; edges = []; pulses = [];
+    var n = Math.max(18, Math.min(46, Math.round(w * h / 22000)));
+    for (var i = 0; i < n; i++) nodes.push({ x: w * (0.08 + rnd() * 0.9), y: h * (0.06 + rnd() * 0.9), r: 1.6 + rnd() * 2.2, label: rnd() < 0.3 ? hash() : null, vx: (rnd() - 0.5) * 0.08, vy: (rnd() - 0.5) * 0.08 });
+    for (var a = 0; a < n; a++) {
+      var best = [];
+      for (var b = 0; b < n; b++) if (a !== b) best.push([Math.hypot(nodes[a].x - nodes[b].x, nodes[a].y - nodes[b].y), b]);
+      best.sort(function (p, q) { return p[0] - q[0]; });
+      for (var k = 0; k < 2; k++) if (a < best[k][1]) edges.push([a, best[k][1]]);
+    }
+  }
+  function draw(t) {
+    ctx.clearRect(0, 0, w, h);
+    ctx.lineWidth = 1;
+    for (var i = 0; i < edges.length; i++) {
+      var p = nodes[edges[i][0]], q = nodes[edges[i][1]];
+      ctx.strokeStyle = "rgba(98,214,196,0.13)"; ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(q.x, q.y); ctx.stroke();
+    }
+    for (var j = 0; j < pulses.length; j++) {
+      var e = edges[pulses[j].e], a = nodes[e[0]], b = nodes[e[1]], f = pulses[j].f;
+      var x = a.x + (b.x - a.x) * f, y = a.y + (b.y - a.y) * f;
+      var g = ctx.createRadialGradient(x, y, 0, x, y, 10);
+      g.addColorStop(0, pulses[j].warn ? "rgba(240,163,90,0.9)" : "rgba(127,224,207,0.95)"); g.addColorStop(1, "rgba(127,224,207,0)");
+      ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, 10, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.font = "10px JetBrains Mono, monospace";
+    for (var k = 0; k < nodes.length; k++) {
+      var o = nodes[k];
+      ctx.fillStyle = "rgba(98,214,196,0.85)"; ctx.beginPath(); ctx.arc(o.x, o.y, o.r, 0, Math.PI * 2); ctx.fill();
+      if (o.label) { ctx.fillStyle = "rgba(142,166,157,0.55)"; ctx.fillText(o.label, o.x + 6, o.y - 5); }
+    }
+  }
+  function step(t) {
+    if (!running) return;
+    for (var k = 0; k < nodes.length; k++) {
+      var o = nodes[k]; o.x += o.vx; o.y += o.vy;
+      if (o.x < w * 0.04 || o.x > w * 0.99) o.vx *= -1;
+      if (o.y < h * 0.03 || o.y > h * 0.98) o.vy *= -1;
+    }
+    if (pulses.length < 7 && Math.random() < 0.05) pulses.push({ e: Math.floor(Math.random() * edges.length), f: 0, s: 0.006 + Math.random() * 0.01, warn: Math.random() < 0.12 });
+    for (var j = pulses.length - 1; j >= 0; j--) { pulses[j].f += pulses[j].s; if (pulses[j].f >= 1) pulses.splice(j, 1); }
+    draw(t);
+    requestAnimationFrame(step);
+  }
+  function setRunning(on) { var next = on && !still && visible && !document.hidden; if (next && !running) { running = true; requestAnimationFrame(step); } else if (!next) running = false; }
+  build(); draw(0);
+  var rt; window.addEventListener("resize", function () { clearTimeout(rt); rt = setTimeout(function () { build(); draw(0); }, 150); });
+  if ("IntersectionObserver" in window) new IntersectionObserver(function (es) { visible = es[0].isIntersecting; setRunning(true); }).observe(c);
+  document.addEventListener("visibilitychange", function () { setRunning(true); });
+  setRunning(true);
+})();
+
 document.querySelectorAll("button[data-copy]").forEach(function (b) {
   b.addEventListener("click", function () {
     var el = document.getElementById(b.getAttribute("data-copy"));
