@@ -108,6 +108,23 @@ section { padding-block: 72px; border-top: 1px solid var(--line); }
 .letter { font-family: var(--display); font-size: 4.2rem; font-weight: 800; line-height: 0.9; color: var(--proof); }
 .word { font-family: var(--mono); font-size: 0.8rem; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
 
+/* Warum jetzt */
+.shift { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0; margin-bottom: 28px; }
+.shift-step { padding: 4px 26px 4px 0; display: grid; gap: 8px; align-content: start; min-width: 0; position: relative; }
+.shift-step + .shift-step { padding-left: 26px; border-left: 1px solid var(--line); }
+.shift-step .n { font-family: var(--mono); font-size: 0.74rem; color: var(--proof); }
+.shift-step p { color: var(--muted); font-size: 0.95rem; }
+.compare td:last-child { color: var(--ink); font-weight: 500; }
+.compare td:nth-child(2) { color: var(--muted); }
+.thesis { margin-top: 24px; padding: 20px 22px; border-radius: 10px; background: var(--proof-soft); }
+.thesis p { max-width: 80ch; }
+.thesis b { color: var(--proof); }
+@media (max-width: 960px) {
+  .shift { grid-template-columns: 1fr; gap: 20px; }
+  .shift-step, .shift-step + .shift-step { padding: 0; border-left: 0; }
+  .shift-step + .shift-step { padding-top: 20px; border-top: 1px solid var(--line); }
+}
+
 /* Die eine Runde */
 .loop { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); border: 1px solid var(--line); border-radius: 12px; background: var(--surface); overflow: hidden; counter-reset: step; }
 .step { padding: 22px 18px; border-right: 1px solid var(--line); display: grid; gap: 8px; align-content: start; min-width: 0; }
@@ -213,6 +230,7 @@ footer .wrap { display: flex; justify-content: space-between; gap: 16px; flex-wr
     <a class="mark" href="#start-top">QAL<span>.</span></a>
     <nav aria-label="Abschnitte">
       <a href="#name">Der Name</a>
+      <a href="#jetzt">Warum jetzt</a>
       <a href="#runde">Die eine Runde</a>
       <a href="#atlas">Alles, was QAL kann</a>
       <a href="#codes">Diagnosen</a>
@@ -285,6 +303,39 @@ footer .wrap { display: flex; justify-content: space-between; gap: 16px; flex-wr
           <h3>Gebaut für den, der schreibt</h3>
           <p>Die Sprache ist für KI-Agenten entworfen, nicht für Menschen am Editor. Deshalb prüft jeder Schreibvorgang sofort alles, jeder Fehler hat einen Code, einen Pfad und einen Hinweis zur Behebung, und jede Wirkung nach außen muss ausdrücklich freigegeben werden.</p>
         </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="jetzt">
+    <div class="wrap">
+      <div class="sec-head">
+        <div class="eyebrow">Warum jetzt</div>
+        <h2>Der nächste Schritt: Sprachen für die Zeit, in der Agenten schreiben</h2>
+        <p>Alle verbreiteten Programmiersprachen wurden für Menschen am Editor entworfen. Inzwischen schreiben KI-Agenten einen wachsenden Teil des Codes. QAL setzt dort an, wo sich dadurch der Engpass verschoben hat.</p>
+      </div>
+      <div class="shift">
+        <div class="shift-step"><span class="n">Was sich geändert hat</span><h3>Code zu erzeugen ist billig geworden</h3><p>Ein Agent schreibt in Sekunden, wofür ein Mensch Stunden braucht. Die Menge an Code wächst schneller, als Menschen ihn lesen und prüfen können.</p></div>
+        <div class="shift-step"><span class="n">Wo der Engpass jetzt liegt</span><h3>Teuer ist das Prüfen</h3><p>Ob der Code stimmt, zeigt sich in heutigen Sprachen erst später: im Testlauf, im Review, im Betrieb. Ein Agent erfährt es oft gar nicht oder zu spät.</p></div>
+        <div class="shift-step"><span class="n">Was QAL daraus macht</span><h3>Prüfen ist Teil des Schreibens</h3><p>Jeder Schreibvorgang wird sofort getypt, bewiesen, getestet und mit dem Programm verknüpft. Vertrauen entsteht aus maschinell geprüften Garantien, nicht aus Hoffnung.</p></div>
+      </div>
+      <div class="table-wrap compare">
+        <table>
+          <thead><tr><th>Worum es geht</th><th>Sprachen für Menschen</th><th>QAL, eine Sprache für Agenten</th></tr></thead>
+          <tbody>
+            <tr><td>Wo Code liegt</td><td>Textdateien, die man durchsucht</td><td>geprüfte Knoten im Speicher, die man abfragt</td></tr>
+            <tr><td>Fehlermeldungen</td><td>Text für Menschen</td><td>JSON mit Code, Pfad und Hinweis zur Behebung</td></tr>
+            <tr><td>Tests</td><td>ein späterer, eigener Schritt</td><td>laufen bei jedem Schreiben mit, so weit die Änderung reicht</td></tr>
+            <tr><td>Verträge</td><td>Kommentare oder Laufzeit-Asserts</td><td>vom Z3-Beweiser beim Schreiben bewiesen</td></tr>
+            <tr><td>Nebenwirkungen</td><td>unsichtbar im Code</td><td>im Typ deklariert und einzeln freigegeben</td></tr>
+            <tr><td>Unbemerkte Rückschritte</td><td>findet ein Mensch, wenn er Glück hat</td><td>meldet das Verhaltensgedächtnis in derselben Runde</td></tr>
+            <tr><td>KI-Aufrufe im Programm</td><td>ein ungeprüfter API-Aufruf</td><td>ein Effekt mit Budget, Aufzeichnung und deterministischen Tests</td></tr>
+            <tr><td>Mehrere Agenten</td><td>Konflikte im Versionsverlauf</td><td>Rollen, Leases, Merge-Tor und signierte Geschichte</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="thesis">
+        <p><b>Unsere These:</b> Je mehr Code Agenten schreiben, desto weniger kann Vertrauen davon kommen, dass ein Mensch jede Zeile liest. Es muss aus der Sprache selbst kommen. QAL ist um diesen Gedanken herum gebaut. Was davon heute gemessen ist und was noch nicht besser ist, steht weiter unten bei den Zahlen und den Grenzen.</p>
       </div>
     </div>
   </section>
