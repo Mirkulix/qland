@@ -27,6 +27,16 @@ The last run (2026-10-26) produced **933 programs: 596 ok, 337 with diagnostics*
 **10 real correction traces** in `corrections.jsonl` (from the benchmark transcripts). That is a
 seed, not the target. The builder takes about 3.5 minutes because it starts the CLI per file.
 
+## Verify
+
+```sh
+python3 bench/corpus/verify.py            # 50 evenly spaced programs
+python3 bench/corpus/verify.py --all      # all programs, about 3.5 minutes
+```
+
+The checker compares only the status (`ok` vs. at least one diagnostic), not the diagnostic
+text, so a better checker does not invalidate the corpus.
+
 ## What is still missing for Phase 8
 
 1. **5,000–20,000 verified programs**, written by strong models from the task types, the
