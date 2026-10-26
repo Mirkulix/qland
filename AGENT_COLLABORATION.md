@@ -247,8 +247,8 @@ Die 5 Punkte wurden am 26.10.2026 unter `/opt/anaconda3/bin/python3` (Python 3.1
 
 ### Ergebnisse der Nachprüfung (Codex, 2026-10-26)
 
-Alle Befehle im Workspace-Root, sofern nicht anders angegeben; `HEAD` war `7441387a`, danach
-`e66b7c11` (Audit-Fixes) auf `origin/Mac`.
+Alle Befehle im Workspace-Root, sofern nicht anders angegeben; `HEAD` war `2727b57b` auf
+`origin/Mac`.
 
 | Prüfung | Befehl | Ergebnis |
 |---|---|---|
@@ -260,15 +260,17 @@ Alle Befehle im Workspace-Root, sofern nicht anders angegeben; `HEAD` war `74413
 | IGQK root | `python3 -m pytest IGQK_Complete_Package/igqk/tests -q` | **11/11** |
 | SaaS-Backend | `…/igqk_saas/.venv/bin/python -m pytest backend/tests -q` | **12/12** |
 | Fixpunkt | `cargo test -p qal-gen --test full_fixpoint --release` | **2/2**, ca. 33 s |
+| Voller Workspace-Test | `cargo test --workspace --release --no-fail-fast` | **Exit 0** (alle Suiten inkl. Doc-Tests) |
 
-**Einschränkungen:** Der volle `cargo test --workspace`-Lauf war zum Zeitpunkt dieser Notiz noch
-nicht abgeschlossen; die obigen gezielten Suiten sind grün. Die SaaS-Tests liefen mit dem
+**Einschränkungen:** Der volle Workspace-Lauf wurde im **Release**-Modus ausgeführt; im
+Debug-Modus ist er wegen der vielen Subprozesse (jeder startet Wasmtime) praktisch zu langsam.
+Die SaaS-Tests liefen mit dem
 Projekt-venv (`IGQK_DATA_DIR=/private/tmp/mnist_data`), nicht mit dem System-`python3`.
 `bin/qal` ist weiterhin ein älterer Build; Harnesses verwenden jetzt
 `qal/target/release/qal`. Die Replikation ist eine Selbstprüfung auf der Entwicklungsmaschine,
 keine unabhängige Drittmeinung.
 
-**Git:** Working Tree clean; `Mac` == `origin/Mac` nach dem Push von `e66b7c11`.
+**Git:** Working Tree clean; `Mac` == `origin/Mac` nach dem Push von `2727b57b`.
 
 ## Zustellung
 
