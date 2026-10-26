@@ -1,0 +1,385 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="QAL ist eine Programmiersprache für KI-Agenten: Ein Agent schreibt Code und weiß in derselben Runde, ob er stimmt.">
+<title>QAL Sprache</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: ein Prüfprotokoll. Links steht, was ein Agent schreibt, rechts, was der Speicher in derselben Runde antwortet. Die Seite liest sich wie ein Beleg mit Zahlen und Quellen. */
+:root {
+  --bg: #f5f7f4;
+  --surface: #ffffff;
+  --ink: #15211c;
+  --muted: #56645d;
+  --line: #d7ded9;
+  --proof: #0e6f5f;
+  --proof-soft: #dcefe9;
+  --warn: #9a5410;
+  --warn-soft: #f6e8d8;
+  --code-bg: #10201a;
+  --code-fg: #d9ece4;
+  --code-dim: #8fb0a3;
+  --code-key: #7fd6bf;
+  --code-str: #f2c58f;
+  --display: "Bricolage Grotesque", "Avenir Next", "Segoe UI", sans-serif;
+  --body: "IBM Plex Sans", "Helvetica Neue", Arial, sans-serif;
+  --mono: "JetBrains Mono", "SFMono-Regular", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0d1512; --surface: #13201b; --ink: #e3ece7; --muted: #9db0a7; --line: #26362f;
+    --proof: #5cc9b2; --proof-soft: #173a32; --warn: #e6a35f; --warn-soft: #3a2a1a;
+    --code-bg: #08110e; --code-fg: #d9ece4; --code-dim: #7f9c90; --code-key: #7fd6bf; --code-str: #f2c58f;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0d1512; --surface: #13201b; --ink: #e3ece7; --muted: #9db0a7; --line: #26362f;
+  --proof: #5cc9b2; --proof-soft: #173a32; --warn: #e6a35f; --warn-soft: #3a2a1a;
+  --code-bg: #08110e; --code-fg: #d9ece4; --code-dim: #7f9c90; --code-key: #7fd6bf; --code-str: #f2c58f;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { margin: 0; }
+img { max-width: 100%; }
+[hidden] { display: none !important; }
+:root { padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px); }
+body { background: var(--bg); color: var(--ink); font-family: var(--body); font-size: 17px; line-height: 1.6; }
+.wrap { max-width: 1120px; margin: 0 auto; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+h1, h2, h3 { font-family: var(--display); line-height: 1.1; text-wrap: balance; margin: 0; }
+h1 { font-size: clamp(2.3rem, 5.4vw, 4.1rem); font-weight: 800; letter-spacing: -0.02em; }
+h2 { font-size: clamp(1.7rem, 3.4vw, 2.5rem); font-weight: 700; letter-spacing: -0.01em; }
+h3 { font-size: 1.2rem; font-weight: 700; }
+p { margin: 0; max-width: 65ch; }
+.eyebrow { font-family: var(--mono); font-size: 0.78rem; letter-spacing: 0.12em; text-transform: uppercase; color: var(--proof); }
+a { color: var(--proof); }
+:focus-visible { outline: 2px solid var(--proof); outline-offset: 2px; }
+code, .mono { font-family: var(--mono); font-size: 0.9em; }
+
+/* Kopf */
+header { padding-block: 22px; border-bottom: 1px solid var(--line); }
+header .wrap { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.mark { font-family: var(--display); font-weight: 800; font-size: 1.35rem; letter-spacing: -0.02em; display: flex; align-items: baseline; gap: 10px; }
+.mark span { font-family: var(--mono); font-size: 0.72rem; font-weight: 400; color: var(--muted); letter-spacing: 0.04em; }
+nav { display: flex; gap: 18px; flex-wrap: wrap; font-size: 0.95rem; }
+nav a { color: var(--muted); text-decoration: none; }
+nav a:hover { color: var(--ink); }
+
+/* Hero */
+.hero { padding-block: 56px 40px; }
+.hero-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr); gap: 44px; align-items: start; }
+.hero-text { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
+.lede { font-size: 1.15rem; color: var(--muted); }
+.lede strong { color: var(--ink); font-weight: 600; }
+.checks { list-style: none; padding: 0; margin: 4px 0 0; display: grid; gap: 8px; }
+.checks li { display: grid; grid-template-columns: 22px 1fr; gap: 10px; align-items: baseline; }
+.checks li::before { content: "✓"; color: var(--proof); font-weight: 700; font-family: var(--mono); }
+
+.exchange { display: grid; gap: 12px; min-width: 0; }
+.panel { background: var(--code-bg); color: var(--code-fg); border-radius: 10px; overflow: hidden; min-width: 0; }
+.panel-head { display: flex; justify-content: space-between; gap: 12px; padding: 9px 14px; font-family: var(--mono); font-size: 0.74rem; color: var(--code-dim); border-bottom: 1px solid rgba(255,255,255,0.08); }
+.panel pre { margin: 0; padding: 14px 16px; overflow-x: auto; font-family: var(--mono); font-size: 0.82rem; line-height: 1.55; }
+.k { color: var(--code-key); }
+.s { color: var(--code-str); }
+.d { color: var(--code-dim); }
+.w { color: #ffb36b; }
+.caption { font-size: 0.82rem; color: var(--muted); }
+
+/* Abschnitte */
+section { padding-block: 64px; border-top: 1px solid var(--line); }
+.sec-head { display: grid; gap: 12px; margin-bottom: 34px; }
+.sec-head p { color: var(--muted); }
+
+/* Die fünf Prüfungen */
+.loop { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 0; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); overflow: hidden; }
+.step { padding: 20px 18px; border-right: 1px solid var(--line); display: grid; gap: 8px; align-content: start; min-width: 0; }
+.step:last-child { border-right: 0; }
+.step .n { font-family: var(--mono); font-size: 0.78rem; color: var(--proof); }
+.step p { font-size: 0.93rem; color: var(--muted); }
+.loop-foot { margin-top: 14px; font-size: 0.95rem; color: var(--muted); }
+
+/* Fähigkeiten */
+.caps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 28px 32px; }
+.cap { display: grid; gap: 8px; align-content: start; min-width: 0; }
+.cap .tag { font-family: var(--mono); font-size: 0.76rem; color: var(--muted); }
+.cap p { font-size: 0.97rem; }
+
+/* Zahlen */
+.figures { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.fig { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 20px 22px; display: grid; gap: 6px; min-width: 0; }
+.fig .val { font-family: var(--display); font-weight: 800; font-size: 2.1rem; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+.fig .val small { font-size: 1rem; font-weight: 500; color: var(--muted); }
+.fig .src { font-family: var(--mono); font-size: 0.74rem; color: var(--muted); }
+.table-wrap { overflow-x: auto; margin-top: 24px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; min-width: 520px; font-variant-numeric: tabular-nums; }
+th, td { text-align: left; padding: 11px 16px; border-bottom: 1px solid var(--line); font-size: 0.95rem; }
+th { font-family: var(--mono); font-size: 0.74rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); font-weight: 400; }
+tr:last-child td { border-bottom: 0; }
+td.now { color: var(--proof); font-weight: 600; }
+
+/* E0807 */
+.catch { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 32px; align-items: start; }
+.warnbox { background: var(--warn-soft); border-left: 3px solid var(--warn); border-radius: 0 10px 10px 0; padding: 18px 20px; display: grid; gap: 10px; min-width: 0; }
+.warnbox .code { font-family: var(--mono); color: var(--warn); font-weight: 600; font-size: 0.85rem; }
+.warnbox blockquote { margin: 0; font-family: var(--mono); font-size: 0.86rem; overflow-wrap: anywhere; }
+.story { display: grid; gap: 14px; min-width: 0; }
+.story ol { margin: 0; padding-left: 1.2em; display: grid; gap: 8px; }
+
+/* Warum, Grenzen */
+.two { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 40px; }
+.list { list-style: none; padding: 0; margin: 0; display: grid; gap: 16px; }
+.list li { display: grid; gap: 4px; }
+.list b { font-weight: 600; }
+.list span { color: var(--muted); font-size: 0.97rem; }
+.limits li b { color: var(--warn); }
+
+/* Loslegen */
+.cmds { display: grid; gap: 12px; }
+.cmd { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: stretch; background: var(--code-bg); border-radius: 10px; overflow: hidden; }
+.cmd pre { margin: 0; padding: 13px 16px; overflow-x: auto; color: var(--code-fg); font-family: var(--mono); font-size: 0.84rem; }
+.cmd button { font: 500 0.82rem var(--body); border: 0; border-left: 1px solid rgba(255,255,255,0.1); background: transparent; color: var(--code-key); padding: 0 16px; cursor: pointer; }
+.cmd button:hover { background: rgba(255,255,255,0.06); }
+.cmd-label { font-size: 0.9rem; color: var(--muted); }
+
+footer { padding-block: 36px; border-top: 1px solid var(--line); color: var(--muted); font-size: 0.88rem; }
+footer .wrap { display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+
+@media (max-width: 900px) {
+  .hero-grid, .catch, .two { grid-template-columns: 1fr; }
+  .caps { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .loop { grid-template-columns: 1fr; }
+  .step { border-right: 0; border-bottom: 1px solid var(--line); }
+  .step:last-child { border-bottom: 0; }
+}
+@media (max-width: 560px) {
+  body { font-size: 16px; }
+  .caps, .figures { grid-template-columns: 1fr; }
+  .hero { padding-block: 36px 28px; }
+  section { padding-block: 48px; }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .reply .line { animation: appear 0.45s ease both; }
+  .reply .line:nth-child(2) { animation-delay: 0.15s; } .reply .line:nth-child(3) { animation-delay: 0.3s; }
+  .reply .line:nth-child(4) { animation-delay: 0.45s; } .reply .line:nth-child(5) { animation-delay: 0.6s; }
+  .reply .line:nth-child(6) { animation-delay: 0.75s; }
+  @keyframes appear { from { opacity: 0.25; transform: translateY(2px); } to { opacity: 1; transform: none; } }
+}
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap">
+    <div class="mark">QAL <span>Query &amp; Agent Language</span></div>
+    <nav aria-label="Abschnitte">
+      <a href="#runde">Die eine Runde</a>
+      <a href="#kann">Was sie kann</a>
+      <a href="#zahlen">Zahlen</a>
+      <a href="#warum">Warum</a>
+      <a href="#start">Loslegen</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <div class="wrap hero">
+    <div class="hero-grid">
+      <div class="hero-text">
+        <div class="eyebrow">Eine Programmiersprache für KI-Agenten</div>
+        <h1>Ein Agent schreibt Code und weiß in derselben Runde, ob er stimmt.</h1>
+        <p class="lede">In QAL liegt Code nicht in Dateien, sondern als geprüfte Funktionsknoten in einem Speicher. Jeder Schreibvorgang wird sofort <strong>getypt, bewiesen, getestet und mit dem Rest des Programms verknüpft</strong>. Die Antwort kommt in unter einer halben Sekunde.</p>
+        <ul class="checks">
+          <li>Verträge (<code>req</code>/<code>ens</code>) werden mit dem Z3-Beweiser bewiesen</li>
+          <li>Jeder betroffene Test läuft mit, auch über Umwege</li>
+          <li>Frühere echte Läufe zeigen, wenn sich Verhalten unbemerkt ändert</li>
+        </ul>
+      </div>
+
+      <div class="exchange" aria-label="Beispiel: ein Schreibvorgang und die Antwort">
+        <div class="panel">
+          <div class="panel-head"><span>Agent → qal_define</span><span>QAL</span></div>
+<pre><span class="k">type</span> Acct = { id: Int, balance: Int }
+
+<span class="k">fn</span> deposit(a: Acct, n: Int) -&gt; Acct
+  <span class="k">req</span> n &gt;= 1
+  <span class="k">ens</span> r.balance &gt; a.balance
+= Acct { id: a.id, balance: a.balance + n }
+
+<span class="k">test</span> deposit_adds =
+  deposit(Acct { id: 1, balance: 5 }, 3).balance == 8</pre>
+        </div>
+        <div class="panel reply">
+          <div class="panel-head"><span>Speicher → Agent, dieselbe Runde</span><span>JSON</span></div>
+<pre><span class="line d">{</span>
+<span class="line">  <span class="k">"defined"</span>:    [<span class="s">"Acct"</span> added, <span class="s">"deposit"</span> replaced, 3 relinked],</span>
+<span class="line">  <span class="k">"proofs"</span>:     [<span class="s">"ens[0] of deposit"</span>: <span class="s">proven</span>],</span>
+<span class="line">  <span class="k">"tests"</span>:      [<span class="s">"deposit_adds"</span>: passed, 4 more reached: passed],</span>
+<span class="line">  <span class="k">"properties"</span>: [<span class="s">"deposit"</span>: passed at 0, ±1, req bounds],</span>
+<span class="line">  <span class="k">"warnings"</span>:   [] <span class="d">}</span></span></pre>
+        </div>
+        <p class="caption">Gekürzt. Felder und Form entsprechen der Antwort von <code>qal_define</code>; die Zahlen in diesem Beispiel sind zur Veranschaulichung gewählt.</p>
+      </div>
+    </div>
+  </div>
+
+  <section id="runde">
+    <div class="wrap">
+      <div class="sec-head">
+        <div class="eyebrow">Die eine Runde</div>
+        <h2>Fünf Prüfungen, ein Aufruf</h2>
+        <p>Andere Sprachen verteilen diese Schritte auf Compiler, Testlauf, Linter und Review. In QAL sind sie die Antwort auf jedes Schreiben. Der Agent muss nichts davon selbst anstoßen.</p>
+      </div>
+      <div class="loop">
+        <div class="step"><span class="n">Typen und Effekte</span><h3>Passt es?</h3><p>Typprüfung, und jede Funktion nennt, was sie darf: <code>!io</code>, <code>!fs</code>, <code>!net</code>, <code>!db</code>, <code>!model</code>.</p></div>
+        <div class="step"><span class="n">Z3-Beweis</span><h3>Gilt der Vertrag?</h3><p>Vor- und Nachbedingungen werden bewiesen. Ein widerlegter Vertrag wird gar nicht erst gespeichert.</p></div>
+        <div class="step"><span class="n">Tests</span><h3>Bricht etwas?</h3><p>Alle Tests, die die Änderung erreichen, auch über andere Funktionen hinweg.</p></div>
+        <div class="step"><span class="n">Property-Tests</span><h3>Und an den Rändern?</h3><p>Jede reine Funktion bei 0, ±1, leeren Werten und an den Grenzen ihrer Vorbedingung.</p></div>
+        <div class="step"><span class="n">Neu verknüpfen</span><h3>Stimmt der Rest?</h3><p>Alle abhängigen Funktionen bekommen neue Hashes und werden mitgeprüft.</p></div>
+      </div>
+      <p class="loop-foot">Dazu kommt das Verhaltensgedächtnis E0807: Frühere echte Programmläufe werden wiederholt, und eine geänderte Ausgabe wird gemeldet.</p>
+    </div>
+  </section>
+
+  <section id="kann">
+    <div class="wrap">
+      <div class="sec-head">
+        <div class="eyebrow">Was die Sprache kann</div>
+        <h2>Gebaut für den, der den Code schreibt: einen Agenten</h2>
+      </div>
+      <div class="caps">
+        <div class="cap"><span class="tag">Speicher statt Dateien</span><h3>Code als adressierte Knoten</h3><p>Jede Definition liegt in <code>.qal/store.db</code> unter ihrem SHA-256-Hash. Umbenennen, Abfragen nach Verwendern und Verlauf sind Speicheroperationen, kein Textsuchen.</p></div>
+        <div class="cap"><span class="tag">Verträge</span><h3>Beweisen statt hoffen</h3><p><code>req</code> und <code>ens</code> stehen an der Funktion. Der eingebettete Z3-Beweiser prüft sie bei jedem Schreiben, und zur Laufzeit gelten sie ebenfalls.</p></div>
+        <div class="cap"><span class="tag">Sandbox</span><h3>WebAssembly mit Grenzen</h3><p>Programme laufen in Wasmtime mit festen Grenzen für Rechenzeit und Speicher. Ein Effekt, der nicht freigegeben ist, ist gar nicht verfügbar.</p></div>
+        <div class="cap"><span class="tag">Exakte Ganzzahlen</span><h3>Keine stillen Überläufe</h3><p><code>a * b / c</code> wird mit 128-Bit-Zwischenergebnis exakt gerechnet. Ein echter Überlauf bricht ab, statt falsch weiterzurechnen.</p></div>
+        <div class="cap"><span class="tag">Selbst gehostet</span><h3>Der Compiler ist in QAL geschrieben</h3><p>Der Compiler übersetzt sich selbst. Stufe 1, 2 und 3 sind byte-gleich; ein Rust-Referenzcompiler prüft ihn laufend gegen.</p></div>
+        <div class="cap"><span class="tag">std.model</span><h3>KI-Aufrufe mit Budget</h3><p>Programme können ein Modell fragen. Jede Antwort wird aufgezeichnet; Tests spielen sie deterministisch und kostenlos ab, ohne Netz.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="zahlen">
+    <div class="wrap">
+      <div class="sec-head">
+        <div class="eyebrow">Gemessen, nicht behauptet</div>
+        <h2>Die Zahlen hinter der einen Runde</h2>
+        <p>Alle Werte stammen aus Messungen am 25. und 26. Oktober 2026. Die Berichte liegen im Repository unter <code>bench/</code>.</p>
+      </div>
+      <div class="figures">
+        <div class="fig"><span class="val">0,28 <small>s</small></span><span>Median eines vollständigen <code>define</code> mit allen Prüfungen, 66 Funktionen</span><span class="src">bench/loop/report.md</span></div>
+        <div class="fig"><span class="val">0,41–0,46 <small>s</small></span><span>derselbe Ablauf bei 1520 Definitionen, früher 4,5–5,0 s</span><span class="src">bench/loop/report.md</span></div>
+        <div class="fig"><span class="val">0 <small>von 2424</small></span><span>Abweichungen zwischen inkrementeller und vollständiger Prüfung, 318 echte Speicher</span><span class="src">Differenztest, Commit 8d10c86e</span></div>
+        <div class="fig"><span class="val">95 <small>von 96</small></span><span>Stufen mit allen verborgenen Tests grün, acht Läufe mit je 12 Änderungsaufträgen</span><span class="src">bench/living, Läufe 7–14</span></div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Ein define, alle fünf Prüfungen</th><th>Vorher</th><th>Jetzt</th></tr></thead>
+          <tbody>
+            <tr><td>66 Funktionen (Median)</td><td>1,24 s</td><td class="now">0,28 s</td></tr>
+            <tr><td>1520 Definitionen</td><td>4,5–5,0 s</td><td class="now">0,41–0,46 s</td></tr>
+            <tr><td>Tokens eines Agenten im Vergleich zu Rust</td><td>2,06×</td><td class="now">1,29–1,32×</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <section id="fang">
+    <div class="wrap">
+      <div class="sec-head">
+        <div class="eyebrow">Ein echter Fang</div>
+        <h2>Alle Tests grün, und trotzdem ein Fehler</h2>
+      </div>
+      <div class="catch">
+        <div class="story">
+          <p>Ein Haiku-Agent sollte mehrzeilige Bestellungen einbauen. Nach seinem ersten <code>define</code> bestanden alle seine eigenen Tests. Nur das Verhaltensgedächtnis meldete, dass eine alte, einzeilige Bestellung jetzt anders kostet.</p>
+          <ol>
+            <li>Der Agent las die Warnung und erkannte: Einzeilige Bestellungen müssen gleich bleiben.</li>
+            <li>Er korrigierte die Rabattformel in der nächsten Runde.</li>
+            <li>Gegenprobe: Der Stand vor der Korrektur hätte 5 von 50 verborgenen Tests verletzt.</li>
+          </ol>
+          <p>Bei gezielt eingebauten Fehlern meldet E0807 allein, ohne einen einzigen Test, 11 von 13. In 30 Live-Versuchen gab es keinen Fehlalarm.</p>
+        </div>
+        <div class="warnbox" role="note">
+          <span class="code">E0807 behaviour_changed</span>
+          <blockquote>this define changed what `main` prints on 3 of 25 earlier runs: `OK o1 8800` is now `OK o1 8835`</blockquote>
+          <span class="caption">Wörtlich aus Versuch 12, Commit 9ab47ae8</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="warum">
+    <div class="wrap two">
+      <div>
+        <div class="sec-head">
+          <div class="eyebrow">Warum QAL</div>
+          <h2>Wenn ein Agent den Code schreibt</h2>
+        </div>
+        <ul class="list">
+          <li><b>Rückmeldung in einer Runde</b><span>Ein Agent erfährt sofort, ob Typen, Verträge, Tests und Abhängige stimmen. Er muss keinen Build-Lauf planen und keine Logs lesen.</span></li>
+          <li><b>Fehler, die Tests nicht sehen</b><span>Beweise und das Verhaltensgedächtnis fangen, was die eigenen Tests eines Agenten übersehen.</span></li>
+          <li><b>Kontrollierte Wirkung</b><span>Jeder Effekt steht im Typ und muss freigegeben werden. Ohne <code>--allow model</code> kann ein Programm kein Modell aufrufen und kein Geld ausgeben.</span></li>
+          <li><b>Antworten als Daten</b><span>Jedes Ergebnis ist JSON. Jeder Fehler hat einen Code, einen Pfad und einen Hinweis zur Behebung.</span></li>
+        </ul>
+      </div>
+      <div>
+        <div class="sec-head">
+          <div class="eyebrow">Was noch nicht besser ist</div>
+          <h2>Ehrlich gemessen</h2>
+        </div>
+        <ul class="list limits">
+          <li><b>Kosten</b><span>Agenten brauchen in QAL etwa 1,3-mal so viele Tokens wie in Rust. Der größte Posten ist die Sprachreferenz, die jeder Agent mitliest.</span></li>
+          <li><b>Kein Zeitgewinn pro Aufgabe</b><span>Bei kleinen Programmen ändert die schnellere Prüfung an Runden und Laufzeit messbar nichts. Ihr Nutzen zeigt sich bei großen Programmen und als Sicherheitsnetz.</span></li>
+          <li><b>Junge Sprache</b><span>Gemessen ist QAL an einem Bestellsystem mit zwölf Änderungsstufen. Breitere Erfahrung im Einsatz fehlt noch.</span></li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section id="start">
+    <div class="wrap">
+      <div class="sec-head">
+        <div class="eyebrow">Loslegen</div>
+        <h2>Ein Projekt, ein Speicher, die erste Runde</h2>
+        <p>QAL wird mit Cargo gebaut. Agenten sprechen über den MCP-Server <code>qal mcp</code> mit dem Speicher; Menschen nutzen dieselben Befehle auf der Kommandozeile.</p>
+      </div>
+      <div class="cmds">
+        <span class="cmd-label">Bauen</span>
+        <div class="cmd"><pre id="c1">cargo build --release --manifest-path qal/Cargo.toml -p qal-cli</pre><button type="button" data-copy="c1">Kopieren</button></div>
+        <span class="cmd-label">Speicher anlegen und Code schreiben</span>
+        <div class="cmd"><pre id="c2">qal init &amp;&amp; qal define konto.qal</pre><button type="button" data-copy="c2">Kopieren</button></div>
+        <span class="cmd-label">Alle Tests laufen lassen und einen Vertrag beweisen</span>
+        <div class="cmd"><pre id="c3">qal test &amp;&amp; qal prove deposit</pre><button type="button" data-copy="c3">Kopieren</button></div>
+        <span class="cmd-label">Für Agenten: den MCP-Server im Projekt starten</span>
+        <div class="cmd"><pre id="c4">qal mcp --root .</pre><button type="button" data-copy="c4">Kopieren</button></div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span>QAL. Rust-Kern, selbst gehosteter Compiler, Z3, Wasmtime.</span>
+    <span>Zahlen vom 25. und 26. Oktober 2026</span>
+  </div>
+</footer>
+
+<script>
+document.querySelectorAll("button[data-copy]").forEach(function (b) {
+  b.addEventListener("click", function () {
+    var el = document.getElementById(b.getAttribute("data-copy"));
+    var text = el.textContent;
+    var done = function () { b.textContent = "Kopiert"; setTimeout(function () { b.textContent = "Kopieren"; }, 1600); };
+    var select = function () { var r = document.createRange(); r.selectNodeContents(el); var s = window.getSelection(); s.removeAllRanges(); s.addRange(r); b.textContent = "Markiert"; };
+    try {
+      navigator.clipboard.writeText(text).then(done, select);
+    } catch (e) { select(); }
+  });
+});
+</script>
+
+</body>
+</html>
