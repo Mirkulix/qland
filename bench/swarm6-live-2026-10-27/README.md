@@ -67,8 +67,9 @@ test double_bad = double() == 30
 ```
 
 `double_bad` passes, but the existing `double_ok` (which pins `double() == 20`) fails in
-the change set. The verifier recorded `failed`; the reviewer tried to merge without an
-approval and got **E0913 gate_unmet**. Nothing was merged.
+the change set. The verifier recorded `failed`; the reviewer then posted `changes` (reopening the set)
+and a merge without approval got **E0913 gate_unmet**. Nothing was merged; the change
+stays `open`.
 
 Evidence after the attack:
 
