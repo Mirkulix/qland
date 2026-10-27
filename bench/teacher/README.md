@@ -12,14 +12,14 @@ Create or append to `~/.config/qal/secrets.env` (mode `600`, never in the repo):
 ```sh
 DEEPSEEK_API_KEY=sk-...
 DEEPSEEK_BASE_URL=https://api.deepseek.com
-DEEPSEEK_MODEL=deepseek-coder
+DEEPSEEK_MODEL=deepseek-chat
 QAL_MODEL_BUDGET_EUR=10
 # optional price overrides, EUR per million tokens:
 # DEEPSEEK_INPUT_EUR_PER_MTOK=0.30
 # DEEPSEEK_OUTPUT_EUR_PER_MTOK=1.20
 ```
 
-`DEEPSEEK_MODEL` is whatever the account exposes (`deepseek-coder`, `deepseek-chat`, ...).
+`DEEPSEEK_MODEL` is whatever the account exposes (default `deepseek-chat`; `deepseek-coder` also exists but performed worse on QAL zero-shot).
 The budget is checked after every task; the run stops when it is exhausted.
 
 ## Run

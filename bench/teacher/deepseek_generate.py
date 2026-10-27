@@ -6,7 +6,7 @@ repository):
 
   DEEPSEEK_API_KEY=sk-...
   DEEPSEEK_BASE_URL=https://api.deepseek.com
-  DEEPSEEK_MODEL=deepseek-coder
+  DEEPSEEK_MODEL=deepseek-chat
   QAL_MODEL_BUDGET_EUR=10
 
   python3 bench/teacher/deepseek_generate.py --dry-run
@@ -21,7 +21,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 SECRETS = Path.home() / ".config" / "qal" / "secrets.env"
 DEFAULT_BASE = "https://api.deepseek.com"
-DEFAULT_MODEL = "deepseek-coder"
+DEFAULT_MODEL = "deepseek-chat"
 QAL = REPO / "qal" / "target" / "release" / "qal"
 
 
@@ -78,6 +78,7 @@ def main():
     ap.add_argument("--limit", type=int, default=0, help="first N tasks (0: all)")
     ap.add_argument("--tasks", nargs="*", default=None, help="task ids; default all bench/tasks")
     ap.add_argument("--max-tokens", type=int, default=4096)
+    ap.add_argument("--attempts", type=int, default=4, help="generate/fix attempts per task")
     ap.add_argument("--out", default=None, help="output dir (default bench/teacher-api-<date>)")
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
@@ -110,28 +111,35 @@ def main():
         prompt = ("Write one complete QAL program for the task below. It must define "
                   "main(args: List[Str]) -> Int !io and use only this language reference. "
                   "Return only QAL source.\n\nTASK:\n" + statement + "\n\nREFERENCE:\n" + ref)
-        try:
-            r = request(env, [{"role": "system", "content": "You write QAL programs."},
-                              {"role": "user", "content": prompt}], args.max_tokens)
-        except Exception as e:
-            results.append({"task": task, "error": f"{type(e).__name__}: {e}"})
-            print(task, "request failed", file=sys.stderr)
-            continue
-        usage = r.get("usage", {})
-        cost = usage.get("prompt_tokens", 0) / 1e6 * in_rate + usage.get("completion_tokens", 0) / 1e6 * out_rate
+        messages = [{"role": "system", "content": "You write QAL programs."},
+                    {"role": "user", "content": prompt}]
+        text, v, attempts, cost = "", {"passed": 0, "total": 0, "error": "no attempt"}, 0, 0.0
+        for attempt in range(1, max(1, args.attempts) + 1):
+            attempts = attempt
+            try:
+                r = request(env, messages, args.max_tokens)
+            except Exception as e:
+                v = {"passed": 0, "total": 0, "error": f"{type(e).__name__}: {e}"}
+                break
+            usage = r.get("usage", {})
+            cost += usage.get("prompt_tokens", 0) / 1e6 * in_rate + usage.get("completion_tokens", 0) / 1e6 * out_rate
+            text = strip_code(r["choices"][0]["message"]["content"])
+            try:
+                v = validate(task, text)
+            except Exception as e:
+                v = {"passed": 0, "total": 0, "error": str(e)}
+            if v.get("total") and v.get("passed") == v.get("total"):
+                break
+            messages += [{"role": "assistant", "content": text},
+                         {"role": "user", "content": "The QAL define failed. Fix it and return only QAL source. Error:\n" + str(v.get("error"))[:3000]}]
         spent += cost
-        text = strip_code(r["choices"][0]["message"]["content"])
-        try:
-            v = validate(task, text)
-        except Exception as e:
-            v = {"passed": 0, "total": 0, "error": str(e)}
         ok = bool(v.get("total")) and v.get("passed") == v.get("total")
         if ok:
             (out / "solutions" / f"{task}.qal").write_text(text, encoding="utf-8")
         results.append({"task": task, "ok": ok, "passed": v.get("passed", 0), "total": v.get("total", 0),
-                        "error": v.get("error"), "usage": usage, "cost_eur": round(cost, 6)})
+                        "error": v.get("error"), "attempts": attempts, "cost_eur": round(cost, 6)})
         print(json.dumps({"task": task, "ok": ok, "passed": v.get("passed", 0), "total": v.get("total", 0),
-                          "spent_eur": round(spent, 4)}))
+                          "attempts": attempts, "spent_eur": round(spent, 4)}))
         if spent >= budget:
             print("budget exhausted", file=sys.stderr)
             break
