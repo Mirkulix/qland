@@ -38,6 +38,12 @@ python3 bench/corpus/verify.py --all      # all programs, about 3.5 minutes
 The checker compares only the status (`ok` vs. at least one diagnostic), not the diagnostic
 text, so a better checker does not invalidate the corpus.
 
+## Generation provenance
+
+`generation-2026-10-27.json` records the 20 DeepSeek batches: 4,400 raw programs, 4,367 kept
+after `qal check` + `qal test`, 33 rejected, SHA-256 dedup, budget 10 EUR (no metering in this
+environment).
+
 ## SFT seed
 
 ```sh
