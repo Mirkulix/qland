@@ -73,8 +73,9 @@ adapter is in `/tmp/qal-mlx-adapter` (not committed). Proxy evaluation on 10 hel
 0/50, adapter 7/50**. The adapter and proxy results are stored in
 `bench/lora/mlx-adapter-2026-10-27/`. A single-shot run over the first 5 benchmark tasks (hidden
 cases, no tools/iteration) solved **0/5 for both** base and adapter (0/46 cases); the full 23-task
-run was stopped because bad programs spend up to 9×10 s in hidden-case timeouts. This is a proxy,
-not the Phase 8 agent benchmark.
+hidden-case run was stopped because bad programs spend up to 9×10 s per case. A fast check-only
+run over all 23 tasks: **base 7/23 valid, adapter 2/23 valid** — the adapter fits the SFT prompts
+but generalizes worse to benchmark tasks. This is a proxy, not the Phase 8 agent benchmark.
 
 ## Proxy evaluation
 
