@@ -66,8 +66,11 @@ python3 -m mlx_lm lora --model TinyLlama/TinyLlama-1.1B-Chat-v1.0 \
   --adapter-path /tmp/qal-mlx-adapter --mask-prompt --steps-per-report 25 --steps-per-eval 100
 ```
 
-Measured on this machine: ~0.21 iterations/s, so 530 iterations ≈ **40 minutes**. This is the run
-currently in progress; `eval_mlx.py` evaluates the resulting adapter.
+Measured on this machine: ~0.21 iterations/s; the run finished in **41 minutes**: final **val loss
+0.171**, train loss 0.164, 530 iters, batch 8, max-length 256 (longer sequences truncated). The
+adapter is in `/tmp/qal-mlx-adapter` (not committed). Proxy evaluation on 10 held-out prompts:
+**base model 0/10, adapter 3/10** pass `qal check` + `qal test`. This is a proxy, not the Phase 8
+benchmark.
 
 ## Proxy evaluation
 
