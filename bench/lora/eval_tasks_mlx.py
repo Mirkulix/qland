@@ -66,7 +66,7 @@ def main():
         solved=sum(1 for r in rows if r['total'] and r['passed']==r['total'])
         return {'tasks':len(rows),'solved':solved,'passed_cases':sum(r['passed'] for r in rows),'total_cases':sum(r['total'] for r in rows)},rows
     out={}
-    if args.compare_base: out['base'],out['base_rows']=run(base)
+    if args.compare_base or adapter is None: out['base'],out['base_rows']=run(base)
     if adapter is not None:
         out['adapter'],out['adapter_rows']=run(adapter)
     print(json.dumps({k:out[k] for k in ('base','adapter') if k in out},indent=2))
