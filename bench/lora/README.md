@@ -46,6 +46,29 @@ The run must be evaluated with the Phase 6 benchmark, not by training loss:
 Those numbers are the Phase 8 acceptance criteria. Until they are measured, Phase 8 stays in
 progress, regardless of how good the adapter's training loss looks.
 
+## MLX run (faster on Apple Silicon)
+
+The PyTorch CPU run is slow (hours). MLX uses the Apple GPU:
+
+```sh
+# convert the SFT chat file once
+python3 - <<'EOF'
+import json, random
+rows=[json.loads(l) for l in open("bench/corpus/sft.jsonl")]
+random.Random(1).shuffle(rows); n=max(1,int(len(rows)*0.05))
+for name,data in (("train",rows[n:]),("valid",rows[:n])):
+    with open(f"/tmp/qal-mlx-data/{name}.jsonl","w") as f:
+        for r in data: f.write(json.dumps({"messages":r["messages"]})+"\n")
+EOF
+
+python3 -m mlx_lm lora --model TinyLlama/TinyLlama-1.1B-Chat-v1.0 \
+  --train --data /tmp/qal-mlx-data --iters 530 --batch-size 8 --max-seq-length 256 \
+  --adapter-path /tmp/qal-mlx-adapter --mask-prompt --steps-per-report 25 --steps-per-eval 100
+```
+
+Measured on this machine: ~0.21 iterations/s, so 530 iterations ≈ **40 minutes**. This is the run
+currently in progress; `eval_mlx.py` evaluates the resulting adapter.
+
 ## Proxy evaluation
 
 After training, `eval_adapter.py --adapter <dir> --limit 10` generates QAL from held-out SFT
