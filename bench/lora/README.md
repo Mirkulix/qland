@@ -46,6 +46,12 @@ The run must be evaluated with the Phase 6 benchmark, not by training loss:
 Those numbers are the Phase 8 acceptance criteria. Until they are measured, Phase 8 stays in
 progress, regardless of how good the adapter's training loss looks.
 
+## Proxy evaluation
+
+After training, `eval_adapter.py --adapter <dir> --limit 10` generates QAL from held-out SFT
+prompts and keeps a sample only if `qal check` and `qal test` accept it. This is a **proxy**, not
+the Phase 8 benchmark (the three-arm agent evaluation is still missing).
+
 ## What is missing
 
 1. 5,000–20,000 model-written, `qal check`-verified programs (the seed has 933, mostly from the
