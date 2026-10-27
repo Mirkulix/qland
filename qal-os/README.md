@@ -11,7 +11,12 @@ kernel/user boundary.
 - each task is defined and tested in **that agent's own store**; one bad task cannot break
   another agent,
 - `ps` and `audit` show tasks, pass/fail counts and definitions per agent,
-- `QAL_OS_HOME`, `QAL_BIN`, `QAL_OS_TIMEOUT`, `QAL_OS_QUOTA` env overrides.
+- `QAL_OS_HOME`, `QAL_BIN`, `QAL_OS_TIMEOUT`, `QAL_OS_QUOTA` env overrides,
+- **macOS sandbox profiles** (`up --sandbox`): each agent may read/write only its own
+  directory; the network is denied for every agent,
+- `isolation-check`: proves that agent A cannot read agent B's directory while it can read
+  its own.
+
 
 ## Run
 
@@ -25,6 +30,15 @@ python3 qal-os/qal_os.py down --tenant demo --force
 
 `run` exits 1 if any task failed (the bad task in the example is intentional).
 
+```sh
+python3 qal-os/qal_os.py up --tenant demo --agents 3 --sandbox --force
+python3 qal-os/qal_os.py isolation-check --tenant demo
+```
+
+Measured on macOS (3 agents): every agent got `Operation not permitted` reading another
+agent's `secret`, while reading its own worked. Sandboxed QAL tasks (add/sub/mul) passed
+3/3. The profiles deny `network*` as well.
+
 ## Measured example
 
 4 agents, 4 tasks (add/sub/mul + one wrong type):
@@ -35,7 +49,8 @@ python3 qal-os/qal_os.py down --tenant demo --force
 
 ## What this is not
 
-- **No OS-level isolation:** same user can read the stores and keys.
+- **Isolation is macOS sandbox-exec only.** All processes still run as the same OS user; on
+  Linux this needs namespaces/cgroups/seccomp (or gVisor/Firecracker).
 - **No preemptive scheduler:** a thread pool plus subprocess timeouts, not epoch preemption.
 - **No IPC bus, no per-agent UID, no multi-tenant security, no boot/trust root.**
 

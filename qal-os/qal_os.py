@@ -18,6 +18,7 @@ REPO = Path(__file__).resolve().parents[1]
 QAL = Path(os.environ.get("QAL_BIN", REPO / "qal" / "target" / "release" / "qal"))
 HOME = Path(os.environ.get("QAL_OS_HOME", Path.home() / ".qal-os"))
 TIMEOUT = int(os.environ.get("QAL_OS_TIMEOUT", "30"))
+SANDBOX = "/usr/bin/sandbox-exec"
 QUOTA = int(os.environ.get("QAL_OS_QUOTA", "8"))
 
 
@@ -40,6 +41,25 @@ def meta(tenant):
     return json.loads(p.read_text())
 
 
+def write_profiles(tenant, agents):
+    """macOS: deny every other agent's directory and the network; allow the rest."""
+    if not Path(SANDBOX).exists():
+        return False
+    t = tenant_dir(tenant)
+    (t / "profiles").mkdir(exist_ok=True)
+    for a in agents:
+        deny = "".join(f'(deny file-read* (subpath "{os.path.realpath(o["dir"])}"))\n(deny file-write* (subpath "{os.path.realpath(o["dir"])}"))\n'
+                       for o in agents if o["id"] != a["id"])
+        text = f'(version 1)\n(allow default)\n(deny network*)\n{deny}'
+        (t / "profiles" / (a["id"] + ".sb")).write_text(text)
+    return True
+
+
+def sandboxed(args, agent_id):
+    p = tenant_dir(args.tenant) / "profiles" / (agent_id + ".sb")
+    return [SANDBOX, "-f", str(p)] if p.exists() else []
+
+
 def cmd_up(args):
     t = tenant_dir(args.tenant)
     if t.exists() and not args.force:
@@ -55,9 +75,10 @@ def cmd_up(args):
         if code != 0:
             sys.exit(f"agent a{i} init failed: {out[:500]}")
         agents.append({"id": f"a{i}", "dir": str(d), "tasks": 0, "passed": 0, "failed": 0})
-    (t / "meta.json").write_text(json.dumps({"tenant": args.tenant, "agents": agents,
+    sandbox = write_profiles(args.tenant, agents) if args.sandbox else False
+    (t / "meta.json").write_text(json.dumps({"tenant": args.tenant, "agents": agents, "sandbox": sandbox,
                                               "created": time.time(), "qal": str(QAL)}, indent=2) + "\n")
-    print(json.dumps({"tenant": args.tenant, "agents": len(agents), "root": str(t)}, indent=2))
+    print(json.dumps({"tenant": args.tenant, "agents": len(agents), "sandbox": sandbox, "root": str(t)}, indent=2))
 
 
 def one_task(tenant, task):
@@ -72,10 +93,11 @@ def one_task(tenant, task):
     src = d / "tasks" / f"task-{agent['tasks']:04d}.qal"
     src.parent.mkdir(exist_ok=True)
     src.write_text(task["source"], encoding="utf-8")
-    code, out = run([str(QAL), "define", src.name], src.parent)
+    pre = sandboxed(argparse.Namespace(tenant=tenant), aid)
+    code, out = run(pre + [str(QAL), "define", src.name], src.parent)
     if code != 0:
         return {"agent": aid, "ok": False, "error": "define", "detail": out[:2000]}
-    code, out = run([str(QAL), "test", src.name], src.parent)
+    code, out = run(pre + [str(QAL), "test", src.name], src.parent)
     return {"agent": aid, "ok": code == 0, "error": None if code == 0 else "test", "detail": out[:2000]}
 
 
@@ -128,6 +150,28 @@ def cmd_audit(args):
     print(json.dumps({"tenant": args.tenant, "agents": out}, indent=2))
 
 
+def cmd_isolation(args):
+    m = meta(args.tenant)
+    if not m.get("sandbox"):
+        sys.exit("tenant was not started with --sandbox")
+    results = []
+    for a in m["agents"]:
+        others = [o for o in m["agents"] if o["id"] != a["id"]]
+        if not others:
+            continue
+        target = Path(others[0]["dir"]) / "secret"
+        target.write_text("other-agent-secret", encoding="utf-8")
+        pre = sandboxed(args, a["id"])
+        code, out = run(pre + ["/bin/cat", str(target)], Path(a["dir"]), timeout=10)
+        own = Path(a["dir"]) / "secret"
+        own.write_text("own", encoding="utf-8")
+        code2, _ = run(pre + ["/bin/cat", str(own)], Path(a["dir"]), timeout=10)
+        results.append({"agent": a["id"], "other_read_denied": code != 0, "own_read_ok": code2 == 0,
+                        "detail": out[:200]})
+    print(json.dumps({"tenant": args.tenant, "results": results}, indent=2))
+    sys.exit(0 if all(r["other_read_denied"] and r["own_read_ok"] for r in results) else 1)
+
+
 def cmd_down(args):
     t = tenant_dir(args.tenant)
     if not t.exists():
@@ -141,10 +185,11 @@ def cmd_down(args):
 def main():
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest="cmd", required=True)
-    up = sub.add_parser("up"); up.add_argument("--tenant", required=True); up.add_argument("--agents", type=int, default=4); up.add_argument("--force", action="store_true"); up.set_defaults(fn=cmd_up)
+    up = sub.add_parser("up"); up.add_argument("--tenant", required=True); up.add_argument("--agents", type=int, default=4); up.add_argument("--force", action="store_true"); up.add_argument("--sandbox", action="store_true"); up.set_defaults(fn=cmd_up)
     r = sub.add_parser("run"); r.add_argument("--tenant", required=True); r.add_argument("--tasks", required=True); r.add_argument("--workers", type=int, default=4); r.set_defaults(fn=cmd_run)
     ps = sub.add_parser("ps"); ps.add_argument("--tenant", required=True); ps.set_defaults(fn=cmd_ps)
     au = sub.add_parser("audit"); au.add_argument("--tenant", required=True); au.set_defaults(fn=cmd_audit)
+    iso = sub.add_parser("isolation-check"); iso.add_argument("--tenant", required=True); iso.set_defaults(fn=cmd_isolation)
     dn = sub.add_parser("down"); dn.add_argument("--tenant", required=True); dn.add_argument("--force", action="store_true"); dn.set_defaults(fn=cmd_down)
     args = ap.parse_args()
     if not Path(QAL).exists():
