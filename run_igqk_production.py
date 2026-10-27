@@ -572,6 +572,27 @@ def evaluate_compression_quality(args):
             print(f"✅ Bewertung: Geringer Genauigkeitsverlust von {acc_drop:.2f}%.")
 
 
+
+def lossless_file(args):
+    """Compress or restore a checkpoint/file bit-exactly (no quantization)."""
+    import zstandard as zstd
+    from pathlib import Path as _Path
+    MAGIC = b"QALLF1\n"
+    if not args.input or not args.output:
+        raise SystemExit("lossless needs --input and --output")
+    data = _Path(args.input).read_bytes()
+    if args.decompress:
+        if not data.startswith(MAGIC):
+            raise SystemExit("not a QALL lossless file")
+        out = zstd.ZstdDecompressor().decompress(data[len(MAGIC):])
+        _Path(args.output).write_bytes(out)
+        print(f"   Restored {args.output}: {len(out):,} bytes (exact)")
+    else:
+        blob = MAGIC + zstd.ZstdCompressor(level=19).compress(data)
+        _Path(args.output).write_bytes(blob)
+        ratio = len(data) / len(blob) if blob else 0
+        print(f"   Lossless {args.input} -> {args.output}: {len(data):,} -> {len(blob):,} bytes ({ratio:.3f}×, exact)")
+
 def main():
     parser = argparse.ArgumentParser(description="IGQK Production Engine")
     subparsers = parser.add_subparsers(dest="command", help="Command to execute")
@@ -609,6 +630,12 @@ def main():
     comp_p.add_argument("--input", type=str, default=None, help="Input model checkpoint path (.pt / .pth)")
     comp_p.add_argument("--output", type=str, default=None, help="Output compressed path")
 
+    # Lossless command
+    loss_p = subparsers.add_parser("lossless", help="Bit-exact (no accuracy loss) file compression with zstd")
+    loss_p.add_argument("--input", type=str, required=True, help="Input checkpoint/file")
+    loss_p.add_argument("--output", type=str, required=True, help="Output .qall file (or restored file with --decompress)")
+    loss_p.add_argument("--decompress", action="store_true", help="Restore an exact file instead of compressing")
+
     # Benchmark command
     subparsers.add_parser("benchmark", help="Run speed and memory benchmarks")
 
@@ -621,6 +648,8 @@ def main():
         train_model(args)
     elif args.command == "compress":
         compress_weights(args)
+    elif args.command == "lossless":
+        lossless_file(args)
     elif args.command == "benchmark":
         run_benchmarks()
     elif args.command == "evaluate":
