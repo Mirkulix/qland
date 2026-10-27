@@ -29,6 +29,7 @@ def main():
     ap.add_argument("--qal", default=DEFAULT_QAL)
     ap.add_argument("--limit", type=int, default=10)
     ap.add_argument("--max-new-tokens", type=int, default=256)
+    ap.add_argument("--compare-base", action="store_true", help="also evaluate the unadapted base model")
     args = ap.parse_args()
 
     import torch
@@ -42,30 +43,36 @@ def main():
     tok = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
     if tok.pad_token is None:
         tok.pad_token = tok.eos_token
-    model = AutoModelForCausalLM.from_pretrained(args.model, torch_dtype=torch.float32, trust_remote_code=True)
-    model = PeftModel.from_pretrained(model, args.adapter)
+    base = AutoModelForCausalLM.from_pretrained(args.model, torch_dtype=torch.float32, trust_remote_code=True)
+    base.eval()
+
+    def evaluate(model):
+        passed = 0
+        results = []
+        for row in rows:
+            messages = row["messages"][:2]  # system + user; the assistant is the target
+            prompt = tok.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+            inputs = tok(prompt, return_tensors="pt", truncation=True, max_length=1024)
+            with torch.no_grad():
+                out = model.generate(**inputs, max_new_tokens=args.max_new_tokens, do_sample=False,
+                                     pad_token_id=tok.eos_token_id)
+            text = tok.decode(out[0][inputs["input_ids"].shape[1]:], skip_special_tokens=True)
+            ok, why = check_source(text, args.qal)
+            passed += ok
+            results.append({"prompt": messages[-1]["content"][:200], "ok": ok, "why": why, "generated": text[:1000]})
+        return {"examples": len(rows), "passed": passed, "rate": passed / len(rows) if rows else 0}, results
+
+    out = {}
+    if args.compare_base:
+        out["base"], out["base_results"] = evaluate(base)
+    model = PeftModel.from_pretrained(base, args.adapter)
     model.eval()
-
-    passed = 0
-    results = []
-    for row in rows:
-        messages = row["messages"][:2]  # system + user; the assistant is the target
-        prompt = tok.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-        inputs = tok(prompt, return_tensors="pt", truncation=True, max_length=1024)
-        with torch.no_grad():
-            out = model.generate(**inputs, max_new_tokens=args.max_new_tokens, do_sample=False,
-                                 pad_token_id=tok.eos_token_id)
-        text = tok.decode(out[0][inputs["input_ids"].shape[1]:], skip_special_tokens=True)
-        ok, why = check_source(text, args.qal)
-        passed += ok
-        results.append({"prompt": messages[-1]["content"][:200], "ok": ok, "why": why, "generated": text[:1000]})
-
-    summary = {"examples": len(rows), "passed": passed, "rate": passed / len(rows) if rows else 0,
-               "note": "proxy eval; not the Phase 8 benchmark"}
-    print(json.dumps(summary, indent=2))
+    out["adapter"], out["adapter_results"] = evaluate(model)
+    out["note"] = "proxy eval; not the Phase 8 benchmark"
+    print(json.dumps({k: out[k] for k in ("base", "adapter") if k in out} | {"note": out["note"]}, indent=2))
     with open(os.path.join(args.adapter, "eval_proxy.json"), "w", encoding="utf-8") as f:
-        json.dump({"summary": summary, "results": results}, f, indent=2)
-    sys.exit(0 if passed == len(rows) else 1)
+        json.dump(out, f, indent=2)
+    sys.exit(0 if out["adapter"]["passed"] == len(rows) else 1)
 
 
 def check_source(text, qal):
