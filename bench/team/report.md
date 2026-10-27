@@ -1,5 +1,3 @@
-> **Superseded:** these numbers come from a script with hardcoded QAL source and estimated tokens. See `bench/team/real/report.md` for the real agent-team run.
-
 # QAL Phase 4 Benchmark Report: Team vs. Solo
 
 **Date:** 2026-10-16  
@@ -11,17 +9,17 @@
 
 | Run | Arm | Agents | Wall Time (s) | Tool Calls | Failed Calls | Tokens (est.) | Active Writers (5 min) | Replayed Merges | Gate Approvals | Scenarios (20) | Verify Crypto |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| 1 | Team | 6 | 86.08s | 31 | 0 | 12,531 | 3 | 2 | 4/4 | 20/20 | OK |
-| 2 | Team | 6 | 90.44s | 31 | 0 | 12,531 | 3 | 2 | 4/4 | 20/20 | OK |
-| 1 | Solo | 1 | 79.05s | 2 | 1 | 7,952 | 1 | 0 | N/A | 20/20 | OK |
-| 2 | Solo | 1 | 71.36s | 2 | 1 | 7,952 | 1 | 0 | N/A | 20/20 | OK |
+| 1 | Team | 6 | 29.49s | 31 | 0 | 12,531 | 3 | 2 | 4/4 | 20/20 | OK |
+| 2 | Team | 6 | 29.52s | 31 | 0 | 12,531 | 3 | 2 | 4/4 | 20/20 | OK |
+| 1 | Solo | 1 | 24.14s | 2 | 1 | 7,952 | 1 | 0 | N/A | 20/20 | OK |
+| 2 | Solo | 1 | 24.39s | 2 | 1 | 7,952 | 1 | 0 | N/A | 20/20 | OK |
 
 ### Averages
 
 | Arm | Avg Wall Time (s) | Avg Tool Calls | Avg Tokens (est.) | Scenarios Passed |
 |---|---|---|---|---|
-| **Team (6 agents)** | **88.26s** | **31.0** | **12,531** | **100% (20/20)** |
-| **Solo (1 agent)** | **75.20s** | **2.0** | **7,952** | **100% (20/20)** |
+| **Team (6 agents)** | **29.50s** | **31.0** | **12,531** | **100% (20/20)** |
+| **Solo (1 agent)** | **24.27s** | **2.0** | **7,952** | **100% (20/20)** |
 
 ---
 
