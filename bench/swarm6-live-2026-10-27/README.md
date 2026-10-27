@@ -49,3 +49,34 @@ qal_verify --trust team.json --head b63f7bbb536077dd70d29f7f187843591bf26f7a0755
 - No emergence, scheduler, reputation or selection; the agents were coordinated by prompts.
 - The store and keys are temporary (`/tmp/qal-swarm6*`); only this report is committed.
 - The observer role was configured but did not add a distinct audit step in this run.
+
+## Attack / immune response (same team, 8 members)
+
+After the green merges, a third implementer (`impl3`) submitted a deliberately bad
+change `c49ae3a1cecef`: it replaced
+
+```qal
+fn double() -> Int = base() * 2   # main, tested by double_ok = 20
+```
+
+with
+
+```qal
+fn double() -> Int = base() * 3   # change, plus double_bad = 30
+test double_bad = double() == 30
+```
+
+`double_bad` passes, but the existing `double_ok` (which pins `double() == 20`) fails in
+the change set. The verifier recorded `failed`; the reviewer tried to merge without an
+approval and got **E0913 gate_unmet**. Nothing was merged.
+
+Evidence after the attack:
+
+```json
+qal_test main ["base_ok","double_ok","triple_ok"] -> passed 3, failed 0
+qal_verify --trust team.json --head 12b9a33125d54998d901c75529716ccb6c3f6f019cb9ce0b600409f9592a025d
+  -> ok=true, records=33, members=8
+```
+
+`double` on main still has hash `3294b48…` (`base() * 2`); the bad edit never landed.
+The immune response is **gate + regression test**, not human vigilance.
