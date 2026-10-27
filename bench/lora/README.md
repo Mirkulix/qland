@@ -90,6 +90,13 @@ After training, `eval_adapter.py --adapter <dir> --limit 10` generates QAL from 
 prompts and keeps a sample only if `qal check` and `qal test` accept it. This is a **proxy**, not
 the Phase 8 benchmark (the three-arm agent evaluation is still missing). `eval_mlx.py` is the MLX variant (loads the adapter and generates on the Apple GPU). Add `--compare-base` to run the same prompts through the unadapted base model.
 
+## Qwen2.5-Coder attempt (2026-10-27)
+
+Qwen2.5-Coder-1.5B zero-shot was **0/23** check-valid. A LoRA run on the 206 task
+examples (batch 1, max-length 256, lr 5e-6, 60 iters) diverged to **NaN** and was
+discarded; no evaluation. TinyLlama remains the only locally trainable base, and it
+is too weak (7/23 base, 6/23 task-tuned).
+
 ## Failed task-oriented attempt (2026-10-27)
 
 A first 223-example task-oriented adapter diverged to **NaN** and was discarded. A second run
