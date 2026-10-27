@@ -66,3 +66,21 @@ def test_full_model_compression_pipeline():
     assert len(stats["layers"]) == 2
     assert stats["global_compression_ratio"] >= 15.0
     assert stats["total_compressed_bytes"] < stats["total_original_bytes"] / 10
+
+
+def test_lossless_roundtrip_is_bit_exact():
+    """A lossless blob restores every parameter exactly (no accuracy change)."""
+    try:
+        from igqk_v4.compression import LosslessCompressor
+    except ModuleNotFoundError:
+        from IGQK_Complete_Package.igqk_v4.compression import LosslessCompressor
+
+    torch.manual_seed(7)
+    model = nn.Sequential(nn.Linear(64, 32), nn.GELU(), nn.Linear(32, 4))
+    before = {k: v.clone() for k, v in model.state_dict().items()}
+    blob = LosslessCompressor.dumps(model)
+    restored = nn.Sequential(nn.Linear(64, 32), nn.GELU(), nn.Linear(32, 4))
+    LosslessCompressor.loads(restored, blob)
+    for key, value in restored.state_dict().items():
+        assert torch.equal(value, before[key]), f"{key} changed"
+    assert LosslessCompressor.ratio(model, blob) >= 1.0

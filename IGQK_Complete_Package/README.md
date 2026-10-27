@@ -14,6 +14,7 @@
 IGQK ist ein **Forschungsprototyp** (research prototype) für Neural Network Compression, der:
 
 - ✅ **Ternäre 2-Bit-Kompression** erreicht: 15,6× auf der gemessenen Checkpoint-Datei (1,53 MB → 0,099 MB); 16,0× auf den reinen ternären Nutzdaten (1 Mio. Parameter: 3,81 MB → 0,24 MB)
+- ✅ **Verlustfreier Modus** (`LosslessCompressor`, zstd): bit-exakte State-Dict-Rückgabe, **keine Genauigkeitsänderung**; gemessen 1,115× auf 1,06 Mio. zufälligen Parametern. Bewusst niedriger als ternär – 16× und bit-exakt sind bei beliebigen Float-Gewichten nicht gleichzeitig möglich.
 - ⚠️ **Genauigkeitsverlust ist modellabhängig**: −3,77 Pp. (97,45 % → 93,68 %, MLP 3072-128-64-10, MNIST, 3 Epochen, Adam) bzw. −7,85 Pp. (94,10 % → 86,25 %, MNISTNet, anderes Netz und andere Trainingsmenge). **Nicht 0,65 %.**
 - ✅ **Quantenmechanik als Optimierungsansatz** (Quantum Gradient Flow)
 - ✅ **Mathematisch formuliert** (Konvergenz- und Rate-Distortion-Theoreme)
