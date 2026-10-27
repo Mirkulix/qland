@@ -50,7 +50,7 @@ progress, regardless of how good the adapter's training loss looks.
 
 After training, `eval_adapter.py --adapter <dir> --limit 10` generates QAL from held-out SFT
 prompts and keeps a sample only if `qal check` and `qal test` accept it. This is a **proxy**, not
-the Phase 8 benchmark (the three-arm agent evaluation is still missing). Add `--compare-base` to run the same prompts through the unadapted base model.
+the Phase 8 benchmark (the three-arm agent evaluation is still missing). `eval_mlx.py` is the MLX variant (loads the adapter and generates on the Apple GPU). Add `--compare-base` to run the same prompts through the unadapted base model.
 
 ## What is missing
 
