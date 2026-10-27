@@ -92,10 +92,11 @@ the Phase 8 benchmark (the three-arm agent evaluation is still missing). `eval_m
 
 ## Failed task-oriented attempt (2026-10-27)
 
-A 223-example task-oriented adapter (`sft_tasks.jsonl`, batch 2, max-length 256, 40 iters)
-diverged to **NaN** by iteration 30 and was discarded; no evaluation. The teacher solutions
-remain valid data (`bench/teacher-2026-10-27/`), but a student run needs a lower LR/shorter
-sequences or a better base.
+A first 223-example task-oriented adapter diverged to **NaN** and was discarded. A second run
+(184 short examples, batch 2, max-length 256, lr 1e-6, 100 iters) was stable (val 1.393) but
+reached only **6/23** check-valid tasks — better than the SFT adapter (2/23), still below the
+base model (7/23). The teacher solutions remain valid data (`bench/teacher-2026-10-27/`); a
+student needs a stronger base and more task-oriented data, not another TinyLlama run.
 
 ## What is missing
 
