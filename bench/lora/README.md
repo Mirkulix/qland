@@ -75,7 +75,8 @@ adapter is in `/tmp/qal-mlx-adapter` (not committed). Proxy evaluation on 10 hel
 cases, no tools/iteration) solved **0/5 for both** base and adapter (0/46 cases); the full 23-task
 hidden-case run was stopped because bad programs spend up to 9×10 s per case. A fast check-only
 run over all 23 tasks: **base 7/23 valid, adapter 2/23 valid** — the adapter fits the SFT prompts
-but generalizes worse to benchmark tasks. This is a proxy, not the Phase 8 agent benchmark.
+but generalizes worse to benchmark tasks. Replacing TinyLlama with **Qwen2.5-Coder-1.5B** made it
+worse zero-shot: **0/23** check-valid. This is a proxy, not the Phase 8 agent benchmark.
 
 ## Proxy evaluation
 
