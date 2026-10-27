@@ -31,6 +31,7 @@ def main():
     ap.add_argument('--limit',type=int,default=0)
     ap.add_argument('--max-tokens',type=int,default=768)
     ap.add_argument('--compare-base',action='store_true')
+    ap.add_argument('--check-only',action='store_true',help='only qal check; skip hidden cases (fast)')
     args=ap.parse_args()
     from mlx_lm import load, generate
     ref=open(os.path.join(REPO,'qal','crates','qal-cli','src','reference.md'),encoding='utf-8').read()
@@ -51,7 +52,12 @@ def main():
             with tempfile.NamedTemporaryFile('w',suffix='.qal',delete=False,encoding='utf-8') as f:
                 f.write(text); path=f.name
             try:
-                res=check.check_qal(task, source=path)
+                if args.check_only:
+                    import subprocess as sp
+                    c=sp.run([os.path.join(REPO,'qal','target','release','qal'),'check',path],capture_output=True,text=True,timeout=20)
+                    res={'task':task,'passed':1 if c.returncode==0 else 0,'total':1,'error':None if c.returncode==0 else 'check'}
+                else:
+                    res=check.check_qal(task, source=path)
             except Exception as e:
                 res={'task':task,'passed':0,'total':0,'error':str(e)}
             finally:
