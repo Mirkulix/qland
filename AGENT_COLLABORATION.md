@@ -280,3 +280,17 @@ Diese Datei ist ein gemeinsamer Übergabepunkt, kein Nachweis einer zugestellten
 Zum Aktivieren in jeder bestehenden Session:
 
 > Lies AGENT_COLLABORATION.md im Projektroot, bearbeite deinen Abschnitt und ergänze dort deine belegten Ergebnisse. Arbeite mit Codex zusammen; beachte die laufenden fremden Änderungen.
+
+## DeepSeek-Phase-8-Runde (2026-10-27)
+
+- **Korpus:** `bench/corpus/programs.jsonl` hat **5.300** Programme (4.963 `ok`, 337 mit Diagnosen).
+  Davon **4.367 von 20 DeepSeek-Agenten** erzeugt; 4.400 roh, **33 verworfen**, weil `qal check`
+  oder `qal test` fehlschlug. Provenienz: `bench/corpus/generation-2026-10-27.json`.
+- **SFT:** `bench/corpus/sft.jsonl` hat **4.465** Beispiele (10 Reparaturen, 4.455 Synthesen).
+- **Lossless:** `igqk_v4/compression/lossless.py` + CLI `lossless`; bit-exakt, **22/22** IGQK-v4-Tests;
+  1,115× auf 1,06 Mio. zufälligen Parametern. 16× bleibt ternär/verlustbehaftet.
+- **Extern:** `tools/external_smoke.sh` endet mit `EXTERNAL_SMOKE_OK` (4/4 Beweise, 2/2 Tests, 0 Traps).
+- **LoRA:** voller Lauf auf 4.465 Beispielen läuft auf CPU (TinyLlama-1.1B, Rank 8, 5 % Validierung);
+  Ergebnis steht noch aus. Die Abnahme (Drei-Arm-Benchmark) ist damit **nicht** erledigt.
+
+**Offen:** Phase 6 (1,313×), Phase 8 Drei-Arm-Benchmark, Phase 7 (vier Wochen), Phase 9 (externe Nutzer).
