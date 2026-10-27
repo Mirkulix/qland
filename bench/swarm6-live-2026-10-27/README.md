@@ -81,3 +81,18 @@ qal_verify --trust team.json --head 12b9a33125d54998d901c75529716ccb6c3f6f019cb9
 
 `double` on main still has hash `3294b48…` (`base() * 2`); the bad edit never landed.
 The immune response is **gate + regression test**, not human vigilance.
+
+## Recovery after the attack
+
+The same implementer then opened a **new, correct** change `cd8f5204bac27`:
+`fn quadruple() -> Int = base() * 4` + `quadruple_ok` (40). The verifier verified it,
+the reviewer merged it, and main now passes:
+
+```json
+qal_test main ["base_ok","double_ok","triple_ok","quadruple_ok"] -> passed 4, failed 0
+qal_verify --trust team.json -> ok=true, records=42, members=8,
+  head=c603f59251b6ede4ef2ccd877da7d0c71e800566ca08f9dadc50e002890c5a15
+```
+
+So the swarm did not only reject the bad change; it **continued and recovered** with a
+correct contribution. The rejected `c49ae3a1cecef` remains open in the record chain.
