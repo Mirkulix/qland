@@ -38,11 +38,15 @@ def main():
     ap.add_argument("--epochs", type=float, default=1.0)
     ap.add_argument("--max-length", type=int, default=1024)
     ap.add_argument("--max-steps", type=int, default=-1)
+    ap.add_argument("--val-fraction", type=float, default=0.05)
+    ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--cpu", action="store_true", help="force CPU (MPS model loading hung on this machine)")
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
 
     rows = load_rows(args.data)
+    if args.limit:
+        rows = rows[:args.limit]
     if not rows:
         sys.exit("train: no examples")
     print(json.dumps({"examples": len(rows), "model": args.model, "dry_run": args.dry_run}, indent=2))
@@ -66,6 +70,11 @@ def main():
         return out
 
     ds = Dataset.from_dict({"text": texts}).map(encode, batched=True, remove_columns=["text"])
+    if 0 < args.val_fraction < 1 and len(ds) > 3:
+        split = ds.train_test_split(test_size=args.val_fraction, seed=1)
+        train_ds, eval_ds = split["train"], split["test"]
+    else:
+        train_ds, eval_ds = ds, None
     model = AutoModelForCausalLM.from_pretrained(args.model, torch_dtype=torch.float32, trust_remote_code=True)
     config = LoraConfig(r=8, lora_alpha=16, lora_dropout=0.05, bias="none", task_type="CAUSAL_LM",
                         target_modules=["q_proj", "v_proj"])
@@ -84,19 +93,25 @@ def main():
         learning_rate=1e-4,
         logging_steps=1,
         save_strategy="no",
+        eval_strategy="epoch" if eval_ds is not None else "no",
+        per_device_eval_batch_size=1,
+        prediction_loss_only=True,
         report_to=[],
         remove_unused_columns=False,
         dataloader_pin_memory=False,
         use_cpu=args.cpu,
     )
-    trainer = Trainer(model=model, args=targs, train_dataset=ds,
+    trainer = Trainer(model=model, args=targs, train_dataset=train_ds, eval_dataset=eval_ds,
                       data_collator=DataCollatorForLanguageModeling(tokenizer=tok, mlm=False))
     result = trainer.train()
+    eval_metrics = trainer.evaluate() if eval_ds is not None else {}
     model.save_pretrained(args.out)
     tok.save_pretrained(args.out)
     with open(os.path.join(args.out, "train_result.json"), "w", encoding="utf-8") as f:
-        json.dump({"metrics": result.metrics, "examples": len(rows), "model": args.model}, f, indent=2)
-    print(json.dumps(result.metrics, indent=2))
+        json.dump({"metrics": result.metrics, "eval": eval_metrics, "examples": len(rows),
+                   "train": len(train_ds), "eval_examples": len(eval_ds) if eval_ds is not None else 0,
+                   "model": args.model}, f, indent=2)
+    print(json.dumps({"train": result.metrics, "eval": eval_metrics}, indent=2))
 
 
 if __name__ == "__main__":
