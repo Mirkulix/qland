@@ -1,0 +1,94 @@
+fn digit_val(c: Str) -> Option[Int] =
+  if len(c) != 1 then None
+  else {
+    let code = char_code(c) in
+    if code >= 48 && code <= 57 then Some(code - 48)
+    else if code >= 97 && code <= 122 then Some(code - 97 + 10)
+    else if code >= 65 && code <= 90 then Some(code - 65 + 10)
+    else None
+  }
+
+fn parse_digits(s: Str, base: Int, i: Int, acc: Int) -> Option[Int] =
+  if i >= len(s) then Some(acc)
+  else {
+    let c = slice(s, i, i + 1) in
+    match digit_val(c) {
+      None => None,
+      Some(d) => if d >= base then None else parse_digits(s, base, i + 1, acc * base + d)
+    }
+  }
+
+fn parse_num(s: Str, base: Int) -> Option[Int] =
+  if len(s) == 0 then None
+  else if slice(s, 0, 1) == "-" then {
+    if len(s) == 1 then None
+    else match parse_digits(s, base, 1, 0) {
+      None => None,
+      Some(v) => Some(-v)
+    }
+  } else parse_digits(s, base, 0, 0)
+
+fn digit_char(d: Int) -> Str =
+  if d < 10 then from_int(d)
+  else from_char_code(97 + d - 10)
+
+fn to_base_rec(m: Int, base: Int) -> Str =
+  if m == 0 then ""
+  else to_base_rec(m / base, base) ++ digit_char(m % base)
+
+fn to_base(n: Int, base: Int) -> Str =
+  if n == 0 then "0"
+  else {
+    let neg = n < 0 in
+    let m = if neg then -n else n in
+    let body = to_base_rec(m, base) in
+    if neg then "-" ++ body else body
+  }
+
+fn parse_base(s: Str) -> Option[Int] =
+  match to_int(s) {
+    None => None,
+    Some(b) => if b >= 2 && b <= 36 then Some(b) else None
+  }
+
+fn process(line: Str) -> Str =
+  let parts = split(line, " ") in
+  if len(parts) != 3 then "error"
+  else {
+    let fs = get(parts, 0) in
+    let ts = get(parts, 1) in
+    let ns = get(parts, 2) in
+    match fs {
+      None => "error",
+      Some(f) => match ts {
+        None => "error",
+        Some(t) => match ns {
+          None => "error",
+          Some(nstr) => match parse_base(f) {
+            None => "error",
+            Some(fb) => match parse_base(t) {
+              None => "error",
+              Some(tb) => match parse_num(nstr, fb) {
+                None => "error",
+                Some(v) => to_base(v, tb)
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+fn loop() -> Unit !io =
+  match read_line() {
+    None => (),
+    Some(line) => {
+      print(process(line));
+      loop()
+    }
+  }
+
+fn main(args: List[Str]) -> Int !io = {
+  loop();
+  0
+}

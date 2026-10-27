@@ -36,6 +36,7 @@ pass counts, token usage and cost. A failed validation is not copied.
 ## Verified without a real key
 
 - `--dry-run` reports the missing key instead of sending a request.
+- **Real key (2026-10-27):** `deepseek-chat`, 4 repair attempts, 23 tasks: **3/23 solved**, **0.265 EUR** spent. See `bench/teacher-api-2026-10-27-chat/`. The agentic DeepSeek run solved 23/23; the raw API needs tool use/iteration to match it.
 - A local fake `/chat/completions` endpoint (returning the known `01-word-count`
   teacher solution) was used to exercise the full path: request → strip code →
   hidden cases → `9/9` → only then stored. The fake server and output were not

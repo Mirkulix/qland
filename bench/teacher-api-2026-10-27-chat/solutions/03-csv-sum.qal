@@ -1,0 +1,81 @@
+fn parse_fields(line: Str) -> List[Str] = parse_fields_go(line, 0, false, "", [])
+
+fn parse_fields_go(line: Str, i: Int, quoted: Bool, cur: Str, acc: List[Str]) -> List[Str] =
+  if i >= len(line) then
+    push(acc, trim(cur))
+  else
+    let c = slice(line, i, i + 1) in
+    if c == "\"" then
+      parse_fields_go(line, i + 1, !quoted, cur, acc)
+    else if c == "," && !quoted then
+      parse_fields_go(line, i + 1, quoted, "", push(acc, trim(cur)))
+    else
+      parse_fields_go(line, i + 1, quoted, cur ++ c, acc)
+
+fn is_blank(line: Str) -> Bool = trim(line) == ""
+
+fn all_digits(s: Str, i: Int) -> Bool =
+  if i >= len(s) then true
+  else
+    let c = slice(s, i, i + 1) in
+    if c >= "0" && c <= "9" then all_digits(s, i + 1) else false
+
+fn is_int_field(s: Str) -> Bool =
+  let n = len(s) in
+  if n == 0 then false
+  else
+    let first = slice(s, 0, 1) in
+    if first == "+" || first == "-" then
+      n > 1 && all_digits(s, 1)
+    else
+      all_digits(s, 0)
+
+fn find_col(header: List[Str], name: Str, i: Int) -> Option[Int] =
+  if i >= len(header) then None
+  else if get(header, i) == Some(name) then Some(i)
+  else find_col(header, name, i + 1)
+
+type Acc = { sum: Int, skipped: Int }
+
+fn process(lines: List[Str], idx: Int, col: Int, sum: Int, skipped: Int) -> Acc =
+  if idx >= len(lines) then Acc { sum: sum, skipped: skipped }
+  else
+    let line = list_at(lines, idx) in
+    if is_blank(line) then
+      process(lines, idx + 1, col, sum, skipped)
+    else
+      let fields = parse_fields(line) in
+      match get(fields, col) {
+        Some(v) =>
+          if is_int_field(v) then
+            match to_int(v) {
+              Some(n) => process(lines, idx + 1, col, sum + n, skipped),
+              None => process(lines, idx + 1, col, sum, skipped + 1)
+            }
+          else
+            process(lines, idx + 1, col, sum, skipped + 1),
+        None => process(lines, idx + 1, col, sum, skipped + 1)
+      }
+
+fn main(args: List[Str]) -> Int !io =
+  if len(args) != 1 then
+    { print("usage: csv_sum <column>"); 2 }
+  else
+    let name = list_at(args, 0) in
+    let input = read_all() in
+    let all_lines = split(input, "\n") in
+    let lines = filter(all_lines, fn(l) => !is_blank(l)) in
+    if len(lines) == 0 then
+      { print("error: no column " ++ name); 1 }
+    else
+      let header = parse_fields(list_at(lines, 0)) in
+      match find_col(header, name, 0) {
+        None => { print("error: no column " ++ name); 1 },
+        Some(col) =>
+          let res = process(lines, 1, col, 0, 0) in
+          {
+            print("sum " ++ from_int(res.sum));
+            print("skipped " ++ from_int(res.skipped));
+            0
+          }
+      }

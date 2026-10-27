@@ -1,0 +1,66 @@
+fn roman_digit_value(c: Str) -> Int = match c {
+  "I" => 1, "V" => 5, "X" => 10, "L" => 50, "C" => 100, "D" => 500, "M" => 1000, _ => 0
+}
+
+fn is_roman_char(c: Str) -> Bool = roman_digit_value(c) > 0
+
+fn all_roman(s: Str) -> Bool = {
+  let cs = chars(s) in
+  fold(cs, true, fn(acc: Bool, c: Str) => acc && is_roman_char(c))
+}
+
+fn all_digits(s: Str) -> Bool = {
+  let cs = chars(s) in
+  len(cs) > 0 && fold(cs, true, fn(acc: Bool, c: Str) => acc && c >= "0" && c <= "9")
+}
+
+fn to_roman_go(vals: List[Int], syms: List[Str], i: Int, rem: Int, acc: Str) -> Str =
+  if rem == 0 then acc
+  else if i >= len(vals) then acc
+  else {
+    let v = list_at(vals, i) in
+    if rem >= v then to_roman_go(vals, syms, i, rem - v, acc ++ list_at(syms, i))
+    else to_roman_go(vals, syms, i + 1, rem, acc)
+  }
+
+fn to_roman(n: Int) -> Str = {
+  let vals = [1000, 900, 500, 400, 100, 90, 50, 40, 10, 9, 5, 4, 1] in
+  let syms = ["M", "CM", "D", "CD", "C", "XC", "L", "XL", "X", "IX", "V", "IV", "I"] in
+  to_roman_go(vals, syms, 0, n, "")
+}
+
+fn roman_value_go(cs: List[Str], i: Int, total: Int) -> Int =
+  if i >= len(cs) then total
+  else {
+    let cur = roman_digit_value(list_at(cs, i)) in
+    let nxt = if i + 1 < len(cs) then roman_digit_value(list_at(cs, i + 1)) else 0 in
+    if cur < nxt then roman_value_go(cs, i + 2, total + nxt - cur)
+    else roman_value_go(cs, i + 1, total + cur)
+  }
+
+fn roman_value(s: Str) -> Int = {
+  let cs = chars(s) in
+  roman_value_go(cs, 0, 0)
+}
+
+fn process(line: Str) -> Str = {
+  let s = trim(line) in
+  if all_digits(s) then {
+    match to_int(s) {
+      Some(n) => if n >= 1 && n <= 3999 then to_roman(n) else "error",
+      None => "error"
+    }
+  } else if all_roman(s) then {
+    let v = roman_value(s) in
+    if v >= 1 && v <= 3999 && to_roman(v) == s then from_int(v) else "error"
+  } else "error"
+}
+
+fn main_loop() -> Int !io = {
+  match read_line() {
+    Some(line) => { print(process(line)); main_loop() },
+    None => 0
+  }
+}
+
+fn main(args: List[Str]) -> Int !io = main_loop()

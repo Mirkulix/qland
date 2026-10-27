@@ -1,0 +1,214 @@
+{
+  "model": "deepseek-chat",
+  "budget_eur": 10.0,
+  "spent_eur": 0.265043,
+  "results": [
+    {
+      "task": "01-word-count",
+      "ok": false,
+      "passed": 0,
+      "total": 9,
+      "error": "qal_define failed: {\"diagnostics\":[{\"code\":\"E0100\",\"kind\":\"parse\",\"def\":\"\",\"path\":\"12:31\",\"message\":\"expected `;` or `}`\",\"hints\":[]}]}",
+      "attempts": 4,
+      "cost_eur": 0.006847
+    },
+    {
+      "task": "02-roman",
+      "ok": true,
+      "passed": 9,
+      "total": 9,
+      "error": null,
+      "attempts": 3,
+      "cost_eur": 0.007065
+    },
+    {
+      "task": "03-csv-sum",
+      "ok": true,
+      "passed": 12,
+      "total": 12,
+      "error": null,
+      "attempts": 3,
+      "cost_eur": 0.007687
+    },
+    {
+      "task": "04-binary-search",
+      "ok": false,
+      "passed": 0,
+      "total": 7,
+      "error": "qal_define failed: {\"diagnostics\":[{\"code\":\"E0100\",\"kind\":\"parse\",\"def\":\"\",\"path\":\"13:13\",\"message\":\"expected an expression, found `fn`\",\"hints\":[\"the `{` opened at 11:58 is not closed: the definition there needs a `}`\"]}]}",
+      "attempts": 4,
+      "cost_eur": 0.007692
+    },
+    {
+      "task": "05-brackets",
+      "ok": false,
+      "passed": 5,
+      "total": 9,
+      "error": null,
+      "attempts": 4,
+      "cost_eur": 0.007767
+    },
+    {
+      "task": "06-bank",
+      "ok": false,
+      "passed": 0,
+      "total": 8,
+      "error": "qal_define failed: {\"diagnostics\":[{\"code\":\"E0100\",\"kind\":\"parse\",\"def\":\"\",\"path\":\"56:7\",\"message\":\"expected a pattern\",\"hints\":[]}]}",
+      "attempts": 4,
+      "cost_eur": 0.01546
+    },
+    {
+      "task": "07-tokenizer",
+      "ok": false,
+      "passed": 2,
+      "total": 8,
+      "error": null,
+      "attempts": 4,
+      "cost_eur": 0.009941
+    },
+    {
+      "task": "08-expr-eval",
+      "ok": false,
+      "passed": 0,
+      "total": 11,
+      "error": "qal_define failed: {\"diagnostics\":[{\"code\":\"E0100\",\"kind\":\"parse\",\"def\":\"\",\"path\":\"12:11\",\"message\":\"expected `=`, found `go`\",\"hints\":[]}]}",
+      "attempts": 4,
+      "cost_eur": 0.017901
+    },
+    {
+      "task": "09-rle",
+      "ok": false,
+      "passed": 5,
+      "total": 14,
+      "error": null,
+      "attempts": 4,
+      "cost_eur": 0.010658
+    },
+    {
+      "task": "10-file-stats",
+      "ok": false,
+      "passed": 0,
+      "total": 12,
+      "error": "qal_define failed: {\"diagnostics\":[{\"code\":\"E0100\",\"kind\":\"parse\",\"def\":\"\",\"path\":\"24:28\",\"message\":\"expected `;` or `}`\",\"hints\":[]}]}",
+      "attempts": 4,
+      "cost_eur": 0.013406
+    },
+    {
+      "task": "11-prime-factors",
+      "ok": false,
+      "passed": 0,
+      "total": 8,
+      "error": "qal_define failed: {\"diagnostics\":[{\"code\":\"E0100\",\"kind\":\"parse\",\"def\":\"\",\"path\":\"28:7\",\"message\":\"expected a pattern\",\"hints\":[]}]}",
+      "attempts": 4,
+      "cost_eur": 0.00968
+    },
+    {
+      "task": "12-sort-words",
+      "ok": false,
+      "passed": 0,
+      "total": 8,
+      "error": "qal_define failed: {\"diagnostics\":[{\"code\":\"E0201\",\"kind\":\"unknown_name\",\"def\":\"collect_words\",\"path\":\"body.items[0].body.value.body.items[0].else.items[0].body.arms[0].body.items[0].then\",\"message\":\"unknown name `rec`\",\"hints\":[\"not a built-in or stored definition; built-ins are listed in the qal_define description; define it in the same call or check qal_query\"]},{\"code\":\"E0201\",\"kind\":\"unknown_name\",\"def\":\"collect_words\",\"path\":\"body.items[0].body.value.body.items[0].else.items[0].body.arms[0].body.items[0].else.items[0].then\",\"message\":\"unknown name `rec`\",\"hints\":[\"not a built-in or stored definition; built-ins are listed in the qal_define description; define it in the same call or check qal_query\"]},{\"code\":\"E0201\",\"kind\":\"unknown_name\",\"def\":\"collect_words\",\"path\":\"body.items[0].body.value.body.items[0].else.items[0].body.arms[0].body.items[0].else.items[0].else\",\"message\":\"unknown name `rec`\",\"hints\":[\"not a built-in or stored definition; built-ins are listed in the qal_define description; define it in the same call or check qal_query\"]},{\"code\":\"E0201\",\"kind\":\"unknown_name\",\"def\":\"dedup_sorted\",\"path\":\"body.items[0].body.value.body.items[0].else.items[0].body.arms[0].body.items[0].then\",\"message\":\"unknown name `rec`\",\"hints\":[\"not a built-in or stored definition; built-ins are listed in the qal_define description; define it in the same call or check qal_query\"]},{\"code\":\"E0201\",\"kind\":\"unknown_name\",\"def\":\"dedup_sorted\",\"path\":\"body.items[0].body.value.body.items[0].else.items[0].body.arms[0].body.items[0].else\",\"message\":\"unknown name `rec`\",\"hints\":[\"not a built-in or stored definition; built-ins are listed in the qal_define description; define it in the same call or check qal_query\"]},{\"code\":\"E0201\",\"kind\":\"unknown_name\",\"def\":\"print_all\",\"path\":\"body.items[0].value.body.items[0].else.items[0].body.arms[0].body.items[1]\",\"message\":\"unknown name `rec`\",\"hints\":[\"not a built-in or stored definition; built-ins are listed in the qal_define description; define it in the same c",
+      "attempts": 4,
+      "cost_eur": 0.008409
+    },
+    {
+      "task": "13-word-freq",
+      "ok": false,
+      "passed": 6,
+      "total": 11,
+      "error": null,
+      "attempts": 4,
+      "cost_eur": 0.013847
+    },
+    {
+      "task": "14-bst",
+      "ok": false,
+      "passed": 1,
+      "total": 9,
+      "error": null,
+      "attempts": 4,
+      "cost_eur": 0.009881
+    },
+    {
+      "task": "15-caesar",
+      "ok": false,
+      "passed": 0,
+      "total": 13,
+      "error": "qal_define failed: {\"diagnostics\":[{\"code\":\"E0100\",\"kind\":\"parse\",\"def\":\"\",\"path\":\"53:5\",\"message\":\"expected a pattern\",\"hints\":[]}]}",
+      "attempts": 4,
+      "cost_eur": 0.008535
+    },
+    {
+      "task": "16-anagrams",
+      "ok": false,
+      "passed": 0,
+      "total": 8,
+      "error": "qal_define failed: {\"diagnostics\":[{\"code\":\"E0100\",\"kind\":\"parse\",\"def\":\"\",\"path\":\"31:7\",\"message\":\"expected a pattern\",\"hints\":[]}]}",
+      "attempts": 4,
+      "cost_eur": 0.009723
+    },
+    {
+      "task": "17-word-wrap",
+      "ok": false,
+      "passed": 0,
+      "total": 12,
+      "error": "qal_define failed: {\"diagnostics\":[{\"code\":\"E0203\",\"kind\":\"type_mismatch\",\"def\":\"wrap_go\",\"path\":\"body.items[0].else.items[0].body.value.args[0]\",\"message\":\"expected Str, found List[Str]\",\"hints\":[]},{\"code\":\"E0203\",\"kind\":\"type_mismatch\",\"def\":\"wrap_go\",\"path\":\"body.items[0].else.items[0].body.body.body.then.args[0]\",\"message\":\"expected List[Str], found Str\",\"hints\":[]},{\"code\":\"E0203\",\"kind\":\"type_mismatch\",\"def\":\"wrap_go\",\"path\":\"body.items[0].else.items[0].body.body.body.else.then.args[0]\",\"message\":\"expected List[Str], found Str\",\"hints\":[]},{\"code\":\"E0203\",\"kind\":\"type_mismatch\",\"def\":\"para_go\",\"path\":\"body.items[0].else.items[0].body.value.args[0]\",\"message\":\"expected Str, found List[Str]\",\"hints\":[]},{\"code\":\"E0203\",\"kind\":\"type_mismatch\",\"def\":\"para_go\",\"path\":\"body.items[0].else.items[0].body.body.then.then.items[0].body.body.args[0]\",\"message\":\"expected List[Str], found Str\",\"hints\":[]},{\"code\":\"E0203\",\"kind\":\"type_mismatch\",\"def\":\"para_go\",\"path\":\"body.items[0].else.items[0].body.body.then.else.args[0]\",\"message\":\"expected List[Str], found Str\",\"hints\":[]},{\"code\":\"E0203\",\"kind\":\"type_mismatch\",\"def\":\"para_go\",\"path\":\"body.items[0].else.items[0].body.body.else.args[0]\",\"message\":\"expected List[Str], found Str\",\"hints\":[]},{\"code\":\"E0203\",\"kind\":\"type_mismatch\",\"def\":\"emit\",\"path\":\"body.items[0].else.items[1].args[0].args[0]\",\"message\":\"expected Str, found List[Str]\",\"hints\":[]},{\"code\":\"E0203\",\"kind\":\"type_mismatch\",\"def\":\"emit\",\"path\":\"body.items[0].else.items[1].args[0]\",\"message\":\"expected List[Str], found Str\",\"hints\":[]}]}",
+      "attempts": 4,
+      "cost_eur": 0.011373
+    },
+    {
+      "task": "18-date-diff",
+      "ok": false,
+      "passed": 0,
+      "total": 7,
+      "error": "qal_define failed: {\"diagnostics\":[{\"code\":\"E0100\",\"kind\":\"parse\",\"def\":\"\",\"path\":\"72:5\",\"message\":\"expected a pattern\",\"hints\":[]}]}",
+      "attempts": 4,
+      "cost_eur": 0.012069
+    },
+    {
+      "task": "19-base-convert",
+      "ok": true,
+      "passed": 7,
+      "total": 7,
+      "error": null,
+      "attempts": 2,
+      "cost_eur": 0.004462
+    },
+    {
+      "task": "20-ini-query",
+      "ok": false,
+      "passed": 0,
+      "total": 11,
+      "error": "qal_define failed: {\"diagnostics\":[{\"code\":\"E0100\",\"kind\":\"parse\",\"def\":\"\",\"path\":\"46:11\",\"message\":\"expected `=`, found `go`\",\"hints\":[]}]}",
+      "attempts": 4,
+      "cost_eur": 0.012314
+    },
+    {
+      "task": "21-expense-approval",
+      "ok": false,
+      "passed": 1,
+      "total": 12,
+      "error": null,
+      "attempts": 4,
+      "cost_eur": 0.021032
+    },
+    {
+      "task": "22-expense-approval-contracts",
+      "ok": false,
+      "passed": 0,
+      "total": 12,
+      "error": "qal_define failed: {\"diagnostics\":[{\"code\":\"E0100\",\"kind\":\"parse\",\"def\":\"\",\"path\":\"270:5\",\"message\":\"expected a pattern\",\"hints\":[]}]}",
+      "attempts": 4,
+      "cost_eur": 0.028988
+    },
+    {
+      "task": "23-expense-approval-change",
+      "ok": false,
+      "passed": 0,
+      "total": 15,
+      "error": "qal_define failed: {\"diagnostics\":[{\"code\":\"E0100\",\"kind\":\"parse\",\"def\":\"\",\"path\":\"245:5\",\"message\":\"expected `,` or `}`\",\"hints\":[]}]}",
+      "attempts": 4,
+      "cost_eur": 0.010307
+    }
+  ]
+}
