@@ -91,7 +91,7 @@ Drittmeinung liegt erst vor, wenn jemand anderes das Paket auf einer anderen Mas
 | 6 — Kosten | **◐** 1,32× (Living), 1,42–1,92× (Benchmark-Reruns), 1,313× (92-Dispatch-Pilot); Ziel ≤ 1,2× nicht erreicht |
 | 6b — Erfahrungsgedächtnis | **◐** gebaut, im Benchmark unbewiesen |
 | 7 — `!model` | **◐** implementiert und getestet; Abnahme (vier Wochen Einsatz) offen |
-| 8 — Modell lernt QAL | **◐** Seed-Korpus 933 Programme + 105 SFT-Beispiele; LoRA-Lauf und Drei-Arm-Harness fehlen |
+| 8 — Modell lernt QAL | **◐** Korpus **5.300 Programme** (4.367 DeepSeek-generiert, alle `qal check`+`qal test`), **4.465 SFT-Beispiele**; voller LoRA-Lauf und Drei-Arm-Harness fehlen |
 | 9 — Verbreitung | **◐** Installer, Bericht und MIT-Lizenz; externe Nutzer offen |
 
 ## 5. Fazit

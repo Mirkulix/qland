@@ -1,9 +1,8 @@
 # QAL seed corpus (Phase 8, item 1)
 
-This directory is the repository-side seed for the Phase 8 corpus. It is **not** the
-5,000–20,000-program corpus of the specification: it indexes the QAL programs that already
-exist in the repository, with the exact result of `qal check`. Model-written solutions and
-the traces of a LoRA run are added to the same format later.
+This directory holds the Phase 8 corpus: the repository programs plus DeepSeek-written programs,
+each with the exact result of `qal check`. The 5,000-program lower bound is met; the LoRA run and
+the three-arm evaluation are still missing.
 
 ## Build
 
@@ -23,9 +22,11 @@ The builder reads `qal/selfhost/corpus/*.qal`, `bench/solutions/qal/*.qal` and
   and those diagnostics are the error side of a training pair.
 - `summary.json` — counts and the Phase 8 target.
 
-The last run (2026-10-26) produced **933 programs: 596 ok, 337 with diagnostics**, plus
-**10 real correction traces** in `corrections.jsonl` (from the benchmark transcripts). That is a
-seed, not the target. The builder takes about 3.5 minutes because it starts the CLI per file.
+The 2026-10-27 corpus has **5,300 programs: 4,963 `ok`, 337 with diagnostics**, plus **10 real
+correction traces** in `corrections.jsonl`. **4,367** are model-written by DeepSeek and were kept
+only after both `qal check` and `qal test` passed; the rest came from the repository. This meets
+the 5,000-program lower bound of the Phase 8 specification. The builder takes about 3.5 minutes
+for the repository part; the model records are preserved across a rebuild.
 
 ## Verify
 
@@ -43,9 +44,9 @@ text, so a better checker does not invalidate the corpus.
 python3 bench/corpus/sft.py
 ```
 
-Writes `sft.jsonl` with **105 instruction/response examples**: 10 repairs (diagnostic + failed code ->
-the fix) and 95 test-first synthesis examples (signatures + tests -> the verified source). This is
-usable seed data, still far below the 5,000-20,000 target and without a LoRA run.
+Writes `sft.jsonl` with **4,465 instruction/response examples**: 10 repairs (diagnostic + failed code
+-> the fix) and 4,455 test-first synthesis examples (signatures + tests -> the verified source).
+A full LoRA run and the three-arm evaluation are still missing.
 
 ## What is still missing for Phase 8
 

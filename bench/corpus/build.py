@@ -81,6 +81,23 @@ def main():
         })
 
     out = os.path.join(args.out, "programs.jsonl")
+    # Preserve model-written records: they are not extractable from the repository,
+    # and a rebuild must not silently delete the Phase 8 corpus.
+    model_written = 0
+    if os.path.exists(out):
+        with open(out, encoding="utf-8") as f:
+            for line in f:
+                if not line.strip():
+                    continue
+                record = json.loads(line)
+                if not record.get("origin", "").startswith("model:"):
+                    continue
+                h = hashlib.sha256(record["source"].encode()).hexdigest()
+                if h in seen:
+                    continue
+                seen.add(h)
+                records.append(record)
+                model_written += 1
     with open(out, "w", encoding="utf-8") as f:
         for record in records:
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
@@ -96,8 +113,8 @@ def main():
         "corrections": corrections,
         "sources": sorted({r["origin"].split("/")[0] for r in records}),
         "phase8_target": [5000, 20000],
-        "model_written_solutions": 0,
-        "note": "Repo-side seed; model-written solutions and LoRA traces are not part of this file yet. corrections.jsonl holds the real fixes from the benchmark transcripts.",
+        "model_written_solutions": model_written,
+        "note": "Repository seed plus model-written records. Every model record was kept only after qal check and qal test passed. corrections.jsonl holds the real fixes from the benchmark transcripts.",
     }
     with open(os.path.join(args.out, "summary.json"), "w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2)

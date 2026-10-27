@@ -1,16 +1,17 @@
 {
-  "programs": 933,
-  "ok": 596,
+  "programs": 5300,
+  "ok": 4963,
   "error": 337,
   "corrections": 10,
   "sources": [
     "bench",
+    "model",
     "qal"
   ],
   "phase8_target": [
     5000,
     20000
   ],
-  "model_written_solutions": 0,
-  "note": "Repo-side seed; model-written solutions and LoRA traces are not part of this file yet. corrections.jsonl holds the real fixes from the benchmark transcripts."
+  "model_written_solutions": 4367,
+  "note": "Seed + DeepSeek-generated, all kept programs pass qal check and qal test. LoRA/3-arm evaluation still open."
 }

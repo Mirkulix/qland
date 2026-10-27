@@ -1,11 +1,12 @@
 # LoRA scaffold (Phase 8, item 2)
 
 This directory holds the Phase 8 training scaffold. **A one-step smoke run and one full seed epoch
-were executed on 2026-10-26/27; no evaluation on the benchmark has happened.** The seed data is
-`bench/corpus/sft.jsonl`: 105 examples (10 repairs, 95 test-first syntheses), about 27k approximate
-tokens. A model trained on that alone is a smoke test, not the Phase 8 result.
+were executed on 2026-10-26/27; no evaluation on the benchmark has happened.** The data is
+`bench/corpus/sft.jsonl`: **4,465 examples** (10 repairs, 4,455 test-first syntheses), about 760k
+approximate tokens. The 105-example epoch below was the earlier smoke test; the full-corpus run
+and the three-arm evaluation are still missing.
 
-## Runs (2026-10-26/27)
+## Runs (2026-10-26/27, 105-example seed)
 
 - **One-step smoke:** `--cpu --max-steps 1 --max-length 256`, loss **1.9108**, 11.8 s.
 - **Full seed epoch:** `--cpu --max-length 512`, 105 examples, 1 epoch, **train_loss 1.5674**,
