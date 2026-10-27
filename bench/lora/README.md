@@ -71,7 +71,10 @@ Measured on this machine: ~0.21 iterations/s; the run finished in **41 minutes**
 adapter is in `/tmp/qal-mlx-adapter` (not committed). Proxy evaluation on 10 held-out prompts:
 **base model 0/10, adapter 3/10** pass `qal check` + `qal test`. On 50 held-out prompts: **base
 0/50, adapter 7/50**. The adapter and proxy results are stored in
-`bench/lora/mlx-adapter-2026-10-27/`. This is a proxy, not the Phase 8 benchmark.
+`bench/lora/mlx-adapter-2026-10-27/`. A single-shot run over the first 5 benchmark tasks (hidden
+cases, no tools/iteration) solved **0/5 for both** base and adapter (0/46 cases); the full 23-task
+run was stopped because bad programs spend up to 9×10 s in hidden-case timeouts. This is a proxy,
+not the Phase 8 agent benchmark.
 
 ## Proxy evaluation
 
