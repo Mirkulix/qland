@@ -27,7 +27,7 @@ def strip_code(text):
 def main():
     ap=argparse.ArgumentParser()
     ap.add_argument('--model',default='TinyLlama/TinyLlama-1.1B-Chat-v1.0')
-    ap.add_argument('--adapter',required=True)
+    ap.add_argument('--adapter',default=None)
     ap.add_argument('--limit',type=int,default=0)
     ap.add_argument('--max-tokens',type=int,default=768)
     ap.add_argument('--compare-base',action='store_true')
@@ -38,7 +38,7 @@ def main():
     tasks=sorted(check.task_ids())
     if args.limit: tasks=tasks[:args.limit]
     base,tok=load(args.model)
-    adapter,_=load(args.model,adapter_path=args.adapter)
+    adapter,_=load(args.model,adapter_path=args.adapter) if args.adapter else (None,None)
 
     def run(model):
         rows=[]
@@ -67,9 +67,11 @@ def main():
         return {'tasks':len(rows),'solved':solved,'passed_cases':sum(r['passed'] for r in rows),'total_cases':sum(r['total'] for r in rows)},rows
     out={}
     if args.compare_base: out['base'],out['base_rows']=run(base)
-    out['adapter'],out['adapter_rows']=run(adapter)
+    if adapter is not None:
+        out['adapter'],out['adapter_rows']=run(adapter)
     print(json.dumps({k:out[k] for k in ('base','adapter') if k in out},indent=2))
-    with open(os.path.join(args.adapter,'eval_tasks_proxy.json'),'w') as f: json.dump(out,f,indent=2)
+    dest=args.adapter or os.path.join(REPO,'bench','lora')
+    with open(os.path.join(dest,'eval_tasks_proxy.json'),'w') as f: json.dump(out,f,indent=2)
     sys.exit(0)
 
 if __name__=='__main__': main()
