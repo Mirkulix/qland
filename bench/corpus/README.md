@@ -22,8 +22,8 @@ The builder reads `qal/selfhost/corpus/*.qal`, `bench/solutions/qal/*.qal` and
   and those diagnostics are the error side of a training pair.
 - `summary.json` — counts and the Phase 8 target.
 
-The 2026-10-27 corpus has **5,300 programs: 4,963 `ok`, 337 with diagnostics**, plus **10 real
-correction traces** in `corrections.jsonl`. **4,367** are model-written by DeepSeek and were kept
+The 2026-10-27 corpus has **5,323 programs: 4,986 `ok`, 337 with diagnostics**, plus **10 real
+correction traces** in `corrections.jsonl`. **4,390** are model-written by DeepSeek (4,367 corpus + 23 teacher solutions) and were kept
 only after both `qal check` and `qal test` passed; the rest came from the repository. This meets
 the 5,000-program lower bound of the Phase 8 specification. The builder takes about 3.5 minutes
 for the repository part; the model records are preserved across a rebuild.
@@ -50,7 +50,7 @@ environment).
 python3 bench/corpus/sft.py
 ```
 
-Writes `sft.jsonl` with **4,465 instruction/response examples**: 10 repairs (diagnostic + failed code
+Writes `sft.jsonl` with **4,465 instruction/response examples**; `sft_tasks.jsonl` additionally holds 23 task->solution teacher examples: 10 repairs (diagnostic + failed code
 -> the fix) and 4,455 test-first synthesis examples (signatures + tests -> the verified source).
 A full LoRA run and the three-arm evaluation are still missing.
 

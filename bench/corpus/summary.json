@@ -1,6 +1,6 @@
 {
-  "programs": 5300,
-  "ok": 4963,
+  "programs": 5323,
+  "ok": 4986,
   "error": 337,
   "corrections": 10,
   "sources": [
@@ -12,6 +12,7 @@
     5000,
     20000
   ],
-  "model_written_solutions": 4367,
-  "note": "Seed + DeepSeek-generated, all kept programs pass qal check and qal test. LoRA/3-arm evaluation still open."
+  "model_written_solutions": 4390,
+  "note": "Seed + DeepSeek-generated + 23 verified DeepSeek teacher solutions; all kept programs pass qal check/test. LoRA/3-arm evaluation open.",
+  "teacher_solutions": 23
 }
