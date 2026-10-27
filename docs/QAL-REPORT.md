@@ -45,6 +45,10 @@ Drittmeinung liegt erst vor, wenn jemand anderes das Paket auf einer anderen Mas
 - Die These „QAL macht Agenten billiger“ ist für Aufgaben dieser Größe **nicht bestätigt**.
 - Was QAL liefert, ist ein geprüfter, gespeicherter, hash-adressierter Codebestand – nicht weniger
   Tokens.
+- **Lehrer-Baseline (DeepSeek, 27.10.):** 23 DeepSeek-Agenten lösten **23/23 Aufgaben** und
+  **232/232 versteckte Testfälle** mit der QAL-CLI (`bench/teacher-2026-10-27/`). Ein starkes
+  Modell kann QAL also schreiben; das lokale TinyLlama (7/23 check-valide, Adapter 2/23) ist
+  der Engpass, nicht die Sprache.
 
 ### Living-Programm (12 Änderungsaufträge, dünne Tickets)
 

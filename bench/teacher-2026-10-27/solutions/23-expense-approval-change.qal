@@ -1,0 +1,499 @@
+# Expense approval with the change request:
+#   1. travel claims on Saturday/Sunday are rejected with reason "weekend"
+#      (checked after "duplicate" and before "over_limit"),
+#   2. the meals limit is 8000 (travel 50000, equipment 150000, other 10000),
+#   3. every summary line carries a fifth field: the number of distinct
+#      YYYY-MM months with at least one approved claim.
+
+type Category = Travel | Meals | Equipment | Other
+
+type Ymd = { y: Int, m: Int, d: Int }
+
+type Claim = { employee: Str, date: Str, category: Category, amount: Int }
+
+type EmpState = {
+  approved_total: Int,
+  approved_count: Int,
+  rejected_count: Int,
+  month_totals: Map[Str, Int],
+}
+
+type State = { emps: Map[Str, EmpState], seen: Map[Str, Bool] }
+
+type Decision = Approve | Reject(Str)
+
+type Sim = { state: State, outputs: List[Str], rejected: Bool }
+
+# ---------------------------------------------------------------- characters
+
+fn is_digit_char(c: Str) -> Bool = len(c) == 1 && c >= "0" && c <= "9"
+
+fn is_digits(s: Str) -> Bool =
+  if len(s) == 0 then true
+  else is_digit_char(slice(s, 0, 1)) && is_digits(slice(s, 1, len(s)))
+
+fn is_upper_char(c: Str) -> Bool = len(c) == 1 && c >= "A" && c <= "Z"
+
+fn is_lower_char(c: Str) -> Bool = len(c) == 1 && c >= "a" && c <= "z"
+
+fn is_employee_char(c: Str) -> Bool =
+  is_upper_char(c) || is_lower_char(c) || is_digit_char(c) || c == "_"
+
+fn all_employee_chars(s: Str, i: Int) -> Bool
+  req i >= 0
+= if i >= len(s) then true
+  else is_employee_char(slice(s, i, i + 1)) && all_employee_chars(s, i + 1)
+
+fn is_employee(s: Str) -> Bool = len(s) > 0 && all_employee_chars(s, 0)
+
+# ---------------------------------------------------------------- calendar
+
+fn is_leap(y: Int) -> Bool = y % 4 == 0 && (y % 100 != 0 || y % 400 == 0)
+
+fn days_in_month(y: Int, m: Int) -> Int
+  ens r >= 0 && r <= 31
+= match m {
+    1 => 31,
+    2 => if is_leap(y) then 29 else 28,
+    3 => 31,
+    4 => 30,
+    5 => 31,
+    6 => 30,
+    7 => 31,
+    8 => 31,
+    9 => 30,
+    10 => 31,
+    11 => 30,
+    12 => 31,
+    _ => 0,
+  }
+
+fn is_valid_ymd(y: Int, m: Int, d: Int) -> Bool =
+  y >= 0 && y <= 9999 && m >= 1 && m <= 12 && d >= 1 && d <= days_in_month(y, m)
+
+fn int_of(s: Str) -> Int = match to_int(s) { Some(n) => n, None => 0 }
+
+fn parse_date(s: Str) -> Option[Ymd] =
+  if len(s) != 10 then None
+  else if slice(s, 4, 5) != "-" then None
+  else if slice(s, 7, 8) != "-" then None
+  else if !is_digits(slice(s, 0, 4)) then None
+  else if !is_digits(slice(s, 5, 7)) then None
+  else if !is_digits(slice(s, 8, 10)) then None
+  else {
+    let y = int_of(slice(s, 0, 4)) in
+    let m = int_of(slice(s, 5, 7)) in
+    let d = int_of(slice(s, 8, 10)) in
+    if is_valid_ymd(y, m, d) then Some(Ymd { y: y, m: m, d: d }) else None
+  }
+
+fn mod_pos(x: Int, m: Int) -> Int
+  req m > 0
+  ens r >= 0 && r < m
+= ((x % m) + m) % m
+
+fn days_from_civil(y: Int, m: Int, d: Int) -> Int
+  req y >= 0 && y <= 399 && m >= 1 && m <= 12 && d >= 1 && d <= 31
+= {
+  let yy = if m <= 2 then y - 1 else y in
+  let era = if yy >= 0 then yy / 400 else (yy - 399) / 400 in
+  let yoe = yy - era * 400 in
+  let mp = if m > 2 then m - 3 else m + 9 in
+  let doy = (153 * mp + 2) / 5 + d - 1 in
+  let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy in
+  era * 146097 + doe - 719468
+}
+
+# 0 = Sunday, 6 = Saturday. The Gregorian calendar repeats exactly every 400
+# years (146097 days = 20871 weeks), so reducing the year mod 400 keeps the
+# weekday and keeps the arithmetic far from any overflow.
+fn weekday(d: Ymd) -> Int =
+  if d.m >= 1 && d.m <= 12 && d.d >= 1 && d.d <= 31 then {
+    let y = mod_pos(d.y, 400) in
+    mod_pos(days_from_civil(y, d.m, d.d) + 4, 7)
+  } else 0
+
+fn is_weekend(d: Ymd) -> Bool = weekday(d) == 0 || weekday(d) == 6
+
+# ---------------------------------------------------------------- fields
+
+fn field_or(xs: List[Str], i: Int) -> Str = match get(xs, i) { Some(s) => s, None => "" }
+
+fn parse_category(s: Str) -> Option[Category] =
+  match s {
+    "travel" => Some(Travel),
+    "meals" => Some(Meals),
+    "equipment" => Some(Equipment),
+    "other" => Some(Other),
+    _ => None,
+  }
+
+fn category_name(c: Category) -> Str =
+  match c {
+    Travel => "travel",
+    Meals => "meals",
+    Equipment => "equipment",
+    Other => "other",
+  }
+
+fn limit_for(c: Category) -> Int
+  ens r == 50000 || r == 8000 || r == 150000 || r == 10000
+= match c {
+    Travel => 50000,
+    Meals => 8000,
+    Equipment => 150000,
+    Other => 10000,
+  }
+
+fn parse_amount(s: Str) -> Option[Int] =
+  if len(s) < 1 || len(s) > 9 then None
+  else if !is_digits(s) then None
+  else {
+    let n = int_of(s) in
+    if n > 0 then Some(n) else None
+  }
+
+fn parse_claim(fields: List[Str]) -> Option[Claim] =
+  if len(fields) != 4 then None
+  else {
+    let emp = field_or(fields, 0) in
+    let date = field_or(fields, 1) in
+    let cat = field_or(fields, 2) in
+    let amt = field_or(fields, 3) in
+    if !is_employee(emp) then None
+    else match parse_date(date) {
+      None => None,
+      Some(_) => match parse_category(cat) {
+        None => None,
+        Some(c) => match parse_amount(amt) {
+          None => None,
+          Some(a) => Some(Claim { employee: emp, date: date, category: c, amount: a }),
+        },
+      },
+    }
+  }
+
+fn claim_key(c: Claim) -> Str =
+  c.employee ++ ";" ++ c.date ++ ";" ++ category_name(c.category) ++ ";" ++ from_int(c.amount)
+
+fn month_of(date: Str) -> Str = if len(date) >= 7 then slice(date, 0, 7) else date
+
+# ---------------------------------------------------------------- state
+
+fn new_emp() -> EmpState =
+  EmpState { approved_total: 0, approved_count: 0, rejected_count: 0, month_totals: map_new() }
+
+fn init_state() -> State = State { emps: map_new(), seen: map_new() }
+
+fn get_emp(st: State, name: Str) -> EmpState =
+  match map_get(st.emps, name) { Some(e) => e, None => new_emp() }
+
+fn month_spent(e: EmpState, month: Str) -> Int =
+  match map_get(e.month_totals, month) { Some(v) => v, None => 0 }
+
+fn with_reject(e: EmpState) -> EmpState =
+  EmpState {
+    approved_total: e.approved_total,
+    approved_count: e.approved_count,
+    rejected_count: e.rejected_count + 1,
+    month_totals: e.month_totals,
+  }
+
+fn bump_rejected(st: State, name: Str) -> State =
+  State { emps: map_put(st.emps, name, with_reject(get_emp(st, name))), seen: st.seen }
+
+# Checks in order: duplicate, weekend (travel only), over_limit, monthly_cap.
+fn decide(st: State, c: Claim) -> Decision =
+  if map_has(st.seen, claim_key(c)) then Reject("duplicate")
+  else match parse_date(c.date) {
+    None => Reject("invalid"),
+    Some(d) =>
+      if c.category == Travel && is_weekend(d) then Reject("weekend")
+      else if c.amount > limit_for(c.category) then Reject("over_limit")
+      else if month_spent(get_emp(st, c.employee), month_of(c.date)) + c.amount > 200000 then
+        Reject("monthly_cap")
+      else Approve,
+  }
+
+fn apply(st: State, c: Claim, dec: Decision) -> State = {
+  let seen2 = map_put(st.seen, claim_key(c), true) in
+  let e = get_emp(st, c.employee) in
+  let month = month_of(c.date) in
+  match dec {
+    Approve =>
+      State {
+        emps: map_put(
+          st.emps,
+          c.employee,
+          EmpState {
+            approved_total: e.approved_total + c.amount,
+            approved_count: e.approved_count + 1,
+            rejected_count: e.rejected_count,
+            month_totals: map_put(e.month_totals, month, month_spent(e, month) + c.amount),
+          },
+        ),
+        seen: seen2,
+      },
+    Reject(_) => State { emps: map_put(st.emps, c.employee, with_reject(e)), seen: seen2 },
+  }
+}
+
+fn summary_line(name: Str, e: EmpState) -> Str =
+  name ++ " " ++ from_int(e.approved_total) ++ " " ++ from_int(e.approved_count) ++ " "
+  ++ from_int(e.rejected_count) ++ " " ++ from_int(map_size(e.month_totals))
+
+fn summary_lines(st: State) -> List[Str] =
+  map(map_keys(st.emps), fn(k) => summary_line(k, get_emp(st, k)))
+
+# ---------------------------------------------------------------- simulation
+
+fn sim_step(sim: Sim, line: Str) -> Sim = {
+  let n = len(sim.outputs) + 1 in
+  let fields = split(line, ";") in
+  let emp = field_or(fields, 0) in
+  if !is_employee(emp) then
+    Sim {
+      state: sim.state,
+      outputs: push(sim.outputs, "REJECT " ++ from_int(n) ++ " ? invalid"),
+      rejected: true,
+    }
+  else match parse_claim(fields) {
+    None =>
+      Sim {
+        state: bump_rejected(sim.state, emp),
+        outputs: push(sim.outputs, "REJECT " ++ from_int(n) ++ " " ++ emp ++ " invalid"),
+        rejected: true,
+      },
+    Some(c) => {
+      let dec = decide(sim.state, c) in
+      let st2 = apply(sim.state, c, dec) in
+      match dec {
+        Approve =>
+          Sim {
+            state: st2,
+            outputs: push(
+              sim.outputs,
+              "OK " ++ from_int(n) ++ " " ++ emp ++ " " ++ from_int(c.amount),
+            ),
+            rejected: sim.rejected,
+          },
+        Reject(reason) =>
+          Sim {
+            state: st2,
+            outputs: push(
+              sim.outputs,
+              "REJECT " ++ from_int(n) ++ " " ++ emp ++ " " ++ from_int(c.amount) ++ " " ++ reason,
+            ),
+            rejected: true,
+          },
+      }
+    },
+  }
+}
+
+fn simulate(lines: List[Str]) -> Sim =
+  fold(lines, Sim { state: init_state(), outputs: [], rejected: false }, sim_step)
+
+# ---------------------------------------------------------------- input/output
+
+fn strip_cr(s: Str) -> Str =
+  if len(s) > 0 && slice(s, len(s) - 1, len(s)) == "\r" then slice(s, 0, len(s) - 1) else s
+
+fn take_into(xs: List[Str], i: Int, n: Int, acc: List[Str]) -> List[Str] =
+  if i >= n then acc
+  else match get(xs, i) { None => acc, Some(x) => take_into(xs, i + 1, n, push(acc, x)) }
+
+fn take_strs(xs: List[Str], n: Int) -> List[Str] = take_into(xs, 0, n, [])
+
+fn input_lines(s: Str) -> List[Str] = {
+  let parts = map(split(s, "\n"), strip_cr) in
+  if len(parts) == 0 then []
+  else if field_or(parts, len(parts) - 1) == "" then take_strs(parts, len(parts) - 1)
+  else parts
+}
+
+fn emit_lines(xs: List[Str], i: Int) -> Unit !io =
+  match get(xs, i) {
+    None => (),
+    Some(s) => {
+      print(s);
+      emit_lines(xs, i + 1)
+    },
+  }
+
+fn main(args: List[Str]) -> Int !io =
+  let sim = simulate(input_lines(read_all())) in
+  {
+    emit_lines(sim.outputs, 0);
+    print("---");
+    emit_lines(summary_lines(sim.state), 0);
+    if sim.rejected then 1 else 0
+  }
+
+# ---------------------------------------------------------------- tests
+
+test leap_years = is_leap(2024) && is_leap(2000) && !is_leap(2025) && !is_leap(1900) && !is_leap(2100)
+
+test february_days = days_in_month(2028, 2) == 29 && days_in_month(2025, 2) == 28 && days_in_month(2026, 4) == 30
+
+test date_valid = parse_date("2026-10-24") == Some(Ymd { y: 2026, m: 10, d: 24 })
+
+test date_leap_valid = parse_date("2028-02-29") == Some(Ymd { y: 2028, m: 2, d: 29 })
+
+test date_leap_invalid = match parse_date("2025-02-29") { None => true, Some(_) => false }
+
+test date_day_overflow = match parse_date("2026-04-31") { None => true, Some(_) => false }
+
+test date_month_overflow = match parse_date("2026-13-01") { None => true, Some(_) => false }
+
+test date_format = match parse_date("+123-01-01") { None => true, Some(_) => false }
+
+test weekend_saturday = is_weekend(Ymd { y: 2026, m: 10, d: 24 })
+
+test weekend_sunday = is_weekend(Ymd { y: 2026, m: 10, d: 25 })
+
+test weekday_friday = !is_weekend(Ymd { y: 2026, m: 10, d: 23 })
+
+test weekday_monday = !is_weekend(Ymd { y: 2026, m: 10, d: 26 })
+
+test weekend_known = is_weekend(Ymd { y: 2026, m: 1, d: 3 })
+  && is_weekend(Ymd { y: 2026, m: 2, d: 28 })
+  && is_weekend(Ymd { y: 2026, m: 3, d: 1 })
+  && !is_weekend(Ymd { y: 1999, m: 12, d: 31 })
+  && !is_weekend(Ymd { y: 2024, m: 2, d: 29 })
+  && is_weekend(Ymd { y: 2026, m: 11, d: 1 })
+  && !is_weekend(Ymd { y: 2100, m: 3, d: 1 })
+  && !is_weekend(Ymd { y: 2000, m: 2, d: 29 })
+
+test limit_meals = limit_for(Meals) == 8000
+
+test limit_others = limit_for(Travel) == 50000 && limit_for(Equipment) == 150000 && limit_for(Other) == 10000
+
+test amount_ok = parse_amount("1") == Some(1) && parse_amount("000000001") == Some(1) && parse_amount("8000") == Some(8000)
+
+fn is_none_amount(s: Str) -> Bool = match parse_amount(s) { None => true, Some(_) => false }
+
+test amount_bad =
+  is_none_amount("0") && is_none_amount("1000000000") && is_none_amount("+5") && is_none_amount("")
+
+test claim_parse = parse_claim(["alice", "2026-10-23", "travel", "12000"]) == Some(
+  Claim { employee: "alice", date: "2026-10-23", category: Travel, amount: 12000 },
+)
+
+test duplicate_before_weekend = {
+  let st = init_state() in
+  let c = Claim { employee: "a", date: "2026-10-24", category: Travel, amount: 60000 } in
+  let st1 = apply(st, c, decide(st, c)) in
+  decide(st1, c) == Reject("duplicate")
+}
+
+test weekend_before_over_limit = decide(
+  init_state(),
+  Claim { employee: "o", date: "2026-10-24", category: Travel, amount: 60000 },
+) == Reject("weekend")
+
+test weekend_only_travel = decide(
+  init_state(),
+  Claim { employee: "k", date: "2026-10-24", category: Meals, amount: 10 },
+) == Approve
+
+test over_limit_meals = decide(
+  init_state(),
+  Claim { employee: "m", date: "2026-05-05", category: Meals, amount: 8001 },
+) == Reject("over_limit")
+
+test meals_at_limit = decide(
+  init_state(),
+  Claim { employee: "m", date: "2026-05-04", category: Meals, amount: 8000 },
+) == Approve
+
+test monthly_cap_boundary = {
+  let st = init_state() in
+  let c1 = Claim { employee: "x", date: "2026-05-01", category: Equipment, amount: 150000 } in
+  let st1 = apply(st, c1, decide(st, c1)) in
+  let c2 = Claim { employee: "x", date: "2026-05-04", category: Travel, amount: 50000 } in
+  let st2 = apply(st1, c2, decide(st1, c2)) in
+  let c3 = Claim { employee: "x", date: "2026-05-05", category: Meals, amount: 1 } in
+  decide(st2, c3) == Reject("monthly_cap")
+}
+
+test weekend_not_counted_in_cap = {
+  let st = init_state() in
+  let c1 = Claim { employee: "y", date: "2026-07-01", category: Equipment, amount: 150000 } in
+  let st1 = apply(st, c1, decide(st, c1)) in
+  let c2 = Claim { employee: "y", date: "2026-07-04", category: Travel, amount: 50000 } in
+  let st2 = apply(st1, c2, decide(st1, c2)) in
+  let c3 = Claim { employee: "y", date: "2026-07-06", category: Travel, amount: 50000 } in
+  let st3 = apply(st2, c3, decide(st2, c3)) in
+  let c4 = Claim { employee: "y", date: "2026-07-07", category: Meals, amount: 1 } in
+  decide(st3, c4) == Reject("monthly_cap") && summary_line("y", get_emp(st3, "y")) == "y 200000 2 1 1"
+}
+
+test months_distinct = {
+  let st = init_state() in
+  let c1 = Claim { employee: "z", date: "2026-01-05", category: Meals, amount: 10 } in
+  let st1 = apply(st, c1, decide(st, c1)) in
+  let c2 = Claim { employee: "z", date: "2026-01-06", category: Meals, amount: 10 } in
+  let st2 = apply(st1, c2, decide(st1, c2)) in
+  let c3 = Claim { employee: "z", date: "2026-02-05", category: Meals, amount: 10 } in
+  let st3 = apply(st2, c3, decide(st2, c3)) in
+  let c4 = Claim { employee: "z", date: "2027-01-05", category: Meals, amount: 10 } in
+  let st4 = apply(st3, c4, decide(st3, c4)) in
+  summary_line("z", get_emp(st4, "z")) == "z 40 4 0 3"
+}
+
+test input_lines_plain = input_lines("a\nb\n") == ["a", "b"]
+
+test input_lines_crlf = input_lines("w;2026-10-12;travel;100\r\nw;2026-10-12;travel;100") == [
+  "w;2026-10-12;travel;100",
+  "w;2026-10-12;travel;100",
+]
+
+test input_lines_empty = input_lines("") == []
+
+# The two examples from the specification.
+
+test example = {
+  let sim = simulate([
+    "alice;2026-10-23;travel;12000",
+    "alice;2026-10-24;travel;12000",
+    "alice;2026-10-24;meals;7500",
+    "alice;2026-10-24;travel;12000",
+    "bob;2026-10-25;travel;100",
+    "bob;2026-11-02;meals;100",
+  ]) in
+  sim.outputs == [
+    "OK 1 alice 12000",
+    "REJECT 2 alice 12000 weekend",
+    "OK 3 alice 7500",
+    "REJECT 4 alice 12000 duplicate",
+    "REJECT 5 bob 100 weekend",
+    "OK 6 bob 100",
+  ]
+  && summary_lines(sim.state) == ["alice 19500 2 2 1", "bob 100 1 1 1"]
+  && sim.rejected
+}
+
+test example_invalid = {
+  let sim = simulate([
+    "carol;2028-02-29;meals;500",
+    "carol;2025-02-29;meals;500",
+    "dave;2026-04-01;snacks;500",
+    ";2026-04-01;meals;500",
+    "erin;2026-04-31;other;100",
+  ]) in
+  sim.outputs == [
+    "OK 1 carol 500",
+    "REJECT 2 carol invalid",
+    "REJECT 3 dave invalid",
+    "REJECT 4 ? invalid",
+    "REJECT 5 erin invalid",
+  ]
+  && summary_lines(sim.state) == ["carol 500 1 1 1", "dave 0 0 1 0", "erin 0 0 1 0"]
+  && sim.rejected
+}
+
+test example_empty = {
+  let sim = simulate([]) in
+  sim.outputs == [] && summary_lines(sim.state) == [] && !sim.rejected
+}

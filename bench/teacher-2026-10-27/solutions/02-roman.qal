@@ -1,0 +1,180 @@
+# Roman numerals: convert decimal numbers (1..3999) to canonical Roman numerals
+# and canonical Roman numerals back to decimal. Anything else prints "error".
+
+type RomanPair = { value: Int, text: Str }
+
+# Largest values first; the canonical greedy decomposition.
+fn roman_table() -> List[RomanPair] = [
+  RomanPair { value: 1000, text: "M" },
+  RomanPair { value: 900, text: "CM" },
+  RomanPair { value: 500, text: "D" },
+  RomanPair { value: 400, text: "CD" },
+  RomanPair { value: 100, text: "C" },
+  RomanPair { value: 90, text: "XC" },
+  RomanPair { value: 50, text: "L" },
+  RomanPair { value: 40, text: "XL" },
+  RomanPair { value: 10, text: "X" },
+  RomanPair { value: 9, text: "IX" },
+  RomanPair { value: 5, text: "V" },
+  RomanPair { value: 4, text: "IV" },
+  RomanPair { value: 1, text: "I" },
+]
+
+fn repeat_str(s: Str, k: Int) -> Str = if k <= 0 then "" else s ++ repeat_str(s, k - 1)
+
+fn to_roman(n: Int) -> Str
+  req n >= 1 && n <= 3999
+= to_roman_at(n, roman_table(), 0, "")
+
+fn to_roman_at(n: Int, table: List[RomanPair], i: Int, acc: Str) -> Str
+= if i >= len(table) then acc
+  else match get(table, i) {
+    None => acc,
+    Some(p) => if p.value <= 0 then to_roman_at(n, table, i + 1, acc)
+      else to_roman_at(n % p.value, table, i + 1, acc ++ repeat_str(p.text, n / p.value)),
+  }
+
+fn is_roman_char(c: Str) -> Bool =
+  c == "I" || c == "V" || c == "X" || c == "L" || c == "C" || c == "D" || c == "M"
+
+fn roman_char_value(c: Str) -> Int = match c {
+  "I" => 1,
+  "V" => 5,
+  "X" => 10,
+  "L" => 50,
+  "C" => 100,
+  "D" => 500,
+  "M" => 1000,
+  _ => 0,
+}
+
+fn all_roman(cs: List[Str]) -> Bool =
+  fold(cs, true, fn(acc, c) => acc && is_roman_char(c))
+
+fn roman_add(cs: List[Str], i: Int, total: Int) -> Int =
+  if i < 0 then total
+  else match get(cs, i) {
+    None => total,
+    Some(c) => {
+      let v = roman_char_value(c) in
+      let next = match get(cs, i + 1) { Some(d) => roman_char_value(d), None => 0 } in
+      roman_add(cs, i + 1, total + (if v < next then 0 - v else v))
+    },
+  }
+
+# Some(v) exactly when s is the canonical Roman numeral of a value in 1..3999.
+fn roman_to_int(s: Str) -> Option[Int] =
+  if len(s) > 15 then None
+  else {
+    let cs = chars(s) in
+    if len(cs) == 0 || !all_roman(cs) then None
+    else {
+      let v = roman_add(cs, 0, 0) in
+      if v < 1 || v > 3999 then None
+      else if to_roman(v) == s then Some(v) else None
+    }
+  }
+
+# Trim only spaces, tabs and carriage returns (not all Unicode whitespace).
+fn is_blank_char(c: Str) -> Bool = c == " " || c == "\t" || c == "\r"
+
+fn skip_blank(cs: List[Str], i: Int, n: Int) -> Int =
+  if i < 0 || i >= n then i
+  else match get(cs, i) {
+    None => i,
+    Some(c) => if is_blank_char(c) then skip_blank(cs, i + 1, n) else i,
+  }
+
+fn skip_blank_back(cs: List[Str], i: Int, start: Int) -> Int =
+  if i < start then i
+  else match get(cs, i) {
+    None => i,
+    Some(c) => if is_blank_char(c) then skip_blank_back(cs, i - 1, start) else i,
+  }
+
+fn trim_edge(s: Str) -> Str =
+  let cs = chars(s) in
+  let n = len(cs) in
+  let start = skip_blank(cs, 0, n) in
+  let stop = skip_blank_back(cs, n - 1, start) in
+  if stop < start then "" else slice(s, start, stop + 1)
+
+fn is_digit_char(c: Str) -> Bool =
+  if c == "" then false else char_code(c) >= 48 && char_code(c) <= 57
+
+fn all_digits(cs: List[Str]) -> Bool = fold(cs, true, fn(acc, c) => acc && is_digit_char(c))
+
+fn convert(line: Str) -> Str =
+  let t = trim_edge(line) in
+  if len(t) > 0 && all_digits(chars(t)) then
+    match to_int(t) {
+      None => "error",
+      Some(v) => if v >= 1 && v <= 3999 then to_roman(v) else "error",
+    }
+  else match roman_to_int(t) {
+    None => "error",
+    Some(v) => from_int(v),
+  }
+
+fn pump_lines() -> Unit !io =
+  match read_line() {
+    None => (),
+    Some(line) => { print(convert(line)); pump_lines() },
+  }
+
+fn main(args: List[Str]) -> Int !io = { pump_lines(); 0 }
+
+test example = map(["1994", "MCMXCIV", "4000", "IIII"], fn(s) => convert(s)) == ["MCMXCIV", "1994", "error", "error"]
+
+test to_roman_1994 = to_roman(1994) == "MCMXCIV"
+test to_roman_1 = to_roman(1) == "I"
+test to_roman_3999 = to_roman(3999) == "MMMCMXCIX"
+test to_roman_3888 = to_roman(3888) == "MMMDCCCLXXXVIII"
+test to_roman_4 = to_roman(4) == "IV"
+test to_roman_40 = to_roman(40) == "XL"
+test to_roman_90 = to_roman(90) == "XC"
+test to_roman_400 = to_roman(400) == "CD"
+test to_roman_900 = to_roman(900) == "CM"
+test to_roman_2421 = to_roman(2421) == "MMCDXXI"
+
+test roman_1994 = roman_to_int("MCMXCIV") == Some(1994)
+test roman_42 = roman_to_int("XLII") == Some(42)
+test roman_3999 = roman_to_int("MMMCMXCIX") == Some(3999)
+test roman_noncanonical_iiii = roman_to_int("IIII") == None
+test roman_noncanonical_ic = roman_to_int("IC") == None
+test roman_noncanonical_vv = roman_to_int("VV") == None
+test roman_noncanonical_iiii_max = roman_to_int("MMMM") == None
+test roman_noncanonical_il = roman_to_int("IL") == None
+test roman_noncanonical_xm = roman_to_int("XM") == None
+test roman_noncanonical_vx = roman_to_int("VX") == None
+test roman_empty = roman_to_int("") == None
+test roman_lowercase = roman_to_int("mcmxciv") == None
+test roman_junk = roman_to_int("MCMXCIVX") == None
+
+test trim_leading = convert("  1994") == "MCMXCIV"
+test trim_trailing = convert("1994\t\r") == "MCMXCIV"
+test trim_both = convert(" \t MCMXCIV \r ") == "1994"
+test blank_line = convert("  \t\r ") == "error"
+test empty_line = convert("") == "error"
+test zero = convert("0") == "error"
+test leading_zeros = convert("01994") == "MCMXCIV"
+test negative = convert("-1") == "error"
+test plus_sign = convert("+1994") == "error"
+test inner_space = convert("MCM XCIV") == "error"
+test too_large_decimal = convert("4000") == "error"
+test decimal_1 = convert("1") == "I"
+test decimal_max = convert("3999") == "MMMCMXCIX"
+
+# Every value in 1..3999 survives a round trip through the canonical form.
+fn roundtrip_ok(n: Int) -> Bool =
+  if n >= 1 && n <= 3999 then roman_to_int(to_roman(n)) == Some(n) else true
+
+test roundtrip_all = fold(range(1, 4000), true, fn(acc, n) => acc && roundtrip_ok(n))
+
+# Conversion of the whole canonical corpus, both directions, agrees with `convert`.
+fn corpus_ok(acc: Bool, n: Int) -> Bool =
+  if n >= 1 && n <= 3999 then
+    acc && convert(from_int(n)) == to_roman(n) && convert(to_roman(n)) == from_int(n)
+  else acc
+
+test corpus_agrees = fold(range(1, 4000), true, corpus_ok)

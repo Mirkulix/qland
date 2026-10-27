@@ -78,6 +78,12 @@ run over all 23 tasks: **base 7/23 valid, adapter 2/23 valid** — the adapter f
 but generalizes worse to benchmark tasks. Replacing TinyLlama with **Qwen2.5-Coder-1.5B** made it
 worse zero-shot: **0/23** check-valid. This is a proxy, not the Phase 8 agent benchmark.
 
+## Teacher data
+
+`bench/teacher-2026-10-27/` holds 23 DeepSeek solutions (23/23 tasks, 232/232 hidden cases).
+They are task-oriented data (`prompt -> verified solution`) for a later distillation run, unlike
+the signature/test SFT corpus.
+
 ## Proxy evaluation
 
 After training, `eval_adapter.py --adapter <dir> --limit 10` generates QAL from held-out SFT

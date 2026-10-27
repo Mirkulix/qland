@@ -1,0 +1,410 @@
+# Expense approval.
+#
+# Input: one claim per line, `<employee>;<date>;<category>;<amount>`.
+# Invalid lines are rejected with reason `invalid`; valid lines are checked in
+# the order duplicate, over_limit, monthly_cap and then approved or rejected.
+# The run ends with `---` and one summary line per employee that appeared,
+# sorted by name. Exit code is 0 only if nothing was rejected.
+#
+# Every rule function states what it guarantees:
+#   - date validity      valid_date_fields, is_leap, days_in_month
+#   - amount validity    parse_amount, all_digits
+#   - category limit     category_limit, over_limit
+#   - monthly cap        cap_ok
+#   - summary            stats_approve, stats_reject, stats_line
+
+type Claim = { employee: Str, date: Str, category: Str, amount: Int }
+type CalDate = { y: Int, m: Int, d: Int }
+type Stats = { total: Int, count: Int, rejected: Int }
+type State = { seen: Map[Str, Bool], months: Map[Str, Int], emps: Map[Str, Stats], out: List[Str], rejected: Bool }
+type Outcome = { lines: List[Str], rejected: Bool }
+
+# ---------- calendar ----------
+
+# A year is a leap year exactly when it is divisible by 4 and, if divisible by
+# 100, also by 400 (so 2024 and 2000 are leap, 2025 and 1900 are not).
+fn is_leap(y: Int) -> Bool
+  ens r == (y % 4 == 0 && (y % 100 != 0 || y % 400 == 0))
+  = y % 4 == 0 && (y % 100 != 0 || y % 400 == 0)
+
+# The month is 1..12; the result is always a real month length (28..31).
+fn days_in_month(y: Int, m: Int) -> Int
+  req m >= 1
+  req m <= 12
+  ens r >= 28 && r <= 31
+  = if m == 2 then (if is_leap(y) then 29 else 28)
+    else if m == 4 || m == 6 || m == 9 || m == 11 then 30
+    else 31
+
+# A triple (y, m, d) is a real calendar date exactly when the month is 1..12,
+# the day is at least 1 and at most that month's length.
+fn valid_date_fields(y: Int, m: Int, d: Int) -> Bool
+  ens r == (m >= 1 && m <= 12 && d >= 1 && d <= days_in_month(y, m))
+  ens (if r then m >= 1 && m <= 12 && d >= 1 && d <= 31 else true)
+  = m >= 1 && m <= 12 && d >= 1 && d <= days_in_month(y, m)
+
+fn is_digit(c: Str) -> Bool =
+  if len(c) == 0 then false
+  else let n = char_code(c) in n >= 48 && n <= 57
+
+fn dash_at(cs: List[Str], i: Int) -> Bool =
+  match get(cs, i) {
+    Some(c) => c == "-",
+    None => false
+  }
+
+# Two ASCII digits at positions i, i+1 -> 0..99.
+fn two_digits(cs: List[Str], i: Int) -> Option[Int] =
+  match get(cs, i) {
+    None => None,
+    Some(a) => match get(cs, i + 1) {
+      None => None,
+      Some(b) =>
+        if is_digit(a) && is_digit(b)
+        then Some((char_code(a) - 48) * 10 + (char_code(b) - 48))
+        else None
+    }
+  }
+
+# `YYYY-MM-DD`: exactly ten characters, dashes at 4 and 7, digits elsewhere,
+# and the fields must form a real calendar date.
+fn parse_date(s: Str) -> Option[CalDate]
+  ens (match r { Some(dt) => valid_date_fields(dt.y, dt.m, dt.d), None => true })
+  = let cs = chars(s) in
+    if len(cs) != 10 then None
+    else if !(dash_at(cs, 4) && dash_at(cs, 7)) then None
+    else match two_digits(cs, 0) {
+      None => None,
+      Some(h) => match two_digits(cs, 2) {
+        None => None,
+        Some(l) => match two_digits(cs, 5) {
+          None => None,
+          Some(m) => match two_digits(cs, 8) {
+            None => None,
+            Some(d) =>
+              let y = h * 100 + l in
+              if valid_date_fields(y, m, d) then Some(CalDate { y: y, m: m, d: d }) else None
+          }
+        }
+      }
+    }
+
+# ---------- employee and category ----------
+
+# `A-Z a-z 0-9 _`
+fn emp_char_ok(c: Str) -> Bool =
+  if len(c) == 0 then false
+  else let n = char_code(c) in
+    (n >= 48 && n <= 57) || (n >= 65 && n <= 90) || (n >= 97 && n <= 122) || n == 95
+
+fn all_emp_chars(cs: List[Str], i: Int) -> Bool =
+  match get(cs, i) {
+    None => true,
+    Some(c) => if emp_char_ok(c) then all_emp_chars(cs, i + 1) else false
+  }
+
+# A well-formed employee name is non-empty and uses only allowed characters.
+fn valid_employee(s: Str) -> Bool
+  ens (if r then len(s) > 0 else true)
+  = len(s) > 0 && all_emp_chars(chars(s), 0)
+
+fn valid_category(c: Str) -> Bool
+  ens r == (c == "travel" || c == "meals" || c == "equipment" || c == "other")
+  = c == "travel" || c == "meals" || c == "equipment" || c == "other"
+
+# Category limits in cents: travel 50000, meals 6000, equipment 150000,
+# other 10000. The result is always one of those four limits.
+fn category_limit(c: Str) -> Int
+  ens r >= 6000 && r <= 150000
+  = match c {
+      "travel" => 50000,
+      "meals" => 6000,
+      "equipment" => 150000,
+      "other" => 10000,
+      _ => 10000
+    }
+
+# A claim is over its limit exactly when the amount is strictly greater than
+# the category limit.
+fn over_limit(amount: Int, category: Str) -> Bool
+  ens r == (amount > category_limit(category))
+  ens (if r then amount > 6000 else true)
+  = amount > category_limit(category)
+
+# The monthly cap: approved amounts in the month plus this amount may not
+# exceed 200000 cents. The result is exactly that comparison; the sum is never
+# computed, so no value can overflow.
+fn cap_ok(approved: Int, amount: Int) -> Bool
+  ens (if approved >= 0 && approved <= 1000000000000 && amount >= 0 && amount <= 1000000000
+       then r == (approved + amount <= 200000)
+       else true)
+  = if approved < 0 then true
+    else if amount < 0 then true
+    else if amount > 200000 then false
+    else approved <= 200000 - amount
+
+# ---------- amount ----------
+
+fn all_digits_from(cs: List[Str], i: Int) -> Bool =
+  match get(cs, i) {
+    None => true,
+    Some(c) => if is_digit(c) then all_digits_from(cs, i + 1) else false
+  }
+
+fn all_digits(cs: List[Str]) -> Bool = all_digits_from(cs, 0)
+
+# 1 to 9 decimal digits, no sign, no separator, value greater than 0.
+# The length check keeps the built-in conversion inside 64 bits, and the
+# postcondition says that an accepted amount is positive.
+fn parse_amount(s: Str) -> Option[Int]
+  ens (match r { Some(n) => n > 0, None => true })
+  = let cs = chars(s) in
+    let n = len(cs) in
+    if n < 1 || n > 9 then None
+    else if !all_digits(cs) then None
+    else match to_int(s) {
+      None => None,
+      Some(v) => if v > 0 then Some(v) else None
+    }
+
+# ---------- the claim as a whole ----------
+
+# A claim is valid exactly when every field is well-formed: a valid employee
+# name, a real date, a known category and a positive amount of 1..9 digits.
+fn parse_claim(parts: List[Str]) -> Option[Claim]
+  ens (match r { Some(c) => valid_employee(c.employee) && valid_category(c.category) && c.amount > 0, None => true })
+  = match get(parts, 0) {
+      None => None,
+      Some(e) => match get(parts, 1) {
+        None => None,
+        Some(ds) => match get(parts, 2) {
+          None => None,
+          Some(cat) => match get(parts, 3) {
+            None => None,
+            Some(as) => match parse_date(ds) {
+              None => None,
+              Some(dt) => match parse_amount(as) {
+                None => None,
+                Some(amt) =>
+                  if valid_employee(e) && valid_category(cat) && valid_date_fields(dt.y, dt.m, dt.d)
+                  then Some(Claim { employee: e, date: ds, category: cat, amount: amt })
+                  else None
+              }
+            }
+          }
+        }
+      }
+    }
+
+# Only a valid date reaches month_key; a short string yields "".
+fn month_key(date: Str) -> Str =
+  if len(date) < 7 then "" else slice(date, 0, 7)
+
+# ---------- bounded arithmetic ----------
+
+# Exact addition for every value this program produces (all counters and cent
+# totals stay far below 10^15); saturating outside that range so that no Int
+# overflow can ever trap. The postcondition says exactly that.
+fn add_sat(a: Int, b: Int) -> Int
+  ens (if a >= 0 && a <= 1000000000000000 && b >= 0 && b <= 1000000000000000 then r == a + b else true)
+  = if a >= 0 then
+      (if b >= 0 then
+        (if a > 1000000000000000000 - b then 1000000000000000000 else a + b)
+       else a + b)
+    else
+      (if b < 0 then
+        (if a < -1000000000000000000 - b then -1000000000000000000 else a + b)
+       else a + b)
+
+# ---------- summary statistics ----------
+
+fn zero_stats() -> Stats = Stats { total: 0, count: 0, rejected: 0 }
+
+fn stats_of(m: Map[Str, Stats], e: Str) -> Stats =
+  match map_get(m, e) {
+    Some(s) => s,
+    None => zero_stats()
+  }
+
+# An approved claim adds exactly its amount to the total and one to the count,
+# and leaves the rejection counter alone (exact on the program's domain).
+fn stats_approve(s: Stats, amt: Int) -> Stats
+  ens (if s.total >= 0 && s.total <= 1000000000000 && amt >= 0 && amt <= 1000000000 then r.total == s.total + amt else true)
+  ens (if s.count >= 0 && s.count <= 1000000000 then r.count == s.count + 1 else true)
+  ens r.rejected == s.rejected
+  = Stats { total: add_sat(s.total, amt), count: add_sat(s.count, 1), rejected: s.rejected }
+
+# A rejected claim changes neither total nor count and adds one to rejections.
+fn stats_reject(s: Stats) -> Stats
+  ens r.total == s.total
+  ens r.count == s.count
+  ens (if s.rejected >= 0 && s.rejected <= 1000000000 then r.rejected == s.rejected + 1 else true)
+  = Stats { total: s.total, count: s.count, rejected: add_sat(s.rejected, 1) }
+
+fn bump_approved(m: Map[Str, Stats], e: Str, amt: Int) -> Map[Str, Stats]
+  ens map_size(r) == map_size(m) || map_size(r) == map_size(m) + 1
+  ens stats_of(r, e).total == add_sat(stats_of(m, e).total, amt)
+  ens stats_of(r, e).count == add_sat(stats_of(m, e).count, 1)
+  = map_put(m, e, stats_approve(stats_of(m, e), amt))
+
+fn bump_rejected(m: Map[Str, Stats], e: Str) -> Map[Str, Stats]
+  ens map_size(r) == map_size(m) || map_size(r) == map_size(m) + 1
+  ens stats_of(r, e).rejected == add_sat(stats_of(m, e).rejected, 1)
+  = map_put(m, e, stats_reject(stats_of(m, e)))
+
+# `<employee> <approved_total> <approved_count> <rejected_count>`
+fn stats_line(e: Str, s: Stats) -> Str
+  ens starts_with(r, e)
+  = e ++ " " ++ from_int(s.total) ++ " " ++ from_int(s.count) ++ " " ++ from_int(s.rejected)
+
+# ---------- the run ----------
+
+fn empty_state() -> State =
+  State { seen: map_new(), months: map_new(), emps: map_new(), out: [], rejected: false }
+
+# An invalid line rejects for its employee when the first field is a
+# well-formed name, and is otherwise ignored.
+fn state_invalid(st: State, n: Int, label: Str, empOk: Bool, emp: Str) -> State =
+  State { seen: st.seen,
+    months: st.months,
+    emps: if empOk then bump_rejected(st.emps, emp) else st.emps,
+    out: push(st.out, "REJECT " ++ from_int(n) ++ " " ++ label ++ " invalid"),
+    rejected: true }
+
+# The first failing check names the reason; only valid claims get here.
+fn reject_reason(dup: Bool, c: Claim, used: Int) -> Str
+  ens r == "" || r == "duplicate" || r == "over_limit" || r == "monthly_cap"
+  ens (if r == "duplicate" then dup else true)
+  ens (if r == "over_limit" then !dup else true)
+  ens (if r == "monthly_cap" then !dup && !over_limit(c.amount, c.category) && !cap_ok(used, c.amount) else true)
+  = if dup then "duplicate"
+    else if over_limit(c.amount, c.category) then "over_limit"
+    else if cap_ok(used, c.amount) then ""
+    else "monthly_cap"
+
+fn state_claim(st: State, n: Int, c: Claim) -> State =
+  let key = c.employee ++ "|" ++ c.date ++ "|" ++ c.category ++ "|" ++ from_int(c.amount) in
+  let dup = map_has(st.seen, key) in
+  let seen2 = map_put(st.seen, key, true) in
+  let mkey = c.employee ++ "|" ++ month_key(c.date) in
+  let used = match map_get(st.months, mkey) { Some(v) => v, None => 0 } in
+  let reason = reject_reason(dup, c, used) in
+  if reason == "" then
+    State { seen: seen2,
+      months: map_put(st.months, mkey, add_sat(used, c.amount)),
+      emps: bump_approved(st.emps, c.employee, c.amount),
+      out: push(st.out, "OK " ++ from_int(n) ++ " " ++ c.employee ++ " " ++ from_int(c.amount)),
+      rejected: st.rejected }
+  else
+    State { seen: seen2,
+      months: st.months,
+      emps: bump_rejected(st.emps, c.employee),
+      out: push(st.out, "REJECT " ++ from_int(n) ++ " " ++ c.employee ++ " " ++ from_int(c.amount) ++ " " ++ reason),
+      rejected: true }
+
+fn process(lines: List[Str], i: Int, st: State) -> State =
+  match get(lines, i) {
+    None => st,
+    Some(line) =>
+      let n = i + 1 in
+      let parts = split(line, ";") in
+      let empRaw = match get(parts, 0) { Some(e) => e, None => "" } in
+      let empOk = valid_employee(empRaw) in
+      let label = if empOk then empRaw else "?" in
+      let parsed = if len(parts) == 4 then parse_claim(parts) else None in
+      process(lines, n,
+        match parsed {
+          None => state_invalid(st, n, label, empOk, empRaw),
+          Some(c) => state_claim(st, n, c)
+        })
+  }
+
+# ---------- input lines ----------
+
+fn strip_cr(s: Str) -> Str =
+  if len(s) == 0 then s
+  else if slice(s, len(s) - 1, len(s)) == "\r" then slice(s, 0, len(s) - 1)
+  else s
+
+fn take_lines(xs: List[Str], n: Int) -> List[Str] =
+  fold(range(0, n), [], fn(acc, i) =>
+    match get(xs, i) {
+      Some(v) => push(acc, v),
+      None => acc
+    })
+
+# Empty input is no lines; otherwise the final line break does not start a
+# further (empty) line, while interior empty lines are lines.
+fn input_lines(input: Str) -> List[Str] =
+  if input == "" then []
+  else
+    let raw = map(split(input, "\n"), fn(s) => strip_cr(s)) in
+    let n = len(raw) in
+    if n == 0 then []
+    else
+      let last = match get(raw, n - 1) { Some(s) => s, None => "" } in
+      if last == "" then take_lines(raw, n - 1) else raw
+
+# ---------- driver ----------
+
+fn solve(input: Str) -> Outcome =
+  let lines = input_lines(input) in
+  let st = process(lines, 0, empty_state()) in
+  let report = map(sort_str(map_keys(st.emps)), fn(e) => stats_line(e, stats_of(st.emps, e))) in
+  Outcome { lines: concat(st.out, concat(["---"], report)), rejected: st.rejected }
+
+fn print_lines(xs: List[Str], i: Int) -> Unit !io =
+  match get(xs, i) {
+    None => (),
+    Some(s) => { print(s); print_lines(xs, i + 1) }
+  }
+
+fn main(args: List[Str]) -> Int !io =
+  let o = solve(read_all()) in
+  { print_lines(o.lines, 0); if o.rejected then 1 else 0 }
+
+# ---------- tests ----------
+
+test example_expense =
+  let o = solve("alice;2026-03-02;travel;12000\nalice;2026-03-02;meals;7500\nbob;2026-03-05;equipment;150000\nalice;2026-03-02;travel;12000\nbob;2026-03-20;equipment;60000\n") in
+  o.lines == ["OK 1 alice 12000", "REJECT 2 alice 7500 over_limit", "OK 3 bob 150000", "REJECT 4 alice 12000 duplicate", "REJECT 5 bob 60000 monthly_cap", "---", "alice 12000 1 2", "bob 150000 1 1"] && o.rejected
+
+test example_invalid =
+  let o = solve("carol;2028-02-29;meals;500\ncarol;2025-02-29;meals;500\ndave;2026-04-01;snacks;500\n;2026-04-01;meals;500\nerin;2026-04-31;other;100\n") in
+  o.lines == ["OK 1 carol 500", "REJECT 2 carol invalid", "REJECT 3 dave invalid", "REJECT 4 ? invalid", "REJECT 5 erin invalid", "---", "carol 500 1 1", "dave 0 0 1", "erin 0 0 1"] && o.rejected
+
+# The rule order: duplicate is reported before over_limit, and a rejected
+# valid claim is itself recorded for duplicate detection.
+test rule_order =
+  let o = solve("ann;2026-05-01;meals;9000\nann;2026-05-01;meals;9000\nann;2026-05-01;meals;1\nann;2026-05-01;meals;1\n") in
+  o.lines == ["REJECT 1 ann 9000 over_limit", "REJECT 2 ann 9000 duplicate", "OK 3 ann 1", "REJECT 4 ann 1 duplicate", "---", "ann 1 1 3"] && o.rejected
+
+# The cap is only consulted after duplicate and limit: a claim that is both
+# over its category limit and would break the cap reports over_limit.
+test rule_order_cap_last =
+  let o = solve("eve;2026-01-01;travel;50000\neve;2026-01-02;travel;50000\neve;2026-01-03;travel;50000\neve;2026-01-04;equipment;49000\neve;2026-01-05;meals;9000\neve;2026-01-06;meals;500\neve;2026-01-07;meals;500\neve;2026-01-08;meals;500\n") in
+  o.lines == ["OK 1 eve 50000", "OK 2 eve 50000", "OK 3 eve 50000", "OK 4 eve 49000", "REJECT 5 eve 9000 over_limit", "OK 6 eve 500", "OK 7 eve 500", "REJECT 8 eve 500 monthly_cap", "---", "eve 200000 6 2"] && o.rejected
+
+test date_validity =
+  valid_date_fields(2024, 2, 29) && !valid_date_fields(2025, 2, 29) && !valid_date_fields(1900, 2, 29) && valid_date_fields(2000, 2, 29) && valid_date_fields(2026, 4, 30) && !valid_date_fields(2026, 4, 31) && !valid_date_fields(2026, 13, 1) && !valid_date_fields(2026, 0, 1) && !valid_date_fields(2026, 1, 0)
+
+test invalid_date_keeps_summary =
+  let o = solve("lea;2025-02-29;other;100\nlea;2028-02-29;other;100\nlea;2026-04-31;other;100\nlea;2026-13-01;other;100\n") in
+  o.lines == ["REJECT 1 lea invalid", "OK 2 lea 100", "REJECT 3 lea invalid", "REJECT 4 lea invalid", "---", "lea 100 1 3"] && o.rejected
+
+# Exactly 200000 approved in a month is allowed; one cent more is not, and the
+# next month starts fresh.
+test monthly_cap_limit =
+  let o = solve("max;2026-01-01;travel;50000\nmax;2026-01-02;travel;50000\nmax;2026-01-03;travel;50000\nmax;2026-01-04;travel;50000\nmax;2026-01-05;travel;1\nmax;2026-02-01;travel;1\n") in
+  o.lines == ["OK 1 max 50000", "OK 2 max 50000", "OK 3 max 50000", "OK 4 max 50000", "REJECT 5 max 1 monthly_cap", "OK 6 max 1", "---", "max 200001 5 1"] && o.rejected && cap_ok(199999, 1) && cap_ok(200000, 0) && !cap_ok(200000, 1)
+
+test invalid_lines_and_summary =
+  let o = solve("iv;2026-01-01;meals;0\niv;2026-01-01;meals;100\nzz;bad\n;2026-01-01;meals;100\nbad name;2026-01-01;meals;100\ngood;2026-01-01;meals;100;extra\n") in
+  o.lines == ["REJECT 1 iv invalid", "OK 2 iv 100", "REJECT 3 zz invalid", "REJECT 4 ? invalid", "REJECT 5 ? invalid", "REJECT 6 good invalid", "---", "good 0 0 1", "iv 100 1 1", "zz 0 0 1"] && o.rejected
+
+test empty_input =
+  let o = solve("") in
+  o.lines == ["---"] && !o.rejected
+
+test amount_validity =
+  parse_amount("1") == Some(1) && parse_amount("0") == None && parse_amount("0001") == Some(1) && parse_amount("123456789") == Some(123456789) && parse_amount("1234567890") == None && parse_amount("+5") == None && parse_amount("1.5") == None && parse_amount("") == None && over_limit(50001, "travel") && !over_limit(50000, "travel") && over_limit(6001, "meals") && !over_limit(6000, "meals")

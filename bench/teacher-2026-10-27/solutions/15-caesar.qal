@@ -1,0 +1,147 @@
+# Caesar cipher: `qal run main --allow io -- <shift>` (stdin: one line per record).
+# The single argument is the shift: an optional `+` or `-`, then digits, with an
+# absolute value of at most 1000000000; anything else prints the usage line and
+# exits with 2. Every ASCII letter moves that many positions inside the alphabet,
+# wrapping around and keeping its case; all other characters stay unchanged.
+
+# --- the shift argument ------------------------------------------------------
+
+# The integer argument, or None unless it is `[+-]?<digits>` with |value| <= 1e9.
+# `to_int` accepts exactly that syntax (optional sign, then digits only) and
+# answers None for anything else, including numbers that do not fit in an Int.
+fn parse_shift(s: Str) -> Option[Int] =
+  match to_int(s) {
+    None => None,
+    Some(n) => if n >= -1000000000 && n <= 1000000000 then Some(n) else None,
+  }
+
+# Exactly one argument, and it must be a valid shift.
+fn shift_arg(args: List[Str]) -> Option[Int] =
+  if len(args) != 1 then None
+  else match get(args, 0) {
+    None => None,
+    Some(raw) => parse_shift(raw),
+  }
+
+# --- the cipher --------------------------------------------------------------
+
+# A shift reduced to 0..=25, also for negative and huge values.
+fn normalize(n: Int) -> Int =
+  let m = n % 26 in
+  if m < 0 then m + 26 else m
+
+# One character shifted by k (0..=25); letters wrap inside their own case, every
+# other character is returned unchanged.
+fn caesar_char(c: Str, k: Int) -> Str =
+  if len(c) == 0 then c
+  else
+    let code = char_code(c) in
+    if code >= 65 && code <= 90 then from_char_code(65 + (code - 65 + k) % 26)
+    else if code >= 97 && code <= 122 then from_char_code(97 + (code - 97 + k) % 26)
+    else c
+
+fn caesar_line(s: Str, k: Int) -> Str =
+  join(map(chars(s), fn(c) => caesar_char(c, k)), "")
+
+# --- input lines -------------------------------------------------------------
+
+fn ends_with_nl(s: Str) -> Bool =
+  len(s) > 0 && slice(s, len(s) - 1, len(s)) == "\n"
+
+fn strip_cr(s: Str) -> Str =
+  if len(s) > 0 && slice(s, len(s) - 1, len(s)) == "\r" then slice(s, 0, len(s) - 1)
+  else s
+
+# One entry per input line: a final newline ends the last line instead of starting
+# an extra empty one, empty input has no lines at all, and a CRLF terminator is
+# not part of the line.
+fn parse_lines(text: Str) -> List[Str] =
+  if text == "" then []
+  else if ends_with_nl(text) then map(split(slice(text, 0, len(text) - 1), "\n"), strip_cr)
+  else map(split(text, "\n"), strip_cr)
+
+# --- output ------------------------------------------------------------------
+
+fn print_lines(lines: List[Str], i: Int) -> Unit !io =
+  if i >= len(lines) then ()
+  else match get(lines, i) {
+    None => (),
+    Some(line) => { print(line); print_lines(lines, i + 1) },
+  }
+
+# --- the whole program: a pure core plus the io shell ------------------------
+
+fn solve_lines(shift: Int, text: Str) -> List[Str] =
+  let k = normalize(shift) in
+  map(parse_lines(text), fn(line) => caesar_line(line, k))
+
+# The complete program without io: None means the usage error (exit code 2).
+fn process(args: List[Str], text: Str) -> Option[List[Str]] =
+  match shift_arg(args) {
+    None => None,
+    Some(shift) => Some(solve_lines(shift, text)),
+  }
+
+fn usage() -> Int !io = { print("usage: caesar <shift>"); 2 }
+
+fn main(args: List[Str]) -> Int !io =
+  match shift_arg(args) {
+    None => usage(),
+    Some(shift) => {
+      let lines = solve_lines(shift, read_all()) in
+      { print_lines(lines, 0); 0 }
+    },
+  }
+
+# --- tests: the benchmark example and the edges of the definition ------------
+
+test example = process(["3"], "Hello, World!\nxyz\n") == Some(["Khoor, Zruog!", "abc"])
+
+test example_hello = caesar_line("Hello, World!", 3) == "Khoor, Zruog!"
+test example_xyz = caesar_line("xyz", 3) == "abc"
+
+test wrap_at_end = caesar_line("XYZ", 3) == "ABC"
+test negative_shift = caesar_line("abc ABC", 25) == "zab ZAB"
+test zero_shift = caesar_line("Same text 123", 0) == "Same text 123"
+test case_is_kept = caesar_line("aAzZ", 1) == "bBaA"
+test full_alphabet =
+  caesar_line("abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ", 13) ==
+    "nopqrstuvwxyzabcdefghijklm NOPQRSTUVWXYZABCDEFGHIJKLM"
+test non_letters_unchanged = caesar_line("0123456789 !\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~", 7) == "0123456789 !\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~"
+test unicode_unchanged = caesar_line("\u{00E4}\u{00F6}\u{00FC} \u{00E9} \u{1F600} z", 1) == "\u{00E4}\u{00F6}\u{00FC} \u{00E9} \u{1F600} a"
+test empty_line = caesar_line("", 9) == ""
+test caesar_char_empty = caesar_char("", 3) == ""
+test caesar_char_non_letter = caesar_char("!", 3) == "!"
+
+test normalize_huge = normalize(1000000000) == 12
+test normalize_huge_negative = normalize(-1000000000) == 14
+test normalize_edges = normalize(0) == 0 && normalize(25) == 25 && normalize(26) == 0 && normalize(-1) == 25
+test huge_shift_matches_wrap = caesar_line("Zebra", 1000000000) == caesar_line("Zebra", 12)
+
+test parse_plain = parse_shift("3") == Some(3)
+test parse_plus = parse_shift("+2") == Some(2)
+test parse_minus = parse_shift("-1") == Some(-1)
+test parse_zero_forms = parse_shift("0") == Some(0) && parse_shift("+0") == Some(0) && parse_shift("-0") == Some(0)
+test parse_leading_zeros = parse_shift("007") == Some(7)
+test parse_bounds = parse_shift("1000000000") == Some(1000000000) && parse_shift("-1000000000") == Some(-1000000000)
+test parse_too_big = parse_shift("1000000001") == None && parse_shift("-1000000001") == None
+test parse_huge = parse_shift("999999999999999999999999") == None
+test parse_empty = parse_shift("") == None
+test parse_sign_only = parse_shift("+") == None && parse_shift("-") == None
+test parse_not_a_number =
+  parse_shift("x") == None && parse_shift("12a") == None && parse_shift("a12") == None &&
+    parse_shift(" 3") == None && parse_shift("3 ") == None && parse_shift("3.0") == None &&
+    parse_shift("+-3") == None && parse_shift("--3") == None && parse_shift("3-") == None
+
+test lines_empty = parse_lines("") == []
+test lines_trailing_newline = parse_lines("Hello, World!\nxyz\n") == ["Hello, World!", "xyz"]
+test lines_no_trailing_newline = parse_lines("abc") == ["abc"]
+test lines_blank_middle = parse_lines("\n\na\n") == ["", "", "a"]
+test lines_crlf = parse_lines("a\r\nb\r\n") == ["a", "b"]
+
+test usage_no_args = process([], "a\n") == None
+test usage_bad_arg = process(["x"], "a\n") == None
+test usage_too_big = process(["1000000001"], "a\n") == None
+test usage_two_args = process(["1", "2"], "a\n") == None
+
+test solve_keeps_all_lines = solve_lines(-7, "a\n\nb") == ["t", "", "u"]

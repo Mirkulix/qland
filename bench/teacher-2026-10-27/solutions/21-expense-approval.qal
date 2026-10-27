@@ -1,0 +1,320 @@
+# Expense approval.
+#
+# Each input line is `<employee>;<date>;<category>;<amount>`; a line is either
+# approved or rejected (invalid, duplicate, over_limit, monthly_cap).  After the
+# decisions we print one summary line per employee seen, sorted by name.
+
+type Emp = { total: Int, approved: Int, rejected: Int }
+
+# One decided line: `kind` is "ok", a rejection reason, or "invalid".
+# `emp` is "" when the employee field is not a well-formed name.
+type Ev = { emp: Str, amount: Int, kind: Str }
+
+type S1 = {
+  seen: Map[Str, Bool],
+  months: Map[Str, Int],
+  outs: List[Str],
+  evs: List[Ev],
+  rejected: Bool,
+}
+
+type Report = { lines: List[Str], code: Int }
+
+fn zero_emp() -> Emp = Emp { total: 0, approved: 0, rejected: 0 }
+
+fn empty_st() -> S1
+= S1 { seen: map_new(), months: map_new(), outs: [], evs: [], rejected: false }
+
+# --- field validation -------------------------------------------------------
+
+fn is_digit_char(c: Str) -> Bool
+= if len(c) == 0 then false
+  else {
+    let n = char_code(c) in
+    n >= 48 && n <= 57
+  }
+
+fn is_emp_char(c: Str) -> Bool
+= if len(c) == 0 then false
+  else {
+    let n = char_code(c) in
+    (n >= 65 && n <= 90) || (n >= 97 && n <= 122) || (n >= 48 && n <= 57) || n == 95
+  }
+
+fn valid_employee(s: Str) -> Bool
+= len(s) > 0 && len(filter(chars(s), is_emp_char)) == len(s)
+
+fn all_digits(s: Str) -> Bool
+= len(s) > 0 && len(s) <= 9 && len(filter(chars(s), is_digit_char)) == len(s)
+
+fn num(s: Str) -> Int = match to_int(s) { Some(n) => n, None => 0 }
+
+fn leap(y: Int) -> Bool = y % 4 == 0 && (y % 100 != 0 || y % 400 == 0)
+
+fn days_in_month(y: Int, m: Int) -> Int
+= if m == 2 then (if leap(y) then 29 else 28)
+  else if m == 4 || m == 6 || m == 9 || m == 11 then 30
+  else 31
+
+fn valid_date(s: Str) -> Bool
+= if len(s) != 10 then false
+  else if slice(s, 4, 5) != "-" || slice(s, 7, 8) != "-" then false
+  else if !(all_digits(slice(s, 0, 4)) && all_digits(slice(s, 5, 7))
+            && all_digits(slice(s, 8, 10))) then false
+  else {
+    let y = num(slice(s, 0, 4)) in
+    let m = num(slice(s, 5, 7)) in
+    let d = num(slice(s, 8, 10)) in
+    m >= 1 && m <= 12 && d >= 1 && d <= days_in_month(y, m)
+  }
+
+fn amount_of(s: Str) -> Int = if all_digits(s) then num(s) else 0
+
+fn valid_amount(s: Str) -> Bool = all_digits(s) && amount_of(s) > 0
+
+fn valid_category(c: Str) -> Bool
+= c == "travel" || c == "meals" || c == "equipment" || c == "other"
+
+fn limit(c: Str) -> Int
+= if c == "travel" then 50000
+  else if c == "meals" then 6000
+  else if c == "equipment" then 150000
+  else 10000
+
+fn first_field(parts: List[Str]) -> Str = match get(parts, 0) { Some(s) => s, None => "" }
+
+# --- line decisions ---------------------------------------------------------
+
+fn invalid_line(st: S1, n: Int, raw: Str) -> S1
+= let ok = valid_employee(raw) in
+  S1 {
+    seen: st.seen,
+    months: st.months,
+    outs: push(st.outs, "REJECT " ++ from_int(n) ++ " " ++ (if ok then raw else "?") ++ " invalid"),
+    evs: push(st.evs, Ev { emp: (if ok then raw else ""), amount: 0, kind: "invalid" }),
+    rejected: true,
+  }
+
+fn reject_line(st: S1, n: Int, emp: Str, amount: Int, reason: Str) -> S1
+= S1 {
+    seen: st.seen,
+    months: st.months,
+    outs: push(st.outs, "REJECT " ++ from_int(n) ++ " " ++ emp ++ " "
+               ++ from_int(amount) ++ " " ++ reason),
+    evs: push(st.evs, Ev { emp: emp, amount: amount, kind: reason }),
+    rejected: true,
+  }
+
+fn approve_line(st: S1, n: Int, emp: Str, amount: Int, mkey: Str, prior: Int) -> S1
+= S1 {
+    seen: st.seen,
+    months: map_put(st.months, mkey, prior + amount),
+    outs: push(st.outs, "OK " ++ from_int(n) ++ " " ++ emp ++ " " ++ from_int(amount)),
+    evs: push(st.evs, Ev { emp: emp, amount: amount, kind: "ok" }),
+    rejected: st.rejected,
+  }
+
+fn month_key(emp: Str, date: Str) -> Str
+= emp ++ ";" ++ (if len(date) >= 7 then slice(date, 0, 7) else date)
+
+fn valid_line(st: S1, n: Int, emp: Str, date: Str, cat: Str, amount: Int) -> S1
+= let key = emp ++ ";" ++ date ++ ";" ++ cat ++ ";" ++ from_int(amount) in
+  let mkey = month_key(emp, date) in
+  let st2 = S1 {
+    seen: map_put(st.seen, key, true),
+    months: st.months,
+    outs: st.outs,
+    evs: st.evs,
+    rejected: st.rejected,
+  } in
+  let prior = match map_get(st.months, mkey) { Some(v) => v, None => 0 } in
+  if map_has(st.seen, key) then reject_line(st2, n, emp, amount, "duplicate")
+  else if amount > limit(cat) then reject_line(st2, n, emp, amount, "over_limit")
+  else if prior + amount > 200000 then reject_line(st2, n, emp, amount, "monthly_cap")
+  else approve_line(st2, n, emp, amount, mkey, prior)
+
+fn run_line(st: S1, n: Int, line: Str) -> S1
+= let parts = split(line, ";") in
+  if len(parts) != 4 then invalid_line(st, n, first_field(parts))
+  else {
+    let emp = list_at(parts, 0) in
+    let date = list_at(parts, 1) in
+    let cat = list_at(parts, 2) in
+    let amt = list_at(parts, 3) in
+    if !valid_employee(emp) || !valid_date(date) || !valid_category(cat) || !valid_amount(amt)
+      then invalid_line(st, n, emp)
+      else valid_line(st, n, emp, date, cat, amount_of(amt))
+  }
+
+fn process(ls: List[Str]) -> S1
+= fold(range(0, len(ls)), empty_st(), fn(st, i) => run_line(st, i + 1, list_at(ls, i)))
+
+# --- summary ----------------------------------------------------------------
+
+fn add_stat(m: Map[Str, Emp], e: Ev) -> Map[Str, Emp]
+= if e.emp == "" then m
+  else {
+    let cur = match map_get(m, e.emp) { Some(x) => x, None => zero_emp() } in
+    let nxt = if e.kind == "ok"
+      then Emp { total: cur.total + e.amount, approved: cur.approved + 1, rejected: cur.rejected }
+      else Emp { total: cur.total, approved: cur.approved, rejected: cur.rejected + 1 } in
+    map_put(m, e.emp, nxt)
+  }
+
+fn stat_line(m: Map[Str, Emp], k: Str) -> Str
+= match map_get(m, k) {
+    None => k ++ " 0 0 0",
+    Some(e) => k ++ " " ++ from_int(e.total) ++ " " ++ from_int(e.approved) ++ " " ++ from_int(e.rejected),
+  }
+
+fn summary(evs: List[Ev]) -> List[Str]
+= let m = fold(evs, map_new(), add_stat) in
+  map(map_keys(m), fn(k) => stat_line(m, k))
+
+fn report(ls: List[Str]) -> Report
+= let st = process(ls) in
+  Report {
+    lines: concat(st.outs, concat(["---"], summary(st.evs))),
+    code: if st.rejected then 1 else 0,
+  }
+
+fn render(ls: List[Str]) -> Str = join(report(ls).lines, "\n")
+
+# --- input ------------------------------------------------------------------
+
+fn strip_cr(s: Str) -> Str
+= if len(s) > 0 && slice(s, len(s) - 1, len(s)) == "\r" then slice(s, 0, len(s) - 1)
+  else s
+
+fn take_n(xs: List[Str], n: Int) -> List[Str]
+= map(filter(range(0, len(xs)), fn(i) => i < n), fn(i) => list_at(xs, i))
+
+fn input_lines(text: Str) -> List[Str]
+= if text == "" then []
+  else {
+    let parts = split(text, "\n") in
+    if slice(text, len(text) - 1, len(text)) == "\n"
+      then map(take_n(parts, len(parts) - 1), strip_cr)
+      else map(parts, strip_cr)
+  }
+
+# --- io ---------------------------------------------------------------------
+
+fn print_from(xs: List[Str], i: Int) -> Unit !io
+= if i >= len(xs) then ()
+  else { print(list_at(xs, i)); print_from(xs, i + 1) }
+
+fn print_all(xs: List[Str]) -> Unit !io = print_from(xs, 0)
+
+fn main(args: List[Str]) -> Int !io
+= let ls = input_lines(read_all()) in
+  let r = report(ls) in
+  { print_all(r.lines); r.code }
+
+fn code_of(ls: List[Str]) -> Int = report(ls).code
+
+# --- tests ------------------------------------------------------------------
+
+test example
+= render([
+    "alice;2026-03-02;travel;12000",
+    "alice;2026-03-02;meals;7500",
+    "bob;2026-03-05;equipment;150000",
+    "alice;2026-03-02;travel;12000",
+    "bob;2026-03-20;equipment;60000",
+  ]) == "OK 1 alice 12000\nREJECT 2 alice 7500 over_limit\nOK 3 bob 150000\nREJECT 4 alice 12000 duplicate\nREJECT 5 bob 60000 monthly_cap\n---\nalice 12000 1 2\nbob 150000 1 1"
+  && code_of([
+    "alice;2026-03-02;travel;12000",
+    "alice;2026-03-02;meals;7500",
+  ]) == 1
+
+test invalid
+= render([
+    "carol;2028-02-29;meals;500",
+    "carol;2025-02-29;meals;500",
+    "dave;2026-04-01;snacks;500",
+    ";2026-04-01;meals;500",
+    "erin;2026-04-31;other;100",
+  ]) == "OK 1 carol 500\nREJECT 2 carol invalid\nREJECT 3 dave invalid\nREJECT 4 ? invalid\nREJECT 5 erin invalid\n---\ncarol 500 1 1\ndave 0 0 1\nerin 0 0 1"
+
+test empty_input = report([]) == Report { lines: ["---"], code: 0 }
+
+test all_ok
+= render([
+    "a;2026-01-01;travel;50000",
+    "a;2026-01-02;meals;6000",
+    "b;2026-01-01;other;10000",
+  ]) == "OK 1 a 50000\nOK 2 a 6000\nOK 3 b 10000\n---\na 56000 2 0\nb 10000 1 0"
+  && code_of(["a;2026-01-01;travel;50000"]) == 0
+
+test cap_exact
+= render([
+    "x;2026-05-01;equipment;150000",
+    "x;2026-05-02;travel;50000",
+    "x;2026-05-03;meals;1",
+    "x;2026-06-01;meals;1",
+  ]) == "OK 1 x 150000\nOK 2 x 50000\nREJECT 3 x 1 monthly_cap\nOK 4 x 1\n---\nx 200001 3 1"
+
+test rejected_not_counted
+= render([
+    "y;2026-07-01;equipment;150000",
+    "y;2026-07-02;equipment;150000",
+    "y;2026-07-03;travel;50000",
+    "y;2026-07-04;meals;1",
+  ]) == "OK 1 y 150000\nREJECT 2 y 150000 monthly_cap\nOK 3 y 50000\nREJECT 4 y 1 monthly_cap\n---\ny 200000 2 2"
+
+test duplicate_after_reject
+= render([
+    "z;2026-08-01;meals;9000",
+    "z;2026-08-01;meals;9000",
+    "z;2026-08-02;meals;9000",
+  ]) == "REJECT 1 z 9000 over_limit\nREJECT 2 z 9000 duplicate\nREJECT 3 z 9000 over_limit\n---\nz 0 0 3"
+
+test amount_edges
+= render([
+    "q;2026-09-01;other;0",
+    "q;2026-09-01;other;1000000000",
+    "q;2026-09-01;other;000000001",
+    "q;2026-09-01;other;1",
+    "q;2026-09-01;other;+5",
+  ]) == "REJECT 1 q invalid\nREJECT 2 q invalid\nOK 3 q 1\nREJECT 4 q 1 duplicate\nREJECT 5 q invalid\n---\nq 1 1 4"
+
+test field_count_and_names
+= render([
+    "w;2026-10-10;travel;100",
+    "w;2026-10-10;travel;100;extra",
+    "w;2026-10-10",
+    "w w;2026-10-10;travel;100",
+  ]) == "OK 1 w 100\nREJECT 2 w invalid\nREJECT 3 w invalid\nREJECT 4 ? invalid\n---\nw 100 1 2"
+
+test order_and_names
+= render([
+    "Zed;2026-11-01;meals;10",
+    "adam;2026-11-01;meals;10",
+    "_x;2026-11-01;meals;10",
+    "Adam;2026-11-01;meals;10",
+  ]) == "OK 1 Zed 10\nOK 2 adam 10\nOK 3 _x 10\nOK 4 Adam 10\n---\nAdam 10 1 0\nZed 10 1 0\n_x 10 1 0\nadam 10 1 0"
+
+test many_months
+= render([
+    "m;2026-01-31;equipment;150000",
+    "m;2026-02-01;equipment;150000",
+    "m;2026-01-15;travel;50000",
+    "m;2026-01-16;travel;1",
+    "m;2026-02-28;travel;50000",
+    "m;2026-02-28;travel;1",
+  ]) == "OK 1 m 150000\nOK 2 m 150000\nOK 3 m 50000\nREJECT 4 m 1 monthly_cap\nOK 5 m 50000\nREJECT 6 m 1 monthly_cap\n---\nm 400000 4 2"
+
+test leap_years
+= valid_date("2028-02-29") && valid_date("2000-02-29") && !valid_date("1900-02-29")
+  && !valid_date("2026-02-29") && valid_date("2026-01-31") && !valid_date("2026-01-32")
+  && !valid_date("2026-00-10") && !valid_date("2026-13-10") && !valid_date("2026-04-31")
+  && !valid_date("2026-4-01") && !valid_date("2026-04-01x") && !valid_date("")
+
+test split_lines
+= input_lines("a;b\nc;d\n") == ["a;b", "c;d"]
+  && input_lines("a;b\r\nc;d") == ["a;b", "c;d"]
+  && input_lines("") == []
+  && input_lines("\n") == [""]
+  && input_lines("x") == ["x"]
+  && input_lines("x\n\n") == ["x", ""]

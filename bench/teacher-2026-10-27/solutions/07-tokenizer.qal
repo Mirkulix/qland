@@ -1,0 +1,133 @@
+# Expression tokenizer.
+#
+# Reads every line from standard input and prints its tokens on one line,
+# separated by single spaces.  Any character that is not part of the
+# language makes the whole line print a single error message that names the
+# first offending character and its 1-based position.
+
+# --- character classes (ASCII only) ---
+
+# The code point of a character; the empty string (which the property tests
+# do generate) has none, so it is mapped to -1 and matches no class.
+fn code(c: Str) -> Int = if len(c) == 0 then -1 else char_code(c)
+
+fn is_digit(c: Str) -> Bool = let n = code(c) in n >= 48 && n <= 57
+
+fn is_upper(c: Str) -> Bool = let n = code(c) in n >= 65 && n <= 90
+
+fn is_lower(c: Str) -> Bool = let n = code(c) in n >= 97 && n <= 122
+
+fn is_alpha(c: Str) -> Bool = is_upper(c) || is_lower(c)
+
+fn is_ident_start(c: Str) -> Bool = is_alpha(c) || c == "_"
+
+fn is_ident_cont(c: Str) -> Bool = is_ident_start(c) || is_digit(c)
+
+fn is_op(c: Str) -> Bool = c == "+" || c == "-" || c == "*" || c == "/" || c == "%"
+
+# `slice` with clamped bounds: the scanner only ever calls it with a valid
+# range, but the generated property tests pass arbitrary numbers, so the
+# index arithmetic here is total (and harmless for valid calls).
+fn safe_slice(s: Str, from: Int, to: Int) -> Str
+= let n = len(s) in
+  let a = if from < 0 then 0 else if from > n then n else from in
+  let b = if to < a then a else if to > n then n else to in
+  slice(s, a, b)
+
+# --- maximal runs ---
+
+fn take_digits(cs: List[Str], i: Int) -> Int
+= if i < 0 || i >= len(cs) then i
+  else match get(cs, i) {
+    None => i,
+    Some(c) => if is_digit(c) then take_digits(cs, i + 1) else i,
+  }
+
+fn take_ident(cs: List[Str], i: Int) -> Int
+= if i < 0 || i >= len(cs) then i
+  else match get(cs, i) {
+    None => i,
+    Some(c) => if is_ident_cont(c) then take_ident(cs, i + 1) else i,
+  }
+
+# --- scanner ---
+#
+# `cs` are the characters of `line` and `i` is the character index of the
+# next character to look at.  Every character accepted so far is ASCII, so
+# a character index in `cs` is also a character index in `line` and `slice`
+# can be used directly.  Tokens are accumulated in order with `push`.
+
+fn scan(line: Str, cs: List[Str], i: Int, acc: List[Str]) -> Result[List[Str], Str]
+= if i < 0 || i >= len(cs) then Ok(acc)
+  else match get(cs, i) {
+    None => Ok(acc),
+    Some(c) =>
+      if c == " " || c == "\t" then scan(line, cs, i + 1, acc)
+      else if c == "(" then scan(line, cs, i + 1, push(acc, "LP"))
+      else if c == ")" then scan(line, cs, i + 1, push(acc, "RP"))
+      else if is_op(c) then scan(line, cs, i + 1, push(acc, "OP(" ++ c ++ ")"))
+      else if is_digit(c) then {
+        let j = take_digits(cs, i) in
+        scan(line, cs, j, push(acc, "NUM(" ++ safe_slice(line, i, j) ++ ")"))
+      }
+      else if is_ident_start(c) then {
+        let j = take_ident(cs, i) in
+        scan(line, cs, j, push(acc, "ID(" ++ safe_slice(line, i, j) ++ ")"))
+      }
+      else Err("error at " ++ from_int(i + 1) ++ ": '" ++ c ++ "'")
+  }
+
+# One output line for one input line: the tokens joined by single spaces, or
+# the error message for the first character outside the language.
+fn render_line(line: Str) -> Str
+= match scan(line, chars(line), 0, []) {
+    Ok(tokens) => join(tokens, " "),
+    Err(message) => message,
+  }
+
+# --- entry point ---
+
+fn consume() -> Int !io
+= match read_line() {
+    None => 0,
+    Some(line) => {
+      print(render_line(line));
+      consume()
+    },
+  }
+
+fn main(args: List[Str]) -> Int !io = consume()
+
+# --- tests (the examples from the task statement first) ---
+
+test example_line_1 = render_line("x1 + 42*(y - 7)") == "ID(x1) OP(+) NUM(42) OP(*) LP ID(y) OP(-) NUM(7) RP"
+
+test example_line_2 = render_line("3 $ 4") == "error at 3: '$'"
+
+test empty_line = render_line("") == ""
+
+test only_separators = render_line(" \t ") == ""
+
+test single_number = render_line("007") == "NUM(007)"
+
+test identifier_alone = render_line("_") == "ID(_)"
+
+test identifier_run = render_line("a_b1") == "ID(a_b1)"
+
+test number_then_identifier = render_line("42x") == "NUM(42) ID(x)"
+
+test all_operators = render_line("(1+2)/3%4-5") == "LP NUM(1) OP(+) NUM(2) RP OP(/) NUM(3) OP(%) NUM(4) OP(-) NUM(5)"
+
+test tabs_separate = render_line("a\tb c") == "ID(a) ID(b) ID(c)"
+
+test dot_is_an_error = render_line("1.5") == "error at 2: '.'"
+
+test error_after_token = render_line("x$") == "error at 2: '$'"
+
+test error_first_character = render_line("@x") == "error at 1: '@'"
+
+test error_has_priority = render_line("1 + 2 # 3") == "error at 7: '#'"
+
+test parens_tight = render_line("((()))") == "LP LP LP RP RP RP"
+
+test unmatched_paren_is_fine = render_line("(1") == "LP NUM(1)"

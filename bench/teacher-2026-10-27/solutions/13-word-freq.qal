@@ -1,0 +1,98 @@
+# Word frequencies.
+# Reads standard input, counts maximal runs of ASCII letters (lowercased),
+# and prints the K most frequent words as "<count> <word>": count descending,
+# ties by word ascending.
+
+type Out = { rem: Int, lines: Accum[Str] }
+
+fn is_digit(c: Str) -> Bool =
+  if c == "" then false
+  else { let n = char_code(c) in n >= 48 && n <= 57 }
+
+fn is_alpha(c: Str) -> Bool =
+  if c == "" then false
+  else { let n = char_code(c) in (n >= 65 && n <= 90) || (n >= 97 && n <= 122) }
+
+fn all_digits(s: Str) -> Bool = fold(chars(s), true, fn(acc, c) => acc && is_digit(c))
+
+# A valid K is decimal digits only, at least one digit, and at least 1.
+fn parse_k(s: Str) -> Option[Int] =
+  if len(s) == 0 || !all_digits(s) then None
+  else match to_int(s) { None => None, Some(n) => if n >= 1 then Some(n) else None }
+
+fn separate(c: Str) -> Str = if is_alpha(c) then c else " "
+
+# All words of the text, lowercased, in order of appearance.
+fn words_of(text: Str) -> List[Str] =
+  filter(
+    split(to_lower(join(map(chars(text), fn(c) => separate(c)), "")), " "),
+    fn(w) => len(w) > 0)
+
+fn count_step(m: Map[Str, Int], w: Str) -> Map[Str, Int] =
+  map_put(m, w, match map_get(m, w) { Some(n) => n + 1, None => 1 })
+
+fn bucket_step(m: Map[Int, Accum[Str]], counts: Map[Str, Int], w: Str) -> Map[Int, Accum[Str]] =
+  { let c = match map_get(counts, w) { Some(n) => n, None => 0 } in
+    map_put(m, c, match map_get(m, c) { Some(a) => AccPush(a, w), None => AccPush(AccEnd, w) }) }
+
+fn add_lines(o: Out, c: Int, words: List[Str]) -> Out =
+  fold(words, o, fn(o2, w) =>
+    if o2.rem <= 0 then o2
+    else Out { rem: o2.rem - 1, lines: AccPush(o2.lines, from_int(c) ++ " " ++ w) })
+
+fn out_step(o: Out, c: Int, buckets: Map[Int, Accum[Str]]) -> Out =
+  if o.rem <= 0 then o
+  else match map_get(buckets, c) { None => o, Some(a) => add_lines(o, c, acc_list(a)) }
+
+# The answer lines for K: K most frequent words, count descending, ties ascending.
+fn rank(text: Str, k: Int) -> List[Str] =
+  { let counts = fold(words_of(text), map_new(), count_step) in
+    let keys = map_keys(counts) in
+    let buckets = fold(keys, map_new(), fn(m, w) => bucket_step(m, counts, w)) in
+    let desc = reverse(map_keys(buckets)) in
+    acc_list(fold(desc, Out { rem: k, lines: AccEnd }, fn(o, c) => out_step(o, c, buckets)).lines) }
+
+fn print_lines(lines: List[Str]) -> Unit !io =
+  fold(lines, (), fn(acc, s) => { print(s); acc })
+
+fn usage() -> Int !io = { print("usage: word_freq <k>"); 2 }
+
+fn main(args: List[Str]) -> Int !io =
+  match get(args, 0) {
+    None => usage(),
+    Some(a) => match parse_k(a) {
+      None => usage(),
+      Some(k) => { print_lines(rank(read_all(), k)); 0 },
+    },
+  }
+
+test example_cat = rank("the cat and the dog and the bird\n", 2) == ["3 the", "2 and"]
+
+test example_ties = rank("b a c b a c d\n", 3) == ["2 a", "2 b", "2 c"]
+
+test example_fewer_words = rank("one two two\n", 10) == ["2 two", "1 one"]
+
+test example_case = rank("Hello, hello! HELLO? world.\n", 5) == ["3 hello", "1 world"]
+
+test example_empty = rank("", 3) == []
+
+test example_k_zero = rank("a b", 0) == []
+
+test example_k_negative = rank("a b", -1) == []
+
+test example_separators = rank("a1b  c\n\td, é\n", 3) == ["1 a", "1 b", "1 c"]
+
+test example_prefix_of_bucket =
+  rank("c b a c b a c x", 3) == ["3 c", "2 a", "2 b"]
+  && rank("c b a c b a c x", 2) == ["3 c", "2 a"]
+
+test parse_ok = parse_k("2") == Some(2) && parse_k("15") == Some(15) && parse_k("007") == Some(7)
+
+test parse_bad =
+  parse_k("") == None && parse_k("zero") == None && parse_k("0") == None
+  && parse_k("-1") == None && parse_k("1x") == None && parse_k(" 2") == None
+
+test words_lower = words_of("Hello, HELLO!") == ["hello", "hello"]
+
+test alpha_chars =
+  is_alpha("a") && is_alpha("Z") && !is_alpha("1") && !is_alpha("") && !is_alpha("é")

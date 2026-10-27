@@ -1,0 +1,210 @@
+# INI file queries.
+# Input: INI lines, then an optional line exactly "---", then one query per line.
+# Every INI line is trimmed; empty lines and lines starting with ';' or '#' are
+# ignored; "[name]" starts a section (name trimmed); "key = value" sets key in the
+# current section (both sides trimmed, split at the first '='); other lines are
+# ignored. Keys before the first section live in section "". A later assignment to
+# the same key in the same section replaces the earlier one.
+# A query is trimmed and names "<section>.<key>" (split at the first '.') or, with
+# no '.', a key of section "". Print the value or "<missing>"; with no "---" line
+# there are no queries. At most 1000 lines.
+
+# --- data -------------------------------------------------------------------
+
+type ParseState = { ini: Map[Str, Map[Str, Str]], section: Str }
+
+fn empty_state() -> ParseState = ParseState { ini: map_new(), section: "" }
+
+fn empty_sub() -> Map[Str, Str] = map_new()
+
+# --- helpers ----------------------------------------------------------------
+
+fn ends_with(s: Str, suf: Str) -> Bool =
+  if len(s) < len(suf) then false
+  else slice(s, len(s) - len(suf), len(s)) == suf
+
+# Splits the raw input into lines: a final newline ends the last line instead of
+# starting an extra empty one, and empty input has no lines at all.
+fn split_lines(text: Str) -> List[Str] =
+  if text == "" then []
+  else if ends_with(text, "\n") then split(slice(text, 0, len(text) - 1), "\n")
+  else split(text, "\n")
+
+# The query separator is a line that is exactly "---". A file written with CRLF
+# leaves a trailing "\r" on the line, which belongs to the line ending, not to
+# the line's content.
+fn is_sep(line: Str) -> Bool = line == "---" || line == "---\r"
+
+# --- INI parsing ------------------------------------------------------------
+
+fn set_key(ini: Map[Str, Map[Str, Str]], section: Str, key: Str, value: Str) -> Map[Str, Map[Str, Str]] =
+  let sub = match map_get(ini, section) { Some(m) => m, None => empty_sub() } in
+  map_put(ini, section, map_put(sub, key, value))
+
+fn get_key(ini: Map[Str, Map[Str, Str]], section: Str, key: Str) -> Option[Str] =
+  match map_get(ini, section) {
+    None => None,
+    Some(m) => map_get(m, key),
+  }
+
+fn parse_line(st: ParseState, line: Str) -> ParseState =
+  let t = trim(line) in
+  if t == "" then st
+  else if starts_with(t, ";") || starts_with(t, "#") then st
+  else if starts_with(t, "[") && ends_with(t, "]") then
+    ParseState { ini: st.ini, section: trim(slice(t, 1, len(t) - 1)) }
+  else
+    match index_of(t, "=") {
+      Some(i) => ParseState {
+        ini: set_key(st.ini, st.section, trim(slice(t, 0, i)), trim(slice(t, i + 1, len(t)))),
+        section: st.section,
+      },
+      None => st,
+    }
+
+# Parses the INI lines before the separator (indexes 0 .. end-1).
+fn parse_ini_end(xs: List[Str], i: Int, end: Int, st: ParseState) -> ParseState =
+  if i < 0 then st
+  else if i >= end then st
+  else
+    match get(xs, i) {
+      None => st,
+      Some(line) => parse_ini_end(xs, i + 1, end, parse_line(st, line)),
+    }
+
+fn parse_ini(xs: List[Str]) -> Map[Str, Map[Str, Str]] = parse_ini_end(xs, 0, len(xs), empty_state()).ini
+
+# --- queries ----------------------------------------------------------------
+
+fn lookup(ini: Map[Str, Map[Str, Str]], section: Str, key: Str) -> Str =
+  match get_key(ini, section, key) {
+    Some(v) => v,
+    None => "<missing>",
+  }
+
+fn resolve(ini: Map[Str, Map[Str, Str]], query: Str) -> Str =
+  let t = trim(query) in
+  match index_of(t, ".") {
+    Some(i) => lookup(ini, slice(t, 0, i), slice(t, i + 1, len(t))),
+    None => lookup(ini, "", t),
+  }
+
+# Index of the first separator line, or len(xs) when there is none.
+fn sep_index(xs: List[Str], i: Int) -> Int =
+  if i < 0 then 0
+  else if i >= len(xs) then len(xs)
+  else
+    match get(xs, i) {
+      None => len(xs),
+      Some(line) => if is_sep(line) then i else sep_index(xs, i + 1),
+    }
+
+fn answers_from(xs: List[Str], i: Int, ini: Map[Str, Map[Str, Str]], acc: Accum[Str]) -> List[Str] =
+  if i < 0 then acc_list(acc)
+  else
+    match get(xs, i) {
+      None => acc_list(acc),
+      Some(line) => answers_from(xs, i + 1, ini, AccPush(acc, resolve(ini, line))),
+    }
+
+# The whole program as a pure function: the answer lines for the given input.
+fn solve_text(text: Str) -> List[Str] =
+  let xs = split_lines(text) in
+  let k = sep_index(xs, 0) in
+  let ini = parse_ini_end(xs, 0, k, empty_state()).ini in
+  answers_from(xs, if k < len(xs) then k + 1 else k, ini, AccEnd)
+
+fn main(args: List[Str]) -> Int !io =
+  let out = solve_text(read_all()) in
+  if len(out) == 0 then 0
+  else { print(join(out, "\n")); 0 }
+
+# --- tests ------------------------------------------------------------------
+
+test example =
+  solve_text("name = demo\n[server]\nhost = example.org\nport=8080\n; comment\n---\nserver.host\nname\nserver.user\n")
+    == ["example.org", "demo", "<missing>"]
+
+test example_crlf =
+  solve_text("name = demo\r\n[server]\r\nhost = example.org\r\n---\r\nserver.host\r\nname\r\n")
+    == ["example.org", "demo"]
+
+test no_separator_no_queries =
+  solve_text("name = demo\n[server]\nhost = example.org\n") == []
+
+test empty_input = solve_text("") == []
+
+test only_separator = solve_text("---\n") == []
+
+test queries_without_ini = solve_text("---\na\n[x].y\n") == ["<missing>", "<missing>"]
+
+test key_before_section =
+  solve_text("top = 1\n[s]\nk = 2\n---\ntop\ns.k\ns.top\n") == ["1", "2", "<missing>"]
+
+test later_assignment_wins =
+  solve_text("[s]\nk = 1\nk = 2\n---\ns.k\n") == ["2"]
+
+test same_key_other_section =
+  solve_text("[a]\nk = 1\n[b]\nk = 2\n---\na.k\nb.k\n") == ["1", "2"]
+
+test comments_ignored =
+  solve_text("; a = 1\n# b = 2\n  ; c = 3\n[s]\nk = 4\n---\ns.k\na\na.b\n") == ["4", "<missing>", "<missing>"]
+
+test whitespace_trimmed =
+  solve_text("  [  sec  ]  \n\t key \t=\t value \t\n---\n  sec.key  \n") == ["value"]
+
+test section_brackets_only =
+  solve_text("[]\nk = 1\n[x]\nk = 2\n---\nk\nx.k\n") == ["1", "2"]
+
+test underscore_and_spaces_in_section =
+  solve_text("[ my section ]\nk = v\n---\nmy section.k\n") == ["v"]
+
+test value_keeps_equals =
+  solve_text("[s]\nurl = a=b=c\n---\ns.url\n") == ["a=b=c"]
+
+test empty_key_and_value =
+  solve_text("[s]\n=\n---\ns.\n") == [""]
+
+test empty_value = solve_text("[s]\nk =\n---\ns.k\n") == [""]
+
+test empty_key = solve_text("[s]\n= v\n---\ns.\n") == ["v"]
+
+test dotted_key =
+  solve_text("[a]\nb.c = 1\n---\na.b.c\n") == ["1"]
+
+test dotted_section =
+  solve_text("[a.b]\nc = 1\n---\na.b.c\n") == ["<missing>"]
+
+test ignored_lines =
+  solve_text("[s]\nnot an assignment\njust words\nk = 1\n---\ns.k\ns.not an assignment\n") == ["1", "<missing>"]
+
+test section_line_with_trailing_text_ignored =
+  solve_text("[s]\n[not a section] x = 1\nk = 2\n---\ns.k\n") == ["2"]
+
+test section_like_assignment =
+  solve_text("[a=b]\nk = 1\n---\na=b.k\n") == ["1"]
+
+test query_with_empty_key = solve_text("[s]\nk = 1\n---\ns.\n") == ["<missing>"]
+
+test query_starts_with_dot = solve_text("k = 1\n---\n.k\n") == ["1"]
+
+test separator_not_trimmed =
+  solve_text("k = 1\n --- \n---\nk\n") == ["1"]
+
+test last_section_applies =
+  solve_text("[a]\nx = 1\n[b]\ny = 2\n[a]\nx = 3\n---\na.x\nb.y\nb.x\n") == ["3", "2", "<missing>"]
+
+test parse_lines_trailing_newline = split_lines("a\nb\n") == ["a", "b"]
+test parse_lines_without_final_newline = split_lines("ab") == ["ab"]
+test parse_lines_blank_middle = split_lines("\n\nzz\n") == ["", "", "zz"]
+test parse_lines_empty = split_lines("") == []
+
+test parse_ini_map =
+  get_key(parse_ini(["[s]", "k = v"]), "s", "k") == Some("v")
+    && get_key(parse_ini(["[s]", "k = v"]), "", "k") == None
+
+test sep_positions =
+  sep_index(["[a]", "k = 1"], 0) == 2
+    && sep_index(["[a]", "---", "q"], 0) == 1
+    && sep_index([], 0) == 0
+    && sep_index(["[a]"], 0) == 1

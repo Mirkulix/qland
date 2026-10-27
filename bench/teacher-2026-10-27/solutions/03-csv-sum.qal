@@ -1,0 +1,245 @@
+# CSV column sum.
+#
+# Reads a CSV table from standard input, sums the integer values of one
+# column (named by the single argument) and reports how many data rows were
+# skipped.  Quoting only toggles "quoted mode": a double quote is never part
+# of the value and commas inside quoted mode do not split fields.  Fields
+# (header included) are stripped of leading and trailing spaces; an integer
+# is an optional '+'/'-' followed by one or more decimal digits and nothing
+# else.
+
+# Sum and skipped-row counter for one table.
+type Tally = { sum: Int, skipped: Int }
+
+# Result of scanning a table: either the named column is absent, or the
+# totals for it.
+type CsvResult = NoColumn | Totals(Int, Int)
+
+# Every output line plus the process exit code.
+type CsvOutcome = { lines: List[Str], code: Int }
+
+# Parser state for one CSV line: completed fields, the current
+# field's characters and whether quoted mode is on.
+type RowState = { done: List[Str], cur: List[Str], quoted: Bool }
+
+# --- integers -------------------------------------------------------------
+
+fn is_digit(c: Str) -> Bool =
+  if len(c) != 1 then false
+  else {
+    let n = char_code(c) in
+    n >= 48 && n <= 57
+  }
+
+fn all_digits(cs: List[Str]) -> Bool =
+  fold(cs, true, fn(acc: Bool, c: Str) => acc && is_digit(c))
+
+# Value of one decimal digit; 0 for anything else, so the folds stay total
+# (the property tests feed arbitrary strings).
+fn digit_value(c: Str) -> Int =
+  if is_digit(c) then char_code(c) - 48 else 0
+
+# Positive magnitude: accumulate positively so "-min_int" still parses.
+fn digits_pos(cs: List[Str]) -> Int =
+  fold(cs, 0, fn(acc: Int, c: Str) => acc * 10 + digit_value(c))
+
+fn digits_neg(cs: List[Str]) -> Int =
+  fold(cs, 0, fn(acc: Int, c: Str) => acc * 10 - digit_value(c))
+
+# An integer is an optional '+' or '-' followed by one or more decimal digits
+# and nothing else (no spaces: fields are already stripped).
+fn parse_int(s: Str) -> Option[Int] =
+  if len(s) == 0 then None
+  else {
+    let first = slice(s, 0, 1) in
+    let signed = first == "+" || first == "-" in
+    let body = if signed then slice(s, 1, len(s)) else s in
+    if len(body) == 0 then None
+    else {
+      let cs = chars(body) in
+      if !all_digits(cs) then None
+      else Some(if first == "-" then digits_neg(cs) else digits_pos(cs))
+    }
+  }
+
+# --- line and field text --------------------------------------------------
+
+fn is_space_char(c: Str) -> Bool =
+  c == " " || c == "\t" || c == "\r" || c == "\n"
+
+# A line that is empty or holds only whitespace is ignored entirely.
+fn is_blank(s: Str) -> Bool =
+  fold(chars(s), true, fn(acc: Bool, c: Str) => acc && is_space_char(c))
+
+# Drop one trailing carriage return so CRLF input behaves like LF input.
+fn strip_cr(s: Str) -> Str =
+  let n = len(s) in
+  if n > 0 && slice(s, n - 1, n) == "\r" then slice(s, 0, n - 1) else s
+
+fn ltrim_sp_at(s: Str, i: Int, n: Int) -> Str =
+  let m = if n > len(s) then len(s) else n in
+  if i < 0 then ltrim_sp_at(s, 0, m)
+  else if i >= m then ""
+  else if slice(s, i, i + 1) == " " then ltrim_sp_at(s, i + 1, m)
+  else slice(s, i, m)
+
+fn ltrim_sp(s: Str) -> Str = ltrim_sp_at(s, 0, len(s))
+
+fn rtrim_sp_at(s: Str, i: Int) -> Str =
+  let n = len(s) in
+  if i >= n then rtrim_sp_at(s, n - 1)
+  else if i < 0 then ""
+  else if slice(s, i, i + 1) == " " then rtrim_sp_at(s, i - 1)
+  else slice(s, 0, i + 1)
+
+fn rtrim_sp(s: Str) -> Str = rtrim_sp_at(s, len(s) - 1)
+
+# Strip leading and trailing spaces (not tabs: the spec says spaces).
+fn strip_sp(s: Str) -> Str = rtrim_sp(ltrim_sp(s))
+
+# --- CSV fields -----------------------------------------------------------
+
+fn row_step(st: RowState, c: Str) -> RowState =
+  if c == "\"" then RowState { done: st.done, cur: st.cur, quoted: !st.quoted }
+  else if c == "," && !st.quoted then {
+    RowState { done: push(st.done, join(st.cur, "")), cur: [], quoted: false }
+  } else {
+    RowState { done: st.done, cur: push(st.cur, c), quoted: st.quoted }
+  }
+
+# Split one line into fields and strip each field's surrounding spaces.
+fn parse_row(line: Str) -> List[Str] =
+  let st = fold(chars(line), RowState { done: [], cur: [], quoted: false }, row_step) in
+  let all = push(st.done, join(st.cur, "")) in
+  map(all, fn(f: Str) => strip_sp(f))
+
+fn find_col_at(fields: List[Str], name: Str, i: Int) -> Option[Int] =
+  if i >= len(fields) then None
+  else match get(fields, i) {
+    Some(f) => if f == name then Some(i) else find_col_at(fields, name, i + 1),
+    None => None
+  }
+
+# Position of the header field whose stripped name is exactly `name`.
+fn find_col(fields: List[Str], name: Str) -> Option[Int] =
+  find_col_at(fields, name, 0)
+
+# --- table scan -----------------------------------------------------------
+
+fn add_row(acc: Tally, line: Str, col: Int) -> Tally =
+  match get(parse_row(line), col) {
+    None => Tally { sum: acc.sum, skipped: acc.skipped + 1 },
+    Some(f) => match parse_int(f) {
+      None => Tally { sum: acc.sum, skipped: acc.skipped + 1 },
+      Some(v) => Tally { sum: acc.sum + v, skipped: acc.skipped }
+    }
+  }
+
+# Non-blank lines of the input, carriage returns removed.
+fn clean_lines(input: Str) -> List[Str] =
+  filter(
+    map(split(input, "\n"), fn(l: Str) => strip_cr(l)),
+    fn(l: Str) => !is_blank(l)
+  )
+
+# The first non-blank line is the header; every later non-blank line is a
+# data row.  A row without an integer in the named position is skipped.
+fn csv_sum(name: Str, input: Str) -> CsvResult =
+  let lines = clean_lines(input) in
+  if len(lines) == 0 then NoColumn
+  else match find_col(parse_row(list_at(lines, 0)), name) {
+    None => NoColumn,
+    Some(col) => {
+      let t = fold(
+        range(1, len(lines)),
+        Tally { sum: 0, skipped: 0 },
+        fn(acc: Tally, i: Int) => add_row(acc, list_at(lines, i), col)
+      ) in
+      Totals(t.sum, t.skipped)
+    }
+  }
+
+# --- entry point ----------------------------------------------------------
+
+fn csv_main(arg_count: Int, name: Str, input: Str) -> CsvOutcome =
+  if arg_count != 1 then {
+    CsvOutcome { lines: ["usage: csv_sum <column>"], code: 2 }
+  } else match csv_sum(name, input) {
+    NoColumn => CsvOutcome { lines: ["error: no column " ++ name], code: 1 },
+    Totals(s, k) => CsvOutcome {
+      lines: ["sum " ++ from_int(s), "skipped " ++ from_int(k)],
+      code: 0
+    }
+  }
+
+fn main(args: List[Str]) -> Int !io =
+  let input = read_all() in
+  let name = match get(args, 0) { Some(n) => n, None => "" } in
+  let out = csv_main(len(args), name, input) in
+  {
+    print(join(out.lines, "\n"));
+    out.code
+  }
+
+# --- tests ----------------------------------------------------------------
+
+test example = csv_main(1, "qty", "item,qty,price\napple,3,10\npear,x,5\nfig,4,7\n") == CsvOutcome { lines: ["sum 7", "skipped 1"], code: 0 }
+
+test missing_column = csv_main(1, "c", "a,b\n1,2\n") == CsvOutcome { lines: ["error: no column c"], code: 1 }
+
+test quoted_commas = csv_main(1, "pop", "name,city,pop\n\"Doe, J\",\"Paris, FR\",100\nX,\"Y\",-20\n") == CsvOutcome { lines: ["sum 80", "skipped 0"], code: 0 }
+
+test quoted_header = csv_main(1, "c", "\"a b\",\"c\"\n1,2\n3,4\n") == CsvOutcome { lines: ["sum 6", "skipped 0"], code: 0 }
+
+test short_rows = csv_main(1, "c", "a,b,c\n1,2,3\n4\n5,6\n") == CsvOutcome { lines: ["sum 3", "skipped 2"], code: 0 }
+
+test signs_and_spaces = csv_main(1, "v", "v\n+5\n -3 \n- 4\n7a\n\n  \n10\n") == CsvOutcome { lines: ["sum 12", "skipped 2"], code: 0 }
+
+test crlf = csv_main(1, "v", "k,v\r\na,1\r\nb,2\r\n") == CsvOutcome { lines: ["sum 3", "skipped 0"], code: 0 }
+
+test usage_no_args = csv_main(0, "", "a\n1\n") == CsvOutcome { lines: ["usage: csv_sum <column>"], code: 2 }
+
+test usage_two_args = csv_main(2, "a", "a\n1\n") == CsvOutcome { lines: ["usage: csv_sum <column>"], code: 2 }
+
+test empty_input = csv_main(1, "a", "") == CsvOutcome { lines: ["error: no column a"], code: 1 }
+
+test blank_lines_ignored = csv_main(1, "x", "\n  \n x \n\t\n5\n\n") == CsvOutcome { lines: ["sum 5", "skipped 0"], code: 0 }
+
+test negative_total = csv_main(1, "n", "n\n-5\n-1\n") == CsvOutcome { lines: ["sum -6", "skipped 0"], code: 0 }
+
+test extra_fields_ok = csv_main(1, "b", "a,b\n1,2,3\n4,5\n") == CsvOutcome { lines: ["sum 7", "skipped 0"], code: 0 }
+
+test first_header_wins = csv_main(1, "a", "a,a\n1,2\n") == CsvOutcome { lines: ["sum 1", "skipped 0"], code: 0 }
+
+test parse_int_forms =
+  parse_int("-20") == Some(-20)
+  && parse_int("+5") == Some(5)
+  && parse_int("007") == Some(7)
+  && parse_int("0") == Some(0)
+  && parse_int("-0") == Some(0)
+  && parse_int("- 4") == None
+  && parse_int(" 5") == None
+  && parse_int("5 ") == None
+  && parse_int("7a") == None
+  && parse_int("") == None
+  && parse_int("+") == None
+  && parse_int("-") == None
+  && parse_int("--1") == None
+
+test parse_row_quotes =
+  parse_row("\"a b\",c , \"d,e\"") == ["a b", "c", "d,e"]
+  && parse_row("a\"b\",c") == ["ab", "c"]
+  && parse_row("") == [""]
+  && parse_row("a,,b") == ["a", "", "b"]
+
+test strip_spaces =
+  strip_sp("  x  ") == "x" && strip_sp("x") == "x" && strip_sp("   ") == ""
+
+test find_column =
+  find_col(["a", "b"], "b") == Some(1)
+  && find_col(["a", "b"], "c") == None
+  && find_col([], "a") == None
+  && find_col(["a", "b"], "a") == Some(0)
+
+test clean_lines_blank_filter =
+  clean_lines("\n a \n\t\n\r\nb") == [" a ", "b"]
