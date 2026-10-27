@@ -48,9 +48,16 @@ Rust-Läufe waren invalid. Die Quote ist ein Artefakt des Headless-Aufbaus, nich
 - `results.jsonl` – alle 92 Datensätze inklusive `valid`/`passed` und Dispatch-Tokens.
 - `driver.log`, `driver2.log` – Prepare-/Claude-/Finish-Protokoll beider Wellen.
 
+## Verworfen: Brief-Prompt
+
+Ein gekürzter Prompt (4,2 KB Kurzreferenz statt 10,7 KB, kompakte Parameterlisten statt
+JSON-Schemas; 8,1 KB statt 19,7 KB Werkzeugteil) wurde an drei QAL-Aufgaben getestet:
+**98.904, 185.135 und 137.307 Tokens**, alle drei invalid. Die Vollreferenz läuft bei denselben
+Aufgaben mit rund 73.000 Tokens und besteht die Tests. Der Brief-Prompt führt zu mehr
+Iterationen/Fehlern und wurde **verworfen**; die Datei ist nicht im Repo.
+
 ## Konsequenz
 
-Der nächste Phase-6-Schritt ist nicht eine weitere Tool-Antwort-Kürzung. Es ist die
-**Runden-/Prompt-Seite**: weniger Runden und ein kleinerer Systemprompt, gemessen mit dem
-vollständigen 80-Lauf-Aufbau (zwei Runden je Aufgabe, valide QAL-Läufe). Bis dahin bleibt
-Phase 6 offen.
+Der nächste Phase-6-Schritt ist nicht eine weitere Tool-Antwort-Kürzung und auch nicht eine
+Kürzung der Referenz. Es ist die **Runden-Seite**: weniger Werkzeugaufrufe je Aufgabe, gemessen
+mit dem vollständigen 80-Lauf-Aufbau. Bis dahin bleibt Phase 6 offen.
