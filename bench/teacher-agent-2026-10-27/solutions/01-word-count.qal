@@ -1,0 +1,21 @@
+fn is_space(c: Str) -> Bool = c == " " || c == "\t" || c == "\r" || c == "\n"
+
+fn count_words(cs: List[Str], i: Int, in_word: Bool, acc: Int) -> Int =
+  if i >= len(cs) then acc
+  else
+    let c = get(cs, i) in
+    match c {
+      Some(ch) => if is_space(ch) then count_words(cs, i + 1, false, acc)
+                  else count_words(cs, i + 1, true, if in_word then acc else acc + 1),
+      None => acc
+    }
+
+fn main(args: List[Str]) -> Int !io = {
+  let s = read_all() in
+  let cs = chars(s) in
+  let n = len(cs) in
+  let lines = fold(cs, 0, fn(acc: Int, c: Str) => if c == "\n" then acc + 1 else acc) in
+  let words = count_words(cs, 0, false, 0) in
+  print(join([from_int(lines), from_int(words), from_int(n)], " "));
+  0
+}

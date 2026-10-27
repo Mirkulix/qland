@@ -1,0 +1,214 @@
+{
+  "model": "deepseek-chat",
+  "budget_eur": 10.0,
+  "spent_eur": 0.601166,
+  "results": [
+    {
+      "task": "01-word-count",
+      "ok": true,
+      "passed": 9,
+      "total": 9,
+      "calls": 2,
+      "cost_eur": 0.003294,
+      "error": null
+    },
+    {
+      "task": "02-roman",
+      "ok": false,
+      "passed": 0,
+      "total": 0,
+      "calls": 11,
+      "cost_eur": 0.037755,
+      "error": null
+    },
+    {
+      "task": "03-csv-sum",
+      "ok": false,
+      "passed": 0,
+      "total": 0,
+      "calls": 11,
+      "cost_eur": 0.035582,
+      "error": null
+    },
+    {
+      "task": "04-binary-search",
+      "ok": true,
+      "passed": 7,
+      "total": 7,
+      "calls": 4,
+      "cost_eur": 0.006961,
+      "error": null
+    },
+    {
+      "task": "05-brackets",
+      "ok": false,
+      "passed": 0,
+      "total": 0,
+      "calls": 10,
+      "cost_eur": 0.033825,
+      "error": null
+    },
+    {
+      "task": "06-bank",
+      "ok": false,
+      "passed": 0,
+      "total": 0,
+      "calls": 10,
+      "cost_eur": 0.041115,
+      "error": null
+    },
+    {
+      "task": "07-tokenizer",
+      "ok": false,
+      "passed": 0,
+      "total": 0,
+      "calls": 10,
+      "cost_eur": 0.03759,
+      "error": null
+    },
+    {
+      "task": "08-expr-eval",
+      "ok": false,
+      "passed": 0,
+      "total": 0,
+      "calls": 11,
+      "cost_eur": 0.01599,
+      "error": null
+    },
+    {
+      "task": "09-rle",
+      "ok": true,
+      "passed": 14,
+      "total": 14,
+      "calls": 11,
+      "cost_eur": 0.029115,
+      "error": null
+    },
+    {
+      "task": "10-file-stats",
+      "ok": false,
+      "passed": 0,
+      "total": 0,
+      "calls": 11,
+      "cost_eur": 0.046474,
+      "error": null
+    },
+    {
+      "task": "11-prime-factors",
+      "ok": false,
+      "passed": 0,
+      "total": 0,
+      "calls": 18,
+      "cost_eur": 0.02834,
+      "error": null
+    },
+    {
+      "task": "12-sort-words",
+      "ok": true,
+      "passed": 8,
+      "total": 8,
+      "calls": 7,
+      "cost_eur": 0.01658,
+      "error": null
+    },
+    {
+      "task": "13-word-freq",
+      "ok": false,
+      "passed": 0,
+      "total": 0,
+      "calls": 11,
+      "cost_eur": 0.023223,
+      "error": null
+    },
+    {
+      "task": "14-bst",
+      "ok": false,
+      "passed": 0,
+      "total": 0,
+      "calls": 11,
+      "cost_eur": 0.018155,
+      "error": null
+    },
+    {
+      "task": "15-caesar",
+      "ok": true,
+      "passed": 13,
+      "total": 13,
+      "calls": 7,
+      "cost_eur": 0.018638,
+      "error": null
+    },
+    {
+      "task": "16-anagrams",
+      "ok": false,
+      "passed": 0,
+      "total": 0,
+      "calls": 10,
+      "cost_eur": 0.023917,
+      "error": null
+    },
+    {
+      "task": "17-word-wrap",
+      "ok": false,
+      "passed": 0,
+      "total": 0,
+      "calls": 11,
+      "cost_eur": 0.032523,
+      "error": null
+    },
+    {
+      "task": "18-date-diff",
+      "ok": false,
+      "passed": 6,
+      "total": 7,
+      "calls": 10,
+      "cost_eur": 0.042272,
+      "error": null
+    },
+    {
+      "task": "19-base-convert",
+      "ok": true,
+      "passed": 7,
+      "total": 7,
+      "calls": 4,
+      "cost_eur": 0.013325,
+      "error": null
+    },
+    {
+      "task": "20-ini-query",
+      "ok": false,
+      "passed": 0,
+      "total": 0,
+      "calls": 10,
+      "cost_eur": 0.041249,
+      "error": null
+    },
+    {
+      "task": "21-expense-approval",
+      "ok": false,
+      "passed": 0,
+      "total": 0,
+      "calls": 10,
+      "cost_eur": 0.018066,
+      "error": null
+    },
+    {
+      "task": "22-expense-approval-contracts",
+      "ok": false,
+      "passed": 0,
+      "total": 0,
+      "calls": 11,
+      "cost_eur": 0.01855,
+      "error": null
+    },
+    {
+      "task": "23-expense-approval-change",
+      "ok": false,
+      "passed": 0,
+      "total": 0,
+      "calls": 11,
+      "cost_eur": 0.018628,
+      "error": null
+    }
+  ]
+}

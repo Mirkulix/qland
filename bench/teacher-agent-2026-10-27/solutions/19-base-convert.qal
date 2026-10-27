@@ -1,0 +1,107 @@
+fn digit_val(c: Str) -> Option[Int] =
+  if len(c) != 1 then None
+  else {
+    let n = char_code(c) in
+    if n >= 48 && n <= 57 then Some(n - 48)
+    else if n >= 97 && n <= 122 then Some(n - 87)
+    else if n >= 65 && n <= 90 then Some(n - 55)
+    else None
+  }
+
+fn parse_base(s: Str) -> Option[Int] =
+  if len(s) == 0 then None
+  else {
+    let n = to_int(s) in
+    match n {
+      None => None,
+      Some(v) => if v >= 2 && v <= 36 then Some(v) else None
+    }
+  }
+
+fn all_digits_ok(cs: List[Str], i: Int, base: Int) -> Bool =
+  if i >= len(cs) then true
+  else match get(cs, i) {
+    None => false,
+    Some(c) => match digit_val(c) {
+      None => false,
+      Some(d) => if d < base then all_digits_ok(cs, i + 1, base) else false
+    }
+  }
+
+fn to_digit_char(d: Int) -> Str =
+  if d < 10 then from_char_code(d + 48) else from_char_code(d + 87)
+
+fn conv(n: Int, base: Int) -> Str =
+  if n == 0 then ""
+  else conv(n / base, base) ++ to_digit_char(n % base)
+
+fn parse_num(cs: List[Str], i: Int, base: Int, acc: Int) -> Int =
+  if i >= len(cs) then acc
+  else {
+    let d = match get(cs, i) {
+      None => 0,
+      Some(c) => match digit_val(c) { Some(v) => v, None => 0 }
+    } in
+    parse_num(cs, i + 1, base, acc * base + d)
+  }
+
+fn solve_line(line: Str) -> Str =
+  {
+    let parts = split(line, " ") in
+    if len(parts) != 3 then "error"
+    else {
+      let fs = match get(parts, 0) { None => "", Some(x) => x } in
+      let ts = match get(parts, 1) { None => "", Some(x) => x } in
+      let ns = match get(parts, 2) { None => "", Some(x) => x } in
+      match parse_base(fs) {
+        None => "error",
+        Some(fb) => match parse_base(ts) {
+          None => "error",
+          Some(tb) => {
+            let neg = len(ns) > 0 && starts_with(ns, "-") in
+            let body = if neg then slice(ns, 1, len(ns)) else ns in
+            let cs = chars(body) in
+            if len(cs) == 0 then "error"
+            else if !all_digits_ok(cs, 0, fb) then "error"
+            else {
+              let v = parse_num(cs, 0, fb, 0) in
+              let out = if v == 0 then "0" else conv(v, tb) in
+              if neg && v != 0 then "-" ++ out else out
+            }
+          }
+        }
+      }
+    }
+  }
+
+fn loop_lines(lines: List[Str], i: Int, last: Int) -> Unit !io =
+  if i >= last then ()
+  else {
+    let line = match get(lines, i) { None => "", Some(x) => x } in
+    let l = if len(line) > 0 && slice(line, len(line) - 1, len(line)) == "\r" then slice(line, 0, len(line) - 1) else line in
+    print(solve_line(l));
+    loop_lines(lines, i + 1, last)
+  }
+
+fn main(args: List[Str]) -> Int !io =
+  {
+    let input = read_all() in
+    let lines = split(input, "\n") in
+    let n = len(lines) in
+    let last = if n > 0 && len(match get(lines, n - 1) { None => "", Some(x) => x }) == 0 then n - 1 else n in
+    loop_lines(lines, 0, last);
+    0
+  }
+
+test t1 = solve_line("10 2 10") == "1010"
+test t2 = solve_line("16 10 ff") == "255"
+test t3 = solve_line("2 16 -1010") == "-a"
+test t4 = solve_line("10 37 5") == "error"
+test t5 = solve_line("10 10 0") == "0"
+test t6 = solve_line("10 10 -0") == "0"
+test t7 = solve_line("10 10 1 2") == "error"
+test t8 = solve_line("10 10 ") == "error"
+test t9 = solve_line("10 10 -") == "error"
+test t10 = solve_line("2 10 102") == "error"
+test t11 = solve_line("36 10 zz") == "1295"
+test t12 = solve_line("10 36 1295") == "zz"

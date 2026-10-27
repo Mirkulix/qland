@@ -1,0 +1,62 @@
+fn parse_shift(s: Str) -> Option[Int] = {
+  let n = len(s) in
+  if n == 0 then None
+  else {
+    let neg = slice(s, 0, 1) == "-" in
+    let pos = slice(s, 0, 1) == "+" in
+    let start = if neg || pos then 1 else 0 in
+    if start >= n then None
+    else {
+      let digits = slice(s, start, n) in
+      let ok = fold(chars(digits), true, fn(acc: Bool, c: Str) => acc && contains("0123456789", c) && len(c) == 1) in
+      if !ok then None
+      else match to_int(digits) {
+        None => None,
+        Some(v) => if neg then Some(-v) else Some(v)
+      }
+    }
+  }
+}
+
+fn shift_char(c: Str, k: Int) -> Str = {
+  let code = char_code(c) in
+  if code >= 65 && code <= 90 then from_char_code(65 + ((code - 65 + k) % 26 + 26) % 26)
+  else if code >= 97 && code <= 122 then from_char_code(97 + ((code - 97 + k) % 26 + 26) % 26)
+  else c
+}
+
+fn shift_line(s: Str, k: Int) -> Str = join(map(chars(s), fn(c: Str) => shift_char(c, k)), "")
+
+fn strip_cr(l: Str) -> Str = if len(l) > 0 && slice(l, len(l) - 1, len(l)) == "\r" then slice(l, 0, len(l) - 1) else l
+
+fn run_shift(k: Int) -> Int !io = {
+  let input = read_all() in
+  let lines = split(input, "\n") in
+  let n = len(lines) in
+  let lines2 = if n > 0 && get(lines, n - 1) == Some("") then map(range(0, n - 1), fn(i: Int) => match get(lines, i) { Some(x) => x, None => "" }) else lines in
+  let out = map(lines2, fn(l: Str) => shift_line(strip_cr(l), k)) in
+  fold(out, 0, fn(acc: Int, l: Str) => { print(l); acc })
+}
+
+fn main(args: List[Str]) -> Int !io = {
+  let arg = if len(args) == 1 then get(args, 0) else None in
+  match arg {
+    None => { print("usage: caesar <shift>"); 2 },
+    Some(s) => match parse_shift(s) {
+      None => { print("usage: caesar <shift>"); 2 },
+      Some(k) => if k > 1000000000 || k < -1000000000 then { print("usage: caesar <shift>"); 2 }
+        else run_shift(k)
+    }
+  }
+}
+
+test parse_ok = parse_shift("3") == Some(3)
+test parse_neg = parse_shift("-3") == Some(-3)
+test parse_plus = parse_shift("+3") == Some(3)
+test parse_bad = parse_shift("3a") == None
+test parse_empty = parse_shift("") == None
+test parse_sign_only = parse_shift("-") == None
+test shift_z = shift_char("z", 1) == "a"
+test shift_A = shift_char("A", -1) == "Z"
+test shift_line1 = shift_line("Hello, World!", 3) == "Khoor, Zruog!"
+test shift_line2 = shift_line("xyz", 3) == "abc"
