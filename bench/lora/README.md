@@ -90,6 +90,13 @@ After training, `eval_adapter.py --adapter <dir> --limit 10` generates QAL from 
 prompts and keeps a sample only if `qal check` and `qal test` accept it. This is a **proxy**, not
 the Phase 8 benchmark (the three-arm agent evaluation is still missing). `eval_mlx.py` is the MLX variant (loads the adapter and generates on the Apple GPU). Add `--compare-base` to run the same prompts through the unadapted base model.
 
+## Failed task-oriented attempt (2026-10-27)
+
+A 223-example task-oriented adapter (`sft_tasks.jsonl`, batch 2, max-length 256, 40 iters)
+diverged to **NaN** by iteration 30 and was discarded; no evaluation. The teacher solutions
+remain valid data (`bench/teacher-2026-10-27/`), but a student run needs a lower LR/shorter
+sequences or a better base.
+
 ## What is missing
 
 1. 5,000–20,000 model-written, `qal check`-verified programs (the seed has 933, mostly from the
