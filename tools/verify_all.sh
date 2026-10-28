@@ -14,3 +14,4 @@ echo "contract diff: $(python3 -c 'import json;print(len(json.load(open("/tmp/qa
 cat /tmp/qal-sim-verify.txt
 cat /tmp/qal-ast-verify.txt
 cat /tmp/qal-tensor-verify.txt
+python3 tools/qal_first.py

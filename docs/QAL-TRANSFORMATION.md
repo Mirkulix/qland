@@ -36,6 +36,21 @@ verified software". It is evidence, not a vision document.
 - Scaling: 5,000 agents/1,000 steps in 0.75 s; 2,000×5,000 and
   1,000×10,000 hit the 256 MiB execution limit.
 
+## Inventory (2026-10-28)
+
+`python3 tools/qal_first.py`:
+
+```text
+qal:        5,175 files, 147,784 lines, 2,558 tests
+rust:       1,393 files, 684,112 lines
+python:       727 files, 146,250 lines
+typescript:    10 files
+packages:      27 .qalpkg
+```
+
+The QAL line count includes the self-hosted compiler, std, examples and tests;
+Rust remains the bootstrap/host layer.
+
 ## The architecture
 
 ```
