@@ -1,0 +1,2 @@
+fn add(a: Int, b: Int) -> Int = a + b
+test add_ok = add(2, 3) == 5
