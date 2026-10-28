@@ -496,3 +496,15 @@ is `<= N` as `{last_index, entries}`. Verified with two appends:
 
 This is the HTTP side of `qal_sim_snapshot`; the host decides when to snapshot,
 QAL returns the prefix.
+
+## Snapshot installation endpoint
+
+`POST /install?index=N` drops log entries with index `<= N`, writes commit N and
+returns the kept suffix. Verified on a fresh node with `a,b,c`:
+
+```json
+{"last_index":2,"entries":["3:1:c"]}
+```
+
+Then `GET /log` returns the same suffix. This is the HTTP side of
+`qal_sim_install`.

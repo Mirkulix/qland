@@ -65,6 +65,12 @@ fn load_log() -> List[Str] !fs =
 fn save_log(xs: List[Str]) -> Bool !fs =
   match write_file("node_log.txt", join(xs, "\n")) { Ok(_) => true, Err(_) => false }
 
+fn entry_index(l: Str) -> Int =
+  match index_of(l, ":") {
+    None => 0,
+    Some(i) => match to_int(slice(l, 0, i)) { None => 0, Some(n) => n },
+  }
+
 fn log_json() -> HttpResponse !fs = std.http.json(200, std.json.arr(map(load_log(), fn(l) => std.json.str(l))))
 
 fn role_of(h: Heartbeat) -> Str = if h.leader < 0 then "candidate" else "follower"
@@ -136,6 +142,23 @@ fn handle(rq: HttpRequest) -> HttpResponse !fs =
           if save_log(push(xs, entry)) then log_json() else std.http.error(500, "io", "save failed"),
       },
     }
+  else if rq.path == "/install" then
+    let ps = std.url.parse_query(rq.query) in
+    match std.url.param(ps, "index") {
+      None => std.http.bad_request("missing index"),
+      Some(is) => match to_int(is) {
+        None => std.http.bad_request("bad index"),
+        Some(index) => let xs = load_log() in
+          let kept = filter(xs, fn(l) => entry_index(l) > index) in
+          if save_log(kept) then match write_file("node_commit.txt", from_int(index)) {
+            Ok(_) => std.http.json(200, std.json.obj([
+              std.json.field("last_index", std.json.int(index)),
+              std.json.field("entries", std.json.arr(map(kept, fn(l) => std.json.str(l)))),
+            ])),
+            Err(_) => std.http.error(500, "io", "save failed"),
+          } else std.http.error(500, "io", "save failed"),
+      },
+    }
   else if rq.path == "/log" then log_json()
   else if rq.path == "/snapshot" then
     let ps = std.url.parse_query(rq.query) in
@@ -144,7 +167,7 @@ fn handle(rq: HttpRequest) -> HttpResponse !fs =
       Some(is) => match to_int(is) {
         None => std.http.bad_request("bad index"),
         Some(index) => let xs = load_log() in
-          let kept = filter(xs, fn(l) => match to_int(slice(l, 0, match index_of(l, ":") { Some(i) => i, None => 0 })) { None => false, Some(n) => n <= index }) in
+          let kept = filter(xs, fn(l) => entry_index(l) <= index) in
           std.http.json(200, std.json.obj([
             std.json.field("last_index", std.json.int(index)),
             std.json.field("entries", std.json.arr(map(kept, fn(l) => std.json.str(l)))),
