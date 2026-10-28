@@ -545,8 +545,10 @@ them as JSON; `/` serves an HTML shell. `cluster_dashboard_run.py` starts three
 nodes and the dashboard:
 
 ```text
-dashboard: 3 node metrics aggregated by QAL, HTML page served
+dashboard: 3 nodes aggregated, health 2/3 after one dies
 ```
+
+`/api/health` reports `{"up":N,"total":3}`; killing node 2 drops it to 2/3.
 
 `/metrics` on a `qal serve` process is reserved for the server's own Prometheus
 metrics, so the QAL routes use `/api/metrics`.

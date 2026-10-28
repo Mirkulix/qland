@@ -51,10 +51,15 @@ def main():
                 assert json.loads(data[k])["log_len"] == 1, data
             page, ptype = http("http://127.0.0.1:8999/")
             assert "text/html" in ptype and "QAL cluster" in page, (ptype, page[:80])
+            # kill node 2: health drops to 2/3
+            procs[2].terminate(); procs[2].wait(timeout=10)
+            time.sleep(0.3)
+            health = json.loads(http("http://127.0.0.1:8999/api/health")[0])
+            assert health == {"up": 2, "total": 3}, health
         finally:
             for p in procs: p.terminate()
             for p in procs: p.wait(timeout=10)
-    print("dashboard: 3 node metrics aggregated by QAL, HTML page served")
+    print("dashboard: 3 nodes aggregated, health 2/3 after one dies")
 
 
 if __name__ == "__main__":

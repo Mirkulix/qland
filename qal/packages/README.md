@@ -75,6 +75,6 @@ setup --allow fs:.`.
 ## `sim_dashboard.qalpkg` (`qal_sim_dashboard`)
 
 Cluster dashboard: fetches `/api/metrics` from three nodes and returns JSON;
-`/` is an HTML shell. 4 definitions, signed registry SHA-256 `bc84e55d…`.
+`/` is an HTML shell. 4 definitions, signed registry SHA-256 `bff64d4c…`.
 Routes use `/api/metrics` because `/metrics` is reserved for `qal serve`'s own
 Prometheus metrics.
