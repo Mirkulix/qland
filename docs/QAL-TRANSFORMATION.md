@@ -111,7 +111,8 @@ The simulation packages now include a working Raft-style stack:
 - a file-backed HTTP node (`qal_sim_node`),
 - an aggregating cluster dashboard (`qal_sim_dashboard`),
 - an Apple-Metal backend for the tensor sidecar (`bench/tensor/server_mlx.py`):
-  512x512 matmul 3.45x faster than NumPy on the M1 (303.7 vs 88.1 GFLOPS).
+  512x512 matmul up to 12.7x faster than NumPy on the M1 (315.7 vs 24.9 GFLOPS);
+2048x2048 reaches 1.44 TFLOPS (5.84x).
 
 Verified end-to-end on real processes:
 

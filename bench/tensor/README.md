@@ -36,6 +36,18 @@ tensor-mlx: 2x2 via MLX/Metal, 466.1 GFLOPS vs numpy 135.3 (3.45x)
 The QAL contract (`req len == n*n`, `ens len(r) == n*n`) is unchanged; only the
 host backend changes.
 
+### Scaling on the M1 (8-core GPU)
+
+| n | NumPy ms | MLX ms | NumPy GFLOPS | MLX GFLOPS | speedup |
+|---:|---:|---:|---:|---:|---:|
+| 256 | 13.84 | 4.24 | 2.4 | 7.9 | 3.27x |
+| 512 | 10.80 | 0.85 | 24.9 | 315.7 | 12.7x |
+| 1024 | 13.13 | 3.16 | 163.5 | 680.8 | 4.16x |
+| 2048 | 69.87 | 11.96 | 245.9 | **1436.8** | 5.84x |
+
+At 2048×2048 MLX reaches **1.44 TFLOPS** on the M1; the small-size numbers are
+overhead-dominated, the large ones show the GPU.
+
 The helper is also a package: `qal/packages/tensor_remote.qalpkg`
 (`qal_tensor_remote`), 3 definitions, signed install verified. `matmul_remote`
 reports effect `!net`; the caller must grant `net:127.0.0.1:8901`.
