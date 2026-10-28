@@ -94,9 +94,10 @@ run -> `5` from a single JSON file.
 
 | Surface | Solved |
 |---|---|
-| QAL JSON AST | 80/100 |
-| Python | 100/100 |
+| QAL JSON AST | **100/100** |
+| Python | **100/100** |
 
-The 20 AST failures are wrong call choices (`Int` as a function, wrong helper),
-not syntax errors. The surface works; the model's composition is the remaining
-gap. Ten families × ten variants; helper prelude still task-specific.
+First run 80/100: wrong call choices (`Int` as a function, wrong helper).
+`allowed_calls` validation plus failure feedback removed those; the last two
+were a prelude whitespace bug, fixed. Final run: 100/100. Ten families × ten
+variants; helper prelude still task-specific.

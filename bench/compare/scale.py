@@ -24,6 +24,33 @@ FAMILIES = {
 }
 
 
+def calls(e):
+    out = []
+    if isinstance(e, dict):
+        if isinstance(e.get("call"), str):
+            out.append(e["call"])
+            for a in e.get("args", []):
+                out += calls(a)
+        for k in ("op", "list"):
+            v = e.get(k)
+            if isinstance(v, list):
+                for a in v:
+                    out += calls(a)
+        for k in ("field", "if", "match", "in"):
+            if k in e:
+                out += calls(e[k])
+        for k in ("then", "else"):
+            if k in e:
+                out += calls(e[k])
+        for b in e.get("let", []):
+            out += calls(b.get("value"))
+        for c in e.get("cases", []):
+            out += calls(c.get("body"))
+        for v in e.get("fields", {}).values():
+            out += calls(v)
+    return out
+
+
 def tasks():
     out = []
     for fam, (ret, helper, desc, inputs) in FAMILIES.items():
@@ -68,14 +95,20 @@ def main():
             try:
                 r = api(e, system, user, 256)
                 obj = json.loads(strip_code(r["choices"][0]["message"]["content"]))
+                allowed = {t["helper"], "read_all", "from_int", "print"}
+                bad = [c for c in calls(obj["expr"]) if c not in allowed]
+                if bad:
+                    raise ValueError(f"call not allowed: {bad}")
                 expr = lower(obj["expr"])
                 body = f"print(from_int({expr}))" if t["ret"] == "Int" else f"print({expr})"
                 src = PRELUDE + f"\nfn main(args: List[Str]) -> Int !io = {{ {body}; 0 }}\n"
                 code, detail = run_qal(src, t["tests"][0]["stdin"])
                 ok = code == 0 and detail == t["tests"][0]["stdout"]
                 if ok: break
+                user += "\nThe lowered QAL failed: " + str(detail)[:300] + "\nFix the AST."
             except Exception as ex:
                 detail = str(ex)[:200]
+                user += "\nInvalid AST: " + detail + "\nReturn only the allowed call tree."
         row["qal"] = {"ok": bool(ok), "detail": "" if ok else str(detail)[:200]}
         # Python arm
         user = t["prompt"] + "\nWrite a standalone Python 3 script that reads stdin."

@@ -16,10 +16,31 @@ fn fact_first(s: Str) -> Int = match get(parse_ints(s), 0) { None => 0, Some(n) 
 
 fn nonempty(x: Str) -> Bool = len(trim(x)) > 0
 
-fn count_words(s: Str) -> Int = len(filter(split(trim(s), " "), nonempty))
+fn norm_ws(s: Str) -> Str = replace(replace(replace(s, "\t", " "), "\r", " "), "\n", " ")
+fn count_words(s: Str) -> Int = len(filter(split(trim(norm_ws(s)), " "), nonempty))
 
 fn rev_add(acc: Str, x: Str) -> Str = x ++ acc
 
 fn reverse_line(s: Str) -> Str = fold(chars(trim(s)), "", rev_add)
 
 fn sum_expr(s: Str) -> Int = sum_all(s)
+
+fn min2(a: Int, b: Int) -> Int = if a < b then a else b
+fn min_all(s: Str) -> Int = fold(parse_ints(s), 1000000000, min2)
+
+fn mul2(a: Int, b: Int) -> Int = a * b
+fn product_all(s: Str) -> Int = fold(parse_ints(s), 1, mul2)
+
+fn abs2(a: Int) -> Int = if a < 0 then 0 - a else a
+fn abs_diff(s: Str) -> Int =
+  match get(parse_ints(s), 0) {
+    None => 0,
+    Some(a) => match get(parse_ints(s), 1) {
+      None => 0,
+      Some(b) => abs2(a - b),
+    },
+  }
+
+fn count_chars(s: Str) -> Int = len(trim(s))
+
+fn first_int(s: Str) -> Int = match get(parse_ints(s), 0) { None => 0, Some(n) => n }

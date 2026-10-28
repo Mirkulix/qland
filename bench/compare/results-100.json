@@ -213,8 +213,8 @@
     {
       "id": "word_count-1",
       "qal": {
-        "ok": false,
-        "detail": "2\n"
+        "ok": true,
+        "detail": ""
       },
       "python": {
         "ok": true
@@ -283,8 +283,8 @@
     {
       "id": "word_count-8",
       "qal": {
-        "ok": false,
-        "detail": "1\n"
+        "ok": true,
+        "detail": ""
       },
       "python": {
         "ok": true
@@ -403,8 +403,8 @@
     {
       "id": "reverse-0",
       "qal": {
-        "ok": false,
-        "detail": "{\"diagnostics\":[{\"code\":\"E0201\",\"kind\":\"unknown_name\",\"def\":\"main\",\"path\":\"body.items[0].args[0]\",\"message\":\"unknown name `Str`\",\"hints\":[\"not a built-in or stored definition; built-ins are listed in "
+        "ok": true,
+        "detail": ""
       },
       "python": {
         "ok": true
@@ -413,8 +413,8 @@
     {
       "id": "reverse-1",
       "qal": {
-        "ok": false,
-        "detail": "{\"diagnostics\":[{\"code\":\"E0201\",\"kind\":\"unknown_name\",\"def\":\"main\",\"path\":\"body.items[0].args[0]\",\"message\":\"unknown name `Str`\",\"hints\":[\"not a built-in or stored definition; built-ins are listed in "
+        "ok": true,
+        "detail": ""
       },
       "python": {
         "ok": true
@@ -423,8 +423,8 @@
     {
       "id": "reverse-2",
       "qal": {
-        "ok": false,
-        "detail": "{\"diagnostics\":[{\"code\":\"E0201\",\"kind\":\"unknown_name\",\"def\":\"main\",\"path\":\"body.items[0].args[0]\",\"message\":\"unknown name `Str`\",\"hints\":[\"not a built-in or stored definition; built-ins are listed in "
+        "ok": true,
+        "detail": ""
       },
       "python": {
         "ok": true
@@ -433,8 +433,8 @@
     {
       "id": "reverse-3",
       "qal": {
-        "ok": false,
-        "detail": "{\"diagnostics\":[{\"code\":\"E0201\",\"kind\":\"unknown_name\",\"def\":\"main\",\"path\":\"body.items[0].args[0]\",\"message\":\"unknown name `Str`\",\"hints\":[\"not a built-in or stored definition; built-ins are listed in "
+        "ok": true,
+        "detail": ""
       },
       "python": {
         "ok": true
@@ -443,8 +443,8 @@
     {
       "id": "reverse-4",
       "qal": {
-        "ok": false,
-        "detail": "{\"diagnostics\":[{\"code\":\"E0201\",\"kind\":\"unknown_name\",\"def\":\"main\",\"path\":\"body.items[0].args[0]\",\"message\":\"unknown name `Str`\",\"hints\":[\"not a built-in or stored definition; built-ins are listed in "
+        "ok": true,
+        "detail": ""
       },
       "python": {
         "ok": true
@@ -453,8 +453,8 @@
     {
       "id": "reverse-5",
       "qal": {
-        "ok": false,
-        "detail": "{\"diagnostics\":[{\"code\":\"E0201\",\"kind\":\"unknown_name\",\"def\":\"main\",\"path\":\"body.items[0].args[0]\",\"message\":\"unknown name `Str`\",\"hints\":[\"not a built-in or stored definition; built-ins are listed in "
+        "ok": true,
+        "detail": ""
       },
       "python": {
         "ok": true
@@ -463,8 +463,8 @@
     {
       "id": "reverse-6",
       "qal": {
-        "ok": false,
-        "detail": "{\"diagnostics\":[{\"code\":\"E0201\",\"kind\":\"unknown_name\",\"def\":\"main\",\"path\":\"body.items[0].args[0]\",\"message\":\"unknown name `Str`\",\"hints\":[\"not a built-in or stored definition; built-ins are listed in "
+        "ok": true,
+        "detail": ""
       },
       "python": {
         "ok": true
@@ -483,8 +483,8 @@
     {
       "id": "reverse-8",
       "qal": {
-        "ok": false,
-        "detail": "{\"diagnostics\":[{\"code\":\"E0201\",\"kind\":\"unknown_name\",\"def\":\"main\",\"path\":\"body.items[0].args[0]\",\"message\":\"unknown name `Str`\",\"hints\":[\"not a built-in or stored definition; built-ins are listed in "
+        "ok": true,
+        "detail": ""
       },
       "python": {
         "ok": true
@@ -493,8 +493,8 @@
     {
       "id": "reverse-9",
       "qal": {
-        "ok": false,
-        "detail": "{\"diagnostics\":[{\"code\":\"E0201\",\"kind\":\"unknown_name\",\"def\":\"main\",\"path\":\"body.items[0].args[0]\",\"message\":\"unknown name `Str`\",\"hints\":[\"not a built-in or stored definition; built-ins are listed in "
+        "ok": true,
+        "detail": ""
       },
       "python": {
         "ok": true
@@ -503,8 +503,8 @@
     {
       "id": "count_chars-0",
       "qal": {
-        "ok": false,
-        "detail": "{\"diagnostics\":[{\"code\":\"E0201\",\"kind\":\"unknown_name\",\"def\":\"main\",\"path\":\"body.items[0].args[0].args[0]\",\"message\":\"unknown name `Int`\",\"hints\":[\"not a built-in or stored definition; built-ins are li"
+        "ok": true,
+        "detail": ""
       },
       "python": {
         "ok": true
@@ -513,8 +513,8 @@
     {
       "id": "count_chars-1",
       "qal": {
-        "ok": false,
-        "detail": "{\"diagnostics\":[{\"code\":\"E0201\",\"kind\":\"unknown_name\",\"def\":\"main\",\"path\":\"body.items[0].args[0].args[0]\",\"message\":\"unknown name `Int`\",\"hints\":[\"not a built-in or stored definition; built-ins are li"
+        "ok": true,
+        "detail": ""
       },
       "python": {
         "ok": true
@@ -533,8 +533,8 @@
     {
       "id": "count_chars-3",
       "qal": {
-        "ok": false,
-        "detail": "{\"diagnostics\":[{\"code\":\"E0201\",\"kind\":\"unknown_name\",\"def\":\"main\",\"path\":\"body.items[0].args[0].args[0]\",\"message\":\"unknown name `Int`\",\"hints\":[\"not a built-in or stored definition; built-ins are li"
+        "ok": true,
+        "detail": ""
       },
       "python": {
         "ok": true
@@ -543,8 +543,8 @@
     {
       "id": "count_chars-4",
       "qal": {
-        "ok": false,
-        "detail": "{\"diagnostics\":[{\"code\":\"E0201\",\"kind\":\"unknown_name\",\"def\":\"main\",\"path\":\"body.items[0].args[0].args[0]\",\"message\":\"unknown name `Int`\",\"hints\":[\"not a built-in or stored definition; built-ins are li"
+        "ok": true,
+        "detail": ""
       },
       "python": {
         "ok": true
@@ -553,8 +553,8 @@
     {
       "id": "count_chars-5",
       "qal": {
-        "ok": false,
-        "detail": "{\"diagnostics\":[{\"code\":\"E0201\",\"kind\":\"unknown_name\",\"def\":\"main\",\"path\":\"body.items[0].args[0].args[0]\",\"message\":\"unknown name `Int`\",\"hints\":[\"not a built-in or stored definition; built-ins are li"
+        "ok": true,
+        "detail": ""
       },
       "python": {
         "ok": true
@@ -563,8 +563,8 @@
     {
       "id": "count_chars-6",
       "qal": {
-        "ok": false,
-        "detail": "{\"diagnostics\":[{\"code\":\"E0201\",\"kind\":\"unknown_name\",\"def\":\"main\",\"path\":\"body.items[0].args[0].args[0]\",\"message\":\"unknown name `Int`\",\"hints\":[\"not a built-in or stored definition; built-ins are li"
+        "ok": true,
+        "detail": ""
       },
       "python": {
         "ok": true
@@ -573,8 +573,8 @@
     {
       "id": "count_chars-7",
       "qal": {
-        "ok": false,
-        "detail": "{\"diagnostics\":[{\"code\":\"E0201\",\"kind\":\"unknown_name\",\"def\":\"main\",\"path\":\"body.items[0].args[0].args[0]\",\"message\":\"unknown name `Int`\",\"hints\":[\"not a built-in or stored definition; built-ins are li"
+        "ok": true,
+        "detail": ""
       },
       "python": {
         "ok": true
@@ -603,8 +603,8 @@
     {
       "id": "min-0",
       "qal": {
-        "ok": false,
-        "detail": "{\"diagnostics\":[{\"code\":\"E0201\",\"kind\":\"unknown_name\",\"def\":\"main\",\"path\":\"body.items[0].args[0].args[0]\",\"message\":\"unknown name `Int`\",\"hints\":[\"not a built-in or stored definition; built-ins are li"
+        "ok": true,
+        "detail": ""
       },
       "python": {
         "ok": true
@@ -633,8 +633,8 @@
     {
       "id": "min-3",
       "qal": {
-        "ok": false,
-        "detail": "{\"diagnostics\":[{\"code\":\"E0201\",\"kind\":\"unknown_name\",\"def\":\"main\",\"path\":\"body.items[0].args[0].args[0]\",\"message\":\"unknown name `Int`\",\"hints\":[\"not a built-in or stored definition; built-ins are li"
+        "ok": true,
+        "detail": ""
       },
       "python": {
         "ok": true
