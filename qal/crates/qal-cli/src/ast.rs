@@ -144,22 +144,27 @@ pub fn lower_main(ast: &Value) -> Result<String, String> {
             prefix.push_str(&format!("type {name} = {{ {} }}\n", fs.join(", ")));
         }
     }
-    let main = ast.get("main").ok_or("AST needs a main field")?;
-    let ret = ast.get("returns").and_then(Value::as_str).unwrap_or("Int");
-    let effects = match ast.get("effects") {
-        None => vec!["io".to_string()],
-        Some(Value::Array(xs)) => xs.iter().map(|e| e.as_str().map(str::to_string).ok_or("effects must be strings"))
-            .collect::<Result<Vec<_>, _>>()?,
-        Some(_) => return Err("effects must be an array".into()),
-    };
-    for e in &effects {
-        if !e.chars().all(|c| c.is_ascii_lowercase() || c == '_') {
-            return Err(format!("bad effect: {e}"));
-        }
+    let main = ast.get("main");
+    if main.is_none() && !matches!(ast.get("tests"), Some(Value::Array(xs)) if !xs.is_empty()) {
+        return Err("AST needs a main or a non-empty tests array".into());
     }
     let mut src = prefix;
-    src.push_str(&format!("fn main(args: List[Str]) -> {ret} !{} = {{ {}; 0 }}\n",
-                          effects.join(" !"), lower(main)?));
+    if let Some(main) = main {
+        let ret = ast.get("returns").and_then(Value::as_str).unwrap_or("Int");
+        let effects = match ast.get("effects") {
+            None => vec!["io".to_string()],
+            Some(Value::Array(xs)) => xs.iter().map(|e| e.as_str().map(str::to_string).ok_or("effects must be strings"))
+                .collect::<Result<Vec<_>, _>>()?,
+            Some(_) => return Err("effects must be an array".into()),
+        };
+        for e in &effects {
+            if !e.chars().all(|c| c.is_ascii_lowercase() || c == '_') {
+                return Err(format!("bad effect: {e}"));
+            }
+        }
+        src.push_str(&format!("fn main(args: List[Str]) -> {ret} !{} = {{ {}; 0 }}\n",
+                              effects.join(" !"), lower(main)?));
+    }
     if let Some(Value::Array(tests)) = ast.get("tests") {
         for t in tests {
             let name = t.get("name").and_then(Value::as_str).ok_or("test needs name")?;
@@ -210,6 +215,12 @@ mod tests {
         let bad: Value = serde_json::json!({"allowed_calls":["read_all"],
             "main":{"call":"Int","args":[]}});
         assert!(lower_main(&bad).is_err());
+    }
+    #[test]
+    fn tests_without_main() {
+        let v: Value = serde_json::json!({"tests":[{"name":"t","body":{"op":"==","args":[{"int":1},{"int":1}]}}]});
+        let s = lower_main(&v).unwrap();
+        assert!(s.contains("test t = (1 == 1)") && !s.contains("fn main"), "{s}");
     }
     #[test]
     fn effects_and_tests() {

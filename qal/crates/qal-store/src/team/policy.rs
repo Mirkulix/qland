@@ -121,6 +121,7 @@ pub const POLICY: &[Row] = &[
     row("qal_request", None, [Yes, Yes, Yes, Yes], true),
     row("qal_build", None, [Yes, Yes, Yes, Yes], true),
     row("qal_define", None, [Own, Own, OwnOrContribution, No], true),
+    row("qal_define_ast", None, [Own, Own, OwnOrContribution, No], true),
     row("qal_rename", None, [Own, No, No, No], true),
     row("qal_delete", None, [Own, No, No, No], true),
     row("qal_lease", Some("acquire"), [Yes, Yes, Yes, No], true),
@@ -145,7 +146,7 @@ pub const POLICY: &[Row] = &[
 ];
 
 /// The tools that write code (and therefore need a signing key).
-pub const WRITE_TOOLS: [&str; 6] = ["qal_define", "qal_rename", "qal_delete", "qal_review", "qal_merge", "qal_rebase"];
+pub const WRITE_TOOLS: [&str; 7] = ["qal_define", "qal_define_ast", "qal_rename", "qal_delete", "qal_review", "qal_merge", "qal_rebase"];
 
 /// The rows of `tool` (with any action).
 fn rows(tool: &str) -> impl Iterator<Item = &'static Row> + '_ {

@@ -3,7 +3,7 @@
   "$id": "https://qal.dev/ast/v1",
   "title": "QAL AST v1",
   "type": "object",
-  "required": ["main"],
+  "anyOf": [{"required": ["main"]}, {"required": ["tests"]}],
   "additionalProperties": false,
   "properties": {
     "ast_version": {"const": 1},
