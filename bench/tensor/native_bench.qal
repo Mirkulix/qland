@@ -1,0 +1,20 @@
+fn mk(n: Int) -> List[Float] = map(range(0, n * n), fn(i) => int_to_float(i % 10))
+
+fn parse_floats(s: Str) -> List[Float] =
+  map(split(s, ","), fn(x) => match to_float(x) { None => 0.0, Some(f) => f })
+
+fn matmul(a: List[Float], b: List[Float], n: Int) -> List[Float] !tensor
+  req n > 0 && len(a) == n * n && len(b) == n * n
+= parse_floats(tensor_matmul(join(map(a, fn(x) => from_float(x)), ","), join(map(b, fn(x) => from_float(x)), ","), n))
+
+fn arg(args: List[Str], i: Int, d: Int) -> Int =
+  match get(args, i) { None => d, Some(s) => match to_int(s) { None => d, Some(n) => n } }
+
+fn main(args: List[Str]) -> Int !io !tensor !time =
+  let n = arg(args, 0, 256) in
+  let a = mk(n) in
+  let b = mk(n) in
+  let t0 = now_ms() in
+  let r = matmul(a, b, n) in
+  let t1 = now_ms() in
+  { print(from_int(n) ++ " " ++ from_int(t1 - t0) ++ "ms " ++ from_int(len(r))); 0 }

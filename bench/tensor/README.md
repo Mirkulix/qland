@@ -67,4 +67,8 @@ qal run native.qal --allow io,tensor -> 19.0,22.0,43.0,50.0
 qal run native.qal --allow io        -> E0508 permission_denied
 ```
 
-The native kernel is a naive Rust CPU matmul; the MLX sidecar is the GPU path.
+On macOS the native kernel calls **Apple Accelerate** `cblas_sgemm`; elsewhere it
+is a naive Rust loop. `native_bench.qal` measures the whole QAL path
+(build + CSV encode/decode + matmul): 128→22 ms, 256→80 ms, 512→316 ms,
+1024→1300 ms. The CSV encode/decode dominates for large matrices; the MLX
+sidecar is the fast GPU path.

@@ -609,6 +609,15 @@ fn print_line(c: &mut Caller<'_, HostState>, line: &[u8]) -> Result<(), wasmtime
     Ok(())
 }
 
+#[cfg(target_os = "macos")]
+#[link(name = "Accelerate", kind = "framework")]
+extern "C" {
+    #[allow(clippy::too_many_arguments)]
+    fn cblas_sgemm(order: i32, transa: i32, transb: i32, m: i32, n: i32, k: i32,
+                   alpha: f32, a: *const f32, lda: i32, b: *const f32, ldb: i32,
+                   beta: f32, c: *mut f32, ldc: i32);
+}
+
 fn tensor_call(c: &mut Caller<'_, HostState>, a_ptr: i32, b_ptr: i32, n: i64) -> Result<i32, wasmtime::Error> {
     let n = usize::try_from(n).map_err(|_| wasmtime::Error::msg("tensor size must be positive"))?;
     if n == 0 || n > 4096 { return Err(wasmtime::Error::msg("tensor size out of range")); }
@@ -620,8 +629,24 @@ fn tensor_call(c: &mut Caller<'_, HostState>, a_ptr: i32, b_ptr: i32, n: i64) ->
     let av = parse(&a)?;
     let bv = parse(&b)?;
     if av.len() != n * n || bv.len() != n * n { return Err(wasmtime::Error::msg("tensor length mismatch")); }
-    let mut out = vec![0.0f64; n * n];
-    for i in 0..n { for j in 0..n { let mut acc = 0.0; for k in 0..n { acc += av[i * n + k] * bv[k * n + j]; } out[i * n + j] = acc; } }
+    #[cfg(target_os = "macos")]
+    let out: Vec<f64> = {
+        // CBLAS row-major, no transpose: 101, 111, 111.
+        let af: Vec<f32> = av.iter().map(|x| *x as f32).collect();
+        let bf: Vec<f32> = bv.iter().map(|x| *x as f32).collect();
+        let mut cf = vec![0.0f32; n * n];
+        let k = n as i32;
+        unsafe {
+            cblas_sgemm(101, 111, 111, k, k, k, 1.0, af.as_ptr(), k, bf.as_ptr(), k, 0.0, cf.as_mut_ptr(), k);
+        }
+        cf.iter().map(|x| *x as f64).collect()
+    };
+    #[cfg(not(target_os = "macos"))]
+    let out: Vec<f64> = {
+        let mut o = vec![0.0f64; n * n];
+        for i in 0..n { for j in 0..n { let mut acc = 0.0; for k in 0..n { acc += av[i * n + k] * bv[k * n + j]; } o[i * n + j] = acc; } }
+        o
+    };
     let text = out.iter().map(|x| format!("{x}")).collect::<Vec<_>>().join(",");
     charge(c, text.len() + 16)?;
     new_str(c, &text)

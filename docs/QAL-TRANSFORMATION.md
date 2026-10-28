@@ -147,4 +147,8 @@ qal run ... --allow io            -> E0508 permission_denied (tensor)
 ```
 
 `qal_tensor_native` is a signed package; `matmul` reports `effects: ["tensor"]`.
-The native builtin is CPU (naive); the MLX sidecar remains the fast GPU path.
+The native builtin uses Apple Accelerate `cblas_sgemm` on macOS (naive Rust
+elsewhere). `native_bench.qal` measures the full QAL path including CSV
+encode/decode: 128→22 ms, 256→80 ms, 512→316 ms, 1024→1300 ms; the CSV overhead
+dominates, so the MLX sidecar remains the fast GPU path. Tensor handles/list ABI
+are the next step.
