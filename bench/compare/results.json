@@ -1,0 +1,69 @@
+{
+  "results": [
+    {
+      "id": "sum",
+      "qal": {
+        "ok": false,
+        "attempts": 3,
+        "detail": "{\"diagnostics\":[{\"code\":\"E0100\",\"kind\":\"parse\",\"def\":\"\",\"path\":\"3:32\",\"message\":\"unexpected character `&`\",\"hints\":[]}]}\n"
+      },
+      "python": {
+        "ok": true,
+        "attempts": 1,
+        "detail": ""
+      }
+    },
+    {
+      "id": "factorial",
+      "qal": {
+        "ok": false,
+        "attempts": 3,
+        "detail": "{\"diagnostics\":[{\"code\":\"E0100\",\"kind\":\"parse\",\"def\":\"\",\"path\":\"3:32\",\"message\":\"unexpected character `&`\",\"hints\":[]}]}\n"
+      },
+      "python": {
+        "ok": true,
+        "attempts": 1,
+        "detail": ""
+      }
+    },
+    {
+      "id": "word_count",
+      "qal": {
+        "ok": false,
+        "attempts": 3,
+        "detail": "{\"diagnostics\":[{\"code\":\"E0100\",\"kind\":\"parse\",\"def\":\"\",\"path\":\"1:1\",\"message\":\"expected `fn`, `type` or `test`\",\"hints\":[]}]}\n"
+      },
+      "python": {
+        "ok": true,
+        "attempts": 1,
+        "detail": ""
+      }
+    },
+    {
+      "id": "max_list",
+      "qal": {
+        "ok": false,
+        "attempts": 3,
+        "detail": "{\"diagnostics\":[{\"code\":\"E0100\",\"kind\":\"parse\",\"def\":\"\",\"path\":\"15:24\",\"message\":\"unexpected character `'`\",\"hints\":[]}]}\n"
+      },
+      "python": {
+        "ok": true,
+        "attempts": 1,
+        "detail": ""
+      }
+    },
+    {
+      "id": "reverse",
+      "qal": {
+        "ok": false,
+        "attempts": 3,
+        "detail": "{\"diagnostics\":[{\"code\":\"E0100\",\"kind\":\"parse\",\"def\":\"\",\"path\":\"3:32\",\"message\":\"unexpected character `&`\",\"hints\":[]}]}\n"
+      },
+      "python": {
+        "ok": true,
+        "attempts": 1,
+        "detail": ""
+      }
+    }
+  ]
+}

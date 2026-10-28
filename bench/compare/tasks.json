@@ -1,0 +1,7 @@
+[
+ {"id":"sum","prompt":"Read two integers separated by whitespace on stdin and print their sum followed by a newline.","tests":[{"stdin":"2 3\n","stdout":"5\n"},{"stdin":"-4 10\n","stdout":"6\n"}]},
+ {"id":"factorial","prompt":"Read one non-negative integer n from stdin and print n! followed by a newline.","tests":[{"stdin":"5\n","stdout":"120\n"},{"stdin":"0\n","stdout":"1\n"}]},
+ {"id":"word_count","prompt":"Read all of stdin and print the number of whitespace-separated words followed by a newline.","tests":[{"stdin":"hello world\n","stdout":"2\n"},{"stdin":"a  b\tc\n","stdout":"3\n"}]},
+ {"id":"max_list","prompt":"Read integers separated by whitespace on stdin and print the largest one followed by a newline.","tests":[{"stdin":"3 9 2 7\n","stdout":"9\n"},{"stdin":"-5 -2 -9\n","stdout":"-2\n"}]},
+ {"id":"reverse","prompt":"Read one line from stdin and print the line reversed, without the trailing newline, followed by a newline.","tests":[{"stdin":"abc\n","stdout":"cba\n"},{"stdin":"qal\n","stdout":"laq\n"}]}
+]
