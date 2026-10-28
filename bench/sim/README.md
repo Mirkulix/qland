@@ -104,3 +104,25 @@ qal test square_integral linear_integral -> 2 passed
 
 QAL owns the contract and the loop shape; a host GPU/NumPy implementation can
 replace the inner numerical work later.
+
+## Queue-driven simulation
+
+`sim_queue.qal` imports `qal_event_queue`, schedules 1000 tick events and processes
+them in order; each event triggers a randomized transfer.
+
+```sh
+qal init
+qal import qal/packages/event_queue.qalpkg
+qal define bench/sim/sim_queue.qal
+qal run main --allow io,rand
+```
+
+Verified:
+
+```text
+agents=100 total=100000 events=1000 tick=1000
+```
+
+The queue is the scheduler; `transfer` keeps the conservation contract.
+`add_events` carries a bounded-range precondition; the prover reports `transfer`'s
+map-based conservation as `unknown` (checked at runtime), which is honest.

@@ -1,0 +1,49 @@
+# Event-queue-driven 100-agent simulation. Queue definitions are imported from
+# qal_event_queue; this file adds the agents and the processing loop.
+
+type Agent = { cash: Int }
+type Sim = { agents: Map[Int, Agent], tick: Int }
+
+fn add_cash(acc: Int, a: Agent) -> Int = acc + a.cash
+fn total(sim: Sim) -> Int = fold(map_values(sim.agents), 0, add_cash)
+
+fn add_agent(m: Map[Int, Agent], i: Int) -> Map[Int, Agent] =
+  map_put(m, i, Agent { cash: 1000 })
+
+fn init(n: Int) -> Sim = Sim { agents: fold(range(0, n), map_new(), add_agent), tick: 0 }
+
+fn transfer(sim: Sim, from: Int, to: Int, amount: Int) -> Sim
+  req amount >= 0
+  ens total(r) == total(sim)
+= if from == to then sim else match map_get(sim.agents, from) {
+    None => sim,
+    Some(src) => if src.cash < amount then sim
+      else match map_get(sim.agents, to) {
+        None => sim,
+        Some(dst) => Sim {
+          agents: map_put(map_put(sim.agents, from, Agent { cash: src.cash - amount }),
+                          to, Agent { cash: dst.cash + amount }),
+          tick: sim.tick + 1,
+        },
+      },
+  }
+
+fn step(sim: Sim) -> Sim !rand =
+  let n = map_size(sim.agents) in
+  if n < 2 then sim
+  else transfer(sim, rand_int(0, n - 1), rand_int(0, n - 1), rand_int(0, 50))
+
+fn add_events(q: Queue, i: Int, n: Int) -> Queue
+  req 0 <= i && i <= n && n <= 1000000
+= if i >= n then q else add_events(enqueue(q, i, "tick", ""), i + 1, n)
+
+fn process(q: Queue, sim: Sim, n: Int) -> Sim !rand =
+  if n <= 0 then sim else match pop(q) {
+    None => sim,
+    Some(p) => process(p.q, step(Sim { agents: sim.agents, tick: p.ev.at }), n - 1),
+  }
+
+fn main(args: List[Str]) -> Int !io !rand =
+  let q = add_events(empty(), 0, 1000) in
+  let s = process(q, init(100), 1000) in
+  { print("agents=100 total=" ++ from_int(total(s)) ++ " events=1000 tick=" ++ from_int(s.tick)); 0 }
