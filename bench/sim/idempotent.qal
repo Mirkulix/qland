@@ -1,0 +1,48 @@
+# Exactly-once cross-shard transfers: a transaction id makes a replay a no-op.
+
+type Agent = { cash: Int }
+type Sim = { agents: Map[Int, Agent], tick: Int }
+type Pair = { a: Sim, b: Sim }
+type Txn = { pair: Pair, seen: Map[Int, Bool] }
+
+fn add_cash(acc: Int, a: Agent) -> Int = acc + a.cash
+fn total(sim: Sim) -> Int = fold(map_values(sim.agents), 0, add_cash)
+fn add_agent(m: Map[Int, Agent], i: Int) -> Map[Int, Agent] = map_put(m, i, Agent { cash: 1000 })
+fn init(n: Int) -> Sim = Sim { agents: fold(range(0, n), map_new(), add_agent), tick: 0 }
+
+fn transfer_between(x: Pair, from: Int, to: Int, amount: Int) -> Pair
+  req amount >= 0
+  ens total(r.a) + total(r.b) == total(x.a) + total(x.b)
+= match map_get(x.a.agents, from) {
+    None => x,
+    Some(src) => if src.cash < amount then x
+      else match map_get(x.b.agents, to) {
+        None => x,
+        Some(dst) => Pair {
+          a: Sim { agents: map_put(x.a.agents, from, Agent { cash: src.cash - amount }), tick: x.a.tick + 1 },
+          b: Sim { agents: map_put(x.b.agents, to, Agent { cash: dst.cash + amount }), tick: x.b.tick + 1 },
+        },
+      },
+  }
+
+fn once(t: Txn, id: Int, from: Int, to: Int, amount: Int) -> Txn
+  req id >= 0 && amount >= 0
+  ens total(r.pair.a) + total(r.pair.b) == total(t.pair.a) + total(t.pair.b)
+= if map_has(t.seen, id) then t
+  else Txn { pair: transfer_between(t.pair, from, to, amount), seen: map_put(t.seen, id, true) }
+
+test replay_is_noop =
+  let t0 = Txn { pair: Pair { a: init(1), b: init(1) }, seen: map_new() } in
+  let t1 = once(t0, 7, 0, 0, 300) in
+  let t2 = once(t1, 7, 0, 0, 300) in
+  match map_get(t2.pair.a.agents, 0) {
+    None => false,
+    Some(a) => a.cash == 700 && total(t2.pair.a) + total(t2.pair.b) == 2000,
+  }
+
+test first_debits =
+  let t0 = Txn { pair: Pair { a: init(1), b: init(1) }, seen: map_new() } in
+  match map_get(once(t0, 1, 0, 0, 250).pair.a.agents, 0) {
+    None => false,
+    Some(a) => a.cash == 750,
+  }

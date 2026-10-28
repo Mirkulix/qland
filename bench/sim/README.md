@@ -207,3 +207,16 @@ fn transfer_between(x: Pair, from: Int, to: Int, amount: Int) -> Pair
 Verified: `cross_conserves` and `cross_debits` pass; signed registry install
 SHA-256 `1672d02a…`. The host still owns coordination/ordering; QAL owns the
 two-shard conservation contract.
+
+## Exactly-once cross-shard transfers
+
+`idempotent.qal` (package `qal_sim_once`, 12 defs) wraps a transfer in a `Txn`
+with a `seen` map:
+
+```qal
+fn once(t: Txn, id: Int, from: Int, to: Int, amount: Int) -> Txn
+```
+
+A replay with the same `id` returns the unchanged state. Tested:
+`replay_is_noop` (balance stays 700 after two calls) and `first_debits`; total
+conservation holds. Signed install SHA-256 `99547aa9…`.
