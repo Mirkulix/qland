@@ -12,6 +12,9 @@ EXPECT = {
     "test_failure.qal": [("test", 1, None)],
     "contract_ok.qal": [("prove", 0, None)],
     "contract_bad.qal": [("prove", 1, None)],
+    "effect_denied.qal": [("run", 1, "E0508")],
+    "unknown_name.qal": [("check", 1, "E0201")],
+    "parse_error.qal": [("check", 1, "E0100")],
 }
 
 
@@ -30,7 +33,8 @@ def main():
         code, out = run([str(QAL), "init"], wd)
         for verb, want, _ in checks:
             code, out = run([str(QAL), verb, name], wd)
-            ok = (code == want)
+            needle = checks[0][2] if False else next((c[2] for c in checks if c[0] == verb), None)
+            ok = (code == want and (needle is None or needle in out))
             results.append({"case": name, "verb": verb, "exit": code, "want": want, "ok": ok,
                             "output": out[-500:]})
         shutil.rmtree(wd, ignore_errors=True)

@@ -9,6 +9,9 @@ Five independent cases pin the minimum observable behavior of the compiler:
 | `test_failure.qal` | `test` | exit 1, `passed: 0` |
 | `contract_ok.qal` | `prove` | exit 0, `proven: 1` |
 | `contract_bad.qal` | `prove` | exit 1, `refuted: 1` |
+| `effect_denied.qal` | `run` | exit 1, `E0508` permission denied |
+| `unknown_name.qal` | `check` | exit 1, `E0201` |
+| `parse_error.qal` | `check` | exit 1, `E0100` |
 
 Run:
 
@@ -16,7 +19,7 @@ Run:
 QAL_BIN=$PWD/qal/target/release/qal python3 bench/conformance/run.py
 ```
 
-Verified result: all five cases pass (`exit 0` from the runner), including the
+Verified result: all eight cases pass (`exit 0` from the runner), including the
 refuted-contract counterexample `x = 1`.
 
 This is the seed of the normative conformance suite: every QAL implementation
