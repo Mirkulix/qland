@@ -56,3 +56,7 @@ signed registry SHA-256 `9d905d7e…`; `transfer` keeps `ens total`.
 `qal_import` over MCP installs a local `.qalpkg` from the project (relative
 path, no signature check; use the registry client for signed HTTP installs).
 Verified with `event_queue.qalpkg`: import succeeds and its three tests pass.
+
+MCP package roundtrip: `qal_import` a local `.qalpkg`, `qal_export` a prefix
+and dependencies to another `.qalpkg`, then import that elsewhere. Verified with
+`enqueue` (3 defs) between two projects.

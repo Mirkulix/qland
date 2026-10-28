@@ -144,3 +144,9 @@ failed with E0951 (`no QAL compiler driver`); seeding the self-host backend when
 the driver is absent fixed it. Verified: import `event_queue.qalpkg`, then
 `push_size`, `pop_order`, `pop_empty` all pass; ordinary stores now expose 16
 tools. The tool is not in the team policy (team stores import only std).
+
+`qal_export` packages stored definitions into a project-relative `.qalpkg`
+(prefix + dependencies). Verified MCP roundtrip: import `event_queue.qalpkg`,
+export prefix `enqueue` to `out.qalpkg` (3 defs, hash 861212ff…), then import
+that into a second project and query `enqueue` -> `fn(Queue, Int, Str, Str) ->
+Queue`. Ordinary stores expose 17 tools.
