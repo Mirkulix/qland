@@ -1,0 +1,33 @@
+# Cross-shard transfer primitive: two shard states, one conservation contract.
+
+type Agent = { cash: Int }
+type Sim = { agents: Map[Int, Agent], tick: Int }
+type Pair = { a: Sim, b: Sim }
+
+fn add_cash(acc: Int, a: Agent) -> Int = acc + a.cash
+fn total(sim: Sim) -> Int = fold(map_values(sim.agents), 0, add_cash)
+
+fn add_agent(m: Map[Int, Agent], i: Int) -> Map[Int, Agent] = map_put(m, i, Agent { cash: 1000 })
+fn init(n: Int) -> Sim = Sim { agents: fold(range(0, n), map_new(), add_agent), tick: 0 }
+
+fn transfer_between(x: Pair, from: Int, to: Int, amount: Int) -> Pair
+  req amount >= 0
+  ens total(r.a) + total(r.b) == total(x.a) + total(x.b)
+= match map_get(x.a.agents, from) {
+    None => x,
+    Some(src) => if src.cash < amount then x
+      else match map_get(x.b.agents, to) {
+        None => x,
+        Some(dst) => Pair {
+          a: Sim { agents: map_put(x.a.agents, from, Agent { cash: src.cash - amount }), tick: x.a.tick + 1 },
+          b: Sim { agents: map_put(x.b.agents, to, Agent { cash: dst.cash + amount }), tick: x.b.tick + 1 },
+        },
+      },
+  }
+
+test cross_conserves = let p = transfer_between(Pair { a: init(2), b: init(2) }, 0, 1, 300) in
+  total(p.a) + total(p.b) == 4000
+test cross_debits = match map_get(transfer_between(Pair { a: init(1), b: init(1) }, 0, 0, 300).a.agents, 0) {
+  None => false,
+  Some(a) => a.cash == 700,
+}

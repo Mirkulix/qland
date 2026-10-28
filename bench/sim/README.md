@@ -193,3 +193,17 @@ its own 256 MiB budget.
 
 Caveat: shards are independent; transfers do not cross shard boundaries. A
 production sharded runtime must handle cross-shard messages explicitly.
+
+## Cross-shard primitive
+
+`cross.qal` (package `qal_sim_cross`, 10 defs) moves cash between two shard
+states in one call:
+
+```qal
+fn transfer_between(x: Pair, from: Int, to: Int, amount: Int) -> Pair
+  ens total(r.a) + total(r.b) == total(x.a) + total(x.b)
+```
+
+Verified: `cross_conserves` and `cross_debits` pass; signed registry install
+SHA-256 `1672d02a…`. The host still owns coordination/ordering; QAL owns the
+two-shard conservation contract.
