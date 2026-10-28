@@ -86,3 +86,13 @@ Fixture evidence (`tools/fixtures/`):
 
 The gate is deliberately not a proof: it forces a human/agent to add a test,
 a proof result and a review note before the contract disappears.
+
+## One-command verification
+
+```sh
+./tools/verify_all.sh
+```
+
+Runs the conformance suite, the signed-registry self-test and the contract-diff
+gate. Current evidence: 12 conformance checks, 13 registry checks, 0 contract
+diff findings.

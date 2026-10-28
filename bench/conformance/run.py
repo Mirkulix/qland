@@ -38,6 +38,15 @@ def main():
             results.append({"case": name, "verb": verb, "exit": code, "want": want, "ok": ok,
                             "output": out[-500:]})
         shutil.rmtree(wd, ignore_errors=True)
+    # contract-diff gate fixtures are part of the normative behavior
+    tool = REPO / "tools" / "contract_diff.py"
+    fixtures = REPO / "tools" / "fixtures"
+    for after, want in (("after_same.qal", 0), ("after_removed.qal", 1), ("after_weakened.qal", 1)):
+        code, out = run([sys.executable, str(tool), "--before", str(fixtures / "before.qal"),
+                         "--after", str(fixtures / after)], REPO)
+        results.append({"case": f"contract_diff/{after}", "verb": "gate", "exit": code,
+                        "want": want, "ok": code == want, "output": out[-300:]})
+
     print(json.dumps({"results": results}, indent=2))
     return 0 if all(r["ok"] for r in results) else 1
 
