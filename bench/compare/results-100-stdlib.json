@@ -303,7 +303,7 @@
     {
       "id": "replace_space-0",
       "qal": {
-        "ok": false,
+        "ok": true,
         "detail": ""
       },
       "python": {
@@ -313,7 +313,7 @@
     {
       "id": "replace_space-1",
       "qal": {
-        "ok": false,
+        "ok": true,
         "detail": ""
       },
       "python": {
@@ -323,7 +323,7 @@
     {
       "id": "replace_space-2",
       "qal": {
-        "ok": false,
+        "ok": true,
         "detail": ""
       },
       "python": {
@@ -333,7 +333,7 @@
     {
       "id": "replace_space-3",
       "qal": {
-        "ok": false,
+        "ok": true,
         "detail": ""
       },
       "python": {
@@ -343,7 +343,7 @@
     {
       "id": "replace_space-4",
       "qal": {
-        "ok": false,
+        "ok": true,
         "detail": ""
       },
       "python": {
@@ -353,7 +353,7 @@
     {
       "id": "replace_space-5",
       "qal": {
-        "ok": false,
+        "ok": true,
         "detail": ""
       },
       "python": {
@@ -363,17 +363,17 @@
     {
       "id": "replace_space-6",
       "qal": {
-        "ok": false,
+        "ok": true,
         "detail": ""
       },
       "python": {
-        "ok": true
+        "ok": false
       }
     },
     {
       "id": "replace_space-7",
       "qal": {
-        "ok": false,
+        "ok": true,
         "detail": ""
       },
       "python": {
@@ -383,17 +383,17 @@
     {
       "id": "replace_space-8",
       "qal": {
-        "ok": false,
+        "ok": true,
         "detail": ""
       },
       "python": {
-        "ok": true
+        "ok": false
       }
     },
     {
       "id": "replace_space-9",
       "qal": {
-        "ok": false,
+        "ok": true,
         "detail": ""
       },
       "python": {

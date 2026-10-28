@@ -8,7 +8,7 @@ sys.path.insert(0, str(HERE))
 from run import env, api, strip_code, run_qal, run_py  # noqa: E402
 from scale import calls  # noqa: E402
 from qal_lower import lower  # noqa: E402
-from ast_fix import fix  # noqa: E402
+from ast_fix import fix, typ  # noqa: E402
 
 ALLOWED = {"read_all", "print", "from_int", "len", "trim", "to_upper", "to_lower",
            "replace", "split", "contains", "starts_with", "slice"}
@@ -119,7 +119,12 @@ def main():
                 bad = [c for c in calls(obj["expr"]) if c not in ALLOWED]
                 if bad:
                     raise ValueError(f"call not allowed: {bad}")
-                expr = lower(fix(obj["expr"]))
+                fixed = fix(obj["expr"])
+                if typ(fixed) == "Str":
+                    fixed = {"call": "print", "args": [fixed]}
+                elif typ(fixed) == "Int":
+                    fixed = {"call": "print", "args": [{"call": "from_int", "args": [fixed]}]}
+                expr = lower(fixed)
                 src = f"fn main(args: List[Str]) -> Int !io = {{ {expr}; 0 }}\n"
                 code, out = run_qal(src, t["tests"][0]["stdin"])
                 ok = code == 0 and out == t["tests"][0]["stdout"]
