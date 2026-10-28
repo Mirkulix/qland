@@ -261,3 +261,15 @@ fn merge_checked(a, b) -> Merged
 Tests `same_payload_no_conflict`, `different_amount_conflict`, `disjoint_merges`
 pass. Signed install SHA-256 `18df143d…`. The host decides how to resolve a
 reported conflict; QAL never silently overwrites.
+
+## Conflict resolution policies
+
+`resolve.qal` (package `qal_sim_resolve`, 13 defs) adds deterministic policies:
+
+- `"min"` / `"max"` pick the lower/higher amount,
+- `"reject"` keeps the conflict and leaves the original entry,
+- `merge_policy(a, b, policy) -> Merged`.
+
+Tests `min_resolves_to_lower`, `max_resolves_to_higher`,
+`reject_keeps_conflict` pass. Signed install SHA-256 `2e7f32f8…`. The policy name
+is the host's choice; QAL makes the result deterministic and auditable.
