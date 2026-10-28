@@ -104,7 +104,9 @@ variants; helper prelude still task-specific.
 
 ## Stdlib-only reality check
 
-With no task-specific helper (only core stdlib), the same AST agent scores
-**10/100** vs Python 90/100. Failures are schema/type errors (positional AST
-arrays, `if` as a call, missing `from_int`), not compiler bugs. The 100/100
-helper pilot proves the surface; it does not prove general composition.
+With no task-specific helper (only core stdlib), the first AST agent scored
+**10/100** vs Python 90/100. A strict recursive JSON schema in a forced tool
+call, plus dialect/type normalisation, raised that to **84/100** (Python 92/100).
+Remaining failures are semantic/output edges, not parser crashes. The 100/100
+helper pilot proves the surface; the 84/100 stdlib run proves the constrained
+schema is necessary but not sufficient for general composition.

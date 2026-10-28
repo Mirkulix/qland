@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """100 tasks with stdlib only (no task-specific helper prelude)."""
-import json, os, sys
+import json, os, sys, urllib.request
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 from run import env, api, strip_code, run_qal, run_py  # noqa: E402
 from scale import calls  # noqa: E402
-from ast_run import lower  # noqa: E402
+from qal_lower import lower  # noqa: E402
+from ast_fix import fix  # noqa: E402
 
 ALLOWED = {"read_all", "print", "from_int", "len", "trim", "to_upper", "to_lower",
            "replace", "split", "contains", "starts_with", "slice"}
@@ -60,6 +61,45 @@ def expr_for(fam):
     raise ValueError(fam)
 
 
+AST_SCHEMA = {
+    "type": "object",
+    "properties": {"expr": {"$ref": "#/$defs/expr"}},
+    "required": ["expr"], "additionalProperties": False,
+    "$defs": {"expr": {"oneOf": [
+        {"type": "object", "properties": {
+            "call": {"type": "string", "enum": sorted(ALLOWED)},
+            "args": {"type": "array", "items": {"$ref": "#/$defs/expr"}}},
+         "required": ["call", "args"], "additionalProperties": False},
+        {"type": "object", "properties": {
+            "if": {"$ref": "#/$defs/expr"}, "then": {"$ref": "#/$defs/expr"},
+            "else": {"$ref": "#/$defs/expr"}},
+         "required": ["if", "then", "else"], "additionalProperties": False},
+        {"type": "object", "properties": {"str": {"type": "string"}},
+         "required": ["str"], "additionalProperties": False},
+        {"type": "object", "properties": {"int": {"type": "integer"}},
+         "required": ["int"], "additionalProperties": False},
+        {"type": "object", "properties": {"list": {"type": "array", "items": {"$ref": "#/$defs/expr"}}},
+         "required": ["list"], "additionalProperties": False},
+    ]}},
+}
+
+
+def api_tool(e, user):
+    base = e.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com").rstrip("/")
+    schema = AST_SCHEMA
+    body = json.dumps({"model": e.get("DEEPSEEK_MODEL", "deepseek-chat"),
+                       "messages": [{"role": "user", "content": user}],
+                       "tools": [{"type": "function", "function": {"name": "emit_ast",
+                                  "description": "Emit the AST", "parameters": schema}}],
+                       "tool_choice": {"type": "function", "function": {"name": "emit_ast"}},
+                       "temperature": 0}).encode()
+    req = urllib.request.Request(base + "/chat/completions", data=body,
+                                 headers={"Authorization": "Bearer " + e["DEEPSEEK_API_KEY"],
+                                          "Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=120) as r:
+        return json.loads(r.read().decode())
+
+
 def main():
     e = env()
     if not e.get("DEEPSEEK_API_KEY"):
@@ -74,12 +114,12 @@ def main():
                 "to_upper, to_lower, replace, split, contains, starts_with, slice. Return {expr}.")
         for attempt in range(1, 3):
             try:
-                r = api(e, 'Return only JSON {"expr": <call tree>}. No prose.', user, 256)
-                obj = json.loads(strip_code(r["choices"][0]["message"]["content"]))
+                r = api_tool(e, user)
+                obj = json.loads(r["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"])
                 bad = [c for c in calls(obj["expr"]) if c not in ALLOWED]
                 if bad:
                     raise ValueError(f"call not allowed: {bad}")
-                expr = lower(obj["expr"])
+                expr = lower(fix(obj["expr"]))
                 src = f"fn main(args: List[Str]) -> Int !io = {{ {expr}; 0 }}\n"
                 code, out = run_qal(src, t["tests"][0]["stdin"])
                 ok = code == 0 and out == t["tests"][0]["stdout"]

@@ -6,6 +6,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 from run import env, api, run_qal, strip_code  # noqa: E402
+from qal_lower import lower  # noqa: E402
 
 TASKS = {
     "sum": ("Int", "sum_all"),
