@@ -328,3 +328,16 @@ fn replicate(c: Cluster, e: LogEntry) -> Cluster
 Tests `majority_commits`, `all_three_append`, `divergent_follower_rejected`
 pass. Signed install SHA-256 `c5dc86dc…`. Transport, retries and leader
 heartbeats stay with the host.
+
+## Log compaction
+
+`snapshot.qal` (package `qal_sim_snapshot`, 10 defs) compacts a committed
+prefix into a snapshot and keeps the suffix:
+
+```qal
+fn compact(log: RaftLog, index: Int, state: Str) -> Compacted
+```
+
+Tests `compact_keeps_suffix`, `compact_beyond_commit_is_refused`,
+`compact_after_all` pass. Signed install SHA-256 `cd726b4d…`. Snapshots are
+QAL data; durable storage/transport stay with the host.

@@ -1,0 +1,36 @@
+# Log compaction: keep a snapshot prefix, retain entries after it.
+
+type LogEntry = { index: Int, term: Int, cmd: Str }
+type RaftLog = { entries: List[LogEntry], commit: Int }
+type Snapshot = { last_index: Int, last_term: Int, state: Str }
+type Compacted = { log: RaftLog, snapshot: Option[Snapshot] }
+
+fn at(log: RaftLog, index: Int) -> Option[LogEntry] =
+  if index <= 0 then None else get(log.entries, index - 1)
+
+fn compact(log: RaftLog, index: Int, state: Str) -> Compacted
+  req index >= 0
+= if index > log.commit then Compacted { log: log, snapshot: None }
+  else match at(log, index) {
+    None => Compacted { log: log, snapshot: None },
+    Some(e) => Compacted {
+      log: RaftLog { entries: filter(log.entries, fn(x) => x.index > index), commit: log.commit },
+      snapshot: Some(Snapshot { last_index: e.index, last_term: e.term, state: state }),
+    },
+  }
+
+fn sample() -> RaftLog =
+  RaftLog {
+    entries: [LogEntry { index: 1, term: 1, cmd: "a" },
+              LogEntry { index: 2, term: 1, cmd: "b" },
+              LogEntry { index: 3, term: 2, cmd: "c" }],
+    commit: 3,
+  }
+
+test compact_keeps_suffix =
+  let c = compact(sample(), 2, "snap") in
+  len(c.log.entries) == 1 && (match c.snapshot { Some(s) => s.last_index == 2 && s.last_term == 1, None => false })
+
+test compact_beyond_commit_is_refused = match compact(sample(), 4, "snap").snapshot { Some(_) => false, None => true }
+
+test compact_after_all = len(compact(sample(), 3, "snap").log.entries) == 0

@@ -28,6 +28,11 @@ run_case numerics
 "$QAL" define "$REPO/bench/sim/numerics.qal" >/dev/null
 "$QAL" test square_integral linear_integral >/dev/null
 
+# log compaction
+run_case snapshot
+"$QAL" define "$REPO/bench/sim/snapshot.qal" >/dev/null
+"$QAL" test compact_keeps_suffix compact_beyond_commit_is_refused compact_after_all >/dev/null
+
 # raft replication
 run_case repl
 "$QAL" define "$REPO/bench/sim/repl.qal" >/dev/null
@@ -110,4 +115,4 @@ run_case dashboard
 printf '[{"method":"GET","path":"/metrics"}]\n' > reqs.json
 "$QAL" request handle reqs.json --allow io | grep -q '"total":100000'
 
-echo "simulation: queue 3, tensor 3, numerics 2, repl 3, raft 4, election 3, quorum 4, resolve 3, conflict 3, merge 3, journal 2, twopc 2, once 2, cross 2, sim_package 2, sim 100000, queue-sim 1000 events, shards 10, dashboard 200"
+echo "simulation: queue 3, tensor 3, numerics 2, snapshot 3, repl 3, raft 4, election 3, quorum 4, resolve 3, conflict 3, merge 3, journal 2, twopc 2, once 2, cross 2, sim_package 2, sim 100000, queue-sim 1000 events, shards 10, dashboard 200"
