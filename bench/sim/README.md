@@ -408,3 +408,16 @@ GET  /state                -> {"leader":1,"term":2,"at":100}
 
 The host owns TCP/TLS and retries; QAL owns the message contract and durable
 state transition.
+
+## Three-node QAL cluster
+
+`cluster_run.py` starts three `qal serve handle` processes, each with its own
+project and `node_state.txt`, then posts the same `hb:1:2:100` heartbeat to all
+three and reads `/state`:
+
+```text
+cluster: 3 QAL nodes accepted hb:1:2:100 and persisted it
+```
+
+This is the transport integration for the Raft node: HTTP between hosts, QAL
+handler and durable state in each node.
