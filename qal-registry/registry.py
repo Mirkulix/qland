@@ -99,7 +99,8 @@ def cmd_publish(args):
     if not dest.exists():
         shutil.copy2(src, dest)
     entry = {"name": name, "defs": defs, "file": f"packages/{digest}.qalpkg",
-             "version": args.version, "published_at": datetime.datetime.now(datetime.timezone.utc).isoformat()}
+             "version": args.version, "published_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+             "dependencies": args.depends}
     if args.key:
         sig, pub = sign_digest(digest, args.key)
         entry["signature"] = sig
@@ -157,6 +158,36 @@ def cmd_trust(args):
     print(json.dumps({"trusted": raw}, indent=2))
 
 
+def check_entry(sha, ent, trust):
+    src = ROOT / ent["file"]
+    if not src.exists() or sha256(src) != sha:
+        return False, "hash"
+    if trust:
+        if not ent.get("signature") or ent.get("public_key") not in trusted_keys():
+            return False, "untrusted"
+        if not verify_digest(sha, ent["signature"], ent["public_key"]):
+            return False, "signature"
+    return True, "ok"
+
+
+def check_graph(sha, idx, trust, seen=None):
+    seen = seen or set()
+    if sha in seen:
+        return False, "cycle"
+    seen.add(sha)
+    ent = idx["packages"].get(sha)
+    if not ent:
+        return False, "missing"
+    ok, why = check_entry(sha, ent, trust)
+    if not ok:
+        return False, why
+    for dep in ent.get("dependencies", []):
+        ok, why = check_graph(dep, idx, trust, seen)
+        if not ok:
+            return False, why
+    return True, "ok"
+
+
 def cmd_resolve(args):
     idx = load_index()
     hits = [(h, e) for h, e in idx["packages"].items() if e.get("name") == args.name]
@@ -164,8 +195,12 @@ def cmd_resolve(args):
         sys.exit("unknown package name")
     hits.sort(key=lambda he: (he[1].get("version", ""), he[1].get("published_at", "")))
     h, e = hits[-1]
+    ok, why = check_graph(h, idx, args.trust) if args.trust else (True, "not-checked")
     print(json.dumps({"name": e["name"], "version": e.get("version"), "sha256": h,
-                      "signed": bool(e.get("signature")), "defs": e.get("defs")}, indent=2))
+                      "signed": bool(e.get("signature")), "defs": e.get("defs"),
+                      "dependencies": e.get("dependencies", []), "ok": ok,
+                      "check": why}, indent=2))
+    sys.exit(0 if ok else 1)
 
 
 def cmd_index(args):
@@ -175,11 +210,11 @@ def cmd_index(args):
 def main():
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest="cmd", required=True)
-    p = sub.add_parser("publish"); p.add_argument("package"); p.add_argument("--key"); p.add_argument("--version", default="0.1.0"); p.set_defaults(fn=cmd_publish)
+    p = sub.add_parser("publish"); p.add_argument("package"); p.add_argument("--key"); p.add_argument("--version", default="0.1.0"); p.add_argument("--depends", action="append", default=[]); p.set_defaults(fn=cmd_publish)
     f = sub.add_parser("fetch"); f.add_argument("sha256"); f.add_argument("--out", required=True); f.add_argument("--trust", action="store_true"); f.set_defaults(fn=cmd_fetch)
     v = sub.add_parser("verify"); v.add_argument("sha256"); v.add_argument("--trust", action="store_true"); v.set_defaults(fn=cmd_verify)
     t = sub.add_parser("trust"); t.add_argument("--public", required=True); t.set_defaults(fn=cmd_trust)
-    r = sub.add_parser("resolve"); r.add_argument("--name", required=True); r.set_defaults(fn=cmd_resolve)
+    r = sub.add_parser("resolve"); r.add_argument("--name", required=True); r.add_argument("--trust", action="store_true"); r.set_defaults(fn=cmd_resolve)
     i = sub.add_parser("index"); i.set_defaults(fn=cmd_index)
     args = ap.parse_args()
     args.fn(args)

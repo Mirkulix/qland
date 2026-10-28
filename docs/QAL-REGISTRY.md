@@ -17,8 +17,19 @@ python3 qal-registry/registry.py publish math.qalpkg --key key.pem --version 1.0
 python3 qal-registry/registry.py trust --public pub.pem
 python3 qal-registry/registry.py verify <sha256> --trust
 python3 qal-registry/registry.py resolve --name math
+python3 qal-registry/registry.py resolve --name age --trust
 python3 qal-registry/registry.py fetch <sha256> --out math.qalpkg --trust
 ```
+
+Dependencies are explicit package digests:
+
+```sh
+python3 qal-registry/registry.py publish age.qalpkg --key key.pem   --version 1.0.0 --depends <math-sha256>
+```
+
+`resolve --name age --trust` walks the dependency graph, re-hashes every
+package, requires a trusted signature for every node and fails on a missing
+package, a hash mismatch, an untrusted key or a cycle.
 
 Default store: `qal-registry/store`; override with `QAL_REGISTRY`.
 
@@ -64,8 +75,9 @@ Measured:
 ## Not yet
 
 - signatures cover the package digest, not the `# def … agent` provenance lines;
-- no dependency resolution beyond the file's own contents;
-- no HTTP server, auth, mirroring or garbage collection;
+- dependencies are registry metadata, not yet encoded inside `.qalpkg`;
+- no version ranges, no transitive fetch command, no HTTP server;
+- no mirroring or garbage collection;
 - no version ranges — a package is addressed by hash.
 
 Next: signed packages, an index by package name + version, and a resolver that
