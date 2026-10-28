@@ -126,3 +126,23 @@ agents=100 total=100000 events=1000 tick=1000
 The queue is the scheduler; `transfer` keeps the conservation contract.
 `add_events` carries a bounded-range precondition; the prover reports `transfer`'s
 map-based conservation as `unknown` (checked at runtime), which is honest.
+
+## Dashboard endpoint
+
+`dashboard.qal` is the QAL side of a dashboard: a pure JSON metrics endpoint.
+
+```sh
+qal init
+qal define bench/sim/dashboard.qal
+qal request handle reqs.json --allow io
+```
+
+Verified response:
+
+```json
+{"agents":100,"total":100000,"tick":1000,
+ "invariant":"total == 100000","source":"qal"}
+```
+
+`qal test` after define: `total_100` passed. The UI/renderer is external; QAL
+owns the metric values, the invariant and the HTTP/JSON contract.
