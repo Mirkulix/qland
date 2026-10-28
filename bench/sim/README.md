@@ -273,3 +273,16 @@ reported conflict; QAL never silently overwrites.
 Tests `min_resolves_to_lower`, `max_resolves_to_higher`,
 `reject_keeps_conflict` pass. Signed install SHA-256 `2e7f32f8…`. The policy name
 is the host's choice; QAL makes the result deterministic and auditable.
+
+## Majority quorum
+
+`quorum.qal` (package `qal_sim_quorum`, 8 defs) counts replica votes and returns
+a value only with a strict majority:
+
+```qal
+fn quorum(votes: List[Vote], n: Int) -> Option[Str]
+```
+
+Tests `majority_wins` (2/3), `single_wins`, `tie_has_no_quorum` (1/2),
+`empty_has_no_quorum` pass. Signed install SHA-256 `c2480194…`. The host
+collects votes and retries; QAL decides what counts as a quorum.
