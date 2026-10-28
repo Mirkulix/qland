@@ -51,6 +51,11 @@ packages:      27 .qalpkg
 The QAL line count includes the self-hosted compiler, std, examples and tests;
 Rust remains the bootstrap/host layer.
 
+The **new-code share** is a different number: `python3 tools/qal_first.py --base
+<ref>` counts added lines by kind. Over the last five commits it was 20 QAL lines
+of 245 added lines (8.2%); host tooling and docs dominated. This is the honest
+measure of how much of the *recent* work is QAL versus infrastructure.
+
 ## The architecture
 
 ```
