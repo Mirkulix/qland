@@ -565,7 +565,7 @@ fn stores_without_team_mode_are_unchanged() {
     std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o600)).unwrap();
     let mut c = t.mcp(Some(&file));
     c.initialize();
-    assert_eq!(c.tools().len(), 14);
+    assert_eq!(c.tools().len(), 15);
     let (err, v) = c.call("qal_define", json!({"source": "fn f() -> Int = 1", "agent": "me"}));
     assert!(!err && v.get("space").is_none() && v.get("notices").is_none(), "{v}");
     assert_eq!(c.call("qal_history", json!({"name": "f"})).1["history"][0]["agent"], "me");

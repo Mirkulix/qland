@@ -684,6 +684,13 @@ impl Server {
                 }
                 reply
             }
+            "qal_ast_schema" => {
+                let schema: serde_json::Value = serde_json::from_str(include_str!("../../../../qal-ast/schema.json"))
+                    .map_err(|e| format!("embedded AST schema is invalid: {e}"))?;
+                let mut out = ops::Output::default();
+                out.extra.insert("schema".into(), schema);
+                Reply::new(out, 0)
+            }
             "qal_define_ast" => {
                 let raw = a.required("ast")?;
                 let v: serde_json::Value = serde_json::from_str(&raw)
@@ -1247,12 +1254,13 @@ fn tools_with_team() -> Vec<J> {
     all
 }
 
-const TOOL_NAMES: [&str; 14] = ["qal_define", "qal_define_ast", "qal_test", "qal_prove", "qal_run", "qal_call", "qal_request", "qal_view", "qal_query", "qal_rename", "qal_delete", "qal_history", "qal_build", "qal_recall"];
+const TOOL_NAMES: [&str; 15] = ["qal_define", "qal_define_ast", "qal_ast_schema", "qal_test", "qal_prove", "qal_run", "qal_call", "qal_request", "qal_view", "qal_query", "qal_rename", "qal_delete", "qal_history", "qal_build", "qal_recall"];
 
 fn tool_params(tool: &str) -> &'static [&'static str] {
     match tool {
         "qal_define" => &["source", "agent", "entry", "cases", "allow", "change"],
         "qal_define_ast" => &["ast", "agent", "change"],
+        "qal_ast_schema" => &[],
         "qal_view" => &["names", "change"],
         "qal_query" => &["name", "type", "uses", "outline", "topic", "change"],
         "qal_test" => &["names", "seed", "change"],
@@ -1299,6 +1307,8 @@ pub fn tools() -> J {
              "entry": s("Entry point for `cases` (default main)."), "allow": list("Effects to grant for `cases`, as for qal_run.")}, "required": ["source"], "additionalProperties": false}},
         {"name": "qal_define_ast", "title": "Define QAL from a JSON AST", "description": "Lower a JSON AST (ast_version 1, schema qal-ast/schema.json) to QAL and define it exactly like qal_define: check, prove, test and store. The AST can carry main, types, effects, returns, tests and allowed_calls. This is the agent-native surface; invalid AST returns diagnostics before lowering.", "annotations": writes,
          "inputSchema": {"type": "object", "properties": {"ast": s("JSON AST document as a string."), "agent": agent}, "required": ["ast"], "additionalProperties": false}},
+        {"name": "qal_ast_schema", "title": "QAL AST v1 schema", "description": "Return the frozen JSON Schema for qal_define_ast (ast_version 1): expressions, types, effects, returns, tests, allowed_calls. Use it before emitting an AST.", "annotations": {"readOnlyHint": true, "openWorldHint": false},
+         "inputSchema": {"type": "object", "properties": {}, "additionalProperties": false}},
         {"name": "qal_test", "title": "Run QAL tests", "annotations": read_only,
          "description": "Run the stored tests and the generated property tests (all, or the named tests and functions; in a project, all means its own: `std.` tests run when named). A pure function with an `ens`, or that calls a function with `req`, gets a property test: 100 generated inputs that satisfy its `req`; any contract violation fails it, with a shrunk counterexample. Result: each test with passed true/false and the runtime error of a failing one, `properties` (passed, failed, gave_up, skipped), plus passed/failed counts.",
          "inputSchema": {"type": "object", "properties": {"names": list("Test or function names (default: all)."), "seed": {"type": "integer", "minimum": 0, "description": "Seed of the generated inputs (default 0)."}}, "additionalProperties": false}},
