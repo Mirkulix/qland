@@ -1,0 +1,25 @@
+# Heartbeat/timeout state for Raft followers.
+
+type Heartbeat = { leader: Int, term: Int, at: Int }
+type NodeState = { role: Str, term: Int, last_heartbeat: Int, leader: Int }
+
+fn on_heartbeat(s: NodeState, h: Heartbeat) -> NodeState
+  req h.term >= 0
+= if h.term < s.term then s
+  else NodeState { role: "follower", term: h.term, last_heartbeat: h.at, leader: h.leader }
+
+fn expired(s: NodeState, now: Int, timeout: Int) -> Bool
+  req now >= 0 && timeout > 0
+= now - s.last_heartbeat >= timeout
+
+fn on_timeout(s: NodeState, now: Int, timeout: Int) -> NodeState
+  req now >= 0 && timeout > 0
+= if expired(s, now, timeout) then NodeState { role: "candidate", term: s.term + 1, last_heartbeat: s.last_heartbeat, leader: -1 }
+  else s
+
+test heartbeat_resets = on_heartbeat(NodeState { role: "candidate", term: 2, last_heartbeat: 0, leader: -1 },
+  Heartbeat { leader: 1, term: 2, at: 100 }).role == "follower"
+test stale_term_ignored = on_heartbeat(NodeState { role: "follower", term: 5, last_heartbeat: 10, leader: 1 },
+  Heartbeat { leader: 2, term: 4, at: 20 }).leader == 1
+test timeout_promotes = on_timeout(NodeState { role: "follower", term: 1, last_heartbeat: 0, leader: 1 }, 100, 50).role == "candidate"
+test fresh_heartbeat_stays = on_timeout(NodeState { role: "follower", term: 1, last_heartbeat: 90, leader: 1 }, 100, 50).role == "follower"

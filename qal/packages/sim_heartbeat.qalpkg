@@ -1,0 +1,35 @@
+# qal-pkg 1
+# package qal_sim_heartbeat 5808d0ce009ad461ef85271d2aba3e8fd6619f939a50ea244c970f16f4ee21a8
+# def Heartbeat 0f543b33e3692fb2d3347b3d11df2bad57f993dfb56c4d1a1ad3875bf521202c cli
+# def NodeState 81333a1a31da9b5552342216c74b2a5faa990ced874981ea29b9db1e0a277737 cli
+# def expired d33cbdc2e959b3d12cbe40e95aadcd39dfef1ca53590c4e6b00b9be9467f36b0 cli
+# def fresh_heartbeat_stays d8b5b99b8763a63b9f5f3320e724020c6b1fd6a2e162d4c7e21761e0707cdf5b cli
+# def heartbeat_resets 200ee385d2afbd5efda08dc3035129ef2c820e35ce53e02aa62d14b49a6c4cb7 cli
+# def on_heartbeat 4b5e506d1d02afc32111bc6a2ae393c331434ee9cc285c162983ce8e93fce532 cli
+# def on_timeout 3aac348fa071053ea23373b1db3bdb67b4b68bc6c16cc8d47d7081dfd3ac2a97 cli
+# def stale_term_ignored e0add589609047bbc40fbe273a841f13154a859250d8162bdc2c533e1d284f1c cli
+# def timeout_promotes a148d57057970e5305f0a3bb724b3dbaf08dad2d727b89c6b2c5cf893283629b cli
+
+type Heartbeat = { leader: Int, term: Int, at: Int }
+
+type NodeState = { role: Str, term: Int, last_heartbeat: Int, leader: Int }
+
+fn expired(s: NodeState, now: Int, timeout: Int) -> Bool
+  req now >= 0 && timeout > 0
+= now - s.last_heartbeat >= timeout
+
+fn on_heartbeat(s: NodeState, h: Heartbeat) -> NodeState
+  req h.term >= 0
+= if h.term < s.term then s else NodeState { role: "follower", term: h.term, last_heartbeat: h.at, leader: h.leader }
+
+test heartbeat_resets = on_heartbeat(NodeState { role: "candidate", term: 2, last_heartbeat: 0, leader: -1 }, Heartbeat { leader: 1, term: 2, at: 100 }).role == "follower"
+
+fn on_timeout(s: NodeState, now: Int, timeout: Int) -> NodeState
+  req now >= 0 && timeout > 0
+= if expired(s, now, timeout) then NodeState { role: "candidate", term: s.term + 1, last_heartbeat: s.last_heartbeat, leader: -1 } else s
+
+test stale_term_ignored = on_heartbeat(NodeState { role: "follower", term: 5, last_heartbeat: 10, leader: 1 }, Heartbeat { leader: 2, term: 4, at: 20 }).leader == 1
+
+test fresh_heartbeat_stays = on_timeout(NodeState { role: "follower", term: 1, last_heartbeat: 90, leader: 1 }, 100, 50).role == "follower"
+
+test timeout_promotes = on_timeout(NodeState { role: "follower", term: 1, last_heartbeat: 0, leader: 1 }, 100, 50).role == "candidate"

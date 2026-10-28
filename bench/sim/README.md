@@ -354,3 +354,14 @@ fn install(snap: Snapshot, log: RaftLog) -> RaftLog
 
 Tests `install_keeps_newer`, `install_advances_commit`,
 `install_can_advance_empty` pass. Signed install SHA-256 `e3b84086…`.
+
+## Heartbeats and timeouts
+
+`heartbeat.qal` (package `qal_sim_heartbeat`, 9 defs) tracks a follower:
+
+- a heartbeat at an equal/newer term resets to follower and records the leader,
+- an older term is ignored,
+- no heartbeat for `timeout` promotes to candidate and increments the term.
+
+Tests `heartbeat_resets`, `stale_term_ignored`, `timeout_promotes`,
+`fresh_heartbeat_stays` pass. Signed install SHA-256 `77e9fe7a…`.
