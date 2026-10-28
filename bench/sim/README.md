@@ -67,3 +67,22 @@ qal test push_size pop_order pop_empty -> 3 passed
 ```
 
 The queue is QAL-owned logic; time and worker execution stay in the host.
+
+## Tensor package
+
+`tensor.qal` is a row-major `Tensor { rows, cols, data }` package:
+
+- `at`, `dot`, `matmul`, `identity`;
+- `matmul` has `ens r.rows == a.rows && r.cols == b.cols`;
+- tests: identity shape, identity multiplication and the 2x2 product (43).
+
+Exported as `qal/packages/tensor.qalpkg` (`qal_tensor`, 11 definitions), signed
+and installed through the registry:
+
+```text
+qal query --name matmul -> fn(Tensor, Tensor) -> Tensor
+qal test identity_shape identity_matmul matmul_2x2 -> 3 passed
+```
+
+This is the QAL-owned shape/contract layer; a GPU/NumPy host would implement the
+inner multiplication later.

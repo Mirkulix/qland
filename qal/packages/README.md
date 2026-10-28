@@ -30,3 +30,8 @@ definition only composes verified definitions.
 Deterministic event queue: `Event`, `Queue`, `Popped`, `enqueue`, `pop`, `size`,
 with three tests. Exported from `bench/sim/queue.qal`, 10 definitions, header
 hash `beadff7c…`, signed registry SHA-256 `d8e8b761…`.
+
+## `tensor.qalpkg` (`qal_tensor`)
+
+Row-major tensor with `at`, `dot`, `matmul`, `identity`, shape postcondition and
+three tests. 11 definitions, signed registry SHA-256 `09cc3dcf…`.

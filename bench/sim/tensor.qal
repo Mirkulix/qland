@@ -1,0 +1,35 @@
+# A small row-major tensor package with shape contracts.
+
+type Tensor = { rows: Int, cols: Int, data: List[Float] }
+
+fn at(t: Tensor, r: Int, c: Int) -> Float
+= if 0 <= r && r < t.rows && 0 <= c && c < t.cols then list_at(t.data, r * t.cols + c) else 0.0
+
+fn dot(a: Tensor, b: Tensor, r: Int, c: Int, k: Int, acc: Float) -> Float
+= if k >= a.cols then acc
+  else dot(a, b, r, c, k + 1, acc + at(a, r, k) * at(b, k, c))
+
+fn cells(a: Tensor, b: Tensor, r: Int, c: Int, acc: List[Float]) -> List[Float]
+= if c >= b.cols then acc
+  else cells(a, b, r, c + 1, push(acc, dot(a, b, r, c, 0, 0.0)))
+
+fn rows(a: Tensor, b: Tensor, r: Int, acc: List[Float]) -> List[Float]
+= if r >= a.rows then acc else rows(a, b, r + 1, cells(a, b, r, 0, acc))
+
+fn matmul(a: Tensor, b: Tensor) -> Tensor
+  ens r.rows == a.rows && r.cols == b.cols
+= Tensor { rows: a.rows, cols: b.cols, data: rows(a, b, 0, []) }
+
+fn ident_cells(i: Int, n: Int, acc: List[Float]) -> List[Float] =
+  if i >= n * n then acc
+  else ident_cells(i + 1, n, push(acc, if i % n == i / n then 1.0 else 0.0))
+
+fn identity(n: Int) -> Tensor
+= if n <= 0 then Tensor { rows: 0, cols: 0, data: [] }
+  else Tensor { rows: n, cols: n, data: ident_cells(0, n, []) }
+
+test identity_shape = identity(2).rows == 2 && identity(2).cols == 2
+test identity_matmul = at(matmul(identity(2), identity(2)), 0, 0) == 1.0
+test matmul_2x2 = at(matmul(
+  Tensor { rows: 2, cols: 2, data: [1.0, 2.0, 3.0, 4.0] },
+  Tensor { rows: 2, cols: 2, data: [5.0, 6.0, 7.0, 8.0] }), 1, 0) == 43.0
