@@ -52,3 +52,7 @@ sidecar in `bench/tensor/server.py`. 3 definitions, signed registry SHA-256
 Reusable simulation core: `Agent`, `Sim`, `init`, `total`, `transfer`, `step`,
 two tests (`transfer_conserves`, `self_transfer_is_noop`). 10 definitions,
 signed registry SHA-256 `9d905d7e…`; `transfer` keeps `ens total`.
+
+`qal_import` over MCP installs a local `.qalpkg` from the project (relative
+path, no signature check; use the registry client for signed HTTP installs).
+Verified with `event_queue.qalpkg`: import succeeds and its three tests pass.

@@ -691,6 +691,23 @@ impl Server {
                 out.extra.insert("schema".into(), schema);
                 Reply::new(out, 0)
             }
+            "qal_import" => {
+                if !qal_compiler::has_qal_driver() {
+                    let _ = qal_run::selfhost::init_seed_backend(qal_run::selfhost::default_jobs());
+                }
+                let rel = a.required("path")?;
+                let full = self.root.join(&rel);
+                let full = full.canonicalize().map_err(|e| format!("cannot read `{rel}`: {e}"))?;
+                let root = self.root.canonicalize().map_err(|e| format!("cannot resolve project root: {e}"))?;
+                if !full.starts_with(&root) {
+                    return Err("`path` must stay inside the project root".into());
+                }
+                if full.extension().and_then(|e| e.to_str()) != Some("qalpkg") {
+                    return Err("`path` must name a .qalpkg file".into());
+                }
+                let text = std::fs::read_to_string(&full).map_err(|e| format!("cannot read `{rel}`: {e}"))?;
+                ops::import(&ctx, &text)
+            }
             "qal_define_ast" => {
                 let raw = a.required("ast")?;
                 let v: serde_json::Value = serde_json::from_str(&raw)
@@ -1254,13 +1271,14 @@ fn tools_with_team() -> Vec<J> {
     all
 }
 
-const TOOL_NAMES: [&str; 15] = ["qal_define", "qal_define_ast", "qal_ast_schema", "qal_test", "qal_prove", "qal_run", "qal_call", "qal_request", "qal_view", "qal_query", "qal_rename", "qal_delete", "qal_history", "qal_build", "qal_recall"];
+const TOOL_NAMES: [&str; 16] = ["qal_define", "qal_define_ast", "qal_ast_schema", "qal_import", "qal_test", "qal_prove", "qal_run", "qal_call", "qal_request", "qal_view", "qal_query", "qal_rename", "qal_delete", "qal_history", "qal_build", "qal_recall"];
 
 fn tool_params(tool: &str) -> &'static [&'static str] {
     match tool {
         "qal_define" => &["source", "agent", "entry", "cases", "allow", "change"],
         "qal_define_ast" => &["ast", "agent", "change"],
         "qal_ast_schema" => &[],
+        "qal_import" => &["path", "change"],
         "qal_view" => &["names", "change"],
         "qal_query" => &["name", "type", "uses", "outline", "topic", "change"],
         "qal_test" => &["names", "seed", "change"],
@@ -1309,6 +1327,8 @@ pub fn tools() -> J {
          "inputSchema": {"type": "object", "properties": {"ast": s("JSON AST document as a string."), "agent": agent}, "required": ["ast"], "additionalProperties": false}},
         {"name": "qal_ast_schema", "title": "QAL AST v1 schema", "description": "Return the frozen JSON Schema for qal_define_ast (ast_version 1): expressions, types, effects, returns, tests, allowed_calls. Use it before emitting an AST.", "annotations": {"readOnlyHint": true, "openWorldHint": false},
          "inputSchema": {"type": "object", "properties": {}, "additionalProperties": false}},
+        {"name": "qal_import", "title": "Import a local QAL package", "description": "Import a .qalpkg file from the project (relative path). Every definition hash is checked and contracts are proven as by qal_define; a refuted contract rejects the import. This does not verify a registry signature: trust the source file/review, or use qal-registry client.py for signed HTTP installs.", "annotations": writes,
+         "inputSchema": {"type": "object", "properties": {"path": s("Project-relative path to a .qalpkg file.")}, "required": ["path"], "additionalProperties": false}},
         {"name": "qal_test", "title": "Run QAL tests", "annotations": read_only,
          "description": "Run the stored tests and the generated property tests (all, or the named tests and functions; in a project, all means its own: `std.` tests run when named). A pure function with an `ens`, or that calls a function with `req`, gets a property test: 100 generated inputs that satisfy its `req`; any contract violation fails it, with a shrunk counterexample. Result: each test with passed true/false and the runtime error of a failing one, `properties` (passed, failed, gave_up, skipped), plus passed/failed counts.",
          "inputSchema": {"type": "object", "properties": {"names": list("Test or function names (default: all)."), "seed": {"type": "integer", "minimum": 0, "description": "Seed of the generated inputs (default 0)."}}, "additionalProperties": false}},

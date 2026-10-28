@@ -138,3 +138,9 @@ verified over MCP: `$id` `https://qal.dev/ast/v1`, `anyOf [main|tests]`.
 
 `qal_ast_schema` is read-only for all four team roles (architect, implementer,
 verifier, reviewer); `cargo test -p qal-cli --test team` 17/17.
+
+`qal_import` imports a project-relative `.qalpkg` over MCP. The first attempt
+failed with E0951 (`no QAL compiler driver`); seeding the self-host backend when
+the driver is absent fixed it. Verified: import `event_queue.qalpkg`, then
+`push_size`, `pop_order`, `pop_empty` all pass; ordinary stores now expose 16
+tools. The tool is not in the team policy (team stores import only std).
