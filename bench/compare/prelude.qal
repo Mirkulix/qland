@@ -1,0 +1,25 @@
+fn add2(a: Int, b: Int) -> Int = a + b
+fn add_int(acc: List[Int], x: Str) -> List[Int] =
+  match to_int(trim(x)) { None => acc, Some(n) => push(acc, n) }
+
+fn parse_ints(s: Str) -> List[Int] = fold(split(trim(s), " "), [], add_int)
+
+fn sum_all(s: Str) -> Int = fold(parse_ints(s), 0, add2)
+
+fn max2(a: Int, b: Int) -> Int = if a > b then a else b
+
+fn max_all(s: Str) -> Int = fold(parse_ints(s), -1000000000, max2)
+
+fn fact(n: Int) -> Int = if n <= 1 then 1 else n * fact(n - 1)
+
+fn fact_first(s: Str) -> Int = match get(parse_ints(s), 0) { None => 0, Some(n) => fact(n) }
+
+fn nonempty(x: Str) -> Bool = len(trim(x)) > 0
+
+fn count_words(s: Str) -> Int = len(filter(split(trim(s), " "), nonempty))
+
+fn rev_add(acc: Str, x: Str) -> Str = x ++ acc
+
+fn reverse_line(s: Str) -> Str = fold(chars(trim(s)), "", rev_add)
+
+fn sum_expr(s: Str) -> Int = sum_all(s)

@@ -1,37 +1,54 @@
 # QAL vs Python pilot (5 tasks)
 
-Same five stdin tasks, same DeepSeek model, max attempts with the failure text fed
-back. The QAL arm gets the reference plus a complete `fn main` example; Python gets
-a standalone-script instruction.
+Same five stdin tasks, same DeepSeek model. Three QAL surfaces compared:
 
-## Results
+| Arm | Solved |
+|---|---|
+| QAL text, zero-shot | **0 / 5** |
+| QAL text, grammar-first + example | **0 / 5** |
+| QAL text, `deepseek-reasoner` | **0 / 5** |
+| **QAL JSON AST** | **5 / 5** |
+| Python | **5 / 5** |
 
-| Run | QAL | Python |
-|---|---|---|
-| first (zero-shot, 3 attempts) | **0/5** | **5/5** |
-| grammar-first prompt + example (4 attempts) | **0/5** | **5/5** |
-| `deepseek-reasoner` | **0/5** | **5/5** |
+Raw: `results.json`, `results-ast.json`.
 
-Raw: `results.json` (last run).
+## The finding
 
-## Failure modes
+The model cannot write QAL **text** zero-shot; it falls back to Python syntax
+(`&`, `'...'`, `def`), misses `fn main`, or writes `let` without `in`.
 
-- Python syntax in QAL (`&`, single quotes, `def`),
-- missing `fn main` or a top-level `{` instead of `=`,
-- `let` without `in`,
-- reasoner often returns no `main` at all (`E0510`).
+But it can emit a JSON expression AST, which a deterministic lowering turns into
+QAL:
 
-The parser errors are shallow, but the model does not repair them even with
-structured diagnostics. This is **not** a semantics problem; it is a **surface
-syntax** problem.
+```json
+{"expr": {"call": "sum_all", "args": [{"call": "read_all", "args": []}]}}
+```
 
-## Conclusion
+This is lowered to:
 
-A general LLM cannot write QAL zero-shot for trivial stdin tasks. Python wins
-because it is the model's strongest prior, not because Python is more correct.
+```qal
+fn main(args: List[Str]) -> Int !io = { print(from_int(sum_all(read_all()))); 0 }
+```
 
-The next step is an **agent-native surface**: let the model emit a JSON AST or
-tool calls that the compiler lowers to QAL. Human QAL syntax remains; the AST is
-the machine surface. See `docs/QAL-AGENT-SURFACE.md`.
+The AST arm solves **5/5**, equal to Python, while QAL text is **0/5**.
 
-This is a 5-task pilot, not the 100-task comparison.
+## Caveat
+
+The pilot provides a small task helper library (`bench/compare/prelude.qal`):
+`sum_all`, `fact_first`, `count_words`, `max_all`, `reverse_line`. The AST model
+chooses and composes calls; it does not write the helper bodies. This is a
+surface test, not a general QAL synthesis result. It is five tasks, not 100.
+
+## What it means
+
+- The bottleneck was the **surface syntax**, not the semantics.
+- An agent-native AST is a viable second surface over the same compiler.
+- Next: generalize the AST schema and freeze the helper library as verified
+  packages, then rerun on 100 tasks.
+
+## Reproduce
+
+```sh
+python3 bench/compare/run.py       # QAL text vs Python
+python3 bench/compare/ast_run.py   # QAL AST vs Python tasks
+```

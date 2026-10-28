@@ -1,0 +1,34 @@
+{
+  "results": [
+    {
+      "id": "sum",
+      "ok": 1,
+      "attempts": 1,
+      "detail": ""
+    },
+    {
+      "id": "factorial",
+      "ok": 1,
+      "attempts": 1,
+      "detail": ""
+    },
+    {
+      "id": "word_count",
+      "ok": 1,
+      "attempts": 1,
+      "detail": ""
+    },
+    {
+      "id": "max_list",
+      "ok": 1,
+      "attempts": 1,
+      "detail": ""
+    },
+    {
+      "id": "reverse",
+      "ok": 1,
+      "attempts": 1,
+      "detail": ""
+    }
+  ]
+}
