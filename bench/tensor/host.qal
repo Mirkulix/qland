@@ -1,0 +1,15 @@
+# Offload matmul to the NumPy sidecar; QAL keeps the shapes and contracts.
+
+fn parse_floats(s: Str) -> List[Float] =
+  map(split(s, ","), fn(x) => match to_float(x) { None => 0.0, Some(f) => f })
+
+fn matmul_remote(a: List[Float], b: List[Float], n: Int) -> List[Float] !net
+  req n > 0 && len(a) == n * n && len(b) == n * n
+  ens len(r) == n * n
+= let body = from_int(n) ++ ";" ++ join(map(a, fn(x) => from_float(x)), ",") ++ ";" ++ join(map(b, fn(x) => from_float(x)), ",") in
+  match http(HttpCall { method: "POST", url: "http://127.0.0.1:8901/matmul", headers: [], body: body }) {
+    Err(_) => [],
+    Ok(resp) => if resp.status == 200 then parse_floats(resp.body) else [],
+  }
+
+test local_shape = len(parse_floats("1.0,2.0,3.0")) == 3

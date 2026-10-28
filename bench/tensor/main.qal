@@ -1,0 +1,5 @@
+fn main(args: List[Str]) -> Int !io !net =
+  let a = [1.0, 2.0, 3.0, 4.0] in
+  let b = [5.0, 6.0, 7.0, 8.0] in
+  let r = matmul_remote(a, b, 2) in
+  { print(join(map(r, fn(x) => from_float(x)), ",")); 0 }
