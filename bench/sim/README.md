@@ -175,3 +175,21 @@ rules/contracts, not interpret every agent.
 The core (without `main`) is also `qal/packages/sim_core.qalpkg` (`qal_sim`),
 10 definitions; signed install verified, `transfer_conserves` and
 `self_transfer_is_noop` pass after import.
+
+## Million-agent sharding
+
+`shard.qal` is one independent shard; `shard.py` runs many processes so each has
+its own 256 MiB budget.
+
+```sh
+./bench/sim/shard.py --shards 100 --agents 10000 --steps 100
+# {"shards":100,"agents":10000,"steps":100,"total_agents":1000000,
+#  "total":1000000000,"expected":1000000000,"seconds":34.81}
+```
+
+- **1,000,000 agents**, 100 steps each, 34.81 s,
+- total conserved: **1,000,000,000**,
+- each shard is a fresh QAL execution, so the persistent-map OOM is avoided.
+
+Caveat: shards are independent; transfers do not cross shard boundaries. A
+production sharded runtime must handle cross-shard messages explicitly.

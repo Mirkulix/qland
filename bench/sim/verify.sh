@@ -44,6 +44,9 @@ run_case sim_queue "$REPO/qal/packages/event_queue.qalpkg"
 OUT="$("$QAL" run main --allow io,rand)"
 echo "$OUT" | grep -q 'total=100000.*events=1000'
 
+# sharded simulation (small version of the million-agent run)
+"$REPO/bench/sim/shard.py" --shards 10 --agents 1000 --steps 100 >/dev/null
+
 # dashboard
 run_case dashboard
 "$QAL" define "$REPO/bench/sim/dashboard.qal" >/dev/null
@@ -51,4 +54,4 @@ run_case dashboard
 printf '[{"method":"GET","path":"/metrics"}]\n' > reqs.json
 "$QAL" request handle reqs.json --allow io | grep -q '"total":100000'
 
-echo "simulation: queue 3, tensor 3, numerics 2, sim_package 2, sim 100000, queue-sim 1000 events, dashboard 200"
+echo "simulation: queue 3, tensor 3, numerics 2, sim_package 2, sim 100000, queue-sim 1000 events, shards 10, dashboard 200"
