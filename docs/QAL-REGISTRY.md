@@ -19,6 +19,9 @@ python3 qal-registry/registry.py verify <sha256> --trust
 python3 qal-registry/registry.py resolve --name math
 python3 qal-registry/registry.py resolve --name age --trust
 python3 qal-registry/registry.py fetch <sha256> --out math.qalpkg --trust
+
+# install the package and its whole dependency graph into a project
+python3 qal-registry/registry.py install --name age --root /path/to/project --trust
 ```
 
 Dependencies are explicit package digests:
@@ -72,8 +75,10 @@ QAL_BIN=$PWD/qal/target/release/qal python3 qal-registry/selftest.py
 
 It creates a temporary store and Ed25519 key, exports `math` and `age`, publishes
 both signed with `age --depends math`, trusts the key, resolves the graph, then
-tampers with the dependency and removes it from the index. All nine cases pass
-(exit 0); the last two exit 1 with `check: hash` and `check: missing`.
+tampers with the dependency and removes it from the index. All eleven cases pass
+(exit 0); the last two exit 1 with `check: hash` and `check: missing`. The
+install case resolves `age -> math`, imports both in dependency order and then
+queries `fact` from the fresh project.
 
 ## Design
 

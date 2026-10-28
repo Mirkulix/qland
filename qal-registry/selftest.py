@@ -63,6 +63,15 @@ def main():
     code, out = run([sys.executable, str(REG), "resolve", "--name", "age", "--trust"], REPO, env)
     results.append(check("resolve age graph ok", code == 0 and '"ok": true' in out, out))
 
+    # install the whole graph into a fresh project
+    proj = base / "proj"
+    proj.mkdir()
+    code, out = run([str(QAL), "init"], proj)
+    code, out = run([sys.executable, str(REG), "install", "--name", "age", "--root", str(proj), "--trust"], REPO, env)
+    results.append(check("install age graph", code == 0 and '"name": "math"' in out and '"name": "age"' in out, out))
+    code, out = run([str(QAL), "query", "--name", "fact"], proj)
+    results.append(check("installed fact queryable", code == 0 and '"fact"' in out, out))
+
     # tamper with the dependency file
     shutil.rmtree(base / "store-broken", ignore_errors=True)
     shutil.copytree(store, base / "store-broken")

@@ -10,7 +10,7 @@ SHA-256 and keeps an index of package name -> hash. It does not replace
   python3 qal-registry/registry.py fetch <sha256> --out math.qalpkg
   python3 qal-registry/registry.py verify <sha256>
 """
-import argparse, base64, datetime, hashlib, json, os, shutil, sys, tempfile
+import argparse, base64, datetime, hashlib, json, os, shutil, subprocess, sys, tempfile
 from pathlib import Path
 
 try:
@@ -20,6 +20,7 @@ except Exception:
     Ed25519PrivateKey = Ed25519PublicKey = serialization = None
 
 ROOT = Path(os.environ.get("QAL_REGISTRY", Path(__file__).resolve().parent / "store"))
+QAL = Path(os.environ.get("QAL_BIN", Path(__file__).resolve().parents[1] / "qal" / "target" / "release" / "qal"))
 
 
 def sha256(path):
@@ -188,6 +189,26 @@ def check_graph(sha, idx, trust, seen=None):
     return True, "ok"
 
 
+def graph_order(sha, idx, trust, seen=None, out=None):
+    if seen is None:
+        seen = set()
+    if out is None:
+        out = []
+    if sha in seen:
+        raise SystemExit("cycle in dependency graph")
+    seen.add(sha)
+    ent = idx["packages"].get(sha)
+    if not ent:
+        raise SystemExit(f"missing dependency {sha}")
+    ok, why = check_entry(sha, ent, trust)
+    if not ok:
+        raise SystemExit(f"dependency {sha}: {why}")
+    for dep in ent.get("dependencies", []):
+        graph_order(dep, idx, trust, seen, out)
+    out.append(sha)
+    return out
+
+
 def cmd_resolve(args):
     idx = load_index()
     hits = [(h, e) for h, e in idx["packages"].items() if e.get("name") == args.name]
@@ -203,6 +224,30 @@ def cmd_resolve(args):
     sys.exit(0 if ok else 1)
 
 
+def cmd_install(args):
+    idx = load_index()
+    hits = [(h, e) for h, e in idx["packages"].items() if e.get("name") == args.name]
+    if not hits:
+        sys.exit("unknown package name")
+    hits.sort(key=lambda he: (he[1].get("version", ""), he[1].get("published_at", "")))
+    root_sha = hits[-1][0]
+    order = graph_order(root_sha, idx, args.trust)
+    root = Path(args.root)
+    if not root.exists():
+        sys.exit(f"project root does not exist: {root}")
+    installed = []
+    with tempfile.TemporaryDirectory(prefix="qal-install-") as tmp:
+        for sha in order:
+            ent = idx["packages"][sha]
+            path = Path(tmp) / f"{sha}.qalpkg"
+            shutil.copy2(ROOT / ent["file"], path)
+            r = subprocess.run([str(QAL), "import", str(path)], cwd=root, capture_output=True, text=True, timeout=120)
+            if r.returncode != 0:
+                sys.exit(f"qal import failed for {ent['name']}: {(r.stdout or r.stderr)[-500:]}")
+            installed.append({"name": ent["name"], "sha256": sha})
+    print(json.dumps({"installed": installed, "root": str(root)}, indent=2))
+
+
 def cmd_index(args):
     print(json.dumps(load_index(), indent=2, sort_keys=True))
 
@@ -215,6 +260,7 @@ def main():
     v = sub.add_parser("verify"); v.add_argument("sha256"); v.add_argument("--trust", action="store_true"); v.set_defaults(fn=cmd_verify)
     t = sub.add_parser("trust"); t.add_argument("--public", required=True); t.set_defaults(fn=cmd_trust)
     r = sub.add_parser("resolve"); r.add_argument("--name", required=True); r.add_argument("--trust", action="store_true"); r.set_defaults(fn=cmd_resolve)
+    ins = sub.add_parser("install"); ins.add_argument("--name", required=True); ins.add_argument("--root", required=True); ins.add_argument("--trust", action="store_true"); ins.set_defaults(fn=cmd_install)
     i = sub.add_parser("index"); i.set_defaults(fn=cmd_index)
     args = ap.parse_args()
     args.fn(args)
