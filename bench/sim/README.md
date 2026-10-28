@@ -171,3 +171,7 @@ until the execution's 256 MiB limit. So QAL's simulation package is good for
 thousands of agents/steps, not millions. A million-agent runtime needs native
 mutable state, sharding and a different memory model; QAL should define the
 rules/contracts, not interpret every agent.
+
+The core (without `main`) is also `qal/packages/sim_core.qalpkg` (`qal_sim`),
+10 definitions; signed install verified, `transfer_conserves` and
+`self_transfer_is_noop` pass after import.

@@ -46,3 +46,9 @@ two integral tests. 6 definitions, signed registry SHA-256 `550726e1…`.
 `matmul_remote(a, b, n) !net` with shape `req`/`ens`, backed by the NumPy
 sidecar in `bench/tensor/server.py`. 3 definitions, signed registry SHA-256
 `51c31794…`; `qal query matmul_remote` shows `!net`, `local_shape` passes.
+
+## `sim_core.qalpkg` (`qal_sim`)
+
+Reusable simulation core: `Agent`, `Sim`, `init`, `total`, `transfer`, `step`,
+two tests (`transfer_conserves`, `self_transfer_is_noop`). 10 definitions,
+signed registry SHA-256 `9d905d7e…`; `transfer` keeps `ens total`.
