@@ -64,3 +64,25 @@ A change that deletes or weakens a `req`/`ens` is **not** a normal edit:
 The 134-mutant study (`bench/mutation/expanded.md`) found that test-only
 validation cannot catch contract deletion: removing a contract removes an
 obligation, not a behavior. Proof/diff review is mandatory for that class.
+
+## Contract diff gate
+
+`tools/contract_diff.py` implements the rule:
+
+```sh
+python3 tools/contract_diff.py --base origin/Mac      # changed *.qal files
+python3 tools/contract_diff.py --before old.qal --after new.qal
+```
+
+It exits 1 when a `req`/`ens` line is deleted or a comparison is weakened
+(`>=`→`>`, `<=`→`<`, `==`→`!=`). `--allow-contract-change` still reports the
+finding but returns 0 for an explicitly acknowledged change.
+
+Fixture evidence (`tools/fixtures/`):
+
+- identical after → exit 0,
+- removed `req a >= 0` → exit 1,
+- weakened `ens r >= a` → `ens r > a` → exit 1.
+
+The gate is deliberately not a proof: it forces a human/agent to add a test,
+a proof result and a review note before the contract disappears.
