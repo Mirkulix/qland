@@ -341,3 +341,16 @@ fn compact(log: RaftLog, index: Int, state: Str) -> Compacted
 Tests `compact_keeps_suffix`, `compact_beyond_commit_is_refused`,
 `compact_after_all` pass. Signed install SHA-256 `cd726b4d…`. Snapshots are
 QAL data; durable storage/transport stay with the host.
+
+## Snapshot installation
+
+`install.qal` (package `qal_sim_install`, 8 defs) installs a snapshot: entries at
+or below `last_index` are dropped, newer ones stay, and the commit index advances
+to at least `last_index`:
+
+```qal
+fn install(snap: Snapshot, log: RaftLog) -> RaftLog
+```
+
+Tests `install_keeps_newer`, `install_advances_commit`,
+`install_can_advance_empty` pass. Signed install SHA-256 `e3b84086…`.

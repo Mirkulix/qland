@@ -1,0 +1,22 @@
+# Install a snapshot into a log: drop covered entries, keep newer ones.
+
+type LogEntry = { index: Int, term: Int, cmd: Str }
+type RaftLog = { entries: List[LogEntry], commit: Int }
+type Snapshot = { last_index: Int, last_term: Int, state: Str }
+
+fn install(snap: Snapshot, log: RaftLog) -> RaftLog
+  req snap.last_index >= 0
+= RaftLog {
+    entries: filter(log.entries, fn(e) => e.index > snap.last_index),
+    commit: if log.commit > snap.last_index then log.commit else snap.last_index,
+  }
+
+fn sample() -> RaftLog =
+  RaftLog { entries: [LogEntry { index: 1, term: 1, cmd: "a" },
+                      LogEntry { index: 2, term: 1, cmd: "b" },
+                      LogEntry { index: 3, term: 2, cmd: "c" }], commit: 3 }
+
+test install_keeps_newer = len(install(Snapshot { last_index: 2, last_term: 1, state: "s" }, sample()).entries) == 1
+test install_advances_commit = install(Snapshot { last_index: 2, last_term: 1, state: "s" }, sample()).commit == 3
+test install_can_advance_empty = install(Snapshot { last_index: 5, last_term: 2, state: "s" },
+  RaftLog { entries: [], commit: 0 }).commit == 5
