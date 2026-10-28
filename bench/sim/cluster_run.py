@@ -41,7 +41,15 @@ def main():
             for port in ports:
                 t = http(f"http://127.0.0.1:{port}/timeout?now=200&timeout=50")
                 assert t["role"] == "candidate" and t["term"] == 3, t
-            # The host picks node 0 and sends its heartbeat; all become followers again.
+            # The host runs a vote: candidate 0, term 3; all three grant.
+            granted = 0
+            for port in ports:
+                v = http(f"http://127.0.0.1:{port}/vote?term=3&candidate=0")
+                granted += 1 if v.get("granted") else 0
+            assert granted == 3, granted
+            stale = http(f"http://127.0.0.1:{ports[0]}/vote?term=2&candidate=1")
+            assert stale.get("granted") is False, stale
+            # The leader sends its heartbeat; all become followers again.
             for port in ports:
                 http(f"http://127.0.0.1:{port}/heartbeat", "hb:0:3:100")
             for port in ports:
@@ -52,7 +60,7 @@ def main():
                 p.terminate()
             for p in procs:
                 p.wait(timeout=10)
-    print("cluster: 3 QAL nodes heartbeat -> candidate term 3 -> leader 0")
+    print("cluster: 3/3 votes -> leader 0, stale vote rejected")
 
 
 if __name__ == "__main__":

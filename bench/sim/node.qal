@@ -89,5 +89,30 @@ fn handle(rq: HttpRequest) -> HttpResponse !fs =
         },
       },
     }
+  else if rq.path == "/vote" then
+    let ps = std.url.parse_query(rq.query) in
+    match std.url.param(ps, "term") {
+      None => std.http.bad_request("missing term"),
+      Some(ts) => match to_int(ts) {
+        None => std.http.bad_request("bad term"),
+        Some(term) => match std.url.param(ps, "candidate") {
+          None => std.http.bad_request("missing candidate"),
+          Some(cs) => match to_int(cs) {
+            None => std.http.bad_request("bad candidate"),
+            Some(candidate) => let h = load() in
+              if term < h.term then std.http.json(200, std.json.obj([
+                std.json.field("granted", std.json.bool(false)),
+                std.json.field("term", std.json.int(h.term)),
+              ]))
+              else let ok = save(Heartbeat { leader: -1, term: term, at: h.at }) in
+                if ok then std.http.json(200, std.json.obj([
+                  std.json.field("granted", std.json.bool(true)),
+                  std.json.field("term", std.json.int(term)),
+                  std.json.field("candidate", std.json.int(candidate)),
+                ])) else std.http.error(500, "io", "save failed"),
+          },
+        },
+      },
+    }
   else if rq.path == "/state" then state_json(load())
   else std.http.not_found()
