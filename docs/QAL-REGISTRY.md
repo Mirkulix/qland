@@ -64,6 +64,17 @@ Measured:
 - tampered store file: `registry corruption: hash mismatch`, exit 1;
 - `resolve --name math` returns version 1.0.0 and the same SHA-256.
 
+## Self-test
+
+```sh
+QAL_BIN=$PWD/qal/target/release/qal python3 qal-registry/selftest.py
+```
+
+It creates a temporary store and Ed25519 key, exports `math` and `age`, publishes
+both signed with `age --depends math`, trusts the key, resolves the graph, then
+tampers with the dependency and removes it from the index. All nine cases pass
+(exit 0); the last two exit 1 with `check: hash` and `check: missing`.
+
 ## Design
 
 - a package is the compiler's text format, not a new archive;
