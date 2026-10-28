@@ -286,3 +286,18 @@ fn quorum(votes: List[Vote], n: Int) -> Option[Str]
 Tests `majority_wins` (2/3), `single_wins`, `tie_has_no_quorum` (1/2),
 `empty_has_no_quorum` pass. Signed install SHA-256 `c2480194…`. The host
 collects votes and retries; QAL decides what counts as a quorum.
+
+## Leader election
+
+`election.qal` (package `qal_sim_election`, 8 defs) counts votes for a candidate
+in a term:
+
+```qal
+fn vote(b: Ballot, node: Int) -> Ballot
+fn leader(b: Ballot) -> Option[Int]
+```
+
+A leader needs a strict majority of the cluster; duplicate votes count once.
+Tests `majority_elects`, `duplicate_vote_counts_once`,
+`minority_does_not_elect` pass. Signed install SHA-256 `8308521d…`. The host
+sends heartbeats/retries; QAL decides when a candidate has won.

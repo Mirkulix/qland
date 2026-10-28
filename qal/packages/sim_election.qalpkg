@@ -1,0 +1,31 @@
+# qal-pkg 1
+# package qal_sim_election db40bdbcad24f3856435a5e4912ad2de643a0a571e2303e240678c9e0f9d7c03
+# def Ballot 6b63095041055248f130e9396d3644d461b8527dbbe934bdb8cccb532b28bbcb cli
+# def duplicate_vote_counts_once f7704e59bb9ed6191627fb816ceed62edc5c4043fd63c53f835169a27e118189 cli
+# def has_vote 6c6d26706d73a33c0ca81688c535a82fafac43a2790eacbfc6ea545b990874ac cli
+# def leader d8a07743d9693fee434ce8e313be7ca4f60011e02fb5b6e0ce43d9970c2776b8 cli
+# def majority_elects ea1ecafcfb1b94a35fd02cbb189f8430a7ee8b052e36f6f46745afb33e7ed8e2 cli
+# def minority_does_not_elect 2a75d2a76f34db83662bfd492e6e6af8239648335f987cb23b4b915642250d95 cli
+# def vote 4958e42a3156c0c09d443b953874b700511900aef78e0dfe11ce2968360e99fd cli
+# def won c5209a8ae98697ddb9a1de2af65434ce23732f9ae9b72c0c44a6ef3504585547 cli
+
+type Ballot = { term: Int, candidate: Int, votes: List[Int], cluster: Int }
+
+fn has_vote(votes: List[Int], node: Int) -> Bool
+= len(filter(votes, fn(v) => v == node)) > 0
+
+fn vote(b: Ballot, node: Int) -> Ballot
+  req b.cluster >= 1
+= if has_vote(b.votes, node) then b else Ballot { term: b.term, candidate: b.candidate, votes: push(b.votes, node), cluster: b.cluster }
+
+fn won(b: Ballot) -> Bool
+= len(b.votes) * 2 > b.cluster
+
+test duplicate_vote_counts_once = len(vote(vote(Ballot { term: 1, candidate: 2, votes: [], cluster: 3 }, 1), 1).votes) == 1
+
+fn leader(b: Ballot) -> Option[Int]
+= if won(b) then Some(b.candidate) else None
+
+test majority_elects = leader(vote(vote(Ballot { term: 1, candidate: 3, votes: [], cluster: 3 }, 1), 2)) == Some(3)
+
+test minority_does_not_elect = leader(Ballot { term: 1, candidate: 2, votes: [1], cluster: 3 }) == None
