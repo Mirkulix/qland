@@ -50,7 +50,12 @@ def run_qal(source, stdin):
             return c.returncode, (c.stdout or "") + (c.stderr or "")
         r = subprocess.run([str(QAL), "run", str(p), "--allow", "io"], input=stdin,
                            capture_output=True, text=True, timeout=30)
-        return r.returncode, (r.stdout or "") + (r.stderr or "")
+        out = r.stdout or ""
+        try:
+            out = json.loads(out).get("stdout", out)
+        except Exception:
+            pass
+        return r.returncode, out + (r.stderr or "")
 
 
 def run_py(source, stdin):
