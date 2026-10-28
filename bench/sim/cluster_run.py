@@ -30,18 +30,19 @@ def main():
                                      cwd=d, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 procs.append(p); ports.append(port)
             time.sleep(1.5)
-            for port in ports:
-                r = http(f"http://127.0.0.1:{port}/heartbeat", "hb:1:2:100")
-                assert (r["leader"], r["term"], r["at"]) == (1, 2, 100), r
+            for at in (100, 101, 102):
+                for port in ports:
+                    r = http(f"http://127.0.0.1:{port}/heartbeat", f"hb:1:2:{at}")
+                    assert (r["leader"], r["term"], r["at"]) == (1, 2, at), r
             for port in ports:
                 s = http(f"http://127.0.0.1:{port}/state")
-                assert (s["leader"], s["term"], s["at"]) == (1, 2, 100), s
+                assert (s["leader"], s["term"], s["at"]) == (1, 2, 102), s
         finally:
             for p in procs:
                 p.terminate()
             for p in procs:
                 p.wait(timeout=10)
-    print("cluster: 3 QAL nodes accepted hb:1:2:100 and persisted it")
+    print("cluster: 3 QAL nodes accepted hb:1:2:100..102 and persisted at=102")
 
 
 if __name__ == "__main__":

@@ -413,10 +413,11 @@ state transition.
 
 `cluster_run.py` starts three `qal serve handle` processes, each with its own
 project and `node_state.txt`, then posts the same `hb:1:2:100` heartbeat to all
-three and reads `/state`:
+three and reads `/state`; it sends three heartbeats (at 100, 101, 102) to
+prove the state advances:
 
 ```text
-cluster: 3 QAL nodes accepted hb:1:2:100 and persisted it
+cluster: 3 QAL nodes accepted hb:1:2:100..102 and persisted at=102
 ```
 
 This is the transport integration for the Raft node: HTTP between hosts, QAL
