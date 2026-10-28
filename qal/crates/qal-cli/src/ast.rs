@@ -82,6 +82,31 @@ pub fn lower(e: &Value) -> Result<String, String> {
     Err(format!("unknown AST keys: {:?}", o.keys().collect::<Vec<_>>()))
 }
 
+fn collect_calls(e: &Value, out: &mut Vec<String>) {
+    let Some(o) = e.as_object() else { return; };
+    if let Some(Value::String(name)) = o.get("call") {
+        out.push(name.clone());
+        if let Some(Value::Array(args)) = o.get("args") { for a in args { collect_calls(a, out); } }
+    }
+    if let Some(Value::Array(args)) = o.get("op") { for a in args { collect_calls(a, out); } }
+    if let Some(v) = o.get("field") { collect_calls(v, out); }
+    if let Some(Value::Array(binds)) = o.get("let") {
+        for b in binds { if let Some(v) = b.get("value") { collect_calls(v, out); } }
+        if let Some(v) = o.get("in") { collect_calls(v, out); }
+    }
+    if let Some(v) = o.get("if") {
+        collect_calls(v, out);
+        if let Some(x) = o.get("then") { collect_calls(x, out); }
+        if let Some(x) = o.get("else") { collect_calls(x, out); }
+    }
+    if let Some(v) = o.get("match") {
+        collect_calls(v, out);
+        if let Some(Value::Array(cases)) = o.get("cases") { for c in cases { if let Some(b) = c.get("body") { collect_calls(b, out); } } }
+    }
+    if let Some(Value::Object(fields)) = o.get("fields") { for v in fields.values() { collect_calls(v, out); } }
+    if let Some(Value::Array(xs)) = o.get("list") { for x in xs { collect_calls(x, out); } }
+}
+
 /// Lower `{"main": expr, "effects": [...]?, "returns": ...?, "tests": [...]?}`
 /// to a complete QAL source (main plus tests).
 pub fn lower_main(ast: &Value) -> Result<String, String> {
@@ -89,6 +114,19 @@ pub fn lower_main(ast: &Value) -> Result<String, String> {
         None => {}
         Some(v) if v.as_u64() == Some(1) => {}
         Some(v) => return Err(format!("unsupported ast_version: {v}")),
+    }
+    if let Some(Value::Array(allowed)) = ast.get("allowed_calls") {
+        let allowed: Vec<&str> = allowed.iter().filter_map(Value::as_str).collect();
+        let mut calls = Vec::new();
+        if let Some(m) = ast.get("main") { collect_calls(m, &mut calls); }
+        if let Some(Value::Array(tests)) = ast.get("tests") {
+            for t in tests { if let Some(b) = t.get("body") { collect_calls(b, &mut calls); } }
+        }
+        for c in calls {
+            if !allowed.contains(&c.as_str()) {
+                return Err(format!("call not allowed by allowed_calls: {c}"));
+            }
+        }
     }
     let mut prefix = String::new();
     if let Some(Value::Array(types)) = ast.get("types") {
@@ -163,6 +201,15 @@ mod tests {
     fn list_literal() {
         let v: Value = serde_json::json!({"main":{"call":"print","args":[{"call":"from_int","args":[{"call":"len","args":[{"list":[{"int":1},{"int":2}]}]}]}]}});
         assert!(lower_main(&v).unwrap().contains("len([1, 2])"));
+    }
+    #[test]
+    fn allowed_calls() {
+        let v: Value = serde_json::json!({"allowed_calls":["read_all","sum_all","print","from_int"],
+            "main":{"call":"print","args":[{"call":"from_int","args":[{"call":"sum_all","args":[{"call":"read_all","args":[]}]}]}]}});
+        assert!(lower_main(&v).is_ok());
+        let bad: Value = serde_json::json!({"allowed_calls":["read_all"],
+            "main":{"call":"Int","args":[]}});
+        assert!(lower_main(&bad).is_err());
     }
     #[test]
     fn effects_and_tests() {
