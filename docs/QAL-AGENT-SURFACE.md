@@ -89,3 +89,14 @@ list literals, vars, calls, ops, fields, let, if, match, records, `ast_version`,
 `types`, `effects`, `returns` and `tests`. `qal define --ast` uses the normal store path, so the AST gets the same
 type check, proofs, tests and hash as text. Verified: `sum_ok` test and `main`
 run -> `5` from a single JSON file.
+
+## 100-task pilot
+
+| Surface | Solved |
+|---|---|
+| QAL JSON AST | 80/100 |
+| Python | 100/100 |
+
+The 20 AST failures are wrong call choices (`Int` as a function, wrong helper),
+not syntax errors. The surface works; the model's composition is the remaining
+gap. Ten families × ten variants; helper prelude still task-specific.
