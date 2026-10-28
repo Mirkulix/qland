@@ -1,0 +1,16 @@
+fn main(args: List[Str]) -> Int !io =
+  let text = trim(read_all()) in
+  let parts = split(text, " ") in
+  match get(parts, 0) {
+    None => 1,
+    Some(a) => match to_int(a) {
+      None => 1,
+      Some(x) => match get(parts, 1) {
+        None => 1,
+        Some(b) => match to_int(b) {
+          None => 1,
+          Some(y) => { print(from_int(x + y)); 0 },
+        },
+      },
+    },
+  }

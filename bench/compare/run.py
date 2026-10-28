@@ -7,6 +7,7 @@ REPO = Path(__file__).resolve().parents[2]
 QAL = Path(os.environ.get("QAL_BIN", REPO / "qal" / "target" / "release" / "qal"))
 SECRETS = Path.home() / ".config" / "qal" / "secrets.env"
 REF = REPO / "qal" / "crates" / "qal-cli" / "src" / "reference.md"
+QAL_EXAMPLE = (Path(__file__).parent / "example.qal").read_text(encoding="utf-8")
 
 
 def env():
@@ -44,6 +45,9 @@ def run_qal(source, stdin):
     with tempfile.TemporaryDirectory(prefix="qal-cmp-") as d:
         p = Path(d) / "main.qal"
         p.write_text(source, encoding="utf-8")
+        c = subprocess.run([str(QAL), "check", str(p)], capture_output=True, text=True, timeout=30)
+        if c.returncode != 0:
+            return c.returncode, (c.stdout or "") + (c.stderr or "")
         r = subprocess.run([str(QAL), "run", str(p), "--allow", "io"], input=stdin,
                            capture_output=True, text=True, timeout=30)
         return r.returncode, (r.stdout or "") + (r.stderr or "")
@@ -77,15 +81,20 @@ def main():
         row = {"id": task["id"]}
         for arm in ("qal", "python"):
             if arm == "qal":
-                system = "You write QAL. Return only QAL source."
-                user = task["prompt"] + "\nWrite `fn main(args: List[Str]) -> Int !io`. Use read_all()/print. Reference:\n" + ref
+                system = ("You write QAL, not Python. Return only QAL source. "
+                          "The first non-comment line must be `fn main(args: List[Str]) -> Int !io`. "
+                          "Use read_all(), print(from_int(...)), match, get, to_int. "
+                          "No Python syntax: no `def`, no `import`, no `&`, no single quotes.")
+                user = ("Example of a complete QAL stdin program:\n" + QAL_EXAMPLE +
+                        "\nTask:\n" + task["prompt"] +
+                        "\nWrite the complete `fn main(args: List[Str]) -> Int !io`. Reference:\n" + ref)
                 runner = run_qal
             else:
                 system = "You write Python 3. Return only Python source."
                 user = task["prompt"] + "\nWrite a standalone script."
                 runner = run_py
             src, ok, detail, attempts = "", False, "", 0
-            for attempt in range(1, 4):
+            for attempt in range(1, 5):
                 attempts = attempt
                 try:
                     r = api(e, system, user, 2048)

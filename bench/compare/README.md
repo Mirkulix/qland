@@ -1,38 +1,37 @@
 # QAL vs Python pilot (5 tasks)
 
-Same five stdin tasks, same DeepSeek `deepseek-chat` model, max three attempts with
-the failure text fed back. QAL arm is prompted with the QAL reference; Python arm
-gets a standalone-script instruction.
+Same five stdin tasks, same DeepSeek model, max attempts with the failure text fed
+back. The QAL arm gets the reference plus a complete `fn main` example; Python gets
+a standalone-script instruction.
 
-## Result
+## Results
 
-| Arm | Solved |
-|---|---|
-| **QAL** | **0 / 5** |
-| **Python** | **5 / 5** |
+| Run | QAL | Python |
+|---|---|---|
+| first (zero-shot, 3 attempts) | **0/5** | **5/5** |
+| grammar-first prompt + example (4 attempts) | **0/5** | **5/5** |
+| `deepseek-reasoner` | **0/5** | **5/5** |
 
-Raw: `results.json`.
+Raw: `results.json` (last run).
 
-## Failure modes (QAL)
+## Failure modes
 
-- Python syntax leaked into QAL (`&`, single quotes),
-- code was emitted without a QAL `fn main` (top-level statements),
-- parse errors at line 1/3, not semantic QAL errors.
+- Python syntax in QAL (`&`, single quotes, `def`),
+- missing `fn main` or a top-level `{` instead of `=`,
+- `let` without `in`,
+- reasoner often returns no `main` at all (`E0510`).
 
-This is the honest baseline: **a general model does not write QAL zero-shot**, even
-for trivial stdin tasks. Python wins because the model has seen it millions of
-times and the language accepts the idioms it reaches for.
+The parser errors are shallow, but the model does not repair them even with
+structured diagnostics. This is **not** a semantics problem; it is a **surface
+syntax** problem.
 
-## What it means
+## Conclusion
 
-- The language is not yet agent-native enough for a plain prompt;
-- the tool-loop/reference/examples must carry the model, not its Python habits;
-- this is a 5-task pilot, not the 100-task comparison;
-- the next step is a grammar-first prompt + structured repair loop, then the
-  same tasks again.
+A general LLM cannot write QAL zero-shot for trivial stdin tasks. Python wins
+because it is the model's strongest prior, not because Python is more correct.
 
-## Reproduce
+The next step is an **agent-native surface**: let the model emit a JSON AST or
+tool calls that the compiler lowers to QAL. Human QAL syntax remains; the AST is
+the machine surface. See `docs/QAL-AGENT-SURFACE.md`.
 
-```sh
-python3 bench/compare/run.py
-```
+This is a 5-task pilot, not the 100-task comparison.
