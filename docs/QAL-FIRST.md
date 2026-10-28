@@ -50,3 +50,17 @@ No feature without a use case. No use case without a test.
 
 Reusable verified definitions are published through `qal-registry/registry.py`
 and imported by hash. Copy-paste is not composition.
+
+## Contract changes
+
+A change that deletes or weakens a `req`/`ens` is **not** a normal edit:
+
+1. it needs a new or updated test that fails without the contract,
+2. it needs a `qal prove` result showing what remains proven,
+3. it needs an explicit review note (which obligation was removed and why),
+4. it must not be merged while every existing test still passes only because
+   the obligation disappeared.
+
+The 134-mutant study (`bench/mutation/expanded.md`) found that test-only
+validation cannot catch contract deletion: removing a contract removes an
+obligation, not a behavior. Proof/diff review is mandatory for that class.
