@@ -220,3 +220,15 @@ fn once(t: Txn, id: Int, from: Int, to: Int, amount: Int) -> Txn
 A replay with the same `id` returns the unchanged state. Tested:
 `replay_is_noop` (balance stays 700 after two calls) and `first_debits`; total
 conservation holds. Signed install SHA-256 `99547aa9…`.
+
+## Two-phase commit
+
+`twopc.qal` (package `qal_sim_2pc`, 14 defs) models prepare/commit/abort over a
+two-shard `Coord`:
+
+- `prepare` validates the source and records "prepared",
+- `commit` applies the transfer exactly once and records "committed",
+- `abort` marks a non-committed transaction "aborted".
+
+Tests `commit_once` (700 after commit, total 2000) and `abort_noop` (1000 after
+abort) pass. Signed install SHA-256 `8f050e15…`.
