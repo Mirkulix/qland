@@ -56,6 +56,17 @@ fn load() -> Heartbeat !fs =
 fn setup() -> Result[Unit, Str] !fs =
   if save(Heartbeat { leader: 0, term: 0, at: 0 }) then Ok(()) else Err("cannot write node_state.txt")
 
+fn load_log() -> List[Str] !fs =
+  match read_file("node_log.txt") {
+    Err(_) => [],
+    Ok(s) => filter(split(trim(s), "\n"), fn(l) => l != ""),
+  }
+
+fn save_log(xs: List[Str]) -> Bool !fs =
+  match write_file("node_log.txt", join(xs, "\n")) { Ok(_) => true, Err(_) => false }
+
+fn log_json() -> HttpResponse !fs = std.http.json(200, std.json.arr(map(load_log(), fn(l) => std.json.str(l))))
+
 fn role_of(h: Heartbeat) -> Str = if h.leader < 0 then "candidate" else "follower"
 
 fn state_json(h: Heartbeat) -> HttpResponse = std.http.json(200, std.json.obj([
@@ -111,6 +122,30 @@ fn handle(rq: HttpRequest) -> HttpResponse !fs =
                   std.json.field("candidate", std.json.int(candidate)),
                 ])) else std.http.error(500, "io", "save failed"),
           },
+        },
+      },
+    }
+  else if rq.path == "/append" then
+    let ps = std.url.parse_query(rq.query) in
+    match std.url.param(ps, "term") {
+      None => std.http.bad_request("missing term"),
+      Some(ts) => match to_int(ts) {
+        None => std.http.bad_request("bad term"),
+        Some(term) => let xs = load_log() in
+          let entry = from_int(len(xs) + 1) ++ ":" ++ from_int(term) ++ ":" ++ rq.body in
+          if save_log(push(xs, entry)) then log_json() else std.http.error(500, "io", "save failed"),
+      },
+    }
+  else if rq.path == "/log" then log_json()
+  else if rq.path == "/commit" then
+    let ps = std.url.parse_query(rq.query) in
+    match std.url.param(ps, "index") {
+      None => std.http.bad_request("missing index"),
+      Some(is) => match to_int(is) {
+        None => std.http.bad_request("bad index"),
+        Some(index) => match write_file("node_commit.txt", from_int(index)) {
+          Ok(_) => std.http.json(200, std.json.obj([std.json.field("commit", std.json.int(index))])),
+          Err(_) => std.http.error(500, "io", "save failed"),
         },
       },
     }

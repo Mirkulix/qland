@@ -1,22 +1,34 @@
 # qal-pkg 1
-# package qal_sim_node df6aac277b267e29cbbd939e4db528a0043a884ad3bc420ecf681cd076da8bf3
+# package qal_sim_node d6a5a56b62f68d9a32d354d88dd44cd209142f3fbeb45c81d1d11afa17d14507
 # std 157299b76ea5a1e74bcc3a0bb266d916f478495c0eec487c6481c604da08b62e
 # def Heartbeat 0f543b33e3692fb2d3347b3d11df2bad57f993dfb56c4d1a1ad3875bf521202c cli
 # def decode 5e13a9de4a91e97d69783aa830dec4321b74ea11bfcf7886c8800729cc3e42fb cli
-# def handle 032ed254283f202231c0b4481ee30dd0e33568d055ca0900793676689f313697 cli
+# def handle f4465d4246e9af2ed12be05f5c4dd4319a6954600f942e66c2a608d198914b03 cli
 # def load 1eee4531eea06a5d795d8cdfbb80cf6a40f84650d36632c406a74846ca5fc9b0 cli
+# def load_log ac76ab76587053a56b9532496eb9760ca1db101628a70154a0efe99fcf7abbf1 cli
+# def log_json 62dc25fb06ba2737843ece07e1c27855458c6801e3acbd955c090820b54ee2a2 cli
 # def role_of b0c19f1d42219c7c2b17729765357268b5bfc8907324a61bc3b9ae2627f57ca8 cli
 # def save 2fd67226b7d089e448a4ae0d453e8ce0f51ffebc9af27c52f8785667cfc7ea53 cli
+# def save_log 397d2518c39ff7467e748e66947d0f78b59a9a1a61cdd29bae1d972fc974ff01 cli
 # def setup 4e77b01c88b4e11c5b5028fc5c10ade87027fca97cfe3fd6027b8ec2a1ae5ddd cli
 # def state_json ded59fd6d0fefa8575570e940e23d109c26fe2d8a17c2c5b7411866c8143c860 cli
 
 type Heartbeat = { leader: Int, term: Int, at: Int }
+
+fn load_log() -> List[Str] !fs
+= match read_file("node_log.txt") { Err(_) => [], Ok(s) => filter(split(trim(s), "\n"), fn(l) => l != "") }
+
+fn save_log(xs: List[Str]) -> Bool !fs
+= match write_file("node_log.txt", join(xs, "\n")) { Ok(_) => true, Err(_) => false }
 
 fn decode(s: Str) -> Option[Heartbeat]
 = let p = split(s, ":") in if len(p) != 4 then None else match get(p, 0) { Some("hb") => match get(p, 1) { None => None, Some(a) => match to_int(a) { None => None, Some(leader) => match get(p, 2) { None => None, Some(b) => match to_int(b) { None => None, Some(term) => match get(p, 3) { None => None, Some(c) => match to_int(c) { None => None, Some(at) => Some(Heartbeat { leader: leader, term: term, at: at }) } } } } } }, _ => None }
 
 fn load() -> Heartbeat !fs
 = match read_file("node_state.txt") { Err(_) => Heartbeat { leader: 0, term: 0, at: 0 }, Ok(s) => let p = split(trim(s), ":") in match get(p, 0) { None => Heartbeat { leader: 0, term: 0, at: 0 }, Some(a) => match to_int(a) { None => Heartbeat { leader: 0, term: 0, at: 0 }, Some(leader) => match get(p, 1) { None => Heartbeat { leader: 0, term: 0, at: 0 }, Some(b) => match to_int(b) { None => Heartbeat { leader: 0, term: 0, at: 0 }, Some(term) => match get(p, 2) { None => Heartbeat { leader: leader, term: term, at: 0 }, Some(c) => match to_int(c) { None => Heartbeat { leader: leader, term: term, at: 0 }, Some(at) => Heartbeat { leader: leader, term: term, at: at } } } } } } } }
+
+fn log_json() -> HttpResponse !fs
+= std.http.json(200, std.json.arr(map(load_log(), fn(l) => std.json.str(l))))
 
 fn role_of(h: Heartbeat) -> Str
 = if h.leader < 0 then "candidate" else "follower"
@@ -31,4 +43,4 @@ fn state_json(h: Heartbeat) -> HttpResponse
 = std.http.json(200, std.json.obj([std.json.field("leader", std.json.int(h.leader)), std.json.field("term", std.json.int(h.term)), std.json.field("at", std.json.int(h.at)), std.json.field("role", std.json.str(role_of(h)))]))
 
 fn handle(rq: HttpRequest) -> HttpResponse !fs
-= if rq.path == "/heartbeat" then match decode(rq.body) { None => std.http.bad_request("bad heartbeat wire format"), Some(h) => if save(h) then state_json(h) else std.http.error(500, "io", "save failed") } else if rq.path == "/timeout" then let ps = std.url.parse_query(rq.query) in match std.url.param(ps, "now") { None => std.http.bad_request("missing now"), Some(ns) => match to_int(ns) { None => std.http.bad_request("bad now"), Some(now) => match std.url.param(ps, "timeout") { None => std.http.bad_request("missing timeout"), Some(ts) => match to_int(ts) { None => std.http.bad_request("bad timeout"), Some(timeout) => let h = load() in if now - h.at >= timeout then match save(Heartbeat { leader: -1, term: h.term + 1, at: now }) { true => state_json(Heartbeat { leader: -1, term: h.term + 1, at: now }), false => std.http.error(500, "io", "save failed") } else state_json(h) } } } } else if rq.path == "/vote" then let ps = std.url.parse_query(rq.query) in match std.url.param(ps, "term") { None => std.http.bad_request("missing term"), Some(ts) => match to_int(ts) { None => std.http.bad_request("bad term"), Some(term) => match std.url.param(ps, "candidate") { None => std.http.bad_request("missing candidate"), Some(cs) => match to_int(cs) { None => std.http.bad_request("bad candidate"), Some(candidate) => let h = load() in if term < h.term then std.http.json(200, std.json.obj([std.json.field("granted", std.json.bool(false)), std.json.field("term", std.json.int(h.term))])) else let ok = save(Heartbeat { leader: -1, term: term, at: h.at }) in if ok then std.http.json(200, std.json.obj([std.json.field("granted", std.json.bool(true)), std.json.field("term", std.json.int(term)), std.json.field("candidate", std.json.int(candidate))])) else std.http.error(500, "io", "save failed") } } } } else if rq.path == "/state" then state_json(load()) else std.http.not_found()
+= if rq.path == "/heartbeat" then match decode(rq.body) { None => std.http.bad_request("bad heartbeat wire format"), Some(h) => if save(h) then state_json(h) else std.http.error(500, "io", "save failed") } else if rq.path == "/timeout" then let ps = std.url.parse_query(rq.query) in match std.url.param(ps, "now") { None => std.http.bad_request("missing now"), Some(ns) => match to_int(ns) { None => std.http.bad_request("bad now"), Some(now) => match std.url.param(ps, "timeout") { None => std.http.bad_request("missing timeout"), Some(ts) => match to_int(ts) { None => std.http.bad_request("bad timeout"), Some(timeout) => let h = load() in if now - h.at >= timeout then match save(Heartbeat { leader: -1, term: h.term + 1, at: now }) { true => state_json(Heartbeat { leader: -1, term: h.term + 1, at: now }), false => std.http.error(500, "io", "save failed") } else state_json(h) } } } } else if rq.path == "/vote" then let ps = std.url.parse_query(rq.query) in match std.url.param(ps, "term") { None => std.http.bad_request("missing term"), Some(ts) => match to_int(ts) { None => std.http.bad_request("bad term"), Some(term) => match std.url.param(ps, "candidate") { None => std.http.bad_request("missing candidate"), Some(cs) => match to_int(cs) { None => std.http.bad_request("bad candidate"), Some(candidate) => let h = load() in if term < h.term then std.http.json(200, std.json.obj([std.json.field("granted", std.json.bool(false)), std.json.field("term", std.json.int(h.term))])) else let ok = save(Heartbeat { leader: -1, term: term, at: h.at }) in if ok then std.http.json(200, std.json.obj([std.json.field("granted", std.json.bool(true)), std.json.field("term", std.json.int(term)), std.json.field("candidate", std.json.int(candidate))])) else std.http.error(500, "io", "save failed") } } } } else if rq.path == "/append" then let ps = std.url.parse_query(rq.query) in match std.url.param(ps, "term") { None => std.http.bad_request("missing term"), Some(ts) => match to_int(ts) { None => std.http.bad_request("bad term"), Some(term) => let xs = load_log() in let entry = from_int(len(xs) + 1) ++ ":" ++ from_int(term) ++ ":" ++ rq.body in if save_log(push(xs, entry)) then log_json() else std.http.error(500, "io", "save failed") } } else if rq.path == "/log" then log_json() else if rq.path == "/commit" then let ps = std.url.parse_query(rq.query) in match std.url.param(ps, "index") { None => std.http.bad_request("missing index"), Some(is) => match to_int(is) { None => std.http.bad_request("bad index"), Some(index) => match write_file("node_commit.txt", from_int(index)) { Ok(_) => std.http.json(200, std.json.obj([std.json.field("commit", std.json.int(index))])), Err(_) => std.http.error(500, "io", "save failed") } } } else if rq.path == "/state" then state_json(load()) else std.http.not_found()

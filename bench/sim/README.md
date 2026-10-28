@@ -422,3 +422,16 @@ cluster: 3 QAL nodes accepted hb:1:2:100..102 and persisted at=102
 
 This is the transport integration for the Raft node: HTTP between hosts, QAL
 handler and durable state in each node.
+
+## Log replication over HTTP
+
+`replicate_run.py` appends `alpha` and `beta` to three QAL node endpoints and
+commits index 2:
+
+```text
+replicate: 3 nodes logs equal, commit index 2
+```
+
+Each node writes `node_log.txt` (`1:1:alpha`, `2:1:beta`) and `node_commit.txt`.
+The host still owns ordering/retries; QAL owns the append/log/commit routes and
+durable files.
