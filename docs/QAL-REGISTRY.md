@@ -98,3 +98,26 @@ queries `fact` from the fresh project.
 
 Next: signed packages, an index by package name + version, and a resolver that
 refuses a package whose dependency hashes are not already verified.
+
+## HTTP front end
+
+```sh
+python3 qal-registry/server.py --registry /path/to/store --port 8899
+```
+
+Endpoints:
+
+- `GET /health` → `{"ok":true}`
+- `GET /index.json` → the signed index
+- `GET /packages/<sha256>.qalpkg` → package bytes, re-hashed before serving
+
+Verified against the signed `qal_event_queue` store:
+
+```text
+health 200 {"ok":true}
+index.json 200
+download /packages/<sha>.qalpkg -> cmp with qal/packages/event_queue.qalpkg -> identical
+```
+
+The server is read-only. Trust is still decided by `verify --trust`/`fetch
+--trust` on the client; the HTTP layer cannot bypass the Ed25519 check.
