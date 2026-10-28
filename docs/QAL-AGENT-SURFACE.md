@@ -101,3 +101,10 @@ First run 80/100: wrong call choices (`Int` as a function, wrong helper).
 `allowed_calls` validation plus failure feedback removed those; the last two
 were a prelude whitespace bug, fixed. Final run: 100/100. Ten families × ten
 variants; helper prelude still task-specific.
+
+## Stdlib-only reality check
+
+With no task-specific helper (only core stdlib), the same AST agent scores
+**10/100** vs Python 90/100. Failures are schema/type errors (positional AST
+arrays, `if` as a call, missing `from_int`), not compiler bugs. The 100/100
+helper pilot proves the surface; it does not prove general composition.
