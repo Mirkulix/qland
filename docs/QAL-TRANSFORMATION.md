@@ -125,3 +125,18 @@ Verified end-to-end on real processes:
 - `/api/metrics` per node and a QAL cluster dashboard over three nodes.
 
 `/metrics` is reserved by `qal serve`; QAL routes use `/api/metrics`.
+
+## Native `!tensor` attempt (2026-10-28)
+
+I prototyped the Rust side of a native `tensor_matmul(a_csv, b_csv, n) -> Str
+!tensor` builtin: `qal-core` builtin/effect, checker signature, module ABI
+`(i32, i32, i64) -> i32`, WASM import/codegen, host permission and a naive Rust
+matmul. The Rust workspace compiled.
+
+The release `qal` binary, however, runs the **self-hosted compiler** by default
+(`qalc.qal`); its builtin enum, tag mapping, signature table, effect list and
+WASM emission do not know `tensor_matmul`/`tensor`, so `qal check` still reports
+`unknown effect tensor` and `unknown name tensor_matmul`. Adding the builtin only
+to Rust is therefore not enough; the self-hosted compiler must learn it too.
+I reverted the prototype to keep the tree clean; the MLX sidecar (`!net`) remains
+the working tensor path.
