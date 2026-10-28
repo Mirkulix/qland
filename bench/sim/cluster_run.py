@@ -37,12 +37,22 @@ def main():
             for port in ports:
                 s = http(f"http://127.0.0.1:{port}/state")
                 assert (s["leader"], s["term"], s["at"]) == (1, 2, 102), s
+            # Leader failure: no heartbeat until now=200/timeout=50 -> candidates.
+            for port in ports:
+                t = http(f"http://127.0.0.1:{port}/timeout?now=200&timeout=50")
+                assert t["role"] == "candidate" and t["term"] == 3, t
+            # The host picks node 0 and sends its heartbeat; all become followers again.
+            for port in ports:
+                http(f"http://127.0.0.1:{port}/heartbeat", "hb:0:3:100")
+            for port in ports:
+                s = http(f"http://127.0.0.1:{port}/state")
+                assert (s["leader"], s["term"], s["role"]) == (0, 3, "follower"), s
         finally:
             for p in procs:
                 p.terminate()
             for p in procs:
                 p.wait(timeout=10)
-    print("cluster: 3 QAL nodes accepted hb:1:2:100..102 and persisted at=102")
+    print("cluster: 3 QAL nodes heartbeat -> candidate term 3 -> leader 0")
 
 
 if __name__ == "__main__":

@@ -69,5 +69,5 @@ the local `qal_event_queue` store (3 tests pass); no trust file is refused.
 
 File-backed Raft follower endpoint: `POST /heartbeat` (wire `hb:...`) persists
 `node_state.txt`, `GET /state` returns JSON, `setup` initializes. 7 definitions,
-signed registry SHA-256 `686c4f8f…`; verified with `qal request handle --init
+signed registry SHA-256 `d4b24b6f…`; verified with `qal request handle --init
 setup --allow fs:.`.

@@ -1,13 +1,14 @@
 # qal-pkg 1
-# package qal_sim_node 641fa9473f3e73df14b68de15cc6ecd19ece7f7b5900f8aa1ece8efa0acfdd98
+# package qal_sim_node 36f279c9e86295e665b4eb0e0add05231b3a77169fd3ac93ffbc5a276b3522fb
 # std 157299b76ea5a1e74bcc3a0bb266d916f478495c0eec487c6481c604da08b62e
 # def Heartbeat 0f543b33e3692fb2d3347b3d11df2bad57f993dfb56c4d1a1ad3875bf521202c cli
 # def decode 5e13a9de4a91e97d69783aa830dec4321b74ea11bfcf7886c8800729cc3e42fb cli
-# def handle d964f799beafc775c657ba759624999cb34bec2ef63f9173ae18705d4a5564df cli
+# def handle 70a27ae2713152ecd831c095e7386790f2cbaff8575593fe84c8e20daa4f7bc7 cli
 # def load 1eee4531eea06a5d795d8cdfbb80cf6a40f84650d36632c406a74846ca5fc9b0 cli
+# def role_of b0c19f1d42219c7c2b17729765357268b5bfc8907324a61bc3b9ae2627f57ca8 cli
 # def save 2fd67226b7d089e448a4ae0d453e8ce0f51ffebc9af27c52f8785667cfc7ea53 cli
 # def setup 4e77b01c88b4e11c5b5028fc5c10ade87027fca97cfe3fd6027b8ec2a1ae5ddd cli
-# def state_json 339d6fe7004ccdc39b30affcb81f7c1bcf8012e331569dad55e80357bdaba9ae cli
+# def state_json ded59fd6d0fefa8575570e940e23d109c26fe2d8a17c2c5b7411866c8143c860 cli
 
 type Heartbeat = { leader: Int, term: Int, at: Int }
 
@@ -17,14 +18,17 @@ fn decode(s: Str) -> Option[Heartbeat]
 fn load() -> Heartbeat !fs
 = match read_file("node_state.txt") { Err(_) => Heartbeat { leader: 0, term: 0, at: 0 }, Ok(s) => let p = split(trim(s), ":") in match get(p, 0) { None => Heartbeat { leader: 0, term: 0, at: 0 }, Some(a) => match to_int(a) { None => Heartbeat { leader: 0, term: 0, at: 0 }, Some(leader) => match get(p, 1) { None => Heartbeat { leader: 0, term: 0, at: 0 }, Some(b) => match to_int(b) { None => Heartbeat { leader: 0, term: 0, at: 0 }, Some(term) => match get(p, 2) { None => Heartbeat { leader: leader, term: term, at: 0 }, Some(c) => match to_int(c) { None => Heartbeat { leader: leader, term: term, at: 0 }, Some(at) => Heartbeat { leader: leader, term: term, at: at } } } } } } } }
 
+fn role_of(h: Heartbeat) -> Str
+= if h.leader < 0 then "candidate" else "follower"
+
 fn save(h: Heartbeat) -> Bool !fs
 = match write_file("node_state.txt", from_int(h.leader) ++ ":" ++ from_int(h.term) ++ ":" ++ from_int(h.at)) { Ok(_) => true, Err(_) => false }
 
-fn state_json(h: Heartbeat) -> HttpResponse
-= std.http.json(200, std.json.obj([std.json.field("leader", std.json.int(h.leader)), std.json.field("term", std.json.int(h.term)), std.json.field("at", std.json.int(h.at))]))
-
-fn handle(rq: HttpRequest) -> HttpResponse !fs
-= if rq.path == "/heartbeat" then match decode(rq.body) { None => std.http.bad_request("bad heartbeat wire format"), Some(h) => if save(h) then state_json(h) else std.http.error(500, "io", "save failed") } else if rq.path == "/state" then state_json(load()) else std.http.not_found()
-
 fn setup() -> Result[Unit, Str] !fs
 = if save(Heartbeat { leader: 0, term: 0, at: 0 }) then Ok(()) else Err("cannot write node_state.txt")
+
+fn state_json(h: Heartbeat) -> HttpResponse
+= std.http.json(200, std.json.obj([std.json.field("leader", std.json.int(h.leader)), std.json.field("term", std.json.int(h.term)), std.json.field("at", std.json.int(h.at)), std.json.field("role", std.json.str(role_of(h)))]))
+
+fn handle(rq: HttpRequest) -> HttpResponse !fs
+= if rq.path == "/heartbeat" then match decode(rq.body) { None => std.http.bad_request("bad heartbeat wire format"), Some(h) => if save(h) then state_json(h) else std.http.error(500, "io", "save failed") } else if rq.path == "/timeout" then let ps = std.url.parse_query(rq.query) in match std.url.param(ps, "now") { None => std.http.bad_request("missing now"), Some(ns) => match to_int(ns) { None => std.http.bad_request("bad now"), Some(now) => match std.url.param(ps, "timeout") { None => std.http.bad_request("missing timeout"), Some(ts) => match to_int(ts) { None => std.http.bad_request("bad timeout"), Some(timeout) => let h = load() in if now - h.at >= timeout then match save(Heartbeat { leader: -1, term: h.term + 1, at: now }) { true => state_json(Heartbeat { leader: -1, term: h.term + 1, at: now }), false => std.http.error(500, "io", "save failed") } else state_json(h) } } } } else if rq.path == "/state" then state_json(load()) else std.http.not_found()

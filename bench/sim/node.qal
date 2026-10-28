@@ -56,10 +56,13 @@ fn load() -> Heartbeat !fs =
 fn setup() -> Result[Unit, Str] !fs =
   if save(Heartbeat { leader: 0, term: 0, at: 0 }) then Ok(()) else Err("cannot write node_state.txt")
 
+fn role_of(h: Heartbeat) -> Str = if h.leader < 0 then "candidate" else "follower"
+
 fn state_json(h: Heartbeat) -> HttpResponse = std.http.json(200, std.json.obj([
   std.json.field("leader", std.json.int(h.leader)),
   std.json.field("term", std.json.int(h.term)),
   std.json.field("at", std.json.int(h.at)),
+  std.json.field("role", std.json.str(role_of(h))),
 ]))
 
 fn handle(rq: HttpRequest) -> HttpResponse !fs =
@@ -67,6 +70,24 @@ fn handle(rq: HttpRequest) -> HttpResponse !fs =
     match decode(rq.body) {
       None => std.http.bad_request("bad heartbeat wire format"),
       Some(h) => if save(h) then state_json(h) else std.http.error(500, "io", "save failed"),
+    }
+  else if rq.path == "/timeout" then
+    let ps = std.url.parse_query(rq.query) in
+    match std.url.param(ps, "now") {
+      None => std.http.bad_request("missing now"),
+      Some(ns) => match to_int(ns) {
+        None => std.http.bad_request("bad now"),
+        Some(now) => match std.url.param(ps, "timeout") {
+          None => std.http.bad_request("missing timeout"),
+          Some(ts) => match to_int(ts) {
+            None => std.http.bad_request("bad timeout"),
+            Some(timeout) => let h = load() in
+              if now - h.at >= timeout then
+                match save(Heartbeat { leader: -1, term: h.term + 1, at: now }) { true => state_json(Heartbeat { leader: -1, term: h.term + 1, at: now }), false => std.http.error(500, "io", "save failed") }
+              else state_json(h),
+          },
+        },
+      },
     }
   else if rq.path == "/state" then state_json(load())
   else std.http.not_found()
