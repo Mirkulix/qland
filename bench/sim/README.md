@@ -448,3 +448,14 @@ leader: alpha on 3, beta on 2/3, follower restarted and caught up
 
 All three logs end as `["1:1:alpha","2:1:beta"]`. The durable `node_log.txt`
 survives the restart; the host owns retries/ordering.
+
+## Continuous leader loop
+
+`cluster_loop.py` runs 10 ticks against three nodes: append `cmdN`, commit
+index N and heartbeat `hb:0:1:100+N` each tick.
+
+```text
+loop: 10 ticks replicated to 3 nodes, heartbeat at 110
+```
+
+All logs are `1:1:cmd1 … 10:1:cmd10` and all nodes report leader 0, at 110.
