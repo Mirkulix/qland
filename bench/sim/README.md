@@ -435,3 +435,16 @@ replicate: 3 nodes logs equal, commit index 2
 Each node writes `node_log.txt` (`1:1:alpha`, `2:1:beta`) and `node_commit.txt`.
 The host still owns ordering/retries; QAL owns the append/log/commit routes and
 durable files.
+
+## Leader retry and follower catch-up
+
+`leader_replicate.py` runs three nodes, appends `alpha` to all, kills follower 2,
+appends/commits `beta` on the leader and follower 1 (2/3), restarts follower 2,
+and catches it up:
+
+```text
+leader: alpha on 3, beta on 2/3, follower restarted and caught up
+```
+
+All three logs end as `["1:1:alpha","2:1:beta"]`. The durable `node_log.txt`
+survives the restart; the host owns retries/ordering.
