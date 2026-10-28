@@ -69,7 +69,7 @@ fn every_checked_corpus_program_round_trips_through_qalt() {
     }
     assert_eq!((files.parsed, files.checked), (FILES, FILES), "{files:?}");
     // Fixed with the corpus: a change means the corpus or the pipeline changed.
-    assert_eq!((st.parsed, st.checked), (880, 602), "{st:?}");
+    assert_eq!((st.parsed, st.checked), (882, 604), "{st:?}");
 }
 
 
