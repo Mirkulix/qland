@@ -1,41 +1,49 @@
-# Expanded mutation benchmark (108 mutants)
+# Expanded mutation benchmark (134 mutants)
 
-`expand.py` applies six source-level changes to the 23 teacher solutions:
+`expand.py` applies nine source-level changes to the 23 teacher solutions,
+only outside comments and string literals:
 
-| Mutator | Count |
+| Class | Mutators |
 |---|---|
-| `+` → `-`, `-` → `+`, `*` → `+`, `==` → `!=` | 4 per solution |
-| `true` → `false`, `0` → `1` (first occurrence) | 2 per solution |
+| operators | `+`→`-`, `-`→`+`, `*`→`+`, `==`→`!=` |
+| constants | `true`→`false`, `0`→`1` |
+| contracts | drop first `req`, drop first `ens`, weaken `>=`→`>` |
 
-A mutant counts only if it **compiles** and the task's hidden tests fail on it.
-Compile errors are invalid; all hidden tests passing is `escaped` (possibly an
-equivalent mutant or a comment/string hit).
+A mutant counts only if it **compiles**; `caught` means the hidden tests fail on
+it, `escaped` means every hidden test still passes.
 
 ## Result
 
 ```
-caught  80 / 108
-escaped 28 / 108
-invalid  0
+caught  112 / 134
+escaped  22 / 134
+invalid   0
 ```
 
-80 of 108 compiled mutants are caught by the hidden tests. The 28 escapes are
-concentrated in `zero_to_one` and `true_to_false`, which often hit comments,
-string literals or equivalent constants; they are not all semantic bugs. The
-operator mutants are the meaningful subset.
+**112/134 (83.6%)** compiled mutants are caught by the hidden tests.
+
+The 22 escapes split into two groups:
+
+1. **contract mutants** (`drop_req`, `drop_ens`, `weaken_ge`) in
+   `09-rle`, `22-expense-approval-contracts`, `23-expense-approval-change`,
+   `01-word-count`, `20-ini-query`, `02-roman`. The hidden tests do not fail
+   because removing a contract removes an obligation, not a behavior. Tests
+   alone cannot catch this; the diff/policy must require that contracts are not
+   silently deleted.
+2. **constant/operator mutants** where the changed token is on an equivalent
+   path or a value that the hidden cases do not exercise (`zero_to_one`,
+   `true_to_false`, a `+`/`-` in an unused branch).
 
 ## What this measures
 
-- QAL's hidden-test suite catches **80/108** mechanical mutations of the teacher
-  solutions;
-- it does **not** yet prove QAL beats Python/TypeScript;
-- it identifies where tests/contracts are weak (e.g. `11-prime-factors`,
-  `19-base-convert`, `22-expense-approval-contracts`).
+- QAL's hidden-test suite catches **83.6%** of compiled mechanical mutations;
+- contract deletion is a real blind spot for test-only validation;
+- it is **not** yet a Python/TypeScript comparison; that arm is still missing.
 
 ## Next
 
-- restrict mutators to code tokens (skip comments/strings) and classify
-  equivalent mutants;
-- add contract-specific mutants (remove a `req`/`ens`, weaken an invariant);
-- run the same 100-task suite against Python/TypeScript agents for the real
-  language comparison.
+- run `qal prove` on every mutant and count contract mutants caught by proof
+  obligations;
+- add a "contract diff" rule: deleting/weakening `req`/`ens` requires explicit
+  review and a new test;
+- add Python/TypeScript agents on a 100-task suite for the language comparison.

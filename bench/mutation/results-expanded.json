@@ -29,6 +29,13 @@
       "total": 9
     },
     {
+      "task": "01-word-count",
+      "mutator": "weaken_ge",
+      "status": "escaped",
+      "passed": 9,
+      "total": 9
+    },
+    {
       "task": "02-roman",
       "mutator": "plus_to_minus",
       "status": "escaped",
@@ -61,6 +68,20 @@
       "mutator": "zero_to_one",
       "status": "caught",
       "passed": 5,
+      "total": 9
+    },
+    {
+      "task": "02-roman",
+      "mutator": "drop_req",
+      "status": "escaped",
+      "passed": 9,
+      "total": 9
+    },
+    {
+      "task": "02-roman",
+      "mutator": "weaken_ge",
+      "status": "caught",
+      "passed": 8,
       "total": 9
     },
     {
@@ -106,6 +127,13 @@
       "total": 12
     },
     {
+      "task": "03-csv-sum",
+      "mutator": "weaken_ge",
+      "status": "caught",
+      "passed": 8,
+      "total": 12
+    },
+    {
       "task": "04-binary-search",
       "mutator": "plus_to_minus",
       "status": "caught",
@@ -129,99 +157,120 @@
     {
       "task": "04-binary-search",
       "mutator": "zero_to_one",
+      "status": "caught",
+      "passed": 3,
+      "total": 7
+    },
+    {
+      "task": "04-binary-search",
+      "mutator": "weaken_ge",
+      "status": "caught",
+      "passed": 2,
+      "total": 7
+    },
+    {
+      "task": "05-brackets",
+      "mutator": "plus_to_minus",
+      "status": "caught",
+      "passed": 4,
+      "total": 9
+    },
+    {
+      "task": "05-brackets",
+      "mutator": "minus_to_plus",
+      "status": "caught",
+      "passed": 3,
+      "total": 9
+    },
+    {
+      "task": "05-brackets",
+      "mutator": "eq_to_ne",
+      "status": "caught",
+      "passed": 1,
+      "total": 9
+    },
+    {
+      "task": "05-brackets",
+      "mutator": "zero_to_one",
+      "status": "caught",
+      "passed": 3,
+      "total": 9
+    },
+    {
+      "task": "05-brackets",
+      "mutator": "weaken_ge",
+      "status": "caught",
+      "passed": 0,
+      "total": 9
+    },
+    {
+      "task": "06-bank",
+      "mutator": "plus_to_minus",
+      "status": "caught",
+      "passed": 3,
+      "total": 8
+    },
+    {
+      "task": "06-bank",
+      "mutator": "minus_to_plus",
+      "status": "caught",
+      "passed": 4,
+      "total": 8
+    },
+    {
+      "task": "06-bank",
+      "mutator": "eq_to_ne",
+      "status": "caught",
+      "passed": 2,
+      "total": 8
+    },
+    {
+      "task": "06-bank",
+      "mutator": "true_to_false",
+      "status": "caught",
+      "passed": 2,
+      "total": 8
+    },
+    {
+      "task": "06-bank",
+      "mutator": "zero_to_one",
       "status": "escaped",
+      "passed": 8,
+      "total": 8
+    },
+    {
+      "task": "06-bank",
+      "mutator": "weaken_ge",
+      "status": "caught",
+      "passed": 0,
+      "total": 8
+    },
+    {
+      "task": "07-tokenizer",
+      "mutator": "plus_to_minus",
+      "status": "caught",
+      "passed": 2,
+      "total": 8
+    },
+    {
+      "task": "07-tokenizer",
+      "mutator": "eq_to_ne",
+      "status": "caught",
+      "passed": 1,
+      "total": 8
+    },
+    {
+      "task": "07-tokenizer",
+      "mutator": "zero_to_one",
+      "status": "caught",
+      "passed": 1,
+      "total": 8
+    },
+    {
+      "task": "07-tokenizer",
+      "mutator": "weaken_ge",
+      "status": "caught",
       "passed": 7,
-      "total": 7
-    },
-    {
-      "task": "05-brackets",
-      "mutator": "plus_to_minus",
-      "status": "caught",
-      "passed": 4,
-      "total": 9
-    },
-    {
-      "task": "05-brackets",
-      "mutator": "minus_to_plus",
-      "status": "escaped",
-      "passed": 9,
-      "total": 9
-    },
-    {
-      "task": "05-brackets",
-      "mutator": "eq_to_ne",
-      "status": "caught",
-      "passed": 1,
-      "total": 9
-    },
-    {
-      "task": "05-brackets",
-      "mutator": "zero_to_one",
-      "status": "escaped",
-      "passed": 9,
-      "total": 9
-    },
-    {
-      "task": "06-bank",
-      "mutator": "plus_to_minus",
-      "status": "caught",
-      "passed": 3,
-      "total": 8
-    },
-    {
-      "task": "06-bank",
-      "mutator": "minus_to_plus",
-      "status": "caught",
-      "passed": 4,
-      "total": 8
-    },
-    {
-      "task": "06-bank",
-      "mutator": "eq_to_ne",
-      "status": "caught",
-      "passed": 2,
-      "total": 8
-    },
-    {
-      "task": "06-bank",
-      "mutator": "true_to_false",
-      "status": "caught",
-      "passed": 2,
-      "total": 8
-    },
-    {
-      "task": "06-bank",
-      "mutator": "zero_to_one",
-      "status": "escaped",
-      "passed": 8,
-      "total": 8
-    },
-    {
-      "task": "07-tokenizer",
-      "mutator": "plus_to_minus",
-      "status": "caught",
-      "passed": 2,
-      "total": 8
-    },
-    {
-      "task": "07-tokenizer",
-      "mutator": "minus_to_plus",
-      "status": "escaped",
-      "passed": 8,
-      "total": 8
-    },
-    {
-      "task": "07-tokenizer",
-      "mutator": "eq_to_ne",
-      "status": "caught",
-      "passed": 1,
-      "total": 8
-    },
-    {
-      "task": "07-tokenizer",
-      "mutator": "zero_to_one",
-      "status": "caught",
-      "passed": 1,
       "total": 8
     },
     {
@@ -257,6 +306,13 @@
       "mutator": "zero_to_one",
       "status": "caught",
       "passed": 1,
+      "total": 11
+    },
+    {
+      "task": "08-expr-eval",
+      "mutator": "weaken_ge",
+      "status": "caught",
+      "passed": 6,
       "total": 11
     },
     {
@@ -297,8 +353,29 @@
     {
       "task": "09-rle",
       "mutator": "zero_to_one",
+      "status": "caught",
+      "passed": 9,
+      "total": 14
+    },
+    {
+      "task": "09-rle",
+      "mutator": "drop_req",
       "status": "escaped",
       "passed": 14,
+      "total": 14
+    },
+    {
+      "task": "09-rle",
+      "mutator": "drop_ens",
+      "status": "escaped",
+      "passed": 14,
+      "total": 14
+    },
+    {
+      "task": "09-rle",
+      "mutator": "weaken_ge",
+      "status": "caught",
+      "passed": 11,
       "total": 14
     },
     {
@@ -325,8 +402,8 @@
     {
       "task": "10-file-stats",
       "mutator": "zero_to_one",
-      "status": "escaped",
-      "passed": 12,
+      "status": "caught",
+      "passed": 11,
       "total": 12
     },
     {
@@ -341,13 +418,6 @@
       "mutator": "minus_to_plus",
       "status": "caught",
       "passed": 7,
-      "total": 8
-    },
-    {
-      "task": "11-prime-factors",
-      "mutator": "times_to_plus",
-      "status": "escaped",
-      "passed": 8,
       "total": 8
     },
     {
@@ -367,8 +437,15 @@
     {
       "task": "11-prime-factors",
       "mutator": "zero_to_one",
-      "status": "escaped",
-      "passed": 8,
+      "status": "caught",
+      "passed": 7,
+      "total": 8
+    },
+    {
+      "task": "11-prime-factors",
+      "mutator": "weaken_ge",
+      "status": "caught",
+      "passed": 2,
       "total": 8
     },
     {
@@ -388,8 +465,15 @@
     {
       "task": "12-sort-words",
       "mutator": "zero_to_one",
-      "status": "escaped",
-      "passed": 8,
+      "status": "caught",
+      "passed": 2,
+      "total": 8
+    },
+    {
+      "task": "12-sort-words",
+      "mutator": "weaken_ge",
+      "status": "caught",
+      "passed": 4,
       "total": 8
     },
     {
@@ -425,6 +509,13 @@
       "mutator": "zero_to_one",
       "status": "escaped",
       "passed": 11,
+      "total": 11
+    },
+    {
+      "task": "13-word-freq",
+      "mutator": "weaken_ge",
+      "status": "caught",
+      "passed": 10,
       "total": 11
     },
     {
@@ -477,6 +568,13 @@
       "total": 13
     },
     {
+      "task": "15-caesar",
+      "mutator": "weaken_ge",
+      "status": "caught",
+      "passed": 12,
+      "total": 13
+    },
+    {
       "task": "16-anagrams",
       "mutator": "eq_to_ne",
       "status": "caught",
@@ -526,6 +624,13 @@
       "total": 12
     },
     {
+      "task": "17-word-wrap",
+      "mutator": "weaken_ge",
+      "status": "caught",
+      "passed": 11,
+      "total": 12
+    },
+    {
       "task": "18-date-diff",
       "mutator": "plus_to_minus",
       "status": "caught",
@@ -563,8 +668,22 @@
     {
       "task": "18-date-diff",
       "mutator": "zero_to_one",
-      "status": "escaped",
-      "passed": 7,
+      "status": "caught",
+      "passed": 3,
+      "total": 7
+    },
+    {
+      "task": "18-date-diff",
+      "mutator": "drop_req",
+      "status": "caught",
+      "passed": 0,
+      "total": 7
+    },
+    {
+      "task": "18-date-diff",
+      "mutator": "weaken_ge",
+      "status": "caught",
+      "passed": 5,
       "total": 7
     },
     {
@@ -584,8 +703,8 @@
     {
       "task": "19-base-convert",
       "mutator": "times_to_plus",
-      "status": "escaped",
-      "passed": 7,
+      "status": "caught",
+      "passed": 1,
       "total": 7
     },
     {
@@ -598,8 +717,8 @@
     {
       "task": "19-base-convert",
       "mutator": "true_to_false",
-      "status": "escaped",
-      "passed": 7,
+      "status": "caught",
+      "passed": 1,
       "total": 7
     },
     {
@@ -607,6 +726,13 @@
       "mutator": "zero_to_one",
       "status": "escaped",
       "passed": 7,
+      "total": 7
+    },
+    {
+      "task": "19-base-convert",
+      "mutator": "weaken_ge",
+      "status": "caught",
+      "passed": 2,
       "total": 7
     },
     {
@@ -633,6 +759,13 @@
     {
       "task": "20-ini-query",
       "mutator": "zero_to_one",
+      "status": "caught",
+      "passed": 4,
+      "total": 11
+    },
+    {
+      "task": "20-ini-query",
+      "mutator": "weaken_ge",
       "status": "escaped",
       "passed": 11,
       "total": 11
@@ -673,6 +806,13 @@
       "total": 12
     },
     {
+      "task": "21-expense-approval",
+      "mutator": "weaken_ge",
+      "status": "caught",
+      "passed": 1,
+      "total": 12
+    },
+    {
       "task": "22-expense-approval-contracts",
       "mutator": "plus_to_minus",
       "status": "caught",
@@ -682,8 +822,8 @@
     {
       "task": "22-expense-approval-contracts",
       "mutator": "minus_to_plus",
-      "status": "escaped",
-      "passed": 12,
+      "status": "caught",
+      "passed": 1,
       "total": 12
     },
     {
@@ -710,8 +850,29 @@
     {
       "task": "22-expense-approval-contracts",
       "mutator": "zero_to_one",
+      "status": "caught",
+      "passed": 0,
+      "total": 12
+    },
+    {
+      "task": "22-expense-approval-contracts",
+      "mutator": "drop_req",
       "status": "escaped",
       "passed": 12,
+      "total": 12
+    },
+    {
+      "task": "22-expense-approval-contracts",
+      "mutator": "drop_ens",
+      "status": "escaped",
+      "passed": 12,
+      "total": 12
+    },
+    {
+      "task": "22-expense-approval-contracts",
+      "mutator": "weaken_ge",
+      "status": "caught",
+      "passed": 10,
       "total": 12
     },
     {
@@ -754,6 +915,27 @@
       "mutator": "zero_to_one",
       "status": "escaped",
       "passed": 15,
+      "total": 15
+    },
+    {
+      "task": "23-expense-approval-change",
+      "mutator": "drop_req",
+      "status": "escaped",
+      "passed": 15,
+      "total": 15
+    },
+    {
+      "task": "23-expense-approval-change",
+      "mutator": "drop_ens",
+      "status": "escaped",
+      "passed": 15,
+      "total": 15
+    },
+    {
+      "task": "23-expense-approval-change",
+      "mutator": "weaken_ge",
+      "status": "caught",
+      "passed": 1,
       "total": 15
     }
   ]

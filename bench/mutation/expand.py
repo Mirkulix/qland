@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Expanded mutation benchmark: 138 mutants over the 23 teacher solutions.
+"""Mutation benchmark over the 23 teacher solutions, code spans only.
 
-Each mutant is one source-level change (operator/constant/boolean) applied to the
-first occurrence. A mutant counts only if it compiles and the hidden tests fail;
-compile errors are invalid, passing hidden tests are escaped/equivalent.
+Six source-level mutators (operators/booleans/constants) plus contract mutators
+(remove req/ens, weaken >=). A mutant is `caught` only if it compiles and hidden
+tests fail; `escaped` if it compiles and all hidden tests pass; `invalid` if it
+does not compile.
 """
 import json, os, re, sys, tempfile
 from pathlib import Path
@@ -13,13 +14,68 @@ sys.path.insert(0, str(REPO / "bench"))
 import check
 
 SOLUTIONS = REPO / "bench" / "teacher-2026-10-27" / "solutions"
+
+
+def spans(src):
+    """(start,end) spans outside QAL comments and string literals."""
+    out, i, start, in_str = [], 0, 0, False
+    while i < len(src):
+        c = src[i]
+        if in_str:
+            if c == "\\":
+                i += 2
+                continue
+            if c == '"':
+                in_str = False
+                start = i + 1
+            i += 1
+            continue
+        if c == '"':
+            if start < i:
+                out.append((start, i))
+            in_str = True
+            i += 1
+            continue
+        if c == "#":
+            if start < i:
+                out.append((start, i))
+            while i < len(src) and src[i] != "\n":
+                i += 1
+            start = i
+            continue
+        i += 1
+    if start < len(src):
+        out.append((start, len(src)))
+    return out
+
+
+def replace_code(src, old, new):
+    for a, b in spans(src):
+        idx = src.find(old, a, b)
+        if idx >= 0:
+            return src[:idx] + new + src[idx + len(old):]
+    return src
+
+
+def drop_first_line(src, pattern):
+    for m in re.finditer(pattern, src, re.M):
+        end = src.find("\n", m.start())
+        if end < 0:
+            return src[:m.start()]
+        return src[:m.start()] + src[end + 1:]
+    return src
+
+
 MUTATORS = [
-    ("plus_to_minus", lambda s: s.replace(" + ", " - ", 1)),
-    ("minus_to_plus", lambda s: s.replace(" - ", " + ", 1)),
-    ("times_to_plus", lambda s: s.replace(" * ", " + ", 1)),
-    ("eq_to_ne", lambda s: s.replace(" == ", " != ", 1)),
-    ("true_to_false", lambda s: s.replace("true", "false", 1)),
-    ("zero_to_one", lambda s: s.replace("0", "1", 1)),
+    ("plus_to_minus", lambda s: replace_code(s, " + ", " - ")),
+    ("minus_to_plus", lambda s: replace_code(s, " - ", " + ")),
+    ("times_to_plus", lambda s: replace_code(s, " * ", " + ")),
+    ("eq_to_ne", lambda s: replace_code(s, " == ", " != ")),
+    ("true_to_false", lambda s: replace_code(s, "true", "false")),
+    ("zero_to_one", lambda s: replace_code(s, "0", "1")),
+    ("drop_req", lambda s: drop_first_line(s, r"^\s*req\b.*$")),
+    ("drop_ens", lambda s: drop_first_line(s, r"^\s*ens\b.*$")),
+    ("weaken_ge", lambda s: replace_code(s, ">=", ">")),
 ]
 
 
