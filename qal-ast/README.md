@@ -29,6 +29,9 @@ semantics. The lowering is now also available in the compiler:
 qal ast qal-ast/example.json > main.qal
 cat bench/compare/prelude.qal main.qal > full.qal
 qal check full.qal
+
+# or direct into the store, no intermediate file:
+qal define qal-ast/simple.json --ast
 ```
 
 `qal ast` is the first native agent surface; Python `lower.py` remains the

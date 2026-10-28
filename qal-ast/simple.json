@@ -1,0 +1,1 @@
+{"main":{"call":"print","args":[{"call":"from_int","args":[{"op":"+","args":[{"int":2},{"int":3}]}]}]}}

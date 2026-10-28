@@ -17,7 +17,7 @@
 //! Every write (define, rename, delete, import) first imports the embedded std package if the project lacks this
 //! version (`std_imported` in its result; if that fails, the
 //! write still goes ahead with the previous std and `std_warnings` says why); reads never change the codebase.
-//!   qal define <file> [--agent <name>] [--breaking]  -> {"defined":[{name,kind,hash,status,old_hash?}],"proofs":[...]?} | {"diagnostics":[...]}
+//!   qal define <file> [--ast] [--agent <name>] [--breaking]  -> {"defined":[{name,kind,hash,status,old_hash?}],"proofs":[...]?} | {"diagnostics":[...]}
 //!                                                       (a function with a refuted contract is not stored: E0801)
 //!   qal view <name|#hash>...                         -> {"views":[{name,kind,hash,signature,effects,text,deps}]}
 //!   qal query [--name <prefix>] [--type <pattern>] [--uses <name|#hash>] [--outline]
@@ -84,7 +84,7 @@ use std::process::ExitCode;
 use std::sync::Arc;
 
 const USAGE: &str = "usage: qal <check|fmt> <file>\n       \
-                     qal init [--std] | define <file> [--agent <name>] [--breaking] | view <name>... | rename <old> <new> [--agent <name>] [--breaking] | delete <name>... [--agent <name>] [--breaking] | history <name> | build <name>\n       \
+                     qal init [--std] | define <file> [--ast] [--agent <name>] [--breaking] | view <name>... | rename <old> <new> [--agent <name>] [--breaking] | delete <name>... [--agent <name>] [--breaking] | history <name> | build <name>\n       \
                      qal export <prefix> --out <file> [--name <pkg>] | import <file|url> | install <file|url>\n       \
                      qal query [--name <prefix>] [--type <pattern>] [--uses <name>] [--outline]\n       \
                      qal recall [--code <E...>] [--message <text>] [--name <prefix>] [--type <pattern>]\n       \
@@ -282,8 +282,9 @@ fn store_command(cmd: &str, args: &[String]) -> ExitCode {
         };
     }
     let breaking = matches!(cmd, "define" | "delete" | "rename") && args.iter().any(|a| a == "--breaking");
+    let ast_flag = cmd == "define" && args.iter().any(|a| a == "--ast");
     let outline = cmd == "query" && args.iter().any(|a| a == "--outline");
-    let without: Vec<String> = args.iter().filter(|a| !(breaking && *a == "--breaking") && !(outline && *a == "--outline")).cloned().collect();
+    let without: Vec<String> = args.iter().filter(|a| !(breaking && *a == "--breaking") && !(outline && *a == "--outline") && !(ast_flag && *a == "--ast")).cloned().collect();
     let args = without.as_slice();
     let options: &[&str] = match cmd {
         "define" | "rename" | "delete" => &["agent"],
@@ -301,9 +302,18 @@ fn store_command(cmd: &str, args: &[String]) -> ExitCode {
     let targets = s.targets.as_slice();
     match (cmd, targets) {
         ("define", [file]) => {
-            let src = match read(file) {
-                Ok(s) => s,
-                Err(code) => return code,
+            let src = if ast_flag {
+                let text = match read(file) { Ok(s) => s, Err(code) => return code };
+                let v: serde_json::Value = match serde_json::from_str(&text) {
+                    Ok(v) => v,
+                    Err(e) => return bad_usage(&format!("invalid JSON AST: {e}")),
+                };
+                match ast::lower_main(&v) {
+                    Ok(s) => s,
+                    Err(e) => return bad_usage(&format!("invalid AST: {e}")),
+                }
+            } else {
+                match read(file) { Ok(s) => s, Err(code) => return code }
             };
             match ctx() {
                 Ok(c) => emit(ops::define(&c, &src, agent, breaking)),
