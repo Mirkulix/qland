@@ -28,6 +28,11 @@ run_case numerics
 "$QAL" define "$REPO/bench/sim/numerics.qal" >/dev/null
 "$QAL" test square_integral linear_integral >/dev/null
 
+# conflict-aware merge
+run_case conflict
+"$QAL" define "$REPO/bench/sim/conflict.qal" >/dev/null
+"$QAL" test same_payload_no_conflict different_amount_conflict disjoint_merges >/dev/null
+
 # journal merge
 run_case merge
 "$QAL" define "$REPO/bench/sim/merge.qal" >/dev/null
@@ -80,4 +85,4 @@ run_case dashboard
 printf '[{"method":"GET","path":"/metrics"}]\n' > reqs.json
 "$QAL" request handle reqs.json --allow io | grep -q '"total":100000'
 
-echo "simulation: queue 3, tensor 3, numerics 2, merge 3, journal 2, twopc 2, once 2, cross 2, sim_package 2, sim 100000, queue-sim 1000 events, shards 10, dashboard 200"
+echo "simulation: queue 3, tensor 3, numerics 2, conflict 3, merge 3, journal 2, twopc 2, once 2, cross 2, sim_package 2, sim 100000, queue-sim 1000 events, shards 10, dashboard 200"

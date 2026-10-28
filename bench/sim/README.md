@@ -247,3 +247,17 @@ id; a duplicate is a no-op. Tests `merge_dedup`, `merge_idempotent`,
 `merge_keeps_both` pass. Signed install SHA-256 `36d07639…`. This is the
 replication primitive for a distributed journal; conflict resolution/ordering
 stay with the host.
+
+## Conflict-aware merge
+
+`conflict.qal` (package `qal_sim_conflict`, 12 defs) returns both the merged log
+and the list of same-id/different-payload conflicts:
+
+```qal
+type Merged = { log: List[Entry], conflicts: List[Conflict] }
+fn merge_checked(a, b) -> Merged
+```
+
+Tests `same_payload_no_conflict`, `different_amount_conflict`, `disjoint_merges`
+pass. Signed install SHA-256 `18df143d…`. The host decides how to resolve a
+reported conflict; QAL never silently overwrites.
