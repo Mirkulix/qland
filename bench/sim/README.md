@@ -1,0 +1,50 @@
+# QAL 100-agent cash simulation
+
+`sim.qal` is a discrete, auditable simulation:
+
+- 100 agents, each starting with 1000 cash, in a `Map[Int, Agent]`;
+- 1000 randomized transfer steps (`rand_int`), effect `!rand`;
+- pure `transfer` with `ens total(r) == total(sim)`;
+- `main` prints the total and final tick.
+
+## Measured
+
+```text
+qal check sim.qal  -> {"ok":true}
+qal run sim.qal --allow io,rand
+  -> agents=100 total=100000 tick=989
+qal test sim.qal
+  -> transfer_conserves passed
+  -> self_transfer_is_noop passed
+```
+
+## The contract caught a real bug
+
+The first run failed with:
+
+```json
+{"kind":"contract_violation","def":"transfer","path":"ens[0]",
+ "message":"`ens total(r) == total(sim)` of `transfer` is false",
+ "values":{"from":91,"to":91,"amount":50,"tick":19}}
+```
+
+A self-transfer (`from == to`) subtracted from the source and added the old
+destination balance, creating 50 cash. Python tests would only catch this if
+they happened to test `from == to`; the QAL postcondition caught it immediately.
+After the fix:
+
+```qal
+= if from == to then sim else match map_get(sim.agents, from) { ... }
+```
+
+the run conserves 100,000 exactly.
+
+## What this demonstrates
+
+- QAL can express a discrete event/agent simulation;
+- the invariant is checked at runtime, not just in tests;
+- deterministic replay is possible with a fixed `rand` seed;
+- the same pattern scales to scheduler/event-queue libraries and host numerics.
+
+It is **not** a high-performance simulator: the interpreter, immutable maps and
+recursion are fine for 100 agents/1000 steps, not millions.
