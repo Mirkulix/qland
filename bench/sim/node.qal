@@ -137,6 +137,20 @@ fn handle(rq: HttpRequest) -> HttpResponse !fs =
       },
     }
   else if rq.path == "/log" then log_json()
+  else if rq.path == "/snapshot" then
+    let ps = std.url.parse_query(rq.query) in
+    match std.url.param(ps, "index") {
+      None => std.http.bad_request("missing index"),
+      Some(is) => match to_int(is) {
+        None => std.http.bad_request("bad index"),
+        Some(index) => let xs = load_log() in
+          let kept = filter(xs, fn(l) => match to_int(slice(l, 0, match index_of(l, ":") { Some(i) => i, None => 0 })) { None => false, Some(n) => n <= index }) in
+          std.http.json(200, std.json.obj([
+            std.json.field("last_index", std.json.int(index)),
+            std.json.field("entries", std.json.arr(map(kept, fn(l) => std.json.str(l)))),
+          ])),
+      },
+    }
   else if rq.path == "/commit" then
     let ps = std.url.parse_query(rq.query) in
     match std.url.param(ps, "index") {

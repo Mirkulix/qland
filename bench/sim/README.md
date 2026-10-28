@@ -484,3 +484,15 @@ watch: monitor detected dead leader, elected node 1 term 2
 
 The old leader is restarted and catches up; all logs are
 `["1:1:cmd1","2:2:cmd2"]`.
+
+## Snapshot endpoint
+
+The node exposes `GET /snapshot?index=N`: it returns the entries whose log index
+is `<= N` as `{last_index, entries}`. Verified with two appends:
+
+```json
+{"last_index":2,"entries":["1:1:a","2:1:b"]}
+```
+
+This is the HTTP side of `qal_sim_snapshot`; the host decides when to snapshot,
+QAL returns the prefix.
