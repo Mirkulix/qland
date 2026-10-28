@@ -81,3 +81,11 @@ The AST arm uses `bench/compare/prelude.qal` helpers and only chooses/composes
 calls; it is not a general synthesis result. But it isolates the surface
 variable: same model, same tasks, same tests, **only the output format changes**.
 That is the evidence that an agent-native surface is the right next layer.
+
+## Implemented surface (2026-10-28)
+
+`qal ast <file.json>` and `qal define <file.json> --ast` now support literals,
+vars, calls, ops, fields, let, if, match, records, `effects`, `returns` and
+`tests`. `qal define --ast` uses the normal store path, so the AST gets the same
+type check, proofs, tests and hash as text. Verified: `sum_ok` test and `main`
+run -> `5` from a single JSON file.

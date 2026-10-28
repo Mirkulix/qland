@@ -76,10 +76,35 @@ pub fn lower(e: &Value) -> Result<String, String> {
     Err(format!("unknown AST keys: {:?}", o.keys().collect::<Vec<_>>()))
 }
 
-/// Lower `{"main": expr}` to a complete main definition.
+/// Lower `{"main": expr, "effects": [...]?, "returns": ...?, "tests": [...]?}`
+/// to a complete QAL source (main plus tests).
 pub fn lower_main(ast: &Value) -> Result<String, String> {
     let main = ast.get("main").ok_or("AST needs a main field")?;
-    Ok(format!("fn main(args: List[Str]) -> Int !io = {{ {}; 0 }}\n", lower(main)?))
+    let ret = ast.get("returns").and_then(Value::as_str).unwrap_or("Int");
+    let effects = match ast.get("effects") {
+        None => vec!["io".to_string()],
+        Some(Value::Array(xs)) => xs.iter().map(|e| e.as_str().map(str::to_string).ok_or("effects must be strings"))
+            .collect::<Result<Vec<_>, _>>()?,
+        Some(_) => return Err("effects must be an array".into()),
+    };
+    for e in &effects {
+        if !e.chars().all(|c| c.is_ascii_lowercase() || c == '_') {
+            return Err(format!("bad effect: {e}"));
+        }
+    }
+    let mut src = format!("fn main(args: List[Str]) -> {ret} !{} = {{ {}; 0 }}\n",
+                          effects.join(" !"), lower(main)?);
+    if let Some(Value::Array(tests)) = ast.get("tests") {
+        for t in tests {
+            let name = t.get("name").and_then(Value::as_str).ok_or("test needs name")?;
+            if !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+                return Err(format!("bad test name: {name}"));
+            }
+            let body = lower(t.get("body").ok_or("test needs body")?)?;
+            src.push_str(&format!("test {name} = {body}\n"));
+        }
+    }
+    Ok(src)
 }
 
 #[cfg(test)]
@@ -97,5 +122,13 @@ mod tests {
         let v: Value = serde_json::json!({"main":{"match":{"call":"to_int","args":[{"str":"42"}]},
             "cases":[{"pattern":"None","body":{"int":0}},{"pattern":"Some(n)","body":{"var":"n"}}]}});
         assert!(lower_main(&v).unwrap().contains("match to_int(\"42\") { None => 0, Some(n) => n }"));
+    }
+    #[test]
+    fn effects_and_tests() {
+        let v: Value = serde_json::json!({"main":{"call":"print","args":[{"str":"ok"}]},
+            "effects":["io","time"],"tests":[{"name":"t","body":{"op":"==","args":[{"int":1},{"int":1}]}}]});
+        let s = lower_main(&v).unwrap();
+        assert!(s.contains("fn main(args: List[Str]) -> Int !io !time"), "{s}");
+        assert!(s.contains("test t = (1 == 1)"), "{s}");
     }
 }

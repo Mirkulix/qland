@@ -4,7 +4,8 @@
 language: it targets the same QAL compiler, hashes, contracts and tests.
 
 Supported nodes: literals (`int`, `str`, `bool`), `var`, `call`, `op`, `field`,
-`let`, `if`, `match`, `record`.
+`let`, `if`, `match`, `record`. The root also accepts `effects` (default `["io"]`),
+`returns` (default `Int`) and `tests` (`[{name, body}]`).
 
 ```sh
 python3 qal-ast/lower.py qal-ast/example.json \
@@ -32,6 +33,7 @@ qal check full.qal
 
 # or direct into the store, no intermediate file:
 qal define qal-ast/simple.json --ast
+qal define qal-ast/tests.json --ast   # main + test sum_ok in one call
 ```
 
 `qal ast` is the first native agent surface; Python `lower.py` remains the
