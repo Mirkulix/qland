@@ -20,6 +20,12 @@ pub fn lower(e: &Value) -> Result<String, String> {
     if let Some(v) = o.get("int") { return lit(v); }
     if let Some(v) = o.get("str") { return lit(v); }
     if let Some(v) = o.get("bool") { return lit(v); }
+    if let Some(v) = o.get("list") {
+        let xs = v.as_array().ok_or("list must be an array")?;
+        let mut out = Vec::new();
+        for x in xs { out.push(lower(x)?); }
+        return Ok(format!("[{}]", out.join(", ")));
+    }
     if let Some(v) = o.get("var") { return v.as_str().map(str::to_string).ok_or_else(|| "var must be a string".into()); }
     if let Some(v) = o.get("call") {
         let name = v.as_str().ok_or("call must be a string")?;
@@ -79,6 +85,27 @@ pub fn lower(e: &Value) -> Result<String, String> {
 /// Lower `{"main": expr, "effects": [...]?, "returns": ...?, "tests": [...]?}`
 /// to a complete QAL source (main plus tests).
 pub fn lower_main(ast: &Value) -> Result<String, String> {
+    match ast.get("ast_version") {
+        None => {}
+        Some(v) if v.as_u64() == Some(1) => {}
+        Some(v) => return Err(format!("unsupported ast_version: {v}")),
+    }
+    let mut prefix = String::new();
+    if let Some(Value::Array(types)) = ast.get("types") {
+        for t in types {
+            let name = t.get("name").and_then(Value::as_str).ok_or("type needs name")?;
+            if !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+                return Err(format!("bad type name: {name}"));
+            }
+            let fields = t.get("fields").and_then(Value::as_object).ok_or("type needs fields")?;
+            let mut fs = Vec::new();
+            for (k, v) in fields {
+                let ty = v.as_str().ok_or("type field type must be a string")?;
+                fs.push(format!("{k}: {ty}"));
+            }
+            prefix.push_str(&format!("type {name} = {{ {} }}\n", fs.join(", ")));
+        }
+    }
     let main = ast.get("main").ok_or("AST needs a main field")?;
     let ret = ast.get("returns").and_then(Value::as_str).unwrap_or("Int");
     let effects = match ast.get("effects") {
@@ -92,8 +119,9 @@ pub fn lower_main(ast: &Value) -> Result<String, String> {
             return Err(format!("bad effect: {e}"));
         }
     }
-    let mut src = format!("fn main(args: List[Str]) -> {ret} !{} = {{ {}; 0 }}\n",
-                          effects.join(" !"), lower(main)?);
+    let mut src = prefix;
+    src.push_str(&format!("fn main(args: List[Str]) -> {ret} !{} = {{ {}; 0 }}\n",
+                          effects.join(" !"), lower(main)?));
     if let Some(Value::Array(tests)) = ast.get("tests") {
         for t in tests {
             let name = t.get("name").and_then(Value::as_str).ok_or("test needs name")?;
@@ -122,6 +150,19 @@ mod tests {
         let v: Value = serde_json::json!({"main":{"match":{"call":"to_int","args":[{"str":"42"}]},
             "cases":[{"pattern":"None","body":{"int":0}},{"pattern":"Some(n)","body":{"var":"n"}}]}});
         assert!(lower_main(&v).unwrap().contains("match to_int(\"42\") { None => 0, Some(n) => n }"));
+    }
+    #[test]
+    fn list_and_type() {
+        let v: Value = serde_json::json!({"ast_version":1,
+            "types":[{"name":"P","fields":{"x":"Int"}}],
+            "main":{"call":"print","args":[{"call":"from_int","args":[{"field":{"record":"P","fields":{"x":{"int":7}}},"name":"x"}]}]}});
+        let s = lower_main(&v).unwrap();
+        assert!(s.contains("type P = { x: Int }"), "{s}");
+    }
+    #[test]
+    fn list_literal() {
+        let v: Value = serde_json::json!({"main":{"call":"print","args":[{"call":"from_int","args":[{"call":"len","args":[{"list":[{"int":1},{"int":2}]}]}]}]}});
+        assert!(lower_main(&v).unwrap().contains("len([1, 2])"));
     }
     #[test]
     fn effects_and_tests() {

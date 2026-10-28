@@ -1,0 +1,14 @@
+{
+  "ast_version": 1,
+  "types": [{"name": "P", "fields": {"x": "Int"}}],
+  "main": {"call": "print", "args": [
+    {"call": "from_int", "args": [
+      {"field": {"record": "P", "fields": {"x": {"int": 7}}}, "name": "x"}
+    ]}
+  ]},
+  "tests": [
+    {"name": "p_ok", "body": {"op": "==", "args": [
+      {"field": {"record": "P", "fields": {"x": {"int": 7}}}, "name": "x"}, {"int": 7}
+    ]}}
+  ]
+}
