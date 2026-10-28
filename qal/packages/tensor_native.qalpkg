@@ -1,0 +1,16 @@
+# qal-pkg 1
+# package qal_tensor_native 24fada223fd9fbd5d4145d2920f5cf86a3a371f6b7aecf2ba82b2b9077a4f12b
+# def main 1ecf22d06b7c4e9a6f2f8c5467e7925f162ce4c7bca960312548b743b728e0fc cli
+# def matmul 495bd6acdea7e0781e72b755561b75540e590d37c43af25fadf4d24551815474 cli
+# def parse_floats dca8f175addf9eb3947b920423fdade3eb741658cdd1796eaffde18ce3e69316 cli
+
+fn parse_floats(s: Str) -> List[Float]
+= map(split(s, ","), fn(x) => match to_float(x) { None => 0.0, Some(f) => f })
+
+fn matmul(a: List[Float], b: List[Float], n: Int) -> List[Float] !tensor
+  req n > 0 && len(a) == n * n && len(b) == n * n
+  ens len(r) == n * n
+= let a_csv = join(map(a, fn(x) => from_float(x)), ",") in let b_csv = join(map(b, fn(x) => from_float(x)), ",") in parse_floats(tensor_matmul(a_csv, b_csv, n))
+
+fn main(args: List[Str]) -> Int !io !tensor
+= let a = [1.0, 2.0, 3.0, 4.0] in let b = [5.0, 6.0, 7.0, 8.0] in let r = matmul(a, b, 2) in { print(join(map(r, fn(x) => from_float(x)), ",")); 0 }

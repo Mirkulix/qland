@@ -78,3 +78,9 @@ Cluster dashboard: fetches `/api/metrics` from three nodes and returns JSON;
 `/` is an HTML shell. 4 definitions, signed registry SHA-256 `bff64d4c…`.
 Routes use `/api/metrics` because `/metrics` is reserved for `qal serve`'s own
 Prometheus metrics.
+
+## `tensor_native.qalpkg` (`qal_tensor_native`)
+
+Native `!tensor` matmul wrapper: `matmul: fn(List[Float], List[Float], Int) ->
+List[Float] !tensor`; 3 definitions, signed registry SHA-256 `ecaadd0b…`.
+Verified `qal run main --allow io,tensor -> 19.0,22.0,43.0,50.0`.

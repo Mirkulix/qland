@@ -2330,7 +2330,7 @@ fn qc_is_builtin_name(name: Str) -> Bool =
   name == "bit_and" || name == "bit_or" || name == "bit_xor" || name == "bit_not" ||
   name == "shl" || name == "shr" || name == "ushr" || name == "float_bits" ||
   name == "float_of_bits" || name == "list_at" || name == "bytes_at" || name == "acc_list" ||
-  name == "bytes_join" || name == "sha256" || name == "todo" || name == "model_ask"
+  name == "bytes_join" || name == "sha256" || name == "todo" || name == "model_ask" || name == "tensor_matmul"
 
 type QcCanonEnv = {
   fns: Map[Str, Bool],
@@ -5025,6 +5025,7 @@ type QcBuiltin =
   | QcBSha256
   | QcBTodo
   | QcBModelAsk
+  | QcBTensorMatmul
 
 fn qc_builtin_from_idx(i: Int) -> QcBuiltin =
   if i == 0 then QcBStrLen
@@ -5099,6 +5100,7 @@ fn qc_builtin_from_idx(i: Int) -> QcBuiltin =
   else if i == 69 then QcBBytesJoin
   else if i == 70 then QcBSha256
   else if i == 71 then QcBTodo
+  else if i == 73 then QcBTensorMatmul
   else QcBModelAsk
 
 fn qc_builtin_to_idx(b: QcBuiltin) -> Int =
@@ -5175,7 +5177,8 @@ fn qc_builtin_to_idx(b: QcBuiltin) -> Int =
     QcBBytesJoin => 69,
     QcBSha256 => 70,
     QcBTodo => 71,
-    QcBModelAsk => 72
+    QcBModelAsk => 72,
+    QcBTensorMatmul => 73
   }
 
 type QcTPField = {
@@ -6176,6 +6179,7 @@ fn qc_builtin_signature(name: Str, a: QcType, b: QcType) -> Option[QcBuiltinSig]
   else if name == "sha256" then Some(QcBuiltinSig { builtin: QcBSha256, params: [t_bytes], ret: t_bytes })
   else if name == "todo" then Some(QcBuiltinSig { builtin: QcBTodo, params: [], ret: a })
   else if name == "model_ask" then Some(QcBuiltinSig { builtin: QcBModelAsk, params: [t_str, t_str], ret: QcTResult(model_resp_ty, model_err_ty) })
+  else if name == "tensor_matmul" then Some(QcBuiltinSig { builtin: QcBTensorMatmul, params: [t_str, t_str, t_int], ret: t_str })
   else None
 
 fn qc_builtin_arity(name: Str) -> Option[Int] =
@@ -6206,6 +6210,7 @@ fn qc_builtin_effect(b: QcBuiltin) -> Option[Str] =
     QcBDbExec => Some("db"),
     QcBDbQuery => Some("db"),
     QcBModelAsk => Some("model"),
+    QcBTensorMatmul => Some("tensor"),
     _ => None
   }
 
@@ -6228,6 +6233,7 @@ test qc_builtin_test =
   qc_builtin_arity("model_ask") == Some(2) &&
   qc_builtin_effect(QcBPrint) == Some("io") &&
   qc_builtin_effect(QcBModelAsk) == Some("model") &&
+  qc_builtin_effect(QcBTensorMatmul) == Some("tensor") &&
   qc_builtin_effect(QcBSha256) == None
 # Type variables and unification for local type inference (spec §7: qc_unify, matching qal-check/src/unify.rs)
 
@@ -9737,7 +9743,7 @@ fn qc_resolve_inner(g: QcGlobals, t: QcType, tps: List[Str], eps: List[Str], def
       let ps_res = qc_resolve_list_loop(g, ps, tps, eps, def_name, path, r_res.diags, 0, AccEnd) in
       let diags_effs = fold(effs, ps_res.diags, fn(st: List[QcDiag], ef: Str) =>
         if !qc_is_known_effect(ef) && !qc_contains_str_loop(eps, ef, 0) then
-          let d = qc_diag_hint(qc_diag_unknown_name(def_name, path, ef), "known effects: io, fs, time, rand, net, db, model; an effect parameter is declared in the function's brackets: `fn f[!" ++ ef ++ "](...)`") in
+          let d = qc_diag_hint(qc_diag_unknown_name(def_name, path, ef), "known effects: io, fs, time, rand, net, db, model, tensor; an effect parameter is declared in the function's brackets: `fn f[!" ++ ef ++ "](...)`") in
           push(st, d)
         else st
       ) in
@@ -9756,7 +9762,7 @@ fn qc_resolve_list_loop(g: QcGlobals, xs: List[QcType], tps: List[Str], eps: Lis
     qc_resolve_list_loop(g, xs, tps, eps, def_name, path, res.diags, idx + 1, AccPush(acc, res.ty))
 
 fn qc_is_known_effect(e: Str) -> Bool =
-  e == "io" || e == "fs" || e == "time" || e == "rand" || e == "net" || e == "db" || e == "model"
+  e == "io" || e == "fs" || e == "time" || e == "rand" || e == "net" || e == "db" || e == "model" || e == "tensor"
 
 # Checking functions and tests
 fn qc_check_fn(f: QcFnDef, g: QcGlobals, diags: List[QcDiag]) -> QcCheckFnRes =
@@ -9864,7 +9870,7 @@ fn qc_check_fn_effects_loop(def_name: Str, effs: List[Str], eparams: List[Str], 
   else
     let ef = list_at(effs, idx) in
     let next_diags = if !qc_is_known_effect(ef) && !qc_contains_str_loop(eparams, ef, 0) then
-      push(diags, qc_diag_hint(qc_diag_unknown_name(def_name, "effects[" ++ from_int(idx) ++ "]", ef), "known effects: io, fs, time, rand, net, db, model; an effect parameter is declared in the brackets: `fn " ++ def_name ++ "[!" ++ ef ++ "](...)`"))
+      push(diags, qc_diag_hint(qc_diag_unknown_name(def_name, "effects[" ++ from_int(idx) ++ "]", ef), "known effects: io, fs, time, rand, net, db, model, tensor; an effect parameter is declared in the brackets: `fn " ++ def_name ++ "[!" ++ ef ++ "](...)`"))
     else diags in
     qc_check_fn_effects_loop(def_name, effs, eparams, next_diags, idx + 1)
 
@@ -10908,6 +10914,7 @@ fn qc_host_signature(name: Str) -> Option[QcFuncSig] =
   else if name == "io.print" then Some(QcFuncSig { params: [QcVI32], results: [] })
   else if name == "net.http" then Some(QcFuncSig { params: [QcVI32], results: [QcVI32] })
   else if name == "db.exec" || name == "db.query" || name == "model.ask" then Some(QcFuncSig { params: [QcVI32, QcVI32], results: [QcVI32] })
+  else if name == "tensor.matmul" then Some(QcFuncSig { params: [QcVI32, QcVI32, QcVI64], results: [QcVI32] })
   else if name == "io.read_line" || name == "io.read_all" then Some(QcFuncSig { params: [], results: [QcVI32] })
   else if name == "fs.read_file" then Some(QcFuncSig { params: [QcVI32], results: [QcVI32, QcVI32] })
   else if name == "fs.write_file" then Some(QcFuncSig { params: [QcVI32, QcVI32], results: [QcVI32, QcVI32] })
@@ -13726,6 +13733,9 @@ fn qc_fngen_builtin(g0: QcFnGen, b: QcBuiltin, args: List[QcTExpr], path: Str, r
             QcBModelAsk =>
               let ir = qc_mb_import(g.m, "model.ask") in
               qc_fngen_set_ma(g, ir.m, qc_asm_i(g.a, QcICall(ir.idx))),
+            QcBTensorMatmul =>
+              let ir = qc_mb_import(g.m, "tensor.matmul") in
+              qc_fngen_set_ma(g, ir.m, qc_asm_i(g.a, QcICall(ir.idx))),
             QcBRandInt =>
               let sr = qc_fngen_site(g, path, "rand_int: req lo <= hi", [
                 QcFieldType { name: "lo", ty: QcTInt },
@@ -14136,6 +14146,7 @@ fn qc_builtin_host_import(b: QcBuiltin) -> Option[Str] =
     QcBDbExec => Some("db.exec"),
     QcBDbQuery => Some("db.query"),
     QcBModelAsk => Some("model.ask"),
+    QcBTensorMatmul => Some("tensor.matmul"),
     _ => None
   }
 

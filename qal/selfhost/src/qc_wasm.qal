@@ -562,6 +562,9 @@ fn qc_fngen_builtin(g0: QcFnGen, b: QcBuiltin, args: List[QcTExpr], path: Str, r
             QcBModelAsk =>
               let ir = qc_mb_import(g.m, "model.ask") in
               qc_fngen_set_ma(g, ir.m, qc_asm_i(g.a, QcICall(ir.idx))),
+            QcBTensorMatmul =>
+              let ir = qc_mb_import(g.m, "tensor.matmul") in
+              qc_fngen_set_ma(g, ir.m, qc_asm_i(g.a, QcICall(ir.idx))),
             QcBRandInt =>
               let sr = qc_fngen_site(g, path, "rand_int: req lo <= hi", [
                 QcFieldType { name: "lo", ty: QcTInt },
@@ -972,6 +975,7 @@ fn qc_builtin_host_import(b: QcBuiltin) -> Option[Str] =
     QcBDbExec => Some("db.exec"),
     QcBDbQuery => Some("db.query"),
     QcBModelAsk => Some("model.ask"),
+    QcBTensorMatmul => Some("tensor.matmul"),
     _ => None
   }
 

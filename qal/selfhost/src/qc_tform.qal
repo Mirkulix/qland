@@ -621,6 +621,7 @@ type QcBuiltin =
   | QcBSha256
   | QcBTodo
   | QcBModelAsk
+  | QcBTensorMatmul
 
 fn qc_builtin_from_idx(i: Int) -> QcBuiltin =
   if i == 0 then QcBStrLen
@@ -695,6 +696,7 @@ fn qc_builtin_from_idx(i: Int) -> QcBuiltin =
   else if i == 69 then QcBBytesJoin
   else if i == 70 then QcBSha256
   else if i == 71 then QcBTodo
+  else if i == 73 then QcBTensorMatmul
   else QcBModelAsk
 
 fn qc_builtin_to_idx(b: QcBuiltin) -> Int =
@@ -771,7 +773,8 @@ fn qc_builtin_to_idx(b: QcBuiltin) -> Int =
     QcBBytesJoin => 69,
     QcBSha256 => 70,
     QcBTodo => 71,
-    QcBModelAsk => 72
+    QcBModelAsk => 72,
+    QcBTensorMatmul => 73
   }
 
 type QcTPField = {

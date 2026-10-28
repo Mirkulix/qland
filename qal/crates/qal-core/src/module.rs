@@ -83,8 +83,10 @@ pub mod host {
     pub const DB_QUERY: &str = "db.query";
     /// `(prompt: Str ptr, schema: Str ptr) -> Result[ModelResponse, ModelError] ptr`
     pub const MODEL_ASK: &str = "model.ask";
+    /// `(a_csv: Str ptr, b_csv: Str ptr, n: i64) -> Str ptr` of the flat result
+    pub const TENSOR_MATMUL: &str = "tensor.matmul";
     /// Every effect host function (the index is reported for a denied call: append only).
-    pub const EFFECT_FNS: [&str; 11] = [PRINT, READ_LINE, READ_FILE, WRITE_FILE, NOW_MS, RAND_INT, READ_ALL, NET_HTTP, DB_EXEC, DB_QUERY, MODEL_ASK];
+    pub const EFFECT_FNS: [&str; 12] = [PRINT, READ_LINE, READ_FILE, WRITE_FILE, NOW_MS, RAND_INT, READ_ALL, NET_HTTP, DB_EXEC, DB_QUERY, MODEL_ASK, TENSOR_MATMUL];
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub enum ValType {
@@ -104,6 +106,7 @@ pub mod host {
             PRINT => (&[I32], &[]),
             NET_HTTP => (&[I32], &[I32]),
             DB_EXEC | DB_QUERY | MODEL_ASK => (&[I32, I32], &[I32]),
+            TENSOR_MATMUL => (&[I32, I32, I64], &[I32]),
             READ_LINE | READ_ALL => (&[], &[I32]),
             READ_FILE => (&[I32], &[I32, I32]),
             WRITE_FILE => (&[I32, I32], &[I32, I32]),

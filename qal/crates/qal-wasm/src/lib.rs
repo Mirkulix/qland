@@ -96,6 +96,7 @@ pub fn compile_with(p: &TProgram, entry: &Entry, opts: &CompileOptions) -> Resul
             Builtin::DbExec => host::DB_EXEC,
             Builtin::DbQuery => host::DB_QUERY,
             Builtin::ModelAsk => host::MODEL_ASK,
+            Builtin::TensorMatmul => host::TENSOR_MATMUL,
             _ => continue,
         };
         imports.push(name);

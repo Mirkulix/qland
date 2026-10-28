@@ -51,3 +51,20 @@ overhead-dominated, the large ones show the GPU.
 The helper is also a package: `qal/packages/tensor_remote.qalpkg`
 (`qal_tensor_remote`), 3 definitions, signed install verified. `matmul_remote`
 reports effect `!net`; the caller must grant `net:127.0.0.1:8901`.
+
+## Native `!tensor`
+
+`native.qal` calls the real builtin `tensor_matmul(a_csv, b_csv, n) -> Str`:
+
+```qal
+fn matmul(a, b, n) -> List[Float] !tensor
+```
+
+Verified:
+
+```text
+qal run native.qal --allow io,tensor -> 19.0,22.0,43.0,50.0
+qal run native.qal --allow io        -> E0508 permission_denied
+```
+
+The native kernel is a naive Rust CPU matmul; the MLX sidecar is the GPU path.

@@ -559,6 +559,7 @@ impl<'g, 'p> FnGen<'g, 'p> {
             B::DbExec => self.a.i(I::Call(self.m.import(host::DB_EXEC))),
             B::DbQuery => self.a.i(I::Call(self.m.import(host::DB_QUERY))),
             B::ModelAsk => self.a.i(I::Call(self.m.import(host::MODEL_ASK))),
+            B::TensorMatmul => self.a.i(I::Call(self.m.import(host::TENSOR_MATMUL))),
             B::RandInt => {
                 let site = self.site(path, "rand_int: req lo <= hi", &[("lo", Type::Int), ("hi", Type::Int)], None);
                 self.site_args(site);

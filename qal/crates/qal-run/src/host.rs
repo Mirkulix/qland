@@ -44,10 +44,12 @@ pub struct Permissions {
     pub net: Vec<NetGrant>,
     /// Whether the `model` effect is granted.
     pub model: bool,
+    /// Whether the `tensor` effect is granted.
+    pub tensor: bool,
 }
 
 /// Known grants, for error messages.
-const KNOWN_GRANTS: &str = "io, time, rand, fs:<dir>, net:<host>[:port], db, db:<name>, db:mem, model";
+const KNOWN_GRANTS: &str = "io, time, rand, fs:<dir>, net:<host>[:port], db, db:<name>, db:mem, model, tensor";
 
 /// Adds a database grant (only one per execution).
 fn grant_db(p: &mut Permissions, item: &str) -> Result<(), String> {
@@ -73,6 +75,7 @@ impl Permissions {
                 "time" => p.time = true,
                 "rand" => p.rand = true,
                 "model" => p.model = true,
+                "tensor" => p.tensor = true,
                 "fs" => return Err("`fs` needs a directory: `fs:<dir>`, e.g. `fs:./data`".into()),
                 _ if is_db_item(item) => grant_db(&mut p, item)?,
                 _ if item == "net" || item.starts_with("net:") => p.net.push(NetGrant::parse(item)?),
@@ -98,6 +101,7 @@ impl Permissions {
                 "time" => p.time = true,
                 "rand" => p.rand = true,
                 "model" => p.model = true,
+                "tensor" => p.tensor = true,
                 "fs" => return Err("`fs` needs a directory: `fs:<dir>` relative to the project root, e.g. `fs:data` or `fs:.`".into()),
                 _ if is_db_item(item) => grant_db(&mut p, item)?,
                 _ if item == "net" || item.starts_with("net:") => p.net.push(NetGrant::parse(item)?),
@@ -138,6 +142,7 @@ impl Permissions {
             "db" => self.db.is_some(),
             "net" => !self.net.is_empty(),
             "model" => self.model,
+            "tensor" => self.tensor,
             _ => false,
         }
     }
@@ -604,6 +609,24 @@ fn print_line(c: &mut Caller<'_, HostState>, line: &[u8]) -> Result<(), wasmtime
     Ok(())
 }
 
+fn tensor_call(c: &mut Caller<'_, HostState>, a_ptr: i32, b_ptr: i32, n: i64) -> Result<i32, wasmtime::Error> {
+    let n = usize::try_from(n).map_err(|_| wasmtime::Error::msg("tensor size must be positive"))?;
+    if n == 0 || n > 4096 { return Err(wasmtime::Error::msg("tensor size out of range")); }
+    let a = guest_str(c, a_ptr)?;
+    let b = guest_str(c, b_ptr)?;
+    let parse = |s: &str| -> Result<Vec<f64>, wasmtime::Error> {
+        s.split(',').map(|x| x.trim().parse::<f64>().map_err(|_| wasmtime::Error::msg("bad tensor element"))).collect()
+    };
+    let av = parse(&a)?;
+    let bv = parse(&b)?;
+    if av.len() != n * n || bv.len() != n * n { return Err(wasmtime::Error::msg("tensor length mismatch")); }
+    let mut out = vec![0.0f64; n * n];
+    for i in 0..n { for j in 0..n { let mut acc = 0.0; for k in 0..n { acc += av[i * n + k] * bv[k * n + j]; } out[i * n + j] = acc; } }
+    let text = out.iter().map(|x| format!("{x}")).collect::<Vec<_>>().join(",");
+    charge(c, text.len() + 16)?;
+    new_str(c, &text)
+}
+
 /// Defines `fail`, the pure helpers, the functions of every granted effect, and stubs for the
 /// ungranted ones: a module may import them (a fn value of an effectful fn makes it reachable)
 /// without ever calling them, so it must still instantiate.
@@ -760,6 +783,9 @@ pub fn link(linker: &mut Linker<HostState>, perms: &Permissions) -> Result<(), w
     }
     if perms.model {
         linker.func_wrap(HOST_MODULE, host::MODEL_ASK, |mut c: Caller<'_, HostState>, prompt: i32, schema: i32| model_call(&mut c, prompt, schema))?;
+    }
+    if perms.tensor {
+        linker.func_wrap(HOST_MODULE, host::TENSOR_MATMUL, |mut c: Caller<'_, HostState>, a: i32, b: i32, n: i64| tensor_call(&mut c, a, b, n))?;
     }
     Ok(())
 }

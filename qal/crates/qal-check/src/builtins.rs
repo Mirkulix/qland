@@ -163,6 +163,7 @@ fn signature(name: &str, a: Type, b: Type) -> Option<(Builtin, Vec<Type>, Type)>
         "bytes_to_str" => (B::BytesToStr, vec![Type::Bytes], Type::option(Type::Str)),
         "compare" => (B::Compare, vec![a.clone(), a], Type::Int),
         "http" => (B::Http, vec![named("HttpCall")], Type::result(named("HttpResponse"), named("NetError"))),
+        "tensor_matmul" => (B::TensorMatmul, vec![Type::Str, Type::Str, Type::Int], Type::Str),
         "db_exec" => (B::DbExec, vec![Type::Str, list(named("SqlValue"))], Type::result(Type::Int, named("DbError"))),
         "db_query" => (B::DbQuery, vec![Type::Str, list(named("SqlValue"))], Type::result(named("DbRows"), named("DbError"))),
         "model_ask" => (B::ModelAsk, vec![Type::Str, Type::Str], Type::result(named("ModelResponse"), named("ModelError"))),

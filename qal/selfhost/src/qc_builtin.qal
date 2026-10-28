@@ -109,6 +109,7 @@ fn qc_builtin_signature(name: Str, a: QcType, b: QcType) -> Option[QcBuiltinSig]
   else if name == "sha256" then Some(QcBuiltinSig { builtin: QcBSha256, params: [t_bytes], ret: t_bytes })
   else if name == "todo" then Some(QcBuiltinSig { builtin: QcBTodo, params: [], ret: a })
   else if name == "model_ask" then Some(QcBuiltinSig { builtin: QcBModelAsk, params: [t_str, t_str], ret: QcTResult(model_resp_ty, model_err_ty) })
+  else if name == "tensor_matmul" then Some(QcBuiltinSig { builtin: QcBTensorMatmul, params: [t_str, t_str, t_int], ret: t_str })
   else None
 
 fn qc_builtin_arity(name: Str) -> Option[Int] =
@@ -139,6 +140,7 @@ fn qc_builtin_effect(b: QcBuiltin) -> Option[Str] =
     QcBDbExec => Some("db"),
     QcBDbQuery => Some("db"),
     QcBModelAsk => Some("model"),
+    QcBTensorMatmul => Some("tensor"),
     _ => None
   }
 
@@ -161,4 +163,5 @@ test qc_builtin_test =
   qc_builtin_arity("model_ask") == Some(2) &&
   qc_builtin_effect(QcBPrint) == Some("io") &&
   qc_builtin_effect(QcBModelAsk) == Some("model") &&
+  qc_builtin_effect(QcBTensorMatmul) == Some("tensor") &&
   qc_builtin_effect(QcBSha256) == None

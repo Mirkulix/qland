@@ -548,6 +548,7 @@ fn qc_host_signature(name: Str) -> Option[QcFuncSig] =
   else if name == "io.print" then Some(QcFuncSig { params: [QcVI32], results: [] })
   else if name == "net.http" then Some(QcFuncSig { params: [QcVI32], results: [QcVI32] })
   else if name == "db.exec" || name == "db.query" || name == "model.ask" then Some(QcFuncSig { params: [QcVI32, QcVI32], results: [QcVI32] })
+  else if name == "tensor.matmul" then Some(QcFuncSig { params: [QcVI32, QcVI32, QcVI64], results: [QcVI32] })
   else if name == "io.read_line" || name == "io.read_all" then Some(QcFuncSig { params: [], results: [QcVI32] })
   else if name == "fs.read_file" then Some(QcFuncSig { params: [QcVI32], results: [QcVI32, QcVI32] })
   else if name == "fs.write_file" then Some(QcFuncSig { params: [QcVI32, QcVI32], results: [QcVI32, QcVI32] })

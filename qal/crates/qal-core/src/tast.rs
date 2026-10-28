@@ -110,6 +110,7 @@ builtins! {
     Sha256 => "sha256",
     Todo => "todo",
     ModelAsk => "model_ask",
+    TensorMatmul => "tensor_matmul",
 }
 
 impl Builtin {
@@ -123,6 +124,7 @@ impl Builtin {
             Builtin::Http => Some("net"),
             Builtin::DbExec | Builtin::DbQuery => Some("db"),
             Builtin::ModelAsk => Some("model"),
+            Builtin::TensorMatmul => Some("tensor"),
             _ => None,
         }
     }
@@ -137,7 +139,7 @@ impl Builtin {
             | B::BitNot | B::FloatBits | B::FloatOfBits | B::AccList | B::BytesJoin | B::Sha256 => 1,
             B::Split | B::Join | B::Contains | B::StartsWith | B::Get | B::Push | B::Concat | B::Map | B::Filter | B::Range | B::WriteFile | B::RandInt | B::IndexOf | B::MapGet | B::MapDel | B::MapHas
             | B::BytesGet | B::Compare | B::DbExec | B::DbQuery | B::BitAnd | B::BitOr | B::BitXor | B::Shl | B::Shr | B::Ushr | B::ListAt | B::BytesAt | B::ModelAsk => 2,
-            B::Slice | B::Fold | B::Replace | B::MapPut | B::BytesSlice => 3,
+            B::Slice | B::Fold | B::Replace | B::MapPut | B::BytesSlice | B::TensorMatmul => 3,
         }
     }
 
@@ -150,7 +152,7 @@ impl Builtin {
         "map_del", "map_has", "map_size", "map_keys", "map_values", "to_bytes", "bytes_len", "bytes_get", "bytes_slice",
         "bytes_from", "bytes_to_list", "bytes_to_str", "compare", "http", "db_exec", "db_query", "bit_and", "bit_or",
         "bit_xor", "bit_not", "shl", "shr", "ushr", "float_bits", "float_of_bits", "list_at", "bytes_at", "acc_list",
-        "bytes_join", "sha256", "todo", "model_ask",
+        "bytes_join", "sha256", "todo", "model_ask", "tensor_matmul",
     ];
 }
 

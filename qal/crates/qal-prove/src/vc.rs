@@ -801,7 +801,7 @@ impl<'p> Enc<'p> {
             // bytes in 0..=255), and calls of a function argument, which may trap themselves.
             B::Split | B::Replace | B::CharCode | B::BytesFrom | B::Map | B::Filter | B::Fold => vec![self.untracked(b)],
             // Effects: never in a contract (contracts are pure); in a body they may fail in many ways.
-            B::Print | B::ReadLine | B::ReadFile | B::WriteFile | B::NowMs | B::ReadAll | B::Http | B::DbExec | B::DbQuery | B::ModelAsk => vec![self.untracked(b)],
+            B::Print | B::ReadLine | B::ReadFile | B::WriteFile | B::NowMs | B::ReadAll | B::Http | B::DbExec | B::DbQuery | B::ModelAsk | B::TensorMatmul => vec![self.untracked(b)],
         }
     }
 

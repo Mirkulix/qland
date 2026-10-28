@@ -10,4 +10,7 @@ cat bench/tensor/host.qal bench/tensor/main.qal > /tmp/qal-tensor-combined.qal
 "$QAL" test bench/tensor/host.qal >/dev/null
 OUT="$("$QAL" run /tmp/qal-tensor-combined.qal --allow io,net:127.0.0.1:8901)"
 echo "$OUT" | grep -q '"stdout":"19.0,22.0,43.0,50.0\\n"'
-echo "tensor: NumPy sidecar 2x2 -> 19.0,22.0,43.0,50.0"
+"$QAL" check bench/tensor/native.qal >/dev/null
+NATIVE="$("$QAL" run bench/tensor/native.qal --allow io,tensor)"
+echo "$NATIVE" | grep -q '"stdout":"19.0,22.0,43.0,50.0\\n"'
+echo "tensor: NumPy sidecar 2x2 -> 19.0,22.0,43.0,50.0; native !tensor ok"
