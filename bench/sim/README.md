@@ -471,3 +471,16 @@ auto: leader 0 died -> node 1 term 2 -> old leader caught up
 ```
 
 All three logs are `["1:1:cmd1","2:2:cmd2"]`; all report leader 1, term 2.
+
+## Monitor-detected failover
+
+`cluster_watch.py` starts three nodes and a monitor loop. After the leader dies,
+the monitor polls `/state`, detects the stalled term, drives `/timeout` and
+`/vote` on both survivors, and elects node 1:
+
+```text
+watch: monitor detected dead leader, elected node 1 term 2
+```
+
+The old leader is restarted and catches up; all logs are
+`["1:1:cmd1","2:2:cmd2"]`.
