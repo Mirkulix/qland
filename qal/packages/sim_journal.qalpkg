@@ -1,0 +1,48 @@
+# qal-pkg 1
+# package qal_sim_journal e3cb561814fefdefb4bd80ebe0c79c0549885b93ba72737628dab8cd5a3e72d8
+# def Entry 827e76bad5d1df1cf84661d9534456d00c5ae3a403becb8d836cec28daafff31 cli
+# def apply 422403f981a45c791a53a103a5ed74a91ce2c640a51735a0577932de1f81a226 cli
+# def duplicate_is_noop 288134ac526da05384c9baa70a971088e335ee0aedb3bd4e99ac27f124fa84cf cli
+# def has 59f3910b5e57cd8bcb48fff02416a9da6fb16a2cb99039446479ef7f11bbb0e5 cli
+# def line 880046e647d82800e8817d759e9a0e79283af69cc9068d11ec2ab9e0a7aeb1ef cli
+# def load 5eb8b8af1b721ae114d0bd055a31edb62052a70346d13f99887b7ebe4680fa9d cli
+# def main 964859fcc036a4bcec0d5431f3558ed83ac284e511d306294f00918c4f5a0652 cli
+# def parse 1e3574bd0d558f284ec2e5780259a3cbdf07a4f11db279b2c554cc61fc2b6682 cli
+# def parse_line 8df77e9a2408309b50cb85a6d4a33ef8ee66295ca52d41483c657ecb7d198d48 cli
+# def roundtrip_lines f0056613b1358692123d30d806d0297c499646d91ccc53b0109cb9fe9ce9c11d cli
+# def save f7ae0b5bca547db023120ea2d1816ec660a87d4239afcda3c5d8ce7ccf62585d cli
+# def serialize ead9efe42d0c1cd73e387e315aaeb7f50c3c574981e4f23a2297398fdd90acc5 cli
+
+type Entry = { id: Int, kind: Str, amount: Int }
+
+fn has(log: List[Entry], id: Int) -> Bool
+= len(filter(log, fn(e) => e.id == id)) > 0
+
+fn line(e: Entry) -> Str
+= from_int(e.id) ++ ":" ++ e.kind ++ ":" ++ from_int(e.amount)
+
+fn parse_line(s: Str) -> Option[Entry]
+= let p = split(s, ":") in if len(p) != 3 then None else match get(p, 0) { None => None, Some(a) => match get(p, 1) { None => None, Some(b) => match get(p, 2) { None => None, Some(c) => match to_int(a) { None => None, Some(id) => match to_int(c) { None => None, Some(amount) => Some(Entry { id: id, kind: b, amount: amount }) } } } } }
+
+fn apply(log: List[Entry], e: Entry) -> List[Entry]
+  ens len(r) == len(log) + (if has(log, e.id) then 0 else 1)
+= if has(log, e.id) then log else push(log, e)
+
+fn parse(s: Str) -> List[Entry]
+= map(filter(map(filter(split(s, "\n"), fn(l) => l != ""), fn(l) => parse_line(l)), fn(e) => e != None), fn(e) => match e { Some(x) => x, None => Entry { id: 0, kind: "", amount: 0 } })
+
+fn serialize(log: List[Entry]) -> Str
+= join(map(log, fn(e) => line(e)), "\n")
+
+test duplicate_is_noop = len(apply(apply([], Entry { id: 1, kind: "debit", amount: 5 }), Entry { id: 1, kind: "debit", amount: 5 })) == 1
+
+fn load(path: Str) -> List[Entry] !fs
+= match read_file(path) { Ok(s) => parse(s), Err(_) => [] }
+
+test roundtrip_lines = parse(serialize([Entry { id: 3, kind: "credit", amount: 9 }])) == [Entry { id: 3, kind: "credit", amount: 9 }]
+
+fn save(path: Str, log: List[Entry]) -> Bool !fs
+= match write_file(path, serialize(log)) { Ok(_) => true, Err(_) => false }
+
+fn main(args: List[Str]) -> Int !fs !io
+= let path = match get(args, 0) { None => "/tmp/qal-journal.txt", Some(p) => p } in let log = apply(apply([], Entry { id: 1, kind: "debit", amount: 5 }), Entry { id: 1, kind: "debit", amount: 5 }) in let ok = save(path, log) in let back = load(path) in { print(from_int(len(back))); if ok && len(back) == 1 then 0 else 1 }

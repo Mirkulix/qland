@@ -232,3 +232,10 @@ two-shard `Coord`:
 
 Tests `commit_once` (700 after commit, total 2000) and `abort_noop` (1000 after
 abort) pass. Signed install SHA-256 `8f050e15…`.
+
+## Durable transaction journal
+
+`journal.qal` (package `qal_sim_journal`, 12 defs) appends `id:kind:amount`
+entries, ignores duplicate ids, serializes/loads through `write_file`/
+`read_file` with `!fs`. Verified: `duplicate_is_noop`, `roundtrip_lines`, and a
+write/read run (`1:debit:5` on disk). Signed install SHA-256 `2d1fe93a…`.

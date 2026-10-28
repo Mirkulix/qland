@@ -28,6 +28,12 @@ run_case numerics
 "$QAL" define "$REPO/bench/sim/numerics.qal" >/dev/null
 "$QAL" test square_integral linear_integral >/dev/null
 
+# durable transaction journal
+run_case journal
+"$QAL" define "$REPO/bench/sim/journal.qal" >/dev/null
+"$QAL" test duplicate_is_noop roundtrip_lines >/dev/null
+"$QAL" run main --allow io,fs:/tmp -- /tmp/qal-journal-verify.txt >/dev/null
+
 # two-phase commit
 run_case twopc
 "$QAL" define "$REPO/bench/sim/twopc.qal" >/dev/null
@@ -69,4 +75,4 @@ run_case dashboard
 printf '[{"method":"GET","path":"/metrics"}]\n' > reqs.json
 "$QAL" request handle reqs.json --allow io | grep -q '"total":100000'
 
-echo "simulation: queue 3, tensor 3, numerics 2, twopc 2, once 2, cross 2, sim_package 2, sim 100000, queue-sim 1000 events, shards 10, dashboard 200"
+echo "simulation: queue 3, tensor 3, numerics 2, journal 2, twopc 2, once 2, cross 2, sim_package 2, sim 100000, queue-sim 1000 events, shards 10, dashboard 200"
