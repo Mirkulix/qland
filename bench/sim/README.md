@@ -184,10 +184,10 @@ its own 256 MiB budget.
 ```sh
 ./bench/sim/shard.py --shards 100 --agents 10000 --steps 100
 # {"shards":100,"agents":10000,"steps":100,"total_agents":1000000,
-#  "total":1000000000,"expected":1000000000,"seconds":34.81}
+#  "jobs":8,"total":1000000000,"expected":1000000000,"seconds":8.51}
 ```
 
-- **1,000,000 agents**, 100 steps each, 34.81 s,
+- **1,000,000 agents**, 100 steps each, **8.51 s** (8 parallel shard processes),
 - total conserved: **1,000,000,000**,
 - each shard is a fresh QAL execution, so the persistent-map OOM is avoided.
 
