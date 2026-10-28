@@ -127,3 +127,8 @@ tools/call qal_test {names:[sum_ok]}
 ```
 
 This makes the JSON surface first-class for MCP agents, not only for the CLI.
+
+Test-only ASTs (no `main`, a non-empty `tests` array) are valid since v1; the
+team role matrix now includes `qal_define_ast` for architect/implementer/
+contributor. Verified: MCP test-only define added `one_is_one` and it passed;
+`cargo test -p qal-cli --test team` 17/17.
