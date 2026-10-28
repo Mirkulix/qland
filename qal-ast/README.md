@@ -13,6 +13,16 @@ python3 qal-ast/lower.py qal-ast/example.json \
   --prelude bench/compare/prelude.qal --check > /tmp/main.qal
 ```
 
+## Frozen schema v1
+
+`qal-ast/schema.json` is the JSON Schema for `ast_version: 1`; `validate.py`
+checks a document and rejects invented dialects such as positional arrays:
+
+```sh
+python3 qal-ast/validate.py qal-ast/simple.json qal-ast/types.json
+python3 qal-ast/verify.sh
+```
+
 ## Tests
 
 `test_lower.py` covers let/op, if, match (Option) and a record field. All four
