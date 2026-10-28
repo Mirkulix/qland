@@ -1,0 +1,46 @@
+# qal-pkg 1
+# package qal_sim_repl 15d5025eb63c8c37d2abcd05518a79a84a0d539705e62f527d7f65f1acd37a90
+# def Cluster f3553a5c3e537660f7b066d6c54dffccb2531999a05421318c7c3c991d38ea2d cli
+# def LogEntry 634cc0ac3f335324f5d00a4fcc157f619ca4306d33237525aae3107d79a75716 cli
+# def RaftLog 53eb66dc57ece21123d4e7d7560e128f27f8a29df17115ff9e8b9cb8e425effb cli
+# def advance d9c4726d9ea7e2345caeba054cd3bbfb94656ee591575b0aa0e996257d7d7c0f cli
+# def all_three_append d6298d66acc332428ef64806f9ae4a4e1ae3c81578e17895162ba97e02df75f0 cli
+# def append 3038fbb805a85959b2de128655a24ed8a52e63efa6ce486cf8052b2ca60539ca cli
+# def at 0774ce2e1e82118f50d345b9a3fc109b623d95c173286d0602e2cabbddab057f cli
+# def divergent_follower_rejected 8ee70274bd9985c9712788b302a4bcc1baced9746f3ec37fd6d5e9932a826b9d cli
+# def empty cb7aa53fa5a7e98edde33afca1bc9b91e67eea3c84bdd3081e2c4016e365a278 cli
+# def majority_commits ad7fac3730b6b2e6ed851ecc242e767ed7867d738d15416158121972784c3cbd cli
+# def replicate 78c34cb01701b94fcf3e72782e29926889cd148aae5723f3b5c9c05bd8545907 cli
+# def three b00a9ad8f6f74ca2471305fc8ef3ff066747aa559b2de2d4c59ff81ecd7299e8 cli
+
+type LogEntry = { index: Int, term: Int, cmd: Str }
+
+type RaftLog = { entries: List[LogEntry], commit: Int }
+
+type Cluster = { logs: List[RaftLog], leader: Int }
+
+fn advance(log: RaftLog, index: Int) -> RaftLog
+= if index > log.commit && index <= len(log.entries) then RaftLog { entries: log.entries, commit: index } else log
+
+fn at(log: RaftLog, index: Int) -> Option[LogEntry]
+= if index <= 0 then None else get(log.entries, index - 1)
+
+fn empty() -> RaftLog
+= RaftLog { entries: [], commit: 0 }
+
+fn append(log: RaftLog, prev_index: Int, prev_term: Int, e: LogEntry) -> RaftLog
+  req prev_index >= 0
+= if prev_index == 0 || (match at(log, prev_index) { Some(x) => x.term == prev_term, None => false }) then RaftLog { entries: push(log.entries, LogEntry { index: prev_index + 1, term: e.term, cmd: e.cmd }), commit: log.commit } else log
+
+fn three() -> Cluster
+= Cluster { logs: [empty(), empty(), empty()], leader: 0 }
+
+fn replicate(c: Cluster, e: LogEntry) -> Cluster
+  req c.leader >= 0
+= match get(c.logs, c.leader) { None => c, Some(ll) => let pi = len(ll.entries) in let pt = match at(ll, pi) { None => 0, Some(x) => x.term } in let logs = map(c.logs, fn(l) => append(l, pi, pt, e)) in let matches = len(filter(logs, fn(l) => len(l.entries) > pi)) in let logs2 = if matches * 2 > len(logs) then map(logs, fn(l) => advance(l, pi + 1)) else logs in Cluster { logs: logs2, leader: c.leader } }
+
+test all_three_append = let c = replicate(three(), LogEntry { index: 1, term: 1, cmd: "x" }) in len(filter(c.logs, fn(l) => len(l.entries) == 1)) == 3
+
+test divergent_follower_rejected = let bad = RaftLog { entries: [LogEntry { index: 1, term: 9, cmd: "z" }], commit: 0 } in let c = Cluster { logs: [empty(), empty(), bad], leader: 0 } in let c2 = replicate(c, LogEntry { index: 1, term: 1, cmd: "x" }) in len(filter(c2.logs, fn(l) => len(l.entries) == 1)) == 2
+
+test majority_commits = let c = replicate(three(), LogEntry { index: 1, term: 1, cmd: "x" }) in len(filter(c.logs, fn(l) => l.commit == 1)) == 3

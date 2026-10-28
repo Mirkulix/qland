@@ -315,3 +315,16 @@ fn advance(log, index) -> RaftLog
 Tests `append_after_zero`, `reject_term_mismatch`, `advance_commits`,
 `advance_cannot_skip` pass. Signed install SHA-256 `2b72f5de…`. The host owns
 transport, timeouts and voting; QAL owns the log/commit rules.
+
+## Raft replication
+
+`repl.qal` (package `qal_sim_repl`, 12 defs) appends a leader command to all
+matching followers and commits it once a strict majority has it:
+
+```qal
+fn replicate(c: Cluster, e: LogEntry) -> Cluster
+```
+
+Tests `majority_commits`, `all_three_append`, `divergent_follower_rejected`
+pass. Signed install SHA-256 `c5dc86dc…`. Transport, retries and leader
+heartbeats stay with the host.
