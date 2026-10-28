@@ -150,3 +150,10 @@ tools. The tool is not in the team policy (team stores import only std).
 export prefix `enqueue` to `out.qalpkg` (3 defs, hash 861212ff…), then import
 that into a second project and query `enqueue` -> `fn(Queue, Int, Str, Str) ->
 Queue`. Ordinary stores expose 17 tools.
+
+`qal_install` adds signed HTTP installs to MCP: fetch `/index.json`, resolve the
+dependency graph, verify SHA-256 **and Ed25519** against a project-relative
+`trusted` keys JSON, then import in order. Verified against the local signed
+`qal_event_queue`: installed d8e8b761… and its three tests passed; without
+`trusted` it fails with `no trusted keys`, with a malformed key file it rejects
+before any import. Ordinary stores expose 18 tools.

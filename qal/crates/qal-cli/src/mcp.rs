@@ -18,6 +18,9 @@
 //! panic inside a tool (a bug) is caught and answered as an internal error.
 
 use crate::ops::{self, CallArgs, Ctx, Reply, Source, StoreAt};
+use base64::Engine as _;
+use ed25519_dalek::{Signature, VerifyingKey};
+use sha2::{Digest, Sha256};
 use qal_core::diag::Diagnostic;
 use qal_run::Permissions;
 use qal_store::team::keys::KeyDir;
@@ -224,6 +227,66 @@ fn ensure_compiler() {
             let _ = qal_run::selfhost::init_seed_backend(qal_run::selfhost::default_jobs());
         }
     }
+}
+
+
+fn http_bytes(url: &str) -> Result<Vec<u8>, String> {
+    let mut out = Vec::new();
+    let resp = ureq::get(url).call().map_err(|e| format!("GET {url}: {e}"))?;
+    std::io::Read::read_to_end(&mut resp.into_reader(), &mut out).map_err(|e| format!("read {url}: {e}"))?;
+    Ok(out)
+}
+
+fn trusted_keys(path: &Path) -> Result<Vec<[u8; 32]>, String> {
+    let text = std::fs::read_to_string(path).map_err(|e| format!("read trusted keys {}: {e}", path.display()))?;
+    let v: serde_json::Value = serde_json::from_str(&text).map_err(|e| format!("trusted keys JSON: {e}"))?;
+    let mut out = Vec::new();
+    for k in v.get("keys").and_then(serde_json::Value::as_array).into_iter().flatten() {
+        let raw = base64::engine::general_purpose::STANDARD.decode(k.as_str().unwrap_or("")).map_err(|e| format!("trusted key base64: {e}"))?;
+        out.push(raw.as_slice().try_into().map_err(|_| "trusted key must be 32 bytes".to_string())?);
+    }
+    Ok(out)
+}
+
+fn verify_package(entry: &serde_json::Value, blob: &[u8], keys: &[[u8; 32]]) -> Result<(), String> {
+    let digest = Sha256::digest(blob);
+    let name = entry.get("name").and_then(serde_json::Value::as_str).unwrap_or("?");
+    if let Some(want) = entry.get("sha256").and_then(serde_json::Value::as_str) {
+        if hex(&digest) != want {
+            return Err(format!("hash mismatch for {name}"));
+        }
+    }
+    if keys.is_empty() {
+        return Err(format!("untrusted package {name}: no trusted keys"));
+    }
+    let pk = entry.get("public_key").and_then(serde_json::Value::as_str).ok_or_else(|| format!("no public key for {name}"))?;
+    let pk = base64::engine::general_purpose::STANDARD.decode(pk).map_err(|e| format!("public key base64: {e}"))?;
+    if !keys.iter().any(|k| k.as_slice() == pk.as_slice()) {
+        return Err(format!("untrusted package {name}"));
+    }
+    let sig = entry.get("signature").and_then(serde_json::Value::as_str).ok_or_else(|| format!("no signature for {name}"))?;
+    let sig = base64::engine::general_purpose::STANDARD.decode(sig).map_err(|e| format!("signature base64: {e}"))?;
+    let vk = VerifyingKey::from_bytes(pk.as_slice().try_into().map_err(|_| "public key must be 32 bytes".to_string())?).map_err(|e| format!("public key: {e}"))?;
+    let sig = Signature::from_slice(&sig).map_err(|e| format!("signature: {e}"))?;
+    vk.verify_strict(hex(&digest).as_bytes(), &sig).map_err(|_| format!("bad signature for {name}"))?;
+    Ok(())
+}
+
+fn hex(b: &[u8]) -> String {
+    b.iter().map(|x| format!("{x:02x}")).collect()
+}
+
+fn registry_order(index: &serde_json::Value, sha: &str, seen: &mut Vec<String>, out: &mut Vec<String>) -> Result<(), String> {
+    if seen.iter().any(|s| s == sha) {
+        return Err("dependency cycle".into());
+    }
+    seen.push(sha.to_string());
+    let entry = index.get("packages").and_then(|p| p.get(sha)).ok_or_else(|| format!("missing dependency {sha}"))?;
+    for dep in entry.get("dependencies").and_then(serde_json::Value::as_array).into_iter().flatten() {
+        registry_order(index, dep.as_str().unwrap_or(""), seen, out)?;
+    }
+    out.push(sha.to_string());
+    Ok(())
 }
 
 fn tool_needs_compiler(name: &str) -> bool {
@@ -689,6 +752,67 @@ impl Server {
                     .map_err(|e| format!("embedded AST schema is invalid: {e}"))?;
                 let mut out = ops::Output::default();
                 out.extra.insert("schema".into(), schema);
+                Reply::new(out, 0)
+            }
+            "qal_install" => {
+                let url = a.required("url")?;
+                let name = a.required("name")?;
+                let insecure = a.flag("insecure")?;
+                let keys = match a.string("trusted")? {
+                    Some(rel) => {
+                        let full = self.root.join(&rel).canonicalize().map_err(|e| format!("cannot read trusted keys `{rel}`: {e}"))?;
+                        let root = self.root.canonicalize().map_err(|e| format!("cannot resolve project root: {e}"))?;
+                        if !full.starts_with(&root) {
+                            return Err("`trusted` must stay inside the project root".into());
+                        }
+                        trusted_keys(&full)?
+                    }
+                    None if insecure => Vec::new(),
+                    None => return Err("no trusted keys: pass `trusted` or set `insecure`".into()),
+                };
+                let base = url.trim_end_matches('/');
+                let index: serde_json::Value = serde_json::from_slice(&http_bytes(&format!("{base}/index.json"))?)
+                    .map_err(|e| format!("index JSON: {e}"))?;
+                let mut root_sha: Option<(String, String)> = None;
+                for (sha, entry) in index.get("packages").and_then(serde_json::Value::as_object).into_iter().flatten() {
+                    if entry.get("name").and_then(serde_json::Value::as_str) == Some(name.as_str()) {
+                        let version = entry.get("version").and_then(serde_json::Value::as_str).unwrap_or("").to_string();
+                        if root_sha.as_ref().is_none_or(|(v, _)| version > *v) {
+                            root_sha = Some((version, sha.clone()));
+                        }
+                    }
+                }
+                let (_, root_sha) = root_sha.ok_or_else(|| format!("unknown package {name}"))?;
+                let mut order = Vec::new();
+                registry_order(&index, &root_sha, &mut Vec::new(), &mut order)?;
+                if !qal_compiler::has_qal_driver() {
+                    let _ = qal_run::selfhost::init_seed_backend(qal_run::selfhost::default_jobs());
+                }
+                let mut installed = Vec::new();
+                for sha in order {
+                    let entry = index.get("packages").and_then(|p| p.get(&sha)).ok_or_else(|| format!("missing package {sha}"))?;
+                    let blob = http_bytes(&format!("{base}/packages/{sha}.qalpkg"))?;
+                    if !insecure {
+                        verify_package(entry, &blob, &keys)?;
+                    } else {
+                        let digest = hex(&Sha256::digest(&blob));
+                        let want = entry.get("sha256").and_then(serde_json::Value::as_str).unwrap_or(&digest);
+                        if digest != want {
+                            return Err(format!("hash mismatch for {}", sha));
+                        }
+                    }
+                    let text = String::from_utf8(blob).map_err(|e| format!("package {sha} is not UTF-8: {e}"))?;
+                    let reply = ops::import(&ctx, &text);
+                    if reply.out.diagnostics.is_some() {
+                        return Ok(reply);
+                    }
+                    installed.push(serde_json::json!({
+                        "name": entry.get("name").cloned().unwrap_or(serde_json::Value::Null),
+                        "sha256": sha,
+                    }));
+                }
+                let mut out = ops::Output::default();
+                out.extra.insert("installed".into(), serde_json::Value::Array(installed));
                 Reply::new(out, 0)
             }
             "qal_export" => {
@@ -1285,7 +1409,7 @@ fn tools_with_team() -> Vec<J> {
     all
 }
 
-const TOOL_NAMES: [&str; 17] = ["qal_define", "qal_define_ast", "qal_ast_schema", "qal_import", "qal_export", "qal_test", "qal_prove", "qal_run", "qal_call", "qal_request", "qal_view", "qal_query", "qal_rename", "qal_delete", "qal_history", "qal_build", "qal_recall"];
+const TOOL_NAMES: [&str; 18] = ["qal_define", "qal_define_ast", "qal_ast_schema", "qal_import", "qal_export", "qal_install", "qal_test", "qal_prove", "qal_run", "qal_call", "qal_request", "qal_view", "qal_query", "qal_rename", "qal_delete", "qal_history", "qal_build", "qal_recall"];
 
 fn tool_params(tool: &str) -> &'static [&'static str] {
     match tool {
@@ -1294,6 +1418,7 @@ fn tool_params(tool: &str) -> &'static [&'static str] {
         "qal_ast_schema" => &[],
         "qal_import" => &["path", "change"],
         "qal_export" => &["prefix", "out", "name", "change"],
+        "qal_install" => &["url", "name", "trusted", "insecure", "change"],
         "qal_view" => &["names", "change"],
         "qal_query" => &["name", "type", "uses", "outline", "topic", "change"],
         "qal_test" => &["names", "seed", "change"],
@@ -1346,6 +1471,8 @@ pub fn tools() -> J {
          "inputSchema": {"type": "object", "properties": {"path": s("Project-relative path to a .qalpkg file.")}, "required": ["path"], "additionalProperties": false}},
         {"name": "qal_export", "title": "Export a QAL package", "description": "Export the stored definitions with a name prefix (and their dependencies) to a project-relative .qalpkg file. This is the inverse of qal_import: agents can package verified code for review or registry publishing.", "annotations": writes,
          "inputSchema": {"type": "object", "properties": {"prefix": s("Name prefix to export (empty for all)."), "out": s("Project-relative output path ending in .qalpkg."), "name": s("Package name (default derived from the first name).")}, "required": ["out"], "additionalProperties": false}},
+        {"name": "qal_install", "title": "Install a signed package over HTTP", "description": "Fetch a signed registry index (GET <url>/index.json), resolve the dependency graph, download each /packages/<sha>.qalpkg, verify SHA-256 and Ed25519 against a project-relative trusted keys JSON ({keys:[base64]}), and import in dependency order. `insecure` skips signatures (hash checks remain) and is for local testing only.", "annotations": writes,
+         "inputSchema": {"type": "object", "properties": {"url": s("Registry base URL, e.g. http://127.0.0.1:8899."), "name": s("Package name."), "trusted": s("Project-relative JSON with a keys array."), "insecure": {"type": "boolean", "description": "Skip signature verification (hash still checked)."}}, "required": ["url", "name"], "additionalProperties": false}},
         {"name": "qal_test", "title": "Run QAL tests", "annotations": read_only,
          "description": "Run the stored tests and the generated property tests (all, or the named tests and functions; in a project, all means its own: `std.` tests run when named). A pure function with an `ens`, or that calls a function with `req`, gets a property test: 100 generated inputs that satisfy its `req`; any contract violation fails it, with a shrunk counterexample. Result: each test with passed true/false and the runtime error of a failing one, `properties` (passed, failed, gave_up, skipped), plus passed/failed counts.",
          "inputSchema": {"type": "object", "properties": {"names": list("Test or function names (default: all)."), "seed": {"type": "integer", "minimum": 0, "description": "Seed of the generated inputs (default 0)."}}, "additionalProperties": false}},

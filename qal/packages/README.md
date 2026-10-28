@@ -60,3 +60,7 @@ Verified with `event_queue.qalpkg`: import succeeds and its three tests pass.
 MCP package roundtrip: `qal_import` a local `.qalpkg`, `qal_export` a prefix
 and dependencies to another `.qalpkg`, then import that elsewhere. Verified with
 `enqueue` (3 defs) between two projects.
+
+`qal_install` over MCP installs from a signed HTTP registry: SHA-256 + Ed25519
+against a trusted-keys JSON, dependency order, then `ops::import`. Verified with
+the local `qal_event_queue` store (3 tests pass); no trust file is refused.
