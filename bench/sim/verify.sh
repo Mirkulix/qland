@@ -28,6 +28,10 @@ run_case numerics
 "$QAL" define "$REPO/bench/sim/numerics.qal" >/dev/null
 "$QAL" test square_integral linear_integral >/dev/null
 
+# packaged simulation core
+run_case sim_package "$REPO/qal/packages/sim_core.qalpkg"
+"$QAL" test transfer_conserves self_transfer_is_noop >/dev/null
+
 # 100-agent simulation
 run_case sim
 "$QAL" define "$REPO/bench/sim/sim.qal" >/dev/null
@@ -47,4 +51,4 @@ run_case dashboard
 printf '[{"method":"GET","path":"/metrics"}]\n' > reqs.json
 "$QAL" request handle reqs.json --allow io | grep -q '"total":100000'
 
-echo "simulation: queue 3, tensor 3, numerics 2, sim 100000, queue-sim 1000 events, dashboard 200"
+echo "simulation: queue 3, tensor 3, numerics 2, sim_package 2, sim 100000, queue-sim 1000 events, dashboard 200"
