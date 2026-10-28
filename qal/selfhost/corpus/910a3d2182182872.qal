@@ -1,0 +1,2 @@
+fn main(args: List[Str]) -> Int !io = count(0)
+fn count(n: Int) -> Int !io = match read_line() { Some(_) => count(n + 1), None => { print(from_int(n)); 0 } }

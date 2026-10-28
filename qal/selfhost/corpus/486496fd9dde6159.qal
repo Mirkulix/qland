@@ -1,0 +1,3 @@
+fn spare() -> Int = 6
+fn twin() -> Int = 2
+fn base() -> Int = 3

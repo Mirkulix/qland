@@ -1,0 +1,2 @@
+type Pair[A, B] = { fst: A, snd: B }
+type Tree[T] = Leaf | Node(Tree[T], T, Tree[T])

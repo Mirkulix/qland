@@ -1,0 +1,111 @@
+# Bracket checker
+#
+# For every input line decide whether the brackets (), [] and {} are balanced
+# and properly nested; every other character is ignored.
+#   - "ok" when the line is balanced.
+#   - "error <pos>" where pos is the 1-based character position of the first
+#     closing bracket that does not match the most recent unclosed opening
+#     bracket (or has none).  If all closing brackets match but openings stay
+#     unclosed, pos is the number of characters of the line plus one.
+# Positions count Unicode characters.
+
+# Is `c` one of the three opening brackets?
+fn is_open(c: Str) -> Bool = c == "(" || c == "[" || c == "{"
+
+# Is `c` one of the three closing brackets?
+fn is_close(c: Str) -> Bool = c == ")" || c == "]" || c == "}"
+
+# Bracket kinds: 0 = "(", 1 = "[", 2 = "{", 3 = ")", 4 = "]", 5 = "}", -1 = other.
+fn code_of(c: Str) -> Int =
+  if is_open(c) then
+    if c == "(" then 0 else if c == "[" then 1 else 2
+  else if is_close(c) then
+    if c == ")" then 3 else if c == "]" then 4 else 5
+  else -1
+
+# Walk the characters left to right.  `stack` holds the unclosed opening
+# brackets in `depth` slots (slot 0 is the oldest); the most recent one is in
+# slot `depth - 1`.  `depth` is passed separately so a pop is O(1) and the
+# stale slot is simply overwritten by the next push.  Returns 0 when the whole
+# line is balanced, -1 when opening brackets stay unclosed, otherwise the
+# 1-based position of the first bad closing bracket.
+fn scan_line(cs: List[Str], i: Int, depth: Int, stack: Map[Int, Int]) -> Int =
+  match get(cs, i) {
+    None => if depth == 0 then 0 else -1,
+    Some(c) =>
+      let k = code_of(c) in
+      if k < 0 then scan_line(cs, i + 1, depth, stack)
+      else if k < 3 then scan_line(cs, i + 1, depth + 1, map_put(stack, depth, k))
+      else if depth == 0 then i + 1
+      else if top_matches(stack, depth, k) then scan_line(cs, i + 1, depth - 1, stack)
+      else i + 1
+  }
+
+# Does the innermost unclosed opening bracket match closing kind `k`?
+fn top_matches(stack: Map[Int, Int], depth: Int, k: Int) -> Bool =
+  match map_get(stack, depth - 1) {
+    Some(v) => v == k - 3,
+    None => false
+  }
+
+# Check one line and render the answer.
+fn check_line(line: Str) -> Str =
+  let cs = chars(line) in
+  let pos = scan_line(cs, 0, 0, map_new()) in
+  if pos == 0 then "ok"
+  else if pos < 0 then "error " ++ from_int(len(cs) + 1)
+  else "error " ++ from_int(pos)
+
+# Remove a single trailing carriage return (CRLF input).
+fn strip_cr(s: Str) -> Str =
+  if len(s) > 0 && slice(s, len(s) - 1, len(s)) == "\r"
+  then slice(s, 0, len(s) - 1)
+  else s
+
+# Does the raw input end with a newline?
+fn ends_with_newline(input: Str) -> Bool =
+  len(input) > 0 && slice(input, len(input) - 1, len(input)) == "\n"
+
+# Number of lines to report: a trailing newline terminates the last line, it
+# does not start an extra empty one; empty input has no lines at all.
+fn line_count(input: Str, raw: List[Str]) -> Int =
+  if input == "" then 0
+  else if ends_with_newline(input) then len(raw) - 1
+  else len(raw)
+
+# Process lines [i, n) of the split input, printing one answer per line.
+fn process_lines(raw: List[Str], i: Int, n: Int) -> Unit !io =
+  if i >= n then ()
+  else {
+    let line = match get(raw, i) { Some(s) => strip_cr(s), None => "" } in
+    print(check_line(line));
+    process_lines(raw, i + 1, n)
+  }
+
+fn main(args: List[Str]) -> Int !io = {
+  let input = read_all() in
+  let raw = split(input, "\n") in
+  process_lines(raw, 0, line_count(input, raw));
+  0
+}
+
+# --- tests -----------------------------------------------------------------
+
+test example_ok = check_line("(a[b]{c})") == "ok"
+test example_mismatch = check_line("(]") == "error 2"
+test example_unclosed = check_line("((") == "error 3"
+test empty_line = check_line("") == "ok"
+test plain_text = check_line("hello, world") == "ok"
+test nested_ok = check_line("{[()]}") == "ok"
+test hard_example = check_line("(()") == "error 4"
+test extra_close = check_line(")") == "error 1"
+test mismatch_deep = check_line("([)]") == "error 3"
+test wrong_pair_after_pop = check_line("([]{)") == "error 5"
+test unicode_unclosed = check_line("é(") == "error 3"
+test unicode_mismatch = check_line("é(]") == "error 3"
+test unicode_ok = check_line("é(ü)") == "ok"
+test strip_cr_test = strip_cr("ab\r") == "ab"
+test strip_cr_none = strip_cr("ab") == "ab"
+test line_count_trailing_newline = line_count("a\nb\n", ["a", "b", ""]) == 2
+test line_count_no_trailing = line_count("a\nb", ["a", "b"]) == 2
+test line_count_empty = line_count("", [""]) == 0

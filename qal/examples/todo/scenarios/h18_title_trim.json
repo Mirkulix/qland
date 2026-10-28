@@ -1,0 +1,141 @@
+{
+ "name": "h18_title_trim",
+ "description": "trim space, tab, CR, LF",
+ "steps": [
+  {
+   "name": "create a",
+   "request": {
+    "method": "POST",
+    "path": "/todos",
+    "json": {
+     "title": "  hi  "
+    }
+   },
+   "expect": {
+    "status": 201,
+    "json": {
+     "id": {
+      "$var": "a"
+     },
+     "title": "hi",
+     "done": false,
+     "created_at": {
+      "$type": "int"
+     }
+    },
+    "headers": {
+     "location": "/todos/{{a}}",
+     "content-type": "application/json"
+    }
+   },
+   "capture": {
+    "a": "/id"
+   }
+  },
+  {
+   "name": "create b",
+   "request": {
+    "method": "POST",
+    "path": "/todos",
+    "json": {
+     "title": "\t\nhi\r\n"
+    }
+   },
+   "expect": {
+    "status": 201,
+    "json": {
+     "id": {
+      "$var": "b"
+     },
+     "title": "hi",
+     "done": false,
+     "created_at": {
+      "$type": "int"
+     }
+    },
+    "headers": {
+     "location": "/todos/{{b}}",
+     "content-type": "application/json"
+    }
+   },
+   "capture": {
+    "b": "/id"
+   }
+  },
+  {
+   "name": "create c",
+   "request": {
+    "method": "POST",
+    "path": "/todos",
+    "json": {
+     "title": " a  b "
+    }
+   },
+   "expect": {
+    "status": 201,
+    "json": {
+     "id": {
+      "$var": "c"
+     },
+     "title": "a  b",
+     "done": false,
+     "created_at": {
+      "$type": "int"
+     }
+    },
+    "headers": {
+     "location": "/todos/{{c}}",
+     "content-type": "application/json"
+    }
+   },
+   "capture": {
+    "c": "/id"
+   }
+  },
+  {
+   "name": "list",
+   "request": {
+    "method": "GET",
+    "path": "/todos"
+   },
+   "expect": {
+    "status": 200,
+    "json": [
+     {
+      "id": {
+       "$var": "a"
+      },
+      "title": "hi",
+      "done": false,
+      "created_at": {
+       "$type": "int"
+      }
+     },
+     {
+      "id": {
+       "$var": "b"
+      },
+      "title": "hi",
+      "done": false,
+      "created_at": {
+       "$type": "int"
+      }
+     },
+     {
+      "id": {
+       "$var": "c"
+      },
+      "title": "a  b",
+      "done": false,
+      "created_at": {
+       "$type": "int"
+      }
+     }
+    ],
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  }
+ ]
+}

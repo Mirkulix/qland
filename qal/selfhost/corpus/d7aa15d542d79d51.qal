@@ -1,0 +1,5 @@
+fn total(price: Int, qty: Int) -> Int = price * qty * 95 / 100
+fn md(a: Int, b: Int, d: Int) -> Int = a * b / d
+fn md3(a: Int, b: Int, c: Int, d: Int) -> Int = a * b * c / d
+fn mul(a: Int, b: Int) -> Int = a * b
+fn mr(a: Int, b: Int, c: Int) -> Int = a * b % c

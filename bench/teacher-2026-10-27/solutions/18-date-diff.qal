@@ -1,0 +1,159 @@
+# Days between dates: read lines `YYYY-MM-DD YYYY-MM-DD` and print the signed
+# number of days from the first date to the second, or `error` for a line that
+# is not a pair of real proleptic-Gregorian dates in years 0001..9999.
+
+type Date = { y: Int, m: Int, d: Int }
+type Pair = { first: Date, second: Date }
+
+fn is_leap(y: Int) -> Bool = y % 4 == 0 && (y % 100 != 0 || y % 400 == 0)
+
+fn month_days(y: Int, m: Int) -> Int =
+  if m == 2 then (if is_leap(y) then 29 else 28)
+  else if m == 4 || m == 6 || m == 9 || m == 11 then 30
+  else 31
+
+fn valid_date(y: Int, m: Int, d: Int) -> Bool =
+  y >= 1 && y <= 9999 && m >= 1 && m <= 12 && d >= 1 && d <= month_days(y, m)
+
+# Days in the months before `m` in a common year (valid m is 1..=12).
+fn month_offset(m: Int) -> Int =
+  if m <= 1 then 0
+  else if m == 2 then 31
+  else if m == 3 then 59
+  else if m == 4 then 90
+  else if m == 5 then 120
+  else if m == 6 then 151
+  else if m == 7 then 181
+  else if m == 8 then 212
+  else if m == 9 then 243
+  else if m == 10 then 273
+  else if m == 11 then 304
+  else 334
+
+fn days_before_year(y: Int) -> Int req y >= 1 && y <= 9999 =
+  let p = y - 1 in p * 365 + p / 4 - p / 100 + p / 400
+
+# Days since 0001-01-01 (which is 0); callers pass dates `parse_date` accepted.
+fn day_number(d: Date) -> Int
+    req d.y >= 1 && d.y <= 9999 && d.m >= 1 && d.m <= 12 && d.d >= 1 && d.d <= 31 =
+  days_before_year(d.y) + month_offset(d.m)
+  + (if d.m > 2 && is_leap(d.y) then 1 else 0) + d.d - 1
+
+fn is_digit(c: Str) -> Bool =
+  if len(c) == 0 then false else (let n = char_code(c) in n >= 48 && n <= 57)
+
+# True when s[from..to) is all ASCII digits (bounds are checked, so no trap).
+fn digits_in(s: Str, from: Int, to: Int) -> Bool =
+  if from < 0 || to > len(s) || from > to then false
+  else
+    fold(range(from, to), true, fn(ok: Bool, i: Int) => ok && is_digit(slice(s, i, i + 1)))
+
+fn parse_date(s: Str) -> Option[Date] =
+  if len(s) != 10 then None
+  else if slice(s, 4, 5) != "-" || slice(s, 7, 8) != "-" then None
+  else if !(digits_in(s, 0, 4) && digits_in(s, 5, 7) && digits_in(s, 8, 10)) then None
+  else
+    match to_int(slice(s, 0, 4)) {
+      Some(y) => match to_int(slice(s, 5, 7)) {
+        Some(m) => match to_int(slice(s, 8, 10)) {
+          Some(d) => if valid_date(y, m, d) then Some(Date { y: y, m: m, d: d }) else None,
+          None => None
+        },
+        None => None
+      },
+      None => None
+    }
+
+# Exactly two 10-character dates separated by a single space.
+fn parse_pair(s: Str) -> Option[Pair] =
+  if len(s) != 21 then None
+  else if slice(s, 10, 11) != " " then None
+  else
+    match parse_date(slice(s, 0, 10)) {
+      Some(a) => match parse_date(slice(s, 11, 21)) {
+        Some(b) => Some(Pair { first: a, second: b }),
+        None => None
+      },
+      None => None
+    }
+
+fn trim_cr(s: Str) -> Str =
+  if len(s) > 0 && slice(s, len(s) - 1, len(s)) == "\r" then slice(s, 0, len(s) - 1) else s
+
+fn render_line(raw: Str) -> Str =
+  match parse_pair(trim_cr(raw)) {
+    Some(p) => from_int(day_number(p.second) - day_number(p.first)),
+    None => "error"
+  }
+
+fn take_loop(xs: List[Str], n: Int, i: Int, acc: List[Str]) -> List[Str] =
+  if i >= n then acc
+  else
+    match get(xs, i) {
+      Some(s) => take_loop(xs, n, i + 1, push(acc, s)),
+      None => take_loop(xs, n, i + 1, acc)
+    }
+
+fn take(xs: List[Str], n: Int) -> List[Str] = take_loop(xs, n, 0, [])
+
+# One input line per element; the final empty element caused by the last
+# newline is dropped, any other empty line is an error line.
+fn lines_of(input: Str) -> List[Str] =
+  let xs = split(input, "\n") in
+  let n = len(xs) in
+  if n > 0 && get(xs, n - 1) == Some("") then take(xs, n - 1) else xs
+
+fn render_all(input: Str) -> Str =
+  join(map(lines_of(input), fn(line: Str) => render_line(line)), "\n")
+
+fn main(args: List[Str]) -> Int !io =
+  let text = render_all(read_all()) in
+  {
+    if len(text) > 0 then print(text) else ();
+    0
+  }
+
+# --- tests: the benchmark examples, the leap rules and the format edges ---
+
+test example =
+  render_all("2024-01-01 2024-03-01\n2024-03-01 2023-03-01\n2023-02-29 2023-03-01\n")
+  == "60\n-366\nerror"
+
+test same_day =
+  render_all("2000-05-05 2000-05-05\n") == "0"
+
+test leap_rules =
+  render_all("1900-02-28 1900-03-01\n2000-02-28 2000-03-01\n2000-02-29 2000-02-29\n1900-02-29 1900-03-01\n2400-02-29 2400-03-01\n")
+  == "1\n2\n0\nerror\n1"
+
+test extremes =
+  render_all("0001-01-01 9999-12-31\n9999-12-31 0001-01-01\n") == "3652058\n-3652058"
+
+test invalid_lines =
+  render_all("0000-01-01 2000-01-01\n2000-13-01 2000-01-01\n2000-1-01 2000-01-01\n2000-01-32 2000-01-01\n2000-04-31 2000-01-01\n2000-01-01\n2000-01-01  2000-01-02\n\nabcd-ef-gh 2000-01-01\n2000-01-01 2000-01-01 x\n")
+  == "error\nerror\nerror\nerror\nerror\nerror\nerror\nerror\nerror\nerror"
+
+test no_trailing_newline =
+  render_all("2024-01-01 2024-01-02") == "1"
+
+test empty_input =
+  render_all("") == ""
+
+test only_blank_line =
+  render_all("\n") == "error"
+
+test crlf_line_endings =
+  render_all("2024-01-01 2024-01-02\r\n") == "1"
+
+test day_number_anchor =
+  day_number(Date { y: 1, m: 1, d: 1 }) == 0
+
+test day_number_second =
+  day_number(Date { y: 1, m: 1, d: 2 }) == 1
+
+test leap_flags =
+  is_leap(2000) && is_leap(2024) && is_leap(2400) && !is_leap(1900) && !is_leap(2023)
+
+test month_lengths =
+  month_days(2023, 2) == 28 && month_days(2024, 2) == 29
+  && month_days(2024, 4) == 30 && month_days(2024, 1) == 31

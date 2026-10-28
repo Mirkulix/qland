@@ -1,0 +1,28 @@
+# Prime factorization by trial division (N <= 10^12, so divisors stay below 10^6).
+
+fn power(n: Int, d: Int, k: Int) -> Int = if n % d == 0 then power(n / d, d, k + 1) else k
+
+fn strip(n: Int, d: Int) -> Int = if n % d == 0 then strip(n / d, d) else n
+
+fn factor(n: Int, d: Int, acc: List[Str]) -> List[Str] =
+  if d * d > n then (if n > 1 then push(acc, from_int(n)) else acc)
+  else if n % d != 0 then factor(n, d + 1, acc)
+  else
+    let k = power(n, d, 0) in
+    factor(strip(n, d), d + 1, push(acc, if k > 1 then from_int(d) ++ "^" ++ from_int(k) else from_int(d)))
+
+fn is_digit(c: Str) -> Bool = c >= "0" && c <= "9"
+
+fn describe(line: Str) -> Str =
+  let t = trim(line) in
+  let n = if t != "" && len(filter(chars(t), is_digit)) == len(t) then to_int(t) else None in
+  match n {
+    Some(v) if v >= 2 && v <= 1000000000000 => t ++ " = " ++ join(factor(v, 2, []), " * "),
+    _ => "error",
+  }
+
+test examples = describe("360") == "360 = 2^3 * 3^2 * 5" && describe("13") == "13 = 13" && describe("1") == "error" && describe("+4") == "error"
+
+fn each_line() -> Int !io = match read_line() { None => 0, Some(l) => { print(describe(l)); each_line() } }
+
+fn main(args: List[Str]) -> Int !io = each_line()

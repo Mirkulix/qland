@@ -1,0 +1,3 @@
+type R = { f: fn(Int) -> Int, n: Int }
+type L = Nil | Cons(R, L)
+fn eq(a: L, b: L) -> Bool = a == b

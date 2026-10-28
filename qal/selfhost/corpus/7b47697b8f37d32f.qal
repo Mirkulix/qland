@@ -1,0 +1,2 @@
+fn g() -> Unit = ()
+test t = let y = -f(1, 2) in if !true then y else y

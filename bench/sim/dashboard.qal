@@ -1,0 +1,27 @@
+# JSON metrics endpoint for the 100-agent simulation; the UI is external.
+
+type Agent = { cash: Int }
+
+fn init(n: Int) -> List[Agent] = map(range(0, n), fn(i) => Agent { cash: 1000 })
+fn add_cash(acc: Int, a: Agent) -> Int = acc + a.cash
+fn total(n: Int) -> Int = fold(init(n), 0, add_cash)
+
+fn page() -> Str =
+  "<!doctype html><html><body><h1>QAL simulation</h1><pre id='out'>loading</pre>" ++
+  "<script>fetch('/metrics').then(r=>r.json()).then(j=>document.getElementById('out').textContent=JSON.stringify(j,null,2))</script>" ++
+  "</body></html>"
+
+fn metrics() -> HttpResponse =
+  std.http.json(200, std.json.obj([
+    std.json.field("agents", std.json.int(100)),
+    std.json.field("total", std.json.int(total(100))),
+    std.json.field("tick", std.json.int(1000)),
+    std.json.field("invariant", std.json.str("total == 100000")),
+    std.json.field("source", std.json.str("qal")),
+  ]))
+
+fn handle(rq: HttpRequest) -> HttpResponse =
+  if rq.path == "/" then std.http.response(200, "text/html; charset=utf-8", page())
+  else metrics()
+
+test total_100 = total(100) == 100000

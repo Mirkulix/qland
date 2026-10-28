@@ -1,0 +1,2 @@
+fn spin(n: Int) -> Int = spin(n + 1)
+test t_infinite = spin(0) == 42

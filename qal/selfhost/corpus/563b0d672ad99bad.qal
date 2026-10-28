@@ -1,0 +1,3 @@
+fn setup() -> Result[Int, DbError] !db = db_exec("CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY, body TEXT NOT NULL)", [])
+fn note(b: Str) -> Int !db = match setup() { Ok(_) => match db_exec("INSERT INTO notes (body) VALUES (?)", [SqlText(b)]) { Ok(n) => n, Err(_) => 0 - 1 }, Err(_) => 0 - 2 }
+fn notes() -> Int !db = match db_query("SELECT count(*) FROM notes", []) { Ok(r) => len(r.rows), Err(DbSql(m)) => 0 - len(m), Err(_) => 0 - 1 }

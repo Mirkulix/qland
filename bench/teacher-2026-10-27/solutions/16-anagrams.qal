@@ -1,0 +1,138 @@
+# Anagram groups.
+#
+# Every input line is one word: strip leading/trailing spaces, tabs and \r;
+# skip lines that are then empty.  Repeated words count once.  Two distinct
+# words share a group when each is a rearrangement of the other (same
+# multiset of characters).  Print every group of at least two distinct words
+# on one line, its words in ascending order separated by single spaces, and
+# the lines in ascending order of their first word.
+#
+# Maps are ordered by key, so map_keys yields the unique words sorted
+# ascending and map_values yields the lines sorted by their first word.
+# Accum keeps appends O(1); at most 2000 words are seen.
+
+# State of a leading-whitespace trim over a character list.
+type TrimState = { trimming: Bool, kept: Accum[Str] }
+
+# The characters removed from both ends of a line.
+fn is_blank(c: Str) -> Bool = c == " " || c == "\t" || c == "\r"
+
+# Fold step: drop blanks while still trimming, then keep every character.
+fn trim_step(t: TrimState, c: Str) -> TrimState =
+  if t.trimming then
+    if is_blank(c) then t
+    else TrimState { trimming: false, kept: AccPush(t.kept, c) }
+  else TrimState { trimming: false, kept: AccPush(t.kept, c) }
+
+# The characters of cs with their leading blanks removed.
+fn lead_trim(cs: List[Str]) -> List[Str] =
+  acc_list(fold(cs, TrimState { trimming: true, kept: AccEnd }, trim_step).kept)
+
+# s without leading/trailing spaces, tabs and carriage returns.
+fn trim_ws(s: Str) -> Str =
+  join(reverse(lead_trim(reverse(lead_trim(chars(s))))), "")
+
+# The group key of a word: its characters sorted ascending.
+fn signature(w: Str) -> Str = join(sort_str(chars(w)), "")
+
+# Add one trimmed line to the set of distinct words.
+fn add_word(m: Map[Str, Bool], line: Str) -> Map[Str, Bool] = {
+  let w = trim_ws(line) in
+  if len(w) == 0 then m else map_put(m, w, true)
+}
+
+# The distinct words of the input, ascending (map keys are ordered).
+fn unique_words(text: Str) -> List[Str] =
+  map_keys(fold(split(text, "\n"), map_new(), add_word))
+
+# Append w, in ascending order, to the bucket of its signature.
+fn add_group(g: Map[Str, Accum[Str]], w: Str) -> Map[Str, Accum[Str]] = {
+  let sig = signature(w) in
+  map_put(g, sig, AccPush(match map_get(g, sig) { None => AccEnd, Some(a) => a }, w))
+}
+
+# One output line per group of at least two distinct words, ordered by the
+# group's first word (the map key), each line its words joined by spaces.
+fn groups_to_lines(groups: Map[Str, Accum[Str]]) -> List[Str] = {
+  let lines = fold(map_keys(groups), map_new(), fn(m: Map[Str, Str], sig: Str) =>
+    { let ws = acc_list(match map_get(groups, sig) { None => AccEnd, Some(a) => a }) in
+      if len(ws) < 2 then m
+      else map_put(m, match get(ws, 0) { None => "", Some(w) => w }, join(ws, " ")) }) in
+  map_values(lines)
+}
+
+# The complete answer for a whole input text.
+fn group_words(text: Str) -> List[Str] =
+  groups_to_lines(fold(unique_words(text), map_new(), add_group))
+
+# Print every line of the answer.
+fn emit(lines: List[Str]) -> Unit !io =
+  fold(lines, (), fn(u: Unit, line: Str) => { print(line); u })
+
+# Entry point: read all of standard input, print the groups, exit 0.
+fn main(args: List[Str]) -> Int !io = {
+  emit(group_words(read_all()));
+  0
+}
+
+# --- tests -------------------------------------------------------------
+
+test example =
+  group_words("listen\nsilent\ncat\nact\ndog\nenlist\n") ==
+    ["act cat", "enlist listen silent"]
+
+test example_none = group_words("a\nb\nc\n") == []
+
+test example_duplicates = group_words("ab\nab\nba\nab\n") == ["ab ba"]
+
+test example_duplicates_only = group_words("ab\nab\n") == []
+
+test example_blank_and_spaces = group_words("\n  ab \nba\n\n") == ["ab ba"]
+
+test example_empty = group_words("") == []
+
+test trim_edges = trim_ws(" \t\r ab \t\r ") == "ab"
+
+test trim_keep_inner = trim_ws("\tabc\t") == "abc"
+
+test trim_only_blanks = trim_ws(" \t\r ") == ""
+
+test trim_no_change = trim_ws("abc") == "abc"
+
+test signature_sorted = signature("listen") == "eilnst"
+
+test signature_anagrams =
+  signature("cat") == signature("act") && signature("act") == signature("tac")
+
+test signature_empty = signature("") == ""
+
+test unique_sorted = unique_words("dog\ncat\nact\ndog\n\n") == ["act", "cat", "dog"]
+
+test group_order_by_first_word =
+  group_words("dog\ncat\ngod\nact\n") == ["act cat", "dog god"]
+
+test group_order_shared_prefix =
+  group_words("abcd\nabdc\nab\nba\n") == ["ab ba", "abcd abdc"]
+
+test prefix_group_of_one = group_words("abc\nab\nba\nabcd\n") == ["ab ba"]
+
+test crlf_lines = group_words("ab\r\n\r\nba\r\n") == ["ab ba"]
+
+test tabs_and_spaces = group_words("  act\t\n cat \n tac\n") == ["act cat tac"]
+
+test singletons_omitted = group_words("listen\nsilent\ndog\n") == ["listen silent"]
+
+test repeated_singletons = group_words("dog\ndog\ncat\n") == []
+
+test single_letter_groups = group_words("ab\nba\naa\nccc\n") == ["ab ba"]
+
+test case_sensitive = group_words("Ab\nbA\nab\nba\n") == ["Ab bA", "ab ba"]
+
+test three_groups_sorted =
+  group_words("bca\nabc\ncba\nb\nc\n") == ["abc bca cba"]
+
+test all_same_letters =
+  group_words("aa\naa\naaa\naaa\n") == []
+
+test long_words =
+  group_words("abcdefghij\njihgfedcba\nabcdefghij\n") == ["abcdefghij jihgfedcba"]

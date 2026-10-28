@@ -1,0 +1,1 @@
+fn main(args: List[Str]) -> Int !io = { print("before"); 1 / (len(args) - len(args)) }

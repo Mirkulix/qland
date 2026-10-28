@@ -85,3 +85,16 @@ See `/docs` for detailed documentation.
 ## 📝 License
 
 MIT License
+
+## Backend starten (2026-10-26)
+
+Das Backend braucht `huggingface-hub < 1.0`: Mit neueren Versionen verweigert `transformers` den
+Import, und das Backend startet nicht. Eine eigene Umgebung, die die vorhandenen Pakete wie
+`torch` mitbenutzt:
+
+```bash
+cd IGQK_Complete_Package/igqk_saas
+python3 -m venv --system-site-packages .venv
+.venv/bin/pip install "huggingface-hub>=0.23.2,<1.0"
+cd backend && ../.venv/bin/python main.py        # Tests: ../.venv/bin/python -m pytest tests
+```

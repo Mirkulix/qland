@@ -1,0 +1,33 @@
+# qal-pkg 1
+# package qal_sim_wire 44ff79766d10998c66cf11260f38ffc84cee3d51901741912b7cae2d1c6a51c3
+# def Heartbeat 0f543b33e3692fb2d3347b3d11df2bad57f993dfb56c4d1a1ad3875bf521202c cli
+# def VoteMsg 653e146fa59a3030e8e2111cce36d7bbf91b95c9f76b491a4b4ca616c0e641e9 cli
+# def decode_heartbeat 5e13a9de4a91e97d69783aa830dec4321b74ea11bfcf7886c8800729cc3e42fb cli
+# def decode_vote a5ff822f1c0cc44b4d7506be5ce84316f4b34665f5f7c61bc88122a09d7c6cdc cli
+# def encode_heartbeat dc45445314a1aec3528eb8e58e581fcd88a369aa7d509c3b4ab3409ce30a6b00 cli
+# def encode_vote 695b49ee5ec39c8edf87137e99d7e15455799411061388145ebe3871945bd8e4 cli
+# def heartbeat_bad 49b513e7d0b89b36a6476f8410f060e59bcebfa861111be1fed52a3660d60e9f cli
+# def heartbeat_roundtrip 22fab6c4c0f316b5578d2eaaffd5c841572d381bb13a576b78596bce45525c77 cli
+# def vote_roundtrip 3b7d7c1a322cf2810fdbcbe93beeae978e8ace95709338be2296d85d96c078bb cli
+
+type Heartbeat = { leader: Int, term: Int, at: Int }
+
+type VoteMsg = { term: Int, candidate: Int, last_index: Int, last_term: Int }
+
+fn decode_heartbeat(s: Str) -> Option[Heartbeat]
+= let p = split(s, ":") in if len(p) != 4 then None else match get(p, 0) { Some("hb") => match get(p, 1) { None => None, Some(a) => match to_int(a) { None => None, Some(leader) => match get(p, 2) { None => None, Some(b) => match to_int(b) { None => None, Some(term) => match get(p, 3) { None => None, Some(c) => match to_int(c) { None => None, Some(at) => Some(Heartbeat { leader: leader, term: term, at: at }) } } } } } }, _ => None }
+
+fn decode_vote(s: Str) -> Option[VoteMsg]
+= let p = split(s, ":") in if len(p) != 5 then None else match get(p, 0) { Some("rv") => match get(p, 1) { None => None, Some(a) => match to_int(a) { None => None, Some(term) => match get(p, 2) { None => None, Some(b) => match to_int(b) { None => None, Some(candidate) => match get(p, 3) { None => None, Some(c) => match to_int(c) { None => None, Some(last_index) => match get(p, 4) { None => None, Some(d) => match to_int(d) { None => None, Some(last_term) => Some(VoteMsg { term: term, candidate: candidate, last_index: last_index, last_term: last_term }) } } } } } } } }, _ => None }
+
+fn encode_heartbeat(h: Heartbeat) -> Str
+= "hb:" ++ from_int(h.leader) ++ ":" ++ from_int(h.term) ++ ":" ++ from_int(h.at)
+
+fn encode_vote(v: VoteMsg) -> Str
+= "rv:" ++ from_int(v.term) ++ ":" ++ from_int(v.candidate) ++ ":" ++ from_int(v.last_index) ++ ":" ++ from_int(v.last_term)
+
+test heartbeat_bad = decode_heartbeat("hb:x:7:100") == None
+
+test heartbeat_roundtrip = decode_heartbeat(encode_heartbeat(Heartbeat { leader: 2, term: 7, at: 100 })) == Some(Heartbeat { leader: 2, term: 7, at: 100 })
+
+test vote_roundtrip = decode_vote(encode_vote(VoteMsg { term: 3, candidate: 1, last_index: 9, last_term: 2 })) == Some(VoteMsg { term: 3, candidate: 1, last_index: 9, last_term: 2 })

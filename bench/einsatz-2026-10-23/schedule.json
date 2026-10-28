@@ -1,0 +1,41 @@
+{
+ "seed": "einsatz-2026-10-23",
+ "runs": 1,
+ "model": {
+  "21-expense-approval": "sonnet",
+  "22-expense-approval-contracts": "sonnet",
+  "23-expense-approval-change": "haiku"
+ },
+ "entries": [
+  {
+   "task": "21-expense-approval",
+   "arm": "qal",
+   "run": 1
+  },
+  {
+   "task": "21-expense-approval",
+   "arm": "rust",
+   "run": 1
+  },
+  {
+   "task": "22-expense-approval-contracts",
+   "arm": "qal",
+   "run": 1
+  },
+  {
+   "task": "22-expense-approval-contracts",
+   "arm": "rust",
+   "run": 1
+  },
+  {
+   "task": "23-expense-approval-change",
+   "arm": "qal",
+   "run": 1
+  },
+  {
+   "task": "23-expense-approval-change",
+   "arm": "rust",
+   "run": 1
+  }
+ ]
+}

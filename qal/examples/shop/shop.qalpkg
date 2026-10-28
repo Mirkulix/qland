@@ -1,0 +1,200 @@
+# qal-pkg 1
+# package shop 9fd8c474d410be5c5b0a70537b88951589161a42c983dade6838a22b6125b7b0
+# std 7df6acc501ea929b95e67df267f4e4a5d54fc356891be34903be794c04cacf96
+# def Endpoint 3da7005156b56255c9486c8e2822b48c90b0c482e8ce5293c4a8f11250004a60 rev-1
+# def LineChecked 00df2c9056e2713cd840a0de6c1dff9d26d4d5063165fc471c7a86c455dfe8f6 rev-1
+# def OrderIn 74be9a71b0a728819b8fea1ffba8a490aeb30a2d7e64a26954f9f1be14f0010a rev-1
+# def OrderLineIn 4aadacc1fa97e241bbe205833f30a122bf86f9ab95b74a10cfb5b58eec140da4 rev-1
+# def PatchIn 9a149144563afbf5a7f0e30fd2ac01f299a14b64c6efec47be16f4567126a3a0 rev-1
+# def ProductIn d0c26350835bfbe1a2ba140b94df3d9029e57aec0440204b1e562e0a0ce4c7d8 rev-1
+# def bad a864a01825b3a1ec5f646fef3fe6aa948c5e6f86ace6fc91d11a282100d51fae rev-1
+# def cancel_order 14497bd1b0b086d35908d2bb57fabf0d0a0008611bbdee6ad8f1db92fa2014a9 rev-1
+# def check_lines_stock 407647d5678664720f7ecfadae9b5500ccde5bf624e32a293c2960c39e869955 rev-1
+# def check_lines_stock_idx 6fa696490afac1122d272e47dc86c538b1cd1a94f2372e258aa8f3aef656c4b1 rev-1
+# def conflict 3c4ce7f31e918af771575eac845a4cdb9a77a8f9b6ee5e151f336a9008a2ea8f rev-1
+# def create_order 9894a139304572a59eeb716595482bc005ca71fe4d3f287c022d0af27e47e073 rev-1
+# def create_order_exec ed8d5d16df36d5c5bffeffd8be0678ec2ddba2a3a767ea5b385f2767c21e232a rev-1
+# def create_product ed3c11e70dd666afa8f5969d7e7a200c05f15a12aeb0f1a2de66cbb0be913691 rev-1
+# def db_fail b45495751550e76540edc6bac9866436b6a37f011dc46233b0caa3580042386d rev-1
+# def dispatch 60c4fd985d3f438c8375a6df4745b09e06fc089b418d8134393296de94889512 rev-1
+# def get_order a37b8fe0bce3ee292b65fabcf43d5311becb48a2bec7563dfa48c1d82cd9a51c rev-1
+# def get_product 6fcf6c04ddbf1ed6945f4e61e62ed5763f8a0812daf8df35103573ee3863fc8b rev-1
+# def handle c76e284b2e4bade1426167a9b2f192f9931ed84f03687920900e8e527bc751a9 rev-1
+# def id_of 8183815787ef7027445d9a9d40fbb30e159ecd0e15bca268762626369c18b412 rev-1
+# def insert_order_lines ff54ef82b4b226fae3c8e6f139802664da2e165bab26985e5274c7bf775c2486 rev-1
+# def insert_order_lines_idx 2c4c2e1b068593e20af7cbefeedc6c28584f44e0d3bf0f2e1af0092f5a566074 rev-1
+# def is_digit 0efbec8afc6288dd99586416499abf54390edb60f09d5cb6bdc76f04de22770e rev-1
+# def line_json 1689e427e5b59a7456beaa6d90ba126299da30b19641bfc629b51ab60cf5d757 rev-1
+# def list_products 511844ab2e04b27e0477d931b4246340dcc83df8dcdff92a8c6a7157c84b164d rev-1
+# def not_found f91344f92eab734ba5a46439028925ab444b566fdb86ab8d28cb0cb5d6510312 rev-1
+# def opt_int 0df07ceaaf29781f1efe493ef6e20d4d084002846cd853bc9cf8e7fbfe19cea1 rev-1
+# def opt_str af1417e3fac3527a75a144b0691b93c1cafd85dcac64612fe35e14e5afd70c34 rev-1
+# def order_json 13ae5ad111850ecbc263ffc0d4c28a33f3f832268e73c80eefa954e2bf43a3ea rev-1
+# def parse_id 6cc7f17429f23e0c8b570c29eb12313ec23d8d15a0d0036b1fb869536d13add6 rev-1
+# def parse_int_param c73c09fd9b0182cac5f13a484c73cd72837087ea39348081f8d9c259140db932 rev-1
+# def patch_product 59b176e0d76e6013f7960bf4b0939ba17008ba55b3dec72b3ffeaca6bc9596f1 rev-1
+# def product_json 9a73f4e8f16e1257e2d218a077c5d3718c7f21175cfe27d96a24e227309b49d8 rev-1
+# def read_order_in 9b232aa3cbb0e0cb5c094a116122a103a5814277deceb7691bc015a17fbf6e43 rev-1
+# def read_order_line 0c75c8860cb53fe31bc2c10fa661375319127e1861a851160580650563d4fd9e rev-1
+# def read_patch_in 594e80525f4c0ee9c99f73b567a6ba8da9a6f844db82b1df4670fa4d69022d1f rev-1
+# def read_product_in f3c404b466f9c7c547f8ebae26a7e24c6870a2da8ec01cba20b41029742e849f rev-1
+# def report_stock 4c36a6b1af530d5486fbc02018ce4fc9ed9dfd62c032ae4f55c5b2ddd3dee00d rev-1
+# def report_stock_for_products 4b8af6e1da0c374160b6cfa5602ce24f6f3da4ed57f6574399439307f2eaf731 rev-1
+# def report_stock_idx 99b69cc9ee635de07102284efbd59144802925e9fbe69dc36e9ecc03f1e232da rev-1
+# def reserve_lines 0e72aa9c523f8b2d395ed76f65a4a7603690335212a1ab57eeeb7088700dba3b rev-1
+# def reserve_lines_idx 3ad64209362c7d79daed1aadb7a67f3e2088672571a9c1ee3dbd69c32a5de0b9 rev-1
+# def restore_order_lines d14805c6f050c52c9615604663e450bd0d4e0fff3a4e319b92bf1658dc116bf0 rev-1
+# def restore_order_lines_idx 94a2186c6bdd601f422b2c1283e930e424df32dacc57fb5246402a44866d8b9a rev-1
+# def routes c52d8a5a6ebfbfe31246fdedd8625a709f234bfa6858cdb182217a9d11d29106 rev-1
+# def setup f0cb7b134e92f9f0410842f57efbffa4976d45d2e6c4e91eeaecaf6cf5688708 rev-1
+# def sum_total 2682f672ca4fd20035cf219d9629c4cbf08c0c3712f2c178d88aa96b950aa265 rev-1
+# def t_health 08b40852baecb00040411b55c614e2c5c2faa2d6552e712386074f1bd6ecc1e7 rev-1
+# def t_routes 7a906581ca619090828db84a1eb09201dc19cd32a76e381fd5b0dd396be52875 rev-1
+# def t_w1 87887026767fa7859bbce0850ac55e7490b44a864b7b53cc6b6ae037cf9341d4 rev-1
+# def t_w2 b087f5d75f8fb22a135d64ba0e196fcce16d53163f9cf28ed9711b00d4da4f10 rev-1
+# def t_w3 3d15dd013bdac2d07499760c1f7d8978af717dd60e1eb462b01ee1e8bc459b9b rev-1
+
+type Endpoint = Health | ListProducts | CreateProduct | GetProduct | PatchProduct | CreateOrder | GetOrder | CancelOrder | ReportStock
+
+type LineChecked = { product_id: Int, qty: Int, unit_price_cents: Int }
+
+type OrderLineIn = { product_id: Int, qty: Int }
+
+type PatchIn = { name: Option[Str], price_cents: Option[Int], stock: Option[Int] }
+
+type ProductIn = { sku: Option[Str], name: Option[Str], price_cents: Option[Int], stock: Option[Int] }
+
+fn bad(code: Str, msg: Str) -> HttpResponse
+= std.http.error(400, code, msg)
+
+fn conflict(code: Str, msg: Str) -> HttpResponse
+= std.http.error(409, code, msg)
+
+fn db_fail() -> HttpResponse
+= std.http.error(500, "db_error", "database error")
+
+fn is_digit(c: Str) -> Bool
+= len(c) == 1 && char_code(c) >= 48 && char_code(c) <= 57
+
+fn not_found(code: Str, msg: Str) -> HttpResponse
+= std.http.error(404, code, msg)
+
+fn opt_int(o: Option[Int]) -> Int
+= match o { Some(n) => n, None => 0 }
+
+fn opt_str(o: Option[Str]) -> Str
+= match o { Some(s) => s, None => "" }
+
+fn setup() -> Result[Unit, Str] !db
+= match db_exec("CREATE TABLE IF NOT EXISTS products (id INTEGER PRIMARY KEY AUTOINCREMENT, sku TEXT UNIQUE NOT NULL, name TEXT NOT NULL, price_cents INTEGER NOT NULL, stock INTEGER NOT NULL)", []) { Err(_) => Err("cannot create products table"), Ok(_) => match db_exec("CREATE TABLE IF NOT EXISTS orders (id INTEGER PRIMARY KEY AUTOINCREMENT, created_at INTEGER NOT NULL, status TEXT NOT NULL, total_cents INTEGER NOT NULL)", []) { Err(_) => Err("cannot create orders table"), Ok(_) => match db_exec("CREATE TABLE IF NOT EXISTS order_lines (id INTEGER PRIMARY KEY AUTOINCREMENT, order_id INTEGER NOT NULL, product_id INTEGER NOT NULL, qty INTEGER NOT NULL, unit_price_cents INTEGER NOT NULL)", []) { Err(_) => Err("cannot create order_lines table"), Ok(_) => Ok(()) } } }
+
+type OrderIn = { lines: List[OrderLineIn] }
+
+fn check_lines_stock_idx(lines: List[OrderLineIn], idx: Int, acc: List[LineChecked]) -> Result[List[LineChecked], HttpResponse] !db
+= if idx >= len(lines) then Ok(acc) else match get(lines, idx) { None => Ok(acc), Some(line) => match db_query("SELECT price_cents, stock FROM products WHERE id = ?", [SqlInt(line.product_id)]) { Err(_) => Err(db_fail()), Ok(rows) => match std.db.first(rows) { None => Err(not_found("product_not_found", "product not found")), Some(r) => let price = opt_int(std.db.int(r, 0)) in let stock = opt_int(std.db.int(r, 1)) in if stock < line.qty then Err(conflict("insufficient_stock", "insufficient stock for product")) else check_lines_stock_idx(lines, idx + 1, push(acc, LineChecked { product_id: line.product_id, qty: line.qty, unit_price_cents: price })) } } }
+
+fn line_json(row: List[SqlValue]) -> std.json.Json
+= std.json.obj([std.json.field("id", std.json.int(opt_int(std.db.int(row, 0)))), std.json.field("product_id", std.json.int(opt_int(std.db.int(row, 1)))), std.json.field("qty", std.json.int(opt_int(std.db.int(row, 2)))), std.json.field("unit_price_cents", std.json.int(opt_int(std.db.int(row, 3))))])
+
+fn order_json(o_row: List[SqlValue], lines: List[std.json.Json]) -> std.json.Json
+= std.json.obj([std.json.field("id", std.json.int(opt_int(std.db.int(o_row, 0)))), std.json.field("status", std.json.str(opt_str(std.db.text(o_row, 2)))), std.json.field("created_at", std.json.int(opt_int(std.db.int(o_row, 1)))), std.json.field("total_cents", std.json.int(opt_int(std.db.int(o_row, 3)))), std.json.field("lines", std.json.arr(lines))])
+
+fn parse_id(s: Str) -> Option[Int]
+= if len(s) == 0 then None else if len(filter(chars(s), fn(c) => !is_digit(c))) > 0 then None else match to_int(s) { Some(n) => if n >= 1 then Some(n) else None, None => None }
+
+fn parse_int_param(s: Str) -> Option[Int]
+= if len(s) == 0 then None else if len(filter(chars(s), fn(c) => !is_digit(c))) > 0 then None else to_int(s)
+
+fn product_json(row: List[SqlValue]) -> std.json.Json
+= std.json.obj([std.json.field("id", std.json.int(opt_int(std.db.int(row, 0)))), std.json.field("sku", std.json.str(opt_str(std.db.text(row, 1)))), std.json.field("name", std.json.str(opt_str(std.db.text(row, 2)))), std.json.field("price_cents", std.json.int(opt_int(std.db.int(row, 3)))), std.json.field("stock", std.json.int(opt_int(std.db.int(row, 4))))])
+
+fn read_order_line(j: std.json.Json) -> Option[OrderLineIn]
+= match std.json.as_obj(j) { None => None, Some(_) => let p_f = std.json.get(j, "product_id") in let q_f = std.json.get(j, "qty") in let p_int = match p_f { Some(v) => std.json.as_int(v), None => None } in let q_int = match q_f { Some(v) => std.json.as_int(v), None => None } in match p_int { None => None, Some(pid) => match q_int { None => None, Some(qty) => if pid >= 1 && qty >= 1 then Some(OrderLineIn { product_id: pid, qty: qty }) else None } } }
+
+fn read_patch_in(j: std.json.Json) -> Result[PatchIn, HttpResponse]
+= match std.json.as_obj(j) { None => Err(bad("invalid_type", "body must be an object")), Some(fs) => let name_f = std.json.get(j, "name") in let price_f = std.json.get(j, "price_cents") in let stock_f = std.json.get(j, "stock") in let name_str = match name_f { Some(v) => std.json.as_str(v), None => None } in let price_int = match price_f { Some(v) => std.json.as_int(v), None => None } in let stock_int = match stock_f { Some(v) => std.json.as_int(v), None => None } in if name_f == None && price_f == None && stock_f == None then Err(bad("no_updates", "at least one field must be provided")) else if name_f != None && name_str == None || price_f != None && price_int == None || stock_f != None && stock_int == None then Err(bad("invalid_type", "wrong field type")) else let p_ok = match price_int { None => true, Some(p) => p >= 0 } in let s_ok = match stock_int { None => true, Some(s) => s >= 0 } in let n_ok = match name_str { None => true, Some(n) => len(trim(n)) > 0 } in if !p_ok || !s_ok || !n_ok then Err(bad("invalid_value", "invalid field value")) else Ok(PatchIn { name: match name_str { None => None, Some(n) => Some(trim(n)) }, price_cents: price_int, stock: stock_int }) }
+
+fn read_product_in(j: std.json.Json) -> Result[ProductIn, HttpResponse]
+= match std.json.as_obj(j) { None => Err(bad("invalid_type", "body must be an object")), Some(fs) => let sku_f = std.json.get(j, "sku") in let name_f = std.json.get(j, "name") in let price_f = std.json.get(j, "price_cents") in let stock_f = std.json.get(j, "stock") in let sku_str = match sku_f { Some(v) => std.json.as_str(v), None => None } in let name_str = match name_f { Some(v) => std.json.as_str(v), None => None } in let price_int = match price_f { Some(v) => std.json.as_int(v), None => None } in let stock_int = match stock_f { Some(v) => std.json.as_int(v), None => None } in if sku_str == None || name_str == None || price_int == None || stock_int == None then Err(bad("missing_field", "missing required product field")) else let s = trim(opt_str(sku_str)) in let n = trim(opt_str(name_str)) in let p = opt_int(price_int) in let st = opt_int(stock_int) in if len(s) == 0 || len(n) == 0 || p < 0 || st < 0 then Err(bad("invalid_value", "invalid product field value")) else Ok(ProductIn { sku: Some(s), name: Some(n), price_cents: Some(p), stock: Some(st) }) }
+
+fn report_stock_idx(products: List[List[SqlValue]], idx: Int, acc: List[std.json.Json]) -> Result[List[std.json.Json], HttpResponse] !db
+= if idx >= len(products) then Ok(acc) else match get(products, idx) { None => Ok(acc), Some(p) => let pid = opt_int(std.db.int(p, 0)) in let sku = opt_str(std.db.text(p, 1)) in let name = opt_str(std.db.text(p, 2)) in let stock = opt_int(std.db.int(p, 3)) in match db_query("SELECT COALESCE(SUM(l.qty), 0), COALESCE(SUM(l.qty * l.unit_price_cents), 0) FROM order_lines l JOIN orders o ON o.id = l.order_id WHERE l.product_id = ? AND o.status = 'confirmed'", [SqlInt(pid)]) { Err(_) => Err(db_fail()), Ok(sum_rows) => match std.db.first(sum_rows) { None => report_stock_idx(products, idx + 1, acc), Some(sr) => let reserved = opt_int(std.db.int(sr, 0)) in let revenue = opt_int(std.db.int(sr, 1)) in let obj = std.json.obj([std.json.field("product_id", std.json.int(pid)), std.json.field("sku", std.json.str(sku)), std.json.field("name", std.json.str(name)), std.json.field("current_stock", std.json.int(stock)), std.json.field("reserved_stock", std.json.int(reserved)), std.json.field("revenue_cents", std.json.int(revenue))]) in report_stock_idx(products, idx + 1, push(acc, obj)) } } }
+
+fn reserve_lines_idx(lines: List[LineChecked], idx: Int) -> Result[Unit, HttpResponse] !db
+= if idx >= len(lines) then Ok(()) else match get(lines, idx) { None => Ok(()), Some(l) => match db_exec("UPDATE products SET stock = stock - ? WHERE id = ?", [SqlInt(l.qty), SqlInt(l.product_id)]) { Err(_) => Err(db_fail()), Ok(_) => reserve_lines_idx(lines, idx + 1) } }
+
+fn restore_order_lines_idx(lines: List[List[SqlValue]], idx: Int) -> Result[Unit, HttpResponse] !db
+= if idx >= len(lines) then Ok(()) else match get(lines, idx) { None => Ok(()), Some(r) => let pid = opt_int(std.db.int(r, 0)) in let qty = opt_int(std.db.int(r, 1)) in match db_exec("UPDATE products SET stock = stock + ? WHERE id = ?", [SqlInt(qty), SqlInt(pid)]) { Err(_) => Err(db_fail()), Ok(_) => restore_order_lines_idx(lines, idx + 1) } }
+
+fn routes() -> List[std.route.Route[Endpoint]]
+= [std.route.Route { method: "GET", pattern: "/health", tag: Health }, std.route.Route { method: "GET", pattern: "/products", tag: ListProducts }, std.route.Route { method: "POST", pattern: "/products", tag: CreateProduct }, std.route.Route { method: "GET", pattern: "/products/:id", tag: GetProduct }, std.route.Route { method: "PATCH", pattern: "/products/:id", tag: PatchProduct }, std.route.Route { method: "POST", pattern: "/orders", tag: CreateOrder }, std.route.Route { method: "GET", pattern: "/orders/:id", tag: GetOrder }, std.route.Route { method: "POST", pattern: "/orders/:id/cancel", tag: CancelOrder }, std.route.Route { method: "GET", pattern: "/reports/stock", tag: ReportStock }]
+
+fn sum_total(lines: List[LineChecked]) -> Int
+= fold(lines, 0, fn(acc, l) => acc + l.qty * l.unit_price_cents)
+
+fn check_lines_stock(lines: List[OrderLineIn]) -> Result[List[LineChecked], HttpResponse] !db
+= check_lines_stock_idx(lines, 0, [])
+
+fn create_product(rq: HttpRequest) -> HttpResponse !db
+= match std.http.json_body(rq) { Err(resp) => resp, Ok(j) => match read_product_in(j) { Err(resp) => resp, Ok(pin) => let sku = opt_str(pin.sku) in let name = opt_str(pin.name) in let price = opt_int(pin.price_cents) in let stock = opt_int(pin.stock) in match db_query("SELECT id FROM products WHERE sku = ?", [SqlText(sku)]) { Err(_) => db_fail(), Ok(existing) => if len(existing.rows) > 0 then conflict("sku_exists", "a product with this sku already exists") else match db_query("INSERT INTO products (sku, name, price_cents, stock) VALUES (?, ?, ?, ?) RETURNING id, sku, name, price_cents, stock", [SqlText(sku), SqlText(name), SqlInt(price), SqlInt(stock)]) { Err(_) => db_fail(), Ok(rows) => match std.db.first(rows) { None => db_fail(), Some(r) => std.http.with_header(std.http.json(201, product_json(r)), "location", "/products/" ++ from_int(opt_int(std.db.int(r, 0)))) } } } } }
+
+fn get_order(id: Int) -> HttpResponse !db
+= match db_query("SELECT id, created_at, status, total_cents FROM orders WHERE id = ?", [SqlInt(id)]) { Err(_) => db_fail(), Ok(o_rows) => match std.db.first(o_rows) { None => not_found("order_not_found", "order not found"), Some(orow) => match db_query("SELECT id, product_id, qty, unit_price_cents FROM order_lines WHERE order_id = ? ORDER BY id ASC", [SqlInt(id)]) { Err(_) => db_fail(), Ok(l_rows) => let lines = map(l_rows.rows, fn(r) => line_json(r)) in std.http.json(200, order_json(orow, lines)) } } }
+
+fn get_product(id: Int) -> HttpResponse !db
+= match db_query("SELECT id, sku, name, price_cents, stock FROM products WHERE id = ?", [SqlInt(id)]) { Err(_) => db_fail(), Ok(rows) => match std.db.first(rows) { None => not_found("product_not_found", "product not found"), Some(r) => std.http.json(200, product_json(r)) } }
+
+fn id_of(ps: List[std.url.Param]) -> Option[Int]
+= parse_id(opt_str(std.route.param(ps, "id")))
+
+fn insert_order_lines_idx(order_id: Int, lines: List[LineChecked], idx: Int, acc: List[std.json.Json]) -> Result[List[std.json.Json], HttpResponse] !db
+= if idx >= len(lines) then Ok(acc) else match get(lines, idx) { None => Ok(acc), Some(l) => match db_query("INSERT INTO order_lines (order_id, product_id, qty, unit_price_cents) VALUES (?, ?, ?, ?) RETURNING id, product_id, qty, unit_price_cents", [SqlInt(order_id), SqlInt(l.product_id), SqlInt(l.qty), SqlInt(l.unit_price_cents)]) { Err(_) => Err(db_fail()), Ok(rows) => match std.db.first(rows) { None => Err(db_fail()), Some(r) => insert_order_lines_idx(order_id, lines, idx + 1, push(acc, line_json(r))) } } }
+
+fn list_products(rq: HttpRequest) -> HttpResponse !db
+= match std.url.param(std.http.query(rq), "below") { None => match db_query("SELECT id, sku, name, price_cents, stock FROM products ORDER BY id ASC", []) { Ok(rows) => std.http.json(200, std.json.arr(map(rows.rows, fn(r) => product_json(r)))), Err(_) => db_fail() }, Some(s) => match parse_int_param(s) { None => bad("invalid_query", "below must be an integer"), Some(b) => match db_query("SELECT id, sku, name, price_cents, stock FROM products WHERE stock < ? ORDER BY id ASC", [SqlInt(b)]) { Ok(rows) => std.http.json(200, std.json.arr(map(rows.rows, fn(r) => product_json(r)))), Err(_) => db_fail() } } }
+
+fn patch_product(id: Int, rq: HttpRequest) -> HttpResponse !db
+= match std.http.json_body(rq) { Err(resp) => resp, Ok(j) => match read_patch_in(j) { Err(resp) => resp, Ok(pin) => let n_val = match pin.name { Some(s) => SqlText(s), None => SqlNull } in let p_val = match pin.price_cents { Some(p) => SqlInt(p), None => SqlNull } in let s_val = match pin.stock { Some(s) => SqlInt(s), None => SqlNull } in match db_query("SELECT id FROM products WHERE id = ?", [SqlInt(id)]) { Err(_) => db_fail(), Ok(rows) => if len(rows.rows) == 0 then not_found("product_not_found", "product not found") else match db_query("UPDATE products SET name = COALESCE(?, name), price_cents = COALESCE(?, price_cents), stock = COALESCE(?, stock) WHERE id = ? RETURNING id, sku, name, price_cents, stock", [n_val, p_val, s_val, SqlInt(id)]) { Err(_) => db_fail(), Ok(upd) => match std.db.first(upd) { None => db_fail(), Some(r) => std.http.json(200, product_json(r)) } } } } }
+
+fn read_order_in(j: std.json.Json) -> Result[OrderIn, HttpResponse]
+= match std.json.as_obj(j) { None => Err(bad("invalid_type", "body must be an object")), Some(_) => match std.json.get(j, "lines") { None => Err(bad("missing_field", "missing lines field")), Some(lf) => match std.json.as_arr(lf) { None => Err(bad("invalid_type", "lines must be an array")), Some(arr) => if len(arr) == 0 then Err(bad("empty_lines", "order lines cannot be empty")) else let parsed = map(arr, fn(item) => read_order_line(item)) in let invalid = filter(parsed, fn(item) => item == None) in if len(invalid) > 0 then Err(bad("invalid_line", "invalid order line")) else Ok(OrderIn { lines: map(parsed, fn(item) => match item { Some(l) => l, None => OrderLineIn { product_id: 0, qty: 0 } }) }) } } }
+
+fn report_stock_for_products(products: List[List[SqlValue]]) -> Result[List[std.json.Json], HttpResponse] !db
+= report_stock_idx(products, 0, [])
+
+fn reserve_lines(lines: List[LineChecked]) -> Result[Unit, HttpResponse] !db
+= reserve_lines_idx(lines, 0)
+
+fn restore_order_lines(lines: List[List[SqlValue]]) -> Result[Unit, HttpResponse] !db
+= restore_order_lines_idx(lines, 0)
+
+test t_health = match std.route.route(routes(), "GET", "/health") { std.route.Matched(Health, _) => true, _ => false }
+
+test t_routes = len(routes()) == 9
+
+test t_w1 = len(routes()) >= 1
+
+test t_w2 = len(routes()) >= 2
+
+test t_w3 = len(routes()) >= 3
+
+fn cancel_order(id: Int) -> HttpResponse !db
+= match db_query("SELECT id, status FROM orders WHERE id = ?", [SqlInt(id)]) { Err(_) => db_fail(), Ok(o_rows) => match std.db.first(o_rows) { None => not_found("order_not_found", "order not found"), Some(orow) => let status = opt_str(std.db.text(orow, 1)) in if status == "cancelled" then conflict("order_already_cancelled", "order already cancelled") else match db_query("SELECT product_id, qty FROM order_lines WHERE order_id = ?", [SqlInt(id)]) { Err(_) => db_fail(), Ok(l_rows) => match restore_order_lines(l_rows.rows) { Err(resp) => resp, Ok(_) => match db_exec("UPDATE orders SET status = 'cancelled' WHERE id = ?", [SqlInt(id)]) { Err(_) => db_fail(), Ok(_) => std.http.json(200, std.json.obj([std.json.field("id", std.json.int(id)), std.json.field("status", std.json.str("cancelled"))])) } } } } }
+
+fn insert_order_lines(order_id: Int, lines: List[LineChecked]) -> Result[List[std.json.Json], HttpResponse] !db
+= insert_order_lines_idx(order_id, lines, 0, [])
+
+fn report_stock() -> HttpResponse !db
+= match db_query("SELECT id, sku, name, stock FROM products ORDER BY id ASC", []) { Err(_) => db_fail(), Ok(rows) => match report_stock_for_products(rows.rows) { Err(resp) => resp, Ok(arr) => std.http.json(200, std.json.arr(arr)) } }
+
+fn create_order_exec(lines: List[OrderLineIn]) -> HttpResponse !db !time
+= match check_lines_stock(lines) { Err(resp) => resp, Ok(checked) => match reserve_lines(checked) { Err(resp) => resp, Ok(_) => let total = sum_total(checked) in let now = now_ms() in match db_query("INSERT INTO orders (created_at, status, total_cents) VALUES (?, 'confirmed', ?) RETURNING id, created_at, status, total_cents", [SqlInt(now), SqlInt(total)]) { Err(_) => db_fail(), Ok(o_rows) => match std.db.first(o_rows) { None => db_fail(), Some(orow) => let oid = opt_int(std.db.int(orow, 0)) in match insert_order_lines(oid, checked) { Err(resp) => resp, Ok(line_jsons) => std.http.with_header(std.http.json(201, order_json(orow, line_jsons)), "location", "/orders/" ++ from_int(oid)) } } } } }
+
+fn create_order(rq: HttpRequest) -> HttpResponse !db !time
+= match std.http.json_body(rq) { Err(resp) => resp, Ok(j) => match read_order_in(j) { Err(resp) => resp, Ok(oin) => create_order_exec(oin.lines) } }
+
+fn dispatch(tag: Endpoint, ps: List[std.url.Param], rq: HttpRequest) -> HttpResponse !db !time
+= match tag { Health => std.http.json(200, std.json.obj([std.json.field("ok", std.json.bool(true))])), ListProducts => list_products(rq), CreateProduct => create_product(rq), GetProduct => match id_of(ps) { None => bad("invalid_id", "invalid id"), Some(id) => get_product(id) }, PatchProduct => match id_of(ps) { None => bad("invalid_id", "invalid id"), Some(id) => patch_product(id, rq) }, CreateOrder => create_order(rq), GetOrder => match id_of(ps) { None => bad("invalid_id", "invalid id"), Some(id) => get_order(id) }, CancelOrder => match id_of(ps) { None => bad("invalid_id", "invalid id"), Some(id) => cancel_order(id) }, ReportStock => report_stock() }
+
+fn handle(rq: HttpRequest) -> HttpResponse !db !time
+= match std.route.route(routes(), rq.method, rq.path) { std.route.Matched(tag, ps) => dispatch(tag, ps, rq), std.route.NotFound => std.http.not_found(), std.route.MethodNotAllowed(ms) => std.http.method_not_allowed(ms) }

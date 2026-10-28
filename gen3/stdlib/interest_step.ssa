@@ -1,0 +1,12 @@
+fn interest_step(arg0: I64, arg1: I64) -> I64 {
+  v00 = arg0
+  v01 = arg1
+  v02 = 0
+  v03 = 25
+  v04 = clamp(v01, v02, v03)          # invariant: [0, 25]
+  v05 = 100
+  v06 = v05 + v04                     # invariant: [100, 125]
+  v07 = v00 * v06                     # invariant: >= 0
+  v08 = v07 / v05                     # invariant: >= 0
+  return v08
+}

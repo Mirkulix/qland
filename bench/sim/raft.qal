@@ -1,0 +1,31 @@
+# Raft-style log matching and commit index.
+
+type LogEntry = { index: Int, term: Int, cmd: Str }
+type RaftLog = { entries: List[LogEntry], commit: Int }
+
+fn at(log: RaftLog, index: Int) -> Option[LogEntry] =
+  if index <= 0 then None else get(log.entries, index - 1)
+
+fn append(log: RaftLog, prev_index: Int, prev_term: Int, e: LogEntry) -> RaftLog
+  req prev_index >= 0
+= if prev_index == 0 || (match at(log, prev_index) { Some(x) => x.term == prev_term, None => false })
+  then RaftLog {
+    entries: push(log.entries, LogEntry { index: prev_index + 1, term: e.term, cmd: e.cmd }),
+    commit: log.commit,
+  }
+  else log
+
+fn advance(log: RaftLog, index: Int) -> RaftLog
+  req index >= 0
+= if index > log.commit && index <= len(log.entries) then RaftLog { entries: log.entries, commit: index } else log
+
+test append_after_zero = len(append(RaftLog { entries: [], commit: 0 }, 0, 0, LogEntry { index: 0, term: 1, cmd: "x" }).entries) == 1
+test reject_term_mismatch =
+  let l = append(RaftLog { entries: [], commit: 0 }, 0, 0, LogEntry { index: 0, term: 1, cmd: "x" }) in
+  len(append(l, 1, 2, LogEntry { index: 0, term: 3, cmd: "y" }).entries) == 1
+test advance_commits =
+  let l = append(RaftLog { entries: [], commit: 0 }, 0, 0, LogEntry { index: 0, term: 1, cmd: "x" }) in
+  advance(l, 1).commit == 1
+test advance_cannot_skip =
+  let l = append(RaftLog { entries: [], commit: 0 }, 0, 0, LogEntry { index: 0, term: 1, cmd: "x" }) in
+  advance(l, 2).commit == 0

@@ -1,0 +1,2 @@
+type Ledger = { accts: List[Acct], day: Int }
+fn day_of(l: Ledger) -> Int = l.day + len(l.accts)

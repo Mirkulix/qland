@@ -1,0 +1,555 @@
+{
+ "per_task": {
+  "01-word-count": {
+   "qal": {
+    "processed": 182057.5,
+    "rounds": 3.5,
+    "top": "ok.define",
+    "runs": 2
+   },
+   "rust": {
+    "processed": 135093.5,
+    "rounds": 3,
+    "top": "ok.other",
+    "runs": 2
+   },
+   "ratio": 1.3476407081021662
+  },
+  "02-roman": {
+   "qal": {
+    "processed": 156350.0,
+    "rounds": 3,
+    "top": "ok.define",
+    "runs": 2
+   },
+   "rust": {
+    "processed": 183736.5,
+    "rounds": 4,
+    "top": "ok.other",
+    "runs": 2
+   },
+   "ratio": 0.8509468722872157
+  },
+  "03-csv-sum": {
+   "qal": {
+    "processed": 218904.5,
+    "rounds": 4,
+    "top": "ok.define",
+    "runs": 2
+   },
+   "rust": {
+    "processed": 135041.0,
+    "rounds": 3,
+    "top": "ok.other",
+    "runs": 2
+   },
+   "ratio": 1.621022504276479
+  },
+  "04-binary-search": {
+   "qal": {
+    "processed": 155483.0,
+    "rounds": 3,
+    "top": "ok.define",
+    "runs": 2
+   },
+   "rust": {
+    "processed": 157614.5,
+    "rounds": 3.5,
+    "top": "ok.other",
+    "runs": 2
+   },
+   "ratio": 0.9864764980379344
+  },
+  "05-brackets": {
+   "qal": {
+    "processed": 180551.5,
+    "rounds": 3.5,
+    "top": "ok.define",
+    "runs": 2
+   },
+   "rust": {
+    "processed": 158294.5,
+    "rounds": 3.5,
+    "top": "ok.other",
+    "runs": 2
+   },
+   "ratio": 1.1406050115449369
+  },
+  "06-bank": {
+   "qal": {
+    "processed": 222507.0,
+    "rounds": 4,
+    "top": "ok.define",
+    "runs": 2
+   },
+   "rust": {
+    "processed": 161145.0,
+    "rounds": 3.5,
+    "top": "ok.other",
+    "runs": 2
+   },
+   "ratio": 1.3807874895280647
+  },
+  "07-tokenizer": {
+   "qal": {
+    "processed": 157334.5,
+    "rounds": 3,
+    "top": "ok.define",
+    "runs": 2
+   },
+   "rust": {
+    "processed": 160333.0,
+    "rounds": 3.5,
+    "top": "ok.other",
+    "runs": 2
+   },
+   "ratio": 0.9812982979174593
+  },
+  "08-expr-eval": {
+   "qal": {
+    "processed": 250740.5,
+    "rounds": 4.5,
+    "top": "ok.define",
+    "runs": 2
+   },
+   "rust": {
+    "processed": 137003.5,
+    "rounds": 3,
+    "top": "ok.other",
+    "runs": 2
+   },
+   "ratio": 1.8301758714193432
+  },
+  "09-rle": {
+   "qal": {
+    "processed": 246391.5,
+    "rounds": 4.5,
+    "top": "ok.run",
+    "runs": 2
+   },
+   "rust": {
+    "processed": 135464.5,
+    "rounds": 3,
+    "top": "ok.other",
+    "runs": 2
+   },
+   "ratio": 1.8188639828146858
+  },
+  "10-file-stats": {
+   "qal": {
+    "processed": 272202.0,
+    "rounds": 5,
+    "top": "ok.run",
+    "runs": 2
+   },
+   "rust": {
+    "processed": 135538.5,
+    "rounds": 3,
+    "top": "ok.other",
+    "runs": 2
+   },
+   "ratio": 2.008300224659414
+  },
+  "11-prime-factors": {
+   "qal": {
+    "processed": 274673.5,
+    "rounds": 5,
+    "top": "ok.run",
+    "runs": 2
+   },
+   "rust": {
+    "processed": 157461.0,
+    "rounds": 3.5,
+    "top": "ok.other",
+    "runs": 2
+   },
+   "ratio": 1.7443906745162294
+  },
+  "12-sort-words": {
+   "qal": {
+    "processed": 236533.0,
+    "rounds": 4.5,
+    "top": "ok.run",
+    "runs": 2
+   },
+   "rust": {
+    "processed": 134273.5,
+    "rounds": 3,
+    "top": "ok.other",
+    "runs": 2
+   },
+   "ratio": 1.7615761859190384
+  },
+  "13-word-freq": {
+   "qal": {
+    "processed": 307173.5,
+    "rounds": 5.5,
+    "top": "ok.run",
+    "runs": 2
+   },
+   "rust": {
+    "processed": 160613.0,
+    "rounds": 3.5,
+    "top": "ok.other",
+    "runs": 2
+   },
+   "ratio": 1.9125070822411636
+  },
+  "14-bst": {
+   "qal": {
+    "processed": 269371.0,
+    "rounds": 5,
+    "top": "ok.run",
+    "runs": 2
+   },
+   "rust": {
+    "processed": 136690.5,
+    "rounds": 3,
+    "top": "env.read_task",
+    "runs": 2
+   },
+   "ratio": 1.9706636525581513
+  },
+  "15-caesar": {
+   "qal": {
+    "processed": 154064.5,
+    "rounds": 3,
+    "top": "ok.define",
+    "runs": 2
+   },
+   "rust": {
+    "processed": 180865.0,
+    "rounds": 4,
+    "top": "ok.other",
+    "runs": 2
+   },
+   "ratio": 0.8518204185442181
+  },
+  "16-anagrams": {
+   "qal": {
+    "processed": 154429.5,
+    "rounds": 3,
+    "top": "ok.define",
+    "runs": 2
+   },
+   "rust": {
+    "processed": 134151.0,
+    "rounds": 3,
+    "top": "ok.other",
+    "runs": 2
+   },
+   "ratio": 1.1511617505646623
+  },
+  "17-word-wrap": {
+   "qal": {
+    "processed": 277973.0,
+    "rounds": 5,
+    "top": "ok.run",
+    "runs": 2
+   },
+   "rust": {
+    "processed": 134804.0,
+    "rounds": 3,
+    "top": "ok.other",
+    "runs": 2
+   },
+   "ratio": 2.0620530548054954
+  },
+  "18-date-diff": {
+   "qal": {
+    "processed": 217159.5,
+    "rounds": 4,
+    "top": "ok.run",
+    "runs": 2
+   },
+   "rust": {
+    "processed": 134597.5,
+    "rounds": 3,
+    "top": "ok.other",
+    "runs": 2
+   },
+   "ratio": 1.61339920875202
+  },
+  "19-base-convert": {
+   "qal": {
+    "processed": 157581.0,
+    "rounds": 3,
+    "top": "ok.define",
+    "runs": 2
+   },
+   "rust": {
+    "processed": 136382.0,
+    "rounds": 3,
+    "top": "ok.other",
+    "runs": 2
+   },
+   "ratio": 1.1554384009620038
+  },
+  "20-ini-query": {
+   "qal": {
+    "processed": 157344.0,
+    "rounds": 3,
+    "top": "ok.define",
+    "runs": 2
+   },
+   "rust": {
+    "processed": 183906.5,
+    "rounds": 4,
+    "top": "ok.other",
+    "runs": 2
+   },
+   "ratio": 0.855565192094896
+  }
+ },
+ "qal": {
+  "runs": 40,
+  "totals": {
+   "prompt.reference": {
+    "processed": 0.0,
+    "new": 0.0,
+    "output": 0.0,
+    "calls": 0
+   },
+   "prompt.task": {
+    "processed": 1649428.0,
+    "new": 697023.0,
+    "output": 3163.0,
+    "calls": 40
+   },
+   "env.read_task": {
+    "processed": 2277446,
+    "new": 554326,
+    "output": 76935,
+    "calls": 40
+   },
+   "ok.define": {
+    "processed": 2510694,
+    "new": 112397,
+    "output": 10166,
+    "calls": 43
+   },
+   "ok.run": {
+    "processed": 1592403,
+    "new": 13968,
+    "output": 5886,
+    "calls": 27
+   },
+   "env.tool_error": {
+    "processed": 230930,
+    "new": 1165,
+    "output": 812,
+    "calls": 4
+   },
+   "lang.type": {
+    "processed": 58616,
+    "new": 2558,
+    "output": 1425,
+    "calls": 1
+   },
+   "lang.parse": {
+    "processed": 178132,
+    "new": 7898,
+    "output": 3671,
+    "calls": 3
+   }
+  },
+  "means": {
+   "prompt.reference": {
+    "processed": 0.0,
+    "new": 0.0,
+    "output": 0.0,
+    "calls": 0.0
+   },
+   "prompt.task": {
+    "processed": 41235.7,
+    "new": 17425.575,
+    "output": 79.075,
+    "calls": 1.0
+   },
+   "env.read_task": {
+    "processed": 56936.15,
+    "new": 13858.15,
+    "output": 1923.375,
+    "calls": 1.0
+   },
+   "ok.define": {
+    "processed": 62767.35,
+    "new": 2809.925,
+    "output": 254.15,
+    "calls": 1.075
+   },
+   "ok.run": {
+    "processed": 39810.075,
+    "new": 349.2,
+    "output": 147.15,
+    "calls": 0.675
+   },
+   "env.tool_error": {
+    "processed": 5773.25,
+    "new": 29.125,
+    "output": 20.3,
+    "calls": 0.1
+   },
+   "lang.type": {
+    "processed": 1465.4,
+    "new": 63.95,
+    "output": 35.625,
+    "calls": 0.025
+   },
+   "lang.parse": {
+    "processed": 4453.3,
+    "new": 197.45,
+    "output": 91.775,
+    "calls": 0.075
+   }
+  },
+  "shares": {
+   "prompt": 0.1941040398350179,
+   "env": 0.2951847034397396,
+   "ok": 0.4828508449807706,
+   "lang": 0.027860411744471913
+  },
+  "top3": [
+   [
+    "ok.define",
+    2510694
+   ],
+   [
+    "env.read_task",
+    2277446
+   ],
+   [
+    "prompt.task",
+    1649428.0
+   ]
+  ],
+  "rounds": {
+   "mean": 3.95,
+   "median": 4.0,
+   "max": 6
+  },
+  "round_cost": {
+   "1": 41235.7,
+   "5": 59435.53333333333,
+   "10": null
+  },
+  "retries": 0,
+  "dispatch_tokens": 1491393,
+  "diag_codes": {
+   "E0100": 3,
+   "E0203": 2
+  }
+ },
+ "rust": {
+  "runs": 40,
+  "totals": {
+   "prompt.reference": {
+    "processed": 0.0,
+    "new": 0.0,
+    "output": 0.0,
+    "calls": 0
+   },
+   "prompt.task": {
+    "processed": 1649455.0,
+    "new": 671846.0,
+    "output": 3230.0,
+    "calls": 40
+   },
+   "env.read_task": {
+    "processed": 1877689,
+    "new": 184112,
+    "output": 47432,
+    "calls": 40
+   },
+   "ok.other": {
+    "processed": 2315629,
+    "new": 53302,
+    "output": 5973,
+    "calls": 49
+   },
+   "rust.compile": {
+    "processed": 48172,
+    "new": 2163,
+    "output": 294,
+    "calls": 1
+   },
+   "rust.panic": {
+    "processed": 95072,
+    "new": 2928,
+    "output": 219,
+    "calls": 2
+   }
+  },
+  "means": {
+   "prompt.reference": {
+    "processed": 0.0,
+    "new": 0.0,
+    "output": 0.0,
+    "calls": 0.0
+   },
+   "prompt.task": {
+    "processed": 41236.375,
+    "new": 16796.15,
+    "output": 80.75,
+    "calls": 1.0
+   },
+   "env.read_task": {
+    "processed": 46942.225,
+    "new": 4602.8,
+    "output": 1185.8,
+    "calls": 1.0
+   },
+   "ok.other": {
+    "processed": 57890.725,
+    "new": 1332.55,
+    "output": 149.325,
+    "calls": 1.225
+   },
+   "rust.compile": {
+    "processed": 1204.3,
+    "new": 54.075,
+    "output": 7.35,
+    "calls": 0.025
+   },
+   "rust.panic": {
+    "processed": 2376.8,
+    "new": 73.2,
+    "output": 5.475,
+    "calls": 0.05
+   }
+  },
+  "shares": {
+   "prompt": 0.27555133906235146,
+   "env": 0.31367919603302163,
+   "ok": 0.3868396965795453,
+   "rust": 0.023929768325081605
+  },
+  "top3": [
+   [
+    "ok.other",
+    2315629
+   ],
+   [
+    "env.read_task",
+    1877689
+   ],
+   [
+    "prompt.task",
+    1649455.0
+   ]
+  ],
+  "rounds": {
+   "mean": 3.3,
+   "median": 3.0,
+   "max": 5
+  },
+  "round_cost": {
+   "1": 41236.375,
+   "5": 47913,
+   "10": null
+  },
+  "retries": 0,
+  "dispatch_tokens": 971499,
+  "diag_codes": {}
+ }
+}

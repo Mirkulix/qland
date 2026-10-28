@@ -1,0 +1,1 @@
+fn f() -> Int = let x: Option[Int] = None in match x { Some(n) => n, None => 0 }

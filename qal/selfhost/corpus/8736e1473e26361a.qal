@@ -1,0 +1,1 @@
+fn wc(args: List[Str]) -> Int !io = let text = read_all() in { print(from_int(len(text))); len(split(text, "\n")) }

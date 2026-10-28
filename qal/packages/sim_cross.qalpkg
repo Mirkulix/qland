@@ -1,0 +1,39 @@
+# qal-pkg 1
+# package qal_sim_cross 9b5fc3389395af6e1d9deb6356efd5ec2ea7249486f1e85439fae3ab407d1172
+# def Agent 9158543700f0201c37dd1e1e1bdf48a08796e644a52a4c71c6c6df429e7027c5 cli
+# def Pair 95aec6a22b96376a5b53bdb6347ef8af1c6aa22069e7934e74c7ab71d611e613 cli
+# def Sim 1f9ee963b95b240936870d6c309da70aa550e6f8981e7dfc483a83277c98206c cli
+# def add_agent 1bc02f942d5876cfbb64841151bb282975c455066b2c102d562cfaddc123c4f9 cli
+# def add_cash 31c6855750e0302ea61b04a324c078672672a44fb0f1f5074fc0b85d0192f9af cli
+# def cross_conserves af8ee85f26dcbeced7457e9299be5df43d7cde31bd74e0ed12144a51c557fdc7 cli
+# def cross_debits 650f1bfdbf7adfbb135a5719ac8d8efbe0e649075ad1609ef0c786fbe18d68f0 cli
+# def init a69ac9c7cd5dc3bbcb6f74eb1c57216c24949caa3d15ac0ed9bd1faf4106bff5 cli
+# def total 6139c8e991584e7f7955a8b93c7829b4ad101f1b40cc040b9cf4cb53136f8362 cli
+# def transfer_between 6c86e8854e2638b6d7678be1abe1d546a0ebdb3044abc336c2ecd5ce7a26a787 cli
+
+type Agent = { cash: Int }
+
+type Sim = { agents: Map[Int, Agent], tick: Int }
+
+fn add_agent(m: Map[Int, Agent], i: Int) -> Map[Int, Agent]
+= map_put(m, i, Agent { cash: 1000 })
+
+fn add_cash(acc: Int, a: Agent) -> Int
+= acc + a.cash
+
+type Pair = { a: Sim, b: Sim }
+
+fn init(n: Int) -> Sim
+= Sim { agents: fold(range(0, n), map_new(), add_agent), tick: 0 }
+
+fn total(sim: Sim) -> Int
+= fold(map_values(sim.agents), 0, add_cash)
+
+fn transfer_between(x: Pair, from: Int, to: Int, amount: Int) -> Pair
+  req amount >= 0
+  ens total(r.a) + total(r.b) == total(x.a) + total(x.b)
+= match map_get(x.a.agents, from) { None => x, Some(src) => if src.cash < amount then x else match map_get(x.b.agents, to) { None => x, Some(dst) => Pair { a: Sim { agents: map_put(x.a.agents, from, Agent { cash: src.cash - amount }), tick: x.a.tick + 1 }, b: Sim { agents: map_put(x.b.agents, to, Agent { cash: dst.cash + amount }), tick: x.b.tick + 1 } } } }
+
+test cross_conserves = let p = transfer_between(Pair { a: init(2), b: init(2) }, 0, 1, 300) in total(p.a) + total(p.b) == 4000
+
+test cross_debits = match map_get(transfer_between(Pair { a: init(1), b: init(1) }, 0, 0, 300).a.agents, 0) { None => false, Some(a) => a.cash == 700 }

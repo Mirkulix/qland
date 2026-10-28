@@ -1,0 +1,1 @@
+fn f() -> Result[Int, DbError] !db = db_exec("DELETE FROM t", [1])

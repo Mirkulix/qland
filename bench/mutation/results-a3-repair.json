@@ -1,0 +1,560 @@
+[
+ {
+  "id": "none",
+  "what": "the unmutated code",
+  "qal": {
+   "test": {
+    "failed_tests": [],
+    "failed_properties": [],
+    "detected": false
+   },
+   "hidden": {
+    "failed": 0,
+    "total": 50,
+    "error": null
+   }
+  },
+  "rust": {
+   "test": {
+    "detected": false,
+    "failed_tests": []
+   },
+   "hidden": {
+    "failed": 0,
+    "total": 50,
+    "error": null
+   }
+  }
+ },
+ {
+  "id": "cancel_pending_deletes",
+  "what": "cancelling a pending order deletes it, so its id is free again and a second cancel says unknown_order (the bug of pressure run 5)",
+  "qal": {
+   "define": {
+    "refuted": [],
+    "failed_tests": [],
+    "ran_tests": 2,
+    "property_warnings": [],
+    "detected": false
+   },
+   "test": {
+    "failed_tests": [],
+    "failed_properties": [],
+    "detected": false
+   },
+   "hidden": {
+    "failed": 1,
+    "total": 50,
+    "error": null
+   }
+  },
+  "rust": {
+   "test": {
+    "detected": false,
+    "failed_tests": []
+   },
+   "hidden": {
+    "failed": 1,
+    "total": 50,
+    "error": null
+   }
+  }
+ },
+ {
+  "id": "cancel_after_return",
+  "what": "an order with a return can still be cancelled",
+  "qal": {
+   "define": {
+    "refuted": [],
+    "failed_tests": [],
+    "ran_tests": 2,
+    "property_warnings": [],
+    "detected": false
+   },
+   "test": {
+    "failed_tests": [],
+    "failed_properties": [],
+    "detected": false
+   },
+   "hidden": {
+    "failed": 1,
+    "total": 50,
+    "error": null
+   }
+  },
+  "rust": {
+   "test": {
+    "detected": false,
+    "failed_tests": []
+   },
+   "hidden": {
+    "failed": 1,
+    "total": 50,
+    "error": null
+   }
+  }
+ },
+ {
+  "id": "cancel_outstanding_negative",
+  "what": "cancelling lets outstanding fall below 0",
+  "qal": {
+   "define": {
+    "refuted": [],
+    "failed_tests": [],
+    "ran_tests": 2,
+    "property_warnings": [
+     "E0803 put_back: the property test of `put_back` failed on a generated input: `ens cust_at(r.st, c.id) && order_at(r.st, o.id)` of `put_back` is false"
+    ],
+    "detected": true
+   },
+   "test": {
+    "failed_tests": [],
+    "failed_properties": [
+     "put_back failed"
+    ],
+    "detected": true
+   },
+   "hidden": {
+    "failed": 1,
+    "total": 50,
+    "error": null
+   }
+  },
+  "rust": {
+   "test": {
+    "detected": false,
+    "failed_tests": []
+   },
+   "hidden": {
+    "failed": 1,
+    "total": 50,
+    "error": null
+   }
+  }
+ },
+ {
+  "id": "no_discount_cap",
+  "what": "the sum of the discounts is not capped at 50",
+  "qal": {
+   "define": {
+    "refuted": [
+     "`ens r >= 0 && r <= 50` (ens[0]) does not hold for the counterexample"
+    ],
+    "failed_tests": [],
+    "ran_tests": 0,
+    "property_warnings": [],
+    "detected": true
+   },
+   "test": {
+    "detected": true,
+    "note": "not stored (E0801)"
+   },
+   "hidden": {
+    "failed": null,
+    "note": "not stored"
+   }
+  },
+  "rust": {
+   "test": {
+    "detected": false,
+    "failed_tests": []
+   },
+   "hidden": {
+    "failed": 2,
+    "total": 50,
+    "error": null
+   }
+  }
+ },
+ {
+  "id": "fits_per_line",
+  "what": "the stock check looks at each line alone, not at the sum of the lines of one product",
+  "qal": {
+   "define": {
+    "refuted": [],
+    "failed_tests": [],
+    "ran_tests": 2,
+    "property_warnings": [],
+    "detected": false
+   },
+   "test": {
+    "failed_tests": [],
+    "failed_properties": [],
+    "detected": false
+   },
+   "hidden": {
+    "failed": 0,
+    "total": 50,
+    "error": null
+   }
+  },
+  "rust": {
+   "test": {
+    "detected": false,
+    "failed_tests": []
+   },
+   "hidden": {
+    "failed": 0,
+    "total": 50,
+    "error": null
+   }
+  }
+ },
+ {
+  "id": "qty_discount_per_line",
+  "what": "the quantity discount looks at each line's quantity instead of the order's total quantity",
+  "qal": {
+   "define": {
+    "refuted": [],
+    "failed_tests": [
+     "example_one",
+     "example_two"
+    ],
+    "ran_tests": 2,
+    "property_warnings": [],
+    "detected": true
+   },
+   "test": {
+    "failed_tests": [
+     "example_one",
+     "example_two"
+    ],
+    "failed_properties": [],
+    "detected": true
+   },
+   "hidden": {
+    "failed": 3,
+    "total": 50,
+    "error": null
+   }
+  },
+  "rust": {
+   "test": {
+    "detected": true,
+    "failed_tests": [
+     "tests::example_one",
+     "tests::example_two"
+    ]
+   },
+   "hidden": {
+    "failed": 3,
+    "total": 50,
+    "error": null
+   }
+  }
+ },
+ {
+  "id": "cancel_keeps_tax",
+  "what": "cancelling does not take the order's tax out of the customer's tax total",
+  "qal": {
+   "define": {
+    "refuted": [],
+    "failed_tests": [],
+    "ran_tests": 2,
+    "property_warnings": [
+     "E0803 put_back: the property test of `put_back` failed on a generated input: `ens cust_at(r.st, c.id) && order_at(r.st, o.id)` of `put_back` is false"
+    ],
+    "detected": true
+   },
+   "test": {
+    "failed_tests": [],
+    "failed_properties": [
+     "put_back failed"
+    ],
+    "detected": true
+   },
+   "hidden": {
+    "failed": 2,
+    "total": 50,
+    "error": null
+   }
+  },
+  "rust": {
+   "test": {
+    "detected": false,
+    "failed_tests": []
+   },
+   "hidden": {
+    "failed": 2,
+    "total": 50,
+    "error": null
+   }
+  }
+ },
+ {
+  "id": "top_ties_reversed",
+  "what": "ties in `top` go by id in reverse byte order",
+  "qal": {
+   "define": {
+    "refuted": [],
+    "failed_tests": [],
+    "ran_tests": 2,
+    "property_warnings": [],
+    "detected": false
+   },
+   "test": {
+    "failed_tests": [],
+    "failed_properties": [],
+    "detected": false
+   },
+   "hidden": {
+    "failed": 1,
+    "total": 50,
+    "error": null
+   }
+  },
+  "rust": {
+   "test": {
+    "detected": false,
+    "failed_tests": []
+   },
+   "hidden": {
+    "failed": 1,
+    "total": 50,
+    "error": null
+   }
+  }
+ },
+ {
+  "id": "return_one_too_many",
+  "what": "a return may take one item more than is left in the order",
+  "qal": {
+   "define": {
+    "refuted": [],
+    "failed_tests": [],
+    "ran_tests": 2,
+    "property_warnings": [],
+    "detected": false
+   },
+   "test": {
+    "failed_tests": [],
+    "failed_properties": [],
+    "detected": false
+   },
+   "hidden": {
+    "failed": 1,
+    "total": 50,
+    "error": null
+   }
+  },
+  "rust": {
+   "test": {
+    "detected": false,
+    "failed_tests": []
+   },
+   "hidden": {
+    "failed": 1,
+    "total": 50,
+    "error": null
+   }
+  }
+ },
+ {
+  "id": "pay_exact_is_overpay",
+  "what": "paying exactly what is owed is an overpay",
+  "qal": {
+   "define": {
+    "refuted": [],
+    "failed_tests": [],
+    "ran_tests": 2,
+    "property_warnings": [],
+    "detected": false
+   },
+   "test": {
+    "failed_tests": [],
+    "failed_properties": [],
+    "detected": false
+   },
+   "hidden": {
+    "failed": 1,
+    "total": 50,
+    "error": null
+   }
+  },
+  "rust": {
+   "test": {
+    "detected": false,
+    "failed_tests": []
+   },
+   "hidden": {
+    "failed": 1,
+    "total": 50,
+    "error": null
+   }
+  }
+ },
+ {
+  "id": "refund_without_tax",
+  "what": "the refund is computed from the net total (gross minus tax)",
+  "qal": {
+   "define": {
+    "refuted": [],
+    "failed_tests": [],
+    "ran_tests": 2,
+    "property_warnings": [],
+    "detected": false
+   },
+   "test": {
+    "failed_tests": [],
+    "failed_properties": [],
+    "detected": false
+   },
+   "hidden": {
+    "failed": 2,
+    "total": 50,
+    "error": null
+   }
+  },
+  "rust": {
+   "test": {
+    "detected": false,
+    "failed_tests": []
+   },
+   "hidden": {
+    "failed": 2,
+    "total": 50,
+    "error": null
+   }
+  }
+ },
+ {
+  "id": "restock_newest_first",
+  "what": "after a restock the pending orders are filled newest first",
+  "qal": {
+   "define": {
+    "refuted": [],
+    "failed_tests": [],
+    "ran_tests": 2,
+    "property_warnings": [],
+    "detected": false
+   },
+   "test": {
+    "failed_tests": [],
+    "failed_properties": [],
+    "detected": false
+   },
+   "hidden": {
+    "failed": 1,
+    "total": 50,
+    "error": null
+   }
+  },
+  "rust": {
+   "test": {
+    "detected": false,
+    "failed_tests": []
+   },
+   "hidden": {
+    "failed": 1,
+    "total": 50,
+    "error": null
+   }
+  }
+ },
+ {
+  "id": "return_keeps_tax",
+  "what": "a return does not lower the customer's tax total",
+  "qal": {
+   "define": {
+    "refuted": [],
+    "failed_tests": [],
+    "ran_tests": 2,
+    "property_warnings": [
+     "E0803 take_back: the property test of `take_back` failed on a generated input: `ens cust_at(r.st, c.id) && order_at(r.st, o.id)` of `take_back` is false"
+    ],
+    "detected": true
+   },
+   "test": {
+    "failed_tests": [],
+    "failed_properties": [
+     "take_back failed"
+    ],
+    "detected": true
+   },
+   "hidden": {
+    "failed": 2,
+    "total": 50,
+    "error": null
+   }
+  },
+  "rust": {
+   "test": {
+    "detected": false,
+    "failed_tests": []
+   },
+   "hidden": {
+    "failed": 2,
+    "total": 50,
+    "error": null
+   }
+  }
+ },
+ {
+  "id": "promo_up_to_100",
+  "what": "`promo` accepts percentages up to 100 instead of 50",
+  "qal": {
+   "define": {
+    "refuted": [],
+    "failed_tests": [],
+    "ran_tests": 2,
+    "property_warnings": [],
+    "detected": false
+   },
+   "test": {
+    "failed_tests": [],
+    "failed_properties": [],
+    "detected": false
+   },
+   "hidden": {
+    "failed": 1,
+    "total": 50,
+    "error": null
+   }
+  },
+  "rust": {
+   "test": {
+    "detected": false,
+    "failed_tests": []
+   },
+   "hidden": {
+    "failed": 1,
+    "total": 50,
+    "error": null
+   }
+  }
+ },
+ {
+  "id": "limit_reached_rejects",
+  "what": "an order that brings outstanding exactly to the limit is rejected",
+  "qal": {
+   "define": {
+    "refuted": [],
+    "failed_tests": [],
+    "ran_tests": 2,
+    "property_warnings": [],
+    "detected": false
+   },
+   "test": {
+    "failed_tests": [],
+    "failed_properties": [],
+    "detected": false
+   },
+   "hidden": {
+    "failed": 2,
+    "total": 50,
+    "error": null
+   }
+  },
+  "rust": {
+   "test": {
+    "detected": false,
+    "failed_tests": []
+   },
+   "hidden": {
+    "failed": 2,
+    "total": 50,
+    "error": null
+   }
+  }
+ }
+]

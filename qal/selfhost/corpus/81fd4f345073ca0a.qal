@@ -1,0 +1,16 @@
+type Shape = Circle(Int) | Rect(Int, Int) | Dot
+type Acct = { id: Int, balance: Int }
+fn area(s: Shape) -> Int = match s { Circle(r) => 3 * r * r, Rect(w, h) => w * h, Dot => 0 }
+fn twice[T](xs: List[T]) -> List[T] = concat(xs, xs)
+fn total(xs: List[Shape]) -> Int = fold(map(xs, fn(s) => area(s)), 0, fn(a, b) => a + b)
+fn deposit(a: Acct, n: Int) -> Acct
+  req n >= 0
+  ens r.balance >= a.balance
+= Acct { id: a.id, balance: a.balance + n }
+fn is_even(n: Int) -> Bool = if n == 0 then true else is_odd(n - 1)
+fn is_odd(n: Int) -> Bool = if n == 0 then false else is_even(n - 1)
+fn count(xs: List[Int]) -> Int = len(twice(xs))
+test area_rect = area(Rect(2, 3)) == 6
+test total_two = total([Dot, Circle(1)]) == 3
+test even_4 = is_even(4)
+test count_2 = count([1, 2]) == 4

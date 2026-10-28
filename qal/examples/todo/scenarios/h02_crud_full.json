@@ -1,0 +1,227 @@
+{
+ "name": "h02_crud_full",
+ "description": "full CRUD flow",
+ "steps": [
+  {
+   "name": "create a",
+   "request": {
+    "method": "POST",
+    "path": "/todos",
+    "json": {
+     "title": "write card"
+    }
+   },
+   "expect": {
+    "status": 201,
+    "json": {
+     "id": {
+      "$var": "a"
+     },
+     "title": "write card",
+     "done": false,
+     "created_at": {
+      "$type": "int"
+     }
+    },
+    "headers": {
+     "location": "/todos/{{a}}",
+     "content-type": "application/json"
+    }
+   },
+   "capture": {
+    "a": "/id",
+    "ca": "/created_at"
+   }
+  },
+  {
+   "name": "get a",
+   "request": {
+    "method": "GET",
+    "path": "/todos/{{a}}"
+   },
+   "expect": {
+    "status": 200,
+    "json": {
+     "id": {
+      "$var": "a"
+     },
+     "title": "write card",
+     "done": false,
+     "created_at": {
+      "$var": "ca"
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "rename",
+   "request": {
+    "method": "PATCH",
+    "path": "/todos/{{a}}",
+    "json": {
+     "title": "write the card"
+    }
+   },
+   "expect": {
+    "status": 200,
+    "json": {
+     "id": {
+      "$var": "a"
+     },
+     "title": "write the card",
+     "done": false,
+     "created_at": {
+      "$var": "ca"
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "done",
+   "request": {
+    "method": "PATCH",
+    "path": "/todos/{{a}}",
+    "json": {
+     "done": true
+    }
+   },
+   "expect": {
+    "status": 200,
+    "json": {
+     "id": {
+      "$var": "a"
+     },
+     "title": "write the card",
+     "done": true,
+     "created_at": {
+      "$var": "ca"
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "get after patches",
+   "request": {
+    "method": "GET",
+    "path": "/todos/{{a}}"
+   },
+   "expect": {
+    "status": 200,
+    "json": {
+     "id": {
+      "$var": "a"
+     },
+     "title": "write the card",
+     "done": true,
+     "created_at": {
+      "$var": "ca"
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "list",
+   "request": {
+    "method": "GET",
+    "path": "/todos"
+   },
+   "expect": {
+    "status": 200,
+    "json": [
+     {
+      "id": {
+       "$var": "a"
+      },
+      "title": "write the card",
+      "done": true,
+      "created_at": {
+       "$var": "ca"
+      }
+     }
+    ],
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "delete",
+   "request": {
+    "method": "DELETE",
+    "path": "/todos/{{a}}"
+   },
+   "expect": {
+    "status": 204,
+    "body": ""
+   }
+  },
+  {
+   "name": "get deleted",
+   "request": {
+    "method": "GET",
+    "path": "/todos/{{a}}"
+   },
+   "expect": {
+    "status": 404,
+    "json": {
+     "error": {
+      "code": "not_found",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "delete again",
+   "request": {
+    "method": "DELETE",
+    "path": "/todos/{{a}}"
+   },
+   "expect": {
+    "status": 404,
+    "json": {
+     "error": {
+      "code": "not_found",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "list is empty",
+   "request": {
+    "method": "GET",
+    "path": "/todos"
+   },
+   "expect": {
+    "status": 200,
+    "json": [],
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  }
+ ]
+}

@@ -1,0 +1,14 @@
+{
+  "main": {"call": "print", "args": [
+    {"call": "from_int", "args": [
+      {"op": "+", "args": [{"int": 2}, {"int": 3}]}
+    ]}
+  ]},
+  "effects": ["io"],
+  "returns": "Int",
+  "tests": [
+    {"name": "sum_ok", "body": {"op": "==", "args": [
+      {"op": "+", "args": [{"int": 2}, {"int": 3}]}, {"int": 5}
+    ]}}
+  ]
+}

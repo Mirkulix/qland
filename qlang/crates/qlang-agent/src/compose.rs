@@ -33,7 +33,8 @@ pub fn compose(first: &Graph, second: &Graph, name: &str) -> Result<Graph, Compo
 
     // Track node ID mapping: old_id → new_id
     let mut first_map: std::collections::HashMap<NodeId, NodeId> = std::collections::HashMap::new();
-    let mut second_map: std::collections::HashMap<NodeId, NodeId> = std::collections::HashMap::new();
+    let mut second_map: std::collections::HashMap<NodeId, NodeId> =
+        std::collections::HashMap::new();
 
     // Copy nodes from first graph (skip output nodes)
     for node in &first.nodes {
@@ -115,9 +116,10 @@ pub fn compose(first: &Graph, second: &Graph, name: &str) -> Result<Graph, Compo
         if edge.from_node == connect_input_id {
             continue; // Already handled above
         }
-        if let (Some(&from_new), Some(&to_new)) =
-            (second_map.get(&edge.from_node), second_map.get(&edge.to_node))
-        {
+        if let (Some(&from_new), Some(&to_new)) = (
+            second_map.get(&edge.from_node),
+            second_map.get(&edge.to_node),
+        ) {
             composed.add_edge(
                 from_new,
                 edge.from_port,
@@ -138,23 +140,43 @@ pub fn parallel(a: &Graph, b: &Graph, name: &str) -> Graph {
     // Copy all nodes and edges from both graphs with ID remapping
     let mut a_map: std::collections::HashMap<NodeId, NodeId> = std::collections::HashMap::new();
     for node in &a.nodes {
-        let new_id = merged.add_node(node.op.clone(), node.input_types.clone(), node.output_types.clone());
+        let new_id = merged.add_node(
+            node.op.clone(),
+            node.input_types.clone(),
+            node.output_types.clone(),
+        );
         a_map.insert(node.id, new_id);
     }
     for edge in &a.edges {
         if let (Some(&from), Some(&to)) = (a_map.get(&edge.from_node), a_map.get(&edge.to_node)) {
-            merged.add_edge(from, edge.from_port, to, edge.to_port, edge.tensor_type.clone());
+            merged.add_edge(
+                from,
+                edge.from_port,
+                to,
+                edge.to_port,
+                edge.tensor_type.clone(),
+            );
         }
     }
 
     let mut b_map: std::collections::HashMap<NodeId, NodeId> = std::collections::HashMap::new();
     for node in &b.nodes {
-        let new_id = merged.add_node(node.op.clone(), node.input_types.clone(), node.output_types.clone());
+        let new_id = merged.add_node(
+            node.op.clone(),
+            node.input_types.clone(),
+            node.output_types.clone(),
+        );
         b_map.insert(node.id, new_id);
     }
     for edge in &b.edges {
         if let (Some(&from), Some(&to)) = (b_map.get(&edge.from_node), b_map.get(&edge.to_node)) {
-            merged.add_edge(from, edge.from_port, to, edge.to_port, edge.tensor_type.clone());
+            merged.add_edge(
+                from,
+                edge.from_port,
+                to,
+                edge.to_port,
+                edge.tensor_type.clone(),
+            );
         }
     }
 
@@ -181,17 +203,41 @@ mod tests {
     fn compose_two_graphs() {
         // Graph A: input → relu → output
         let mut a = Graph::new("relu_graph");
-        let a_in = a.add_node(Op::Input { name: "x".into() }, vec![], vec![TensorType::f32_vector(4)]);
-        let a_relu = a.add_node(Op::Relu, vec![TensorType::f32_vector(4)], vec![TensorType::f32_vector(4)]);
-        let a_out = a.add_node(Op::Output { name: "y".into() }, vec![TensorType::f32_vector(4)], vec![]);
+        let a_in = a.add_node(
+            Op::Input { name: "x".into() },
+            vec![],
+            vec![TensorType::f32_vector(4)],
+        );
+        let a_relu = a.add_node(
+            Op::Relu,
+            vec![TensorType::f32_vector(4)],
+            vec![TensorType::f32_vector(4)],
+        );
+        let a_out = a.add_node(
+            Op::Output { name: "y".into() },
+            vec![TensorType::f32_vector(4)],
+            vec![],
+        );
         a.add_edge(a_in, 0, a_relu, 0, TensorType::f32_vector(4));
         a.add_edge(a_relu, 0, a_out, 0, TensorType::f32_vector(4));
 
         // Graph B: input → neg → output
         let mut b = Graph::new("neg_graph");
-        let b_in = b.add_node(Op::Input { name: "x".into() }, vec![], vec![TensorType::f32_vector(4)]);
-        let b_neg = b.add_node(Op::Neg, vec![TensorType::f32_vector(4)], vec![TensorType::f32_vector(4)]);
-        let b_out = b.add_node(Op::Output { name: "y".into() }, vec![TensorType::f32_vector(4)], vec![]);
+        let b_in = b.add_node(
+            Op::Input { name: "x".into() },
+            vec![],
+            vec![TensorType::f32_vector(4)],
+        );
+        let b_neg = b.add_node(
+            Op::Neg,
+            vec![TensorType::f32_vector(4)],
+            vec![TensorType::f32_vector(4)],
+        );
+        let b_out = b.add_node(
+            Op::Output { name: "y".into() },
+            vec![TensorType::f32_vector(4)],
+            vec![],
+        );
         b.add_edge(b_in, 0, b_neg, 0, TensorType::f32_vector(4));
         b.add_edge(b_neg, 0, b_out, 0, TensorType::f32_vector(4));
 
@@ -207,10 +253,18 @@ mod tests {
     #[test]
     fn parallel_graphs() {
         let mut a = Graph::new("a");
-        a.add_node(Op::Input { name: "x".into() }, vec![], vec![TensorType::f32_vector(4)]);
+        a.add_node(
+            Op::Input { name: "x".into() },
+            vec![],
+            vec![TensorType::f32_vector(4)],
+        );
 
         let mut b = Graph::new("b");
-        b.add_node(Op::Input { name: "y".into() }, vec![], vec![TensorType::f32_vector(4)]);
+        b.add_node(
+            Op::Input { name: "y".into() },
+            vec![],
+            vec![TensorType::f32_vector(4)],
+        );
 
         let merged = parallel(&a, &b, "parallel");
         assert_eq!(merged.nodes.len(), 2);

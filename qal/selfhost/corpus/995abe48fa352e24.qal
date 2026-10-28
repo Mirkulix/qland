@@ -1,0 +1,1 @@
+test t = let f = (fn(x) => x) in 1 + f(2) == (fn(x) => x + 1 == 2) && g(fn() => fn() => 1)

@@ -1,0 +1,1 @@
+test t = let g = fn(f) => f(1) in true

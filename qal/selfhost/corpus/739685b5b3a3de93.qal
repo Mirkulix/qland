@@ -1,0 +1,1 @@
+fn k(a: String) -> Str = a

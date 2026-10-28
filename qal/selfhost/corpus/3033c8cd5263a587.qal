@@ -1,0 +1,4 @@
+fn hi() -> Unit !io = print("hi")
+fn h(cb: fn() -> Unit) -> Unit = cb()
+fn g(k: fn(fn() -> Unit !io) -> Unit) -> Unit = k(hi)
+fn run() -> Unit = g(h)

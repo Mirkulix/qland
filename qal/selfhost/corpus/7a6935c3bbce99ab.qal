@@ -1,0 +1,1 @@
+fn total(xs: List[Shape]) -> Int = fold(map(xs, fn(s) => area(s) + 0), 0, fn(a, b) => a + b)

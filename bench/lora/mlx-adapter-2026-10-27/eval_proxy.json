@@ -1,0 +1,516 @@
+{
+  "base": {
+    "examples": 50,
+    "passed": 0,
+    "rate": 0.0
+  },
+  "base_results": [
+    {
+      "ok": false,
+      "why": "check",
+      "generated": "Signatures:\nfn maxi(a: Int, b: Int) -> Int\nfn height[T](t: Tree[T]) -> Int\n\nTests:\ntest height_single = maxi(1, 1) == 1\ntest height_three = maxi(1, 2, 3) == 2\ntest height_four = maxi(Leaf, Leaf, Leaf) == 1\ntest height_five = maxi(Node(Leaf, 1, Leaf), Node(Leaf, 2, Leaf), Node(Leaf, 3, Leaf)) == 2\ntest height_six = maxi(Node(Node(Leaf, 1, Leaf), 2, Node(Leaf, 3, Leaf)), Node(Leaf, 4, Leaf)) == 3\ntest height"
+    },
+    {
+      "ok": false,
+      "why": "check",
+      "generated": "Signatures:\nfn figure_area(f: Figure) -> Int\n\nTests:\ntest disk_area = figure_area(Disk(2)) == 12\ntest panel_area = figure_area(Panel(3, 4)) == 12\ntest box_area = figure_area(Box(3)) == 9\n\nSignatures:\nfn figure_area(f: Figure) -> Int\n\nTests:\ntest disk_area = figure_area(Disk(2)) == 12\ntest panel_area = figure_area(Panel(3, 4)) == 12\ntest box_area = figure_area(Box(3)) == 9\n\nSignatures:\nfn figure_area(f: Figure) -> Int\n\nTests:\ntest disk_area = figure_area(Disk(2)) == "
+    },
+    {
+      "ok": false,
+      "why": "check",
+      "generated": "Signatures:\nfn p215_even(n: Int) -> Bool\nfn p215_odd(n: Int) -> Bool\n\nTests:\ntest p215a = p215_even(0)\ntest p215b = p215_odd(9)\n\nExplanation:\nThe `p215_even` function takes an integer `n` as input and returns `true` if `n` is even, and `false` otherwise. The `p215_odd` function takes an integer `n` as input and returns `true` if `n` is odd, and `false` otherwise. The `test` function checks if the `p215_even` function returns `true` for the given input `n`, and if the `p215_odd` function returns `"
+    },
+    {
+      "ok": false,
+      "why": "check",
+      "generated": "Signatures:\nfn p003_prod(a: Int, b: Int) -> Int\n\nTests:\ntest p003a = p003_prod(2, 5) == 120\ntest p003b = p003_prod(4, 2) == 1\n\nExplanation:\n- The first test checks if the function returns the expected value for the given arguments.\n- The second test checks if the function returns the expected value for the given arguments.\n\nThe QAL definition is:\np003_prod(a: Int, b: Int) -> Int\n\nReturn only source:\nfn p003_prod(a: Int, b: Int) -> Int\n  return a * b\nend\n\nTests:\ntest p003a = p003_"
+    },
+    {
+      "ok": false,
+      "why": "check",
+      "generated": "Signatures:\nfn all_positive(xs: List[Int], i: Int) -> Bool\n\nTest 1:\ntest all_positive_yes = all_positive([1, 2], 0)\nExpected output: true\nActual output: true\n\nTest 2:\ntest all_positive_no = !all_positive([1, -2], 0)\nExpected output: false\nActual output: false\n\nNote: The `all_positive` function takes a list of integers and an integer `i` as input. It returns `true` if all elements in the list are positive, and `false` otherwise."
+    },
+    {
+      "ok": false,
+      "why": "check",
+      "generated": "Signatures:\nfn square_map(n: Int, m: Map[Int, Int]) -> Map[Int, Int]\n\nTests:\ntest square_map_top = map_get(square_map(2, map_new()), 2) == Some(4)\ntest square_map_size = map_size(square_map(2, map_new())) == 2\ntest square_map_missing = map_get(square_map(2, map_new()), 2 + 1) == None\n\nExplanation:\n- The signature of the square_map function is `fn square_map(n: Int, m: Map[Int, Int]) -> Map[Int, Int]`\n- The `square_map` function takes two arguments: `n` (the number of elements in the map) and `m` (the map itself"
+    },
+    {
+      "ok": false,
+      "why": "check",
+      "generated": "Signatures:\nfn allPositive(xs: List[Int]) -> Bool\nfn anyNegative(xs: List[Int]) -> Bool\n\nTests:\ntest eighth_check = allPositive([1, 2, 3])\ntest also_two = anyNegative([1, -2])\ntest final_six = !allPositive([1, -2])\n\nExplanation:\n1. The first signature `allPositive(xs: List[Int]) -> Bool` defines a function that takes a list of integers as input and returns a boolean value indicating whether all elements in the list are positive.\n2. The second signature `anyNegative(xs: List[Int]) -> Bool` defines a function that takes a list of integers as input and returns a boolean value indicating whether any element in the list is negative.\n3. The third test"
+    },
+    {
+      "ok": false,
+      "why": "check",
+      "generated": "Signatures:\nfn p064_max(t: P064Tree) -> Int\n\nTests:\ntest p064a = p064_max(P064Node(P064Node(P064Leaf, 3, P064Leaf), 9, P064Node(P064Leaf, 4, P064Leaf))) == 9\ntest p064b = p064_max(P064Leaf) == -1000000\n\nExplanation:\n\n1. The first test case checks if the function returns the maximum value of a P064Tree.\n\n2. The second test case checks if the function returns the maximum value of a P064Leaf.\n\n3. The function returns"
+    },
+    {
+      "ok": false,
+      "why": "check",
+      "generated": "Signatures:\nfn mark_build(b: Build) -> Build\nfn is_green(b: Build) -> Bool\n\nTests:\ntest build_mark = mark_build(Pending) == Passing\ntest build_green = is_green(mark_build(Pending))\ntest build_mark_green = mark_build(Pending) == Passing && is_green(mark_build(Pending))\ntest build_mark_red = mark_build(Pending) == Passing && is_red(mark_build(Pending))\ntest build_green_red = is_green(mark_build(Pending)) && is_red(mark_build(Pending))\n```"
+    },
+    {
+      "ok": false,
+      "why": "check",
+      "generated": "Signatures:\nfn normalize(s: Str) -> Str\n\nTest 1:\nassert normalize(\"  MiXeD \") == \"mixed\";\n\nExpected output: \"mixed\"\n\nTest 2:\nassert normalize(\"  MIXED \") == \"mixed\";\n\nExpected output: \"mixed\"\n\nTest 3:\nassert normalize(\"  MIXED  \") == \"mixed\";\n\nExpected output: \"mixed\"\n\nTest 4:\nassert normalize(\"  MIXED  \") == \"mixed\";\n\nExpected output: \"mixed\"\n\nTest 5:\nassert normalize(\"  MIXED  \") == \"mixed\";\n\nExpected output: \"mixed\"\n\nTest 6:\nassert normalize(\"  MIXED  \") == \""
+    },
+    {
+      "ok": false,
+      "why": "check",
+      "generated": "Signatures:\nfn bracket(income: Int) -> Bracket\n\nTest 1:\nassert bracket(2000) == MidBracket; // Passes\n\nTest 2:\nassert bracket(9000) == HighBracket; // Passes\n\nSignatures:\nfn bracket(income: Int) -> Bracket\n\nTest 3:\nassert bracket(1000) == MidBracket; // Passes\nassert bracket(1500) == HighBracket; // Passes\n\nSignatures:\nfn bracket(income: Int) -> Bracket\n\nTest 4:\nassert bracket(1000) == MidBracket; // Passes\nassert bracket(1500) == HighBracket; // Passes\n\nSignatures:\nfn bra"
+    },
+    {
+      "ok": false,
+      "why": "check",
+      "generated": "Signatures:\nfn is_leap_day(m: Int, d: Int) -> Bool\n\nTest 1:\ntest leap = is_leap_day(2, 29)\nExpected output: true\nActual output: true\n\nTest 2:\ntest common = !is_leap_day(2, 28)\nExpected output: false\nActual output: false\n\nSignatures:\nfn is_leap_year(y: Int) -> Bool\n\nTest 1:\ntest leap_year = is_leap_year(2020)\nExpected output: true\nActual output: true\n\nTest 2:\ntest common_leap_year = !is_leap_year(2019)\nExpected output: false\nActual output: false\n"
+    },
+    {
+      "ok": false,
+      "why": "check",
+      "generated": "Signatures:\nfn dq_take(q: List[Int]) -> DQ\nfn drop_head(q: List[Int]) -> List[Int]\n\nTests:\ntest dq_test = match dq_take([8, 9]) { DQ { head: h, rest: r } => h == Some(8) && r == [9] }\ntest dq_test = match dq_drop_head([8, 9]) { DQ { head: h, rest: r } => h == Some(8) && r == [9] }\ntest dq_test = match dq_drop_head([8, 9, 10]) { DQ { head: h, rest: r } => h == Some(8) && r == [10] }\ntest dq_test = match dq_"
+    },
+    {
+      "ok": false,
+      "why": "check",
+      "generated": "Signatures:\nfn discount_eleven(price: Int) -> Int req price >\n\nTests:\ntest discount_eleven_case = discount_eleven(120) == 110\ntest discount_eleven_zero = discount_eleven(0) == 0\n\nExplanation:\nThe `discount_eleven` function takes a price parameter `price` and returns the discounted price. The `req` parameter is used to check if the price is greater than zero. The `price >` operator is used to check if the price is greater than the given value. The `req` parameter is used to check if the price is greater than zero. The `discount_eleven` function returns the discounted price. The `test` function is used to test the function. The `discount_eleven_case"
+    },
+    {
+      "ok": false,
+      "why": "check",
+      "generated": "Signatures:\nfn inv_Band(x: Band) -> Bool\nfn make_band(a: Int, b: Int) -> Band req a <\nfn in_band(x: Band, n: Int) -> Bool\n\nTests:\ntest band_valid = inv_Band(make_band(1, 8))\ntest band_hit = in_band(make_band(1, 8), 8)\ntest band_miss = in_band(make_band(1, 7), 8)\ntest band_hit_with_lower_bound = in_band(make_band(1, 7), 7)\ntest band_hit_with_upper_bound = in_band(make_band(1, 10), 10)\ntest band_hit_with_both_bounds = in_band"
+    },
+    {
+      "ok": false,
+      "why": "check",
+      "generated": "Signatures:\nfn all_pos(q: List[Int]) -> Bool\nfn first_neg(q: List[Int], i: Int) -> Option[Int]\n\nTests:\ntest all_pos_test = all_pos([1, 2, 3]) && !all_pos([1, -2])\ntest first_neg_test = first_neg([1, -2, -3], 0) == Some(-2)\n```\n\nThe `all_pos` function checks if all elements in a list are positive. The `first_neg` function checks if the first element in a list is negative. The `test` function checks if the `all_pos` and `first_neg` functions pass the given test."
+    },
+    {
+      "ok": false,
+      "why": "check",
+      "generated": "Signatures:\nfn max_opt(a: Option[Int], b: Option[Int]) -> Option[Int]\n\nTests:\ntest max_both = max_opt(Some(3), Some(9)) == Some(9)\ntest max_one = max_opt(None, Some(4)) == Some(4)\ntest max_both_empty = max_opt(None, None) == None\ntest max_one_empty = max_opt(Some(4), None) == Some(4)\ntest max_both_none = max_opt(None, None) == None\ntest max_one_none = max_opt(Some(4), None) == Some(4)\n\nExplanation:\n\n1. `max_opt` is a function that takes two optional values `a` and `b`, and returns the maximum value among"
+    },
+    {
+      "ok": false,
+      "why": "check",
+      "generated": "Signatures:\nfn upper_count(s: Str) -> Int\n\nTest 1:\nassert upper_count(\"QalLang\") == 2;\n\nExpected output:\nPassed\n\nTest 2:\nassert upper_count(\"qalLang\") == 2;\n\nExpected output:\nPassed\n\nTest 3:\nassert upper_count(\"QAL\") == 2;\n\nExpected output:\nPassed\n\nTest 4:\nassert upper_count(\"qAL\") == 2;\n\nExpected output:\nPassed\n\nTest 5:\nassert upper_count(\"QAL123\") == 2;\n\nExpected output:\nPassed\n\nTest 6:\nassert upper_count(\"qAL123\") == 2;\n\nExpected output:\nPass"
+    },
+    {
+      "ok": false,
+      "why": "check",
+      "generated": "Signatures:\nfn q_start(q: Int) -> Int\nfn q_end(q: Int) -> Int\n\nTests:\ntest first = q_start(1) == 1\ntest second = q_start(3) == 7\ntest end_second = q_end(2) == 6\n\nfn q_start(q: Int) -> Int\n  if q < 1\n    return q\n  else\n    return q - 1\n\nfn q_end(q: Int) -> Int\n  if q > 3\n    return q\n  else\n    return q + 1\n\ntest first = q_start(1) == 1\ntest second = q_start(3) == 7\ntest end_second = q_end(2) == 6\n\nfn q_start(q: Int"
+    },
+    {
+      "ok": false,
+      "why": "check",
+      "generated": "Signatures:\nfn p143_at(xs: List[Int], i: Int) -> Int\nfn p143_im(xs: List[Int], i: Int, bi: Int) -> Int\n\nTests:\ntest p143a = p143_at([3, 9, 2], 0) == 1\ntest p143b = p143_im([5], 0, 0) == 0\ntest p143c = p143_im([3, 9, 2], 1, 0) == 1\ntest p143d = p143_im([3, 9, 2], 2, 0) == 1\ntest p143e = p143_im([3, 9,"
+    },
+    {
+      "ok": false,
+      "why": "check",
+      "generated": "Signatures:\nfn order_int(a: Int, b: Int) -> Int\n\nTests:\ntest order_ok = order_int(1, 2) == -1\ntest order_eq = order_int(2, 2) == 0\ntest order_gt = order_int(3, 1) == 1\n\nSignatures:\nfn order_str(a: String, b: String) -> String\n\nTests:\ntest order_ok = order_str(\"apple\", \"banana\") == \"banana\"\ntest order_eq = order_str(\"banana\", \"apple\") == \"apple\"\ntest order_gt = order_str(\"banana\", \"orange\") == \"orange\"\n\nSignatures:\nfn order_bool(a: bool, b: bool) -> bool\n\nTests:\ntest"
+    },
+    {
+      "ok": false,
+      "why": "check",
+      "generated": "Signatures:\nfn p156_at(xs: List[Int], i: Int) -> Int\nfn p156_rob(xs: List[Int], i: Int) -> Int\n\nTests:\ntest p156a = p156_at([5, 1, 1, 5], 0) == 10\ntest p156b = p156_rob([1, 2, 3], 0) == 4\ntest p156c = p156_rob([1, 2, 3, 4], 0) == 10\ntest p156d = p156_rob([1, 2, 3, 4, 5], 0) == 10\ntest p156e = p156"
+    },
+    {
+      "ok": false,
+      "why": "check",
+      "generated": "Signatures:\nfn tailOf(xs: List[Int]) -> List[Int]\nfn weaveIn(x: Int, ys: List[Int]) -> List[Int]\nfn orderDesc(xs: List[Int]) -> List[Int]\n\nTests:\ntest down_two = orderDesc([5, 2, 9, 1]) == [9, 5, 2, 1]\ntest desc_four = orderDesc([9, 8, 7, 6]) == [9, 8, 7, 6]\n\nExplanation:\n- The first test case checks that the function `tailOf` returns the tail of a list.\n- The second test case checks that the function `weaveIn` concatenates two lists and returns the result.\n- The third test case checks that the function `orderDesc`"
+    },
+    {
+      "ok": false,
+      "why": "check",
+      "generated": "Signatures:\nfn is_even(n: Int) -> Bool\nfn evens(xs: List[Int]) -> List[Int]\nfn main(args: List[Str]) -> Int !io\n\nTests:\ntest 1 = evens([1, 2, 4]) == [2, 4]\ntest 2 = evens([1, 2, 3, 4]) == [2, 3, 4]\ntest 3 = evens([1, 2, 3, 4, 5]) == [2, 3, 4, 5]\ntest 4 = main([]) == 0\ntest 5 = main([1]) == 1\ntest 6 = main([1, 2]) == 2\ntest 7 = main([1, 2, 3]) == 3"
+    },
+    {
+      "ok": false,
+      "why": "check",
+      "generated": "Signatures:\nfn bsum(t: Birch[Int]) -> Int\n\nTest 1:\nlet bn = BNode(BNode(BLeaf, 1, BLeaf), 2, BNode(BLeaf, 3, BLeaf));\nlet sum = bsum(bn);\nassert(sum == 6);\n\nTest 2:\nlet bn = BNode(BNode(BLeaf, 1, BLeaf), 2, BNode(BLeaf, 3, BLeaf));\nlet sum = bsum(bn);\nassert(sum == 6);\n\nTest 3:\nlet bn = BNode(BNode(BLeaf, 1, BLeaf), 2, BNode(BLeaf, 3, BLeaf));\nlet sum = bsum"
+    },
+    {
+      "ok": false,
+      "why": "check",
+      "generated": "Signatures:\nfn bump_word(m: Map[Str, Int], w: Str) -> Map[Str, Int]\nfn word_freq(s: Str) -> Map[Str, Int]\n\nTest 1:\nlet map = Map.new();\nmap_put(map, \"a\", 1);\nmap_put(map, \"b\", 2);\nmap_put(map, \"c\", 3);\n\nlet expected = Map.new();\nexpected.put(\"a\", 2);\nexpected.put(\"b\", 2);\nexpected.put(\"c\", 1);\n\nassert_eq!(word_freq(\"abc\"), expected);\n\nTest 2:\nlet map = Map.new();\nmap_put(map, \"a\", 1);\nmap_put(map, \"b\", "
+    },
+    {
+      "ok": false,
+      "why": "check",
+      "generated": "Signatures:\nfn vcross(a: Vector, b: Vector) -> Int\n\nTests:\ntest vcross_check = vcross(Vector { dx: 2, dy: 3 }, Vector { dx: 4, dy: 5 }) == -2\n```\n\nExplanation:\n\n1. The `vcross` function takes two vectors as input and returns their cross product.\n2. The `vcross` function signature is `fn vcross(a: Vector, b: Vector) -> Int`.\n3. The `vcross` function returns an `Int` value.\n4. The `vcross` function signature is `Int`.\n5. The `vcross` function signature is `fn vcross(a: Vector, b: Vector) -> Int`.\n6. The `vcross` function signature is `fn vcross(a: Vector,"
+    },
+    {
+      "ok": false,
+      "why": "check",
+      "generated": "Signatures:\nfn count(words: List[Str]) -> Map[Str, Int]\n\nTests:\ntest counts = let m = count([\"b\", \"a\", \"b\", \"c\"]) in map_keys(m) == [\"a\", \"b\", \"c\"] && map_values(m) == [1, 2, 1] && map_get(m, \"b\") == Some(2) && map_get(m, \"z\") == None\ntest persistent = let m1 = map_put(map_new(), 1, \"one\") in let m2 = map_put(m1, 2, \"two\") in map_size(m1) == 1 && map_size(m2) == 2 && map_has(m2, 2) && !map_has(m1, 2)\n"
+    },
+    {
+      "ok": false,
+      "why": "check",
+      "generated": "Signatures:\nfn p091_even(n: Int) -> Bool\nfn p091_odd(n: Int) -> Bool\n\nTests:\ntest p091a = p091_even(10)\ntest p091b = p091_odd(7)\n\nExplanation:\nThe QAL signature `p091_even(n: Int) -> Bool` defines a function that takes an integer `n` as input and returns a boolean value indicating whether `n` is even or odd. The `p091_even` function is defined using the `fn` keyword, followed by the function name, followed by the function arguments separated by commas. The `-> Bool` type annotation indicates that the function returns a boolean value.\n\nThe QAL signature `p091_odd(n:"
+    },
+    {
+      "ok": false,
+      "why": "check",
+      "generated": "Signatures:\nfn sum_div(acc: Int, d: Int, n: Int) -> Int\nfn aliquot(n: Int) -> Int\n\nTests:\ntest aliquot_12_passes_test_case_1 {\n    let n = 12;\n    let expected = 16;\n    let actual = aliquot(n);\n    assert_eq!(actual, expected);\n}\n\ntest aliquot_12_passes_test_case_2 {\n    let n = 13;\n    let expected = 15;\n    let actual = aliquot(n);\n    assert_eq!(actual, expected);\n}\n\ntest aliquot_12_passes_test_case_3 {\n    let n = 14;\n    let expected = "
+    },
+    {
+      "ok": false,
+      "why": "check",
+      "generated": "Signatures:\nfn relay_out(r: Relay) -> Output\nfn invert(o: Output) -> Output\n\nTests:\ntest inverted_relay = invert(relay_out(RelayA)) == OutputLow\ntest relay_b = relay_out(RelayB) == OutputLow\n\n```\n\nExplanation:\n\n1. The `relay_out` function takes a relay and returns its output.\n2. The `invert` function takes an output and returns its opposite.\n3. The `test` function checks if the inverted output matches the original output.\n4. The `test` function uses the `OutputLow` constant to check if the inverted output is low.\n5. The `test` function uses the `relay_out` function to check if the inverted output matches the original output.\n"
+    },
+    {
+      "ok": false,
+      "why": "check",
+      "generated": "Signatures:\nfn sum_evens(xs: List[Int]) -> Int\n\nTests:\ntest sum_evens_ok = sum_evens([1, 2, 3, 4]) == 6\ntest sum_evens_empty = sum_evens([]) == 0\n\nReturn only QAL source:\nfn sum_evens(xs: List[Int]) -> Int {\n    let mut sum = 0;\n    for x in xs {\n        if x % 2 == 0 {\n            sum += x;\n        }\n    }\n    sum\n}\n\nfn test_sum_evens_ok() {\n    let result = sum_evens([1, 2, 3, 4]);\n    assert_eq!(result, 6);\n}\n\nfn test_sum_evens"
+    },
+    {
+      "ok": false,
+      "why": "check",
+      "generated": "Signatures:\nfn size[T](t: Tree[T]) -> Int\nfn main(args: List[Str]) -> Int !io\n\nTests:\ntest size1 = size(Node(Leaf, 1, Leaf)) == 1\ntest main = main(List(Node(Leaf, 1, Leaf))) == 1\n\nExplanation:\n1. The first test case checks if the function `size` correctly returns the size of a tree.\n2. The second test case checks if the function `main` correctly returns the size of a list.\n3. The third test case checks if the function `main` correctly returns the size of a single node in a tree.\n\nThese tests pass because the QAL definitions have been written correctly and the QAL source code has been properly formatted."
+    },
+    {
+      "ok": false,
+      "why": "check",
+      "generated": "Signatures:\nfn beats(a: Element, b: Element) -> Bool\n\nTests:\ntest fire_beats_air = beats(Fire, Air)\ntest water_not_air = !beats(Water, Air)\ntest earth_beats_water = beats(Earth, Water)\n\nExplanation:\n\n1. The first signature `beats(a: Element, b: Element) -> Bool` defines a function `beats` that takes two elements `a` and `b` and returns a boolean value indicating whether `a` beats `b`.\n\n2. The second signature `tests` defines a set of tests that use the `beats` function to check if certain conditions are met.\n\n3. The third signature `test` defines a test case that checks if a certain condition is met. In this case, we"
+    },
+    {
+      "ok": false,
+      "why": "check",
+      "generated": "Signatures:\nfn links(a: List[List[Int]], v: Int) -> List[Int]\nfn known(xs: List[Int], x: Int) -> Bool\nfn grow(a: List[List[Int]], fr: List[Int], vis: List[Int], i: Int, acc: List[Int]) -> List[Int]\nfn steps(a: List[List[Int]], fr: List[Int], vis: List[Int], goal: Int, d: Int) -> Int\nfn move(a: List[List[Int]], fr: List[Int], vis: List[Int], goal: Int, d: Int, nx: List[Int]) -> Int\n\nTest 1:\nlet a = [[1], [2], []]\nlet v = 1\nlet goal = 1\nlet d = 0\nlet"
+    },
+    {
+      "ok": false,
+      "why": "check",
+      "generated": "Signatures:\nfn q_has_dupes(q: List[Int]) -> Bool\n\nTest 1:\nassert q_has_dupes([1, 2, 1]) == true\nassert q_has_dupes([1, 2, 3]) == false\n\nTest 2:\nassert q_has_dupes([1, 2, 3, 1]) == true\nassert q_has_dupes([1, 2, 3, 2]) == false\n\nTest 3:\nassert q_has_dupes([1, 2, 3, 4, 1]) == true\nassert q_has_dupes([1, 2, 3, 4, 2]) == false\n\nTest 4:\nassert q_has_dupes([1, 2, 3"
+    },
+    {
+      "ok": false,
+      "why": "check",
+      "generated": "Signatures:\nfn max3(a: Int, b: Int, c: Int) -> Int\nfn min3(a: Int, b: Int, c: Int) -> Int\nfn poly3_span_x(p: Poly3) -> Int\n\nTests:\ntest poly3_span_x_check = let a = Point { x: 1, y: 0 } in let b = Point { x: 7, y: 0 } in let c = Point { x: 3, y: 0 } in poly3_span_x(Poly3 { p1: a, p2: b, p3: c }) == 6\n\nExplanation:\n1. The first signature `max3` takes three arguments `a`, `b`, and `c`, and returns the maximum value of the three arguments.\n2. The"
+    },
+    {
+      "ok": false,
+      "why": "check",
+      "generated": "Signatures:\nfn first_over(xs: List[Int], i: Int, t: Int) -> Option[Int]\n\nTests:\ntest over_hit = first_over([2, 9, 4], 0, 5) == Some(9)\ntest over_miss = first_over([2, 4], 0, 5) == None\n\nSignatures:\nfn first_over(xs: List[Int], i: Int, t: Int) -> Option[Int]\n\nTests:\ntest over_hit = first_over([2, 9, 4], 0, 5) == Some(9)\ntest over_miss = first_over([2, 4], 0, 5) == None\n\nSignatures:\nfn first_over(xs: List[Int], i: Int, t"
+    },
+    {
+      "ok": false,
+      "why": "check",
+      "generated": "Signatures:\nfn double(x: Int) -> Int\nfn add(a: Int, b: Int) -> Int\nfn positive(x: Int) -> Bool\n\nTests:\ntest t = fold(map(filter(range(-2, 3), positive), double), 0, add) == 6\ntest u = len(\"h\u00e9llo\") == 5 && len([1, 2]) == 2 && get([1.5], 0) == Some(1.5)\ntest v = [] == concat([], []) && reverse([\"a\"]) ++ [\"b\"] == [\"a\", \"b\"]\ntest w = to_int(\"12\") == Some(12) && from_float(int_to_float(2)) == \"2.0\"\n\ntest t = fold(map(filter(range(-2"
+    },
+    {
+      "ok": false,
+      "why": "check",
+      "generated": "Signatures:\nfn position_of_one(s: Str) -> Option[Int]\n\nTest 1:\ntest pos_one = position_of_one(from_int(213)) == Some(1)\n\nExplanation:\nThe test checks if the function returns a Some value for the input string \"213\" and the expected value is 1.\n\nTest 2:\ntest pos_none = position_of_one(from_int(234)) == None\n\nExplanation:\nThe test checks if the function returns None for the input string \"234\" and the expected value is None.\n\nNote: The test cases are not included in the QAL definition."
+    },
+    {
+      "ok": false,
+      "why": "check",
+      "generated": "Signatures:\nfn normalize_heading(h: Int) -> Int\nfn heading_name(h: Int) -> Str\n\nTest 1:\nassert heading_name(90) == \"E\" && heading_name(45) == \"?\"\n\nExpected output:\nPassed\n\nTest 2:\nassert heading_name(90) == \"E\" && heading_name(45) == \"?\"\n\nExpected output:\nPassed\n\nTest 3:\nassert heading_name(90) == \"E\" && heading_name(45) == \"?\"\n\nExpected output:\nPassed\n\nTest 4:\nassert heading_name(90) == \"E\" && heading_name(45) == \"?\"\n\nExpected output:\nPassed\n\nTest 5:\n"
+    },
+    {
+      "ok": false,
+      "why": "check",
+      "generated": "Signatures:\nfn rot13(s: Str) -> Str\nfn encode(s: Str, k: Int) -> Str\n\nTests:\ntest rot13_ok = rot13(\"Hello\") == \"Uryyb\"\ntest encode_ok = encode(\"Hello\", 3) == \"Uryyb\"\ntest encode_bad_input = encode(\"A\", 1) == \"A\"\ntest encode_bad_input_k = encode(\"A\", 2) == \"A\"\ntest encode_bad_input_k_not_found = encode(\"A\", 4) == \"A\"\ntest encode_bad_input_k_too_big = encode(\"A\", 10) == \"A\"\ntest encode_bad_input_k_too_small = encode(\"A\", -1) == \"A\""
+    },
+    {
+      "ok": false,
+      "why": "check",
+      "generated": "Signatures:\nfn toggle(s: Str) -> Str\n\nTest 1:\nassert_eq!(toggle(\"Qal\"), \"qAL\");\n\nTest 2:\nassert_eq!(toggle(\"Qal\"), \"qAL\");\n\nTest 3:\nassert_eq!(toggle(\"Qal\"), \"qAL\");\n\nTest 4:\nassert_eq!(toggle(\"Qal\"), \"qAL\");\n\nTest 5:\nassert_eq!(toggle(\"Qal\"), \"qAL\");\n\nTest 6:\nassert_eq!(toggle(\"Qal\"), \"qAL\");\n\nTest 7:\nassert_eq!(toggle(\"Qal\"), \"qAL\");\n\nTest 8:\nassert_eq!(toggle(\"Qal\"), \"qAL\");\n\nTest 9:\nassert_eq!(toggle(\"Qal\"), \"qAL"
+    },
+    {
+      "ok": false,
+      "why": "check",
+      "generated": "Signatures:\nfn is_digit(c: Str) -> Bool\nfn run_end(cs: List[Str], c: Str, i: Int) -> Int\nfn encode_from(cs: List[Str], i: Int, acc: List[Str]) -> Str\nfn encode(line: Str) -> Str\nfn repeat(c: Str, n: Int) -> Str\nfn digits_end(cs: List[Str], i: Int) -> Int\nfn decode_from(cs: List[Str], i: Int, acc: List[Str]) -> Str\nfn decode_pair(cs: List[Str], i: Int, e: Int, acc: List[Str]) -> Str\nfn number(cs: List[Str], i: Int, e: Int, acc: Str) -> Str\nfn decode(line: Str) -> Str\nfn each"
+    },
+    {
+      "ok": false,
+      "why": "check",
+      "generated": "Signatures:\nfn p036_at(xs: List[Int], i: Int) -> Int\nfn p036_row(g: List[List[Int]], r: Int) -> List[Int]\nfn p036_max(g: List[List[Int]], r: Int, c: Int) -> Int\n\nTests:\ntest p036a = p036_max([[2], [3, 4], [6, 5, 7], [4, 1, 8, 3]], 0, 0) == 21\ntest p036b = p036_max([[5]], 0, 0) == 5\ntest p036c = p036_max([[1, 2, 3, 4]], 0"
+    },
+    {
+      "ok": false,
+      "why": "check",
+      "generated": "Signatures:\nfn count_at(m: Map[Int, Int], k: Int) -> Int\nfn counter(nums: List[Int]) -> Map[Int, Int]\nfn most_frequent(nums: List[Int]) -> Option[Int]\n\nTests:\ntest most_frequent_value = most_frequent([7, 7, 3]) == Some(7)\ntest most_frequent_empty = most_frequent([]) == None\ntest counter_size = map_size(counter([7, 7, 3])) == 2\ntest counter_size = map_size(counter([7, 7, 7])) == 3\ntest counter_size = map_size(counter([7, 7, 7, 7])) == 4\ntest counter_size = map_size(counter(["
+    },
+    {
+      "ok": false,
+      "why": "check",
+      "generated": "Signatures:\nfn shape_is_dot(s: Shape) -> Bool\n\nTests:\ntest shape_is_dot_check = shape_is_dot(Dot) && !shape_is_dot(Circle(1))\ntest shape_is_dot_check_2 = shape_is_dot(Circle(1)) && !shape_is_dot(Dot)\ntest shape_is_dot_check_3 = shape_is_dot(Circle(1)) && shape_is_dot(Diamond(1))\ntest shape_is_dot_check_4 = shape_is_dot(Circle(1)) && shape_is_dot(Triangle(1))\ntest shape_is_dot_check_5 = shape_is_dot(Circle(1)) && shape_is_dot(Rectangle("
+    },
+    {
+      "ok": false,
+      "why": "check",
+      "generated": "Signatures:\nfn min_acc(xs: List[Int], i: Int, best: Int) -> Int\nfn list_min(xs: List[Int]) -> Int\n\nTests:\ntest list_min_a = min_acc([3, 9, 2, 7], 2, 2) == 2\ntest list_min_a = min_acc([3, 9, 2, 7], 3, 3) == 3\ntest list_min_a = min_acc([3, 9, 2, 7], 4, 4) == 4\ntest list_min_a = min_acc([3, 9, 2, 7], 5, 5) == 5\ntest list_min_a = min_acc([3, 9, 2, "
+    },
+    {
+      "ok": false,
+      "why": "check",
+      "generated": "Signatures:\nfn parse_pair(s: Str) -> Result[Int, Str]\nfn pair_or(s: Str) -> Int\n\nTests:\ntest pair_ok = parse_pair(\"8\") == Ok(8)\ntest pair_bad = parse_pair(\"x\") == Err(\"Invalid input: 'x'\")\ntest pair_bad = pair_or(\"x\") == -1\ntest pair_bad = pair_or(\"\") == -1\ntest pair_bad = pair_or(\" \") == -1\ntest pair_bad = pair_or(\" \") == -1\ntest pair_bad = pair_or(\" \") == -1\ntest pair_bad = pair_or(\" \") == -1\ntest pair_bad = pair_or(\" \") == -1\ntest pair_bad = pair_or(\" \") == -1\ntest pair_"
+    },
+    {
+      "ok": false,
+      "why": "check",
+      "generated": "Signatures:\nfn winner(vs: List[Vote]) -> Str\n\nTests:\ntest winner_ok = winner([Vote { candidate: \"a\", count: 1 }, Vote { candidate: \"b\", count: 4 }]) == \"b\"\ntest winner_fail = winner([Vote { candidate: \"a\", count: 1 }, Vote { candidate: \"c\", count: 2 }]) == \"a\"\ntest winner_fail = winner([Vote { candidate: \"b\", count: 1 }, Vote { candidate: \"c\", count: 2 }]) == \"c\"\ntest winner_fail = winner([Vote { candidate: \"a\", count: 1 }, Vote { candidate: \"a\", count: 1 }]) == \"a\"\ntest winner_fail = winner([Vote { candidate: \"b\","
+    }
+  ],
+  "adapter": {
+    "examples": 50,
+    "passed": 7,
+    "rate": 0.14
+  },
+  "adapter_results": [
+    {
+      "ok": true,
+      "why": "ok",
+      "generated": "type Tree[T] = Leaf | Node(Tree[T], T, Tree[T])\nfn maxi(a: Int, b: Int) -> Int = if a > b then a else b\nfn height[T](t: Tree[T]) -> Int = match t { Leaf => 0, Node(l, _, r) => 1 + maxi(height(l), height(r)) }\ntest height_single = height(Node(Leaf, 1, Leaf)) == 1\ntest height_three = height(Node(Node(Leaf, 1, Leaf), 2, Node(Leaf, 3, Leaf))) == 2"
+    },
+    {
+      "ok": false,
+      "why": "test",
+      "generated": "type Figure = Disk(Int) | Panel(Int, Int) | Box(Int)\nfn figure_area(f: Figure) -> Int = match f { Disk(n) => n, Panel(a, b) => a * b, Box(a) => a }\ntest disk_area = figure_area(Disk(2)) == 12\ntest panel_area = figure_area(Panel(3, 4)) == 12\ntest box_area = figure_area(Box(3)) == 9"
+    },
+    {
+      "ok": true,
+      "why": "ok",
+      "generated": "fn p215_even(n: Int) -> Bool = n % 2 == 0\nfn p215_odd(n: Int) -> Bool = n % 2 != 0\ntest p215a = p215_even(0)\ntest p215b = p215_odd(9)"
+    },
+    {
+      "ok": false,
+      "why": "test",
+      "generated": "fn p003_prod(a: Int, b: Int) -> Int = a * b\ntest p003a = p003_prod(2, 5) == 120\ntest p003b = p003_prod(4, 2) == 1"
+    },
+    {
+      "ok": false,
+      "why": "check",
+      "generated": "fn all_positive(xs: List[Int], i: Int) -> Bool =\n  let start = if i < 0 then len(xs) else i in\n  let end = if i >= len(xs) then len(xs) else i + 1 in\n  fold(range(start, end), false, fn(a: Bool, x: Int) => a && xs[x] >= 0)\ntest all_positive_yes = all_positive([1, 2], 0)\ntest all_positive_no = !all_positive([1, -2], 0)"
+    },
+    {
+      "ok": false,
+      "why": "test",
+      "generated": "fn square_map(n: Int, m: Map[Int, Int]) -> Map[Int, Int] = map_new()\ntest square_map_top = map_get(square_map(2, map_new()), 2) == Some(4)\ntest square_map_size = map_size(square_map(2, map_new())) == 2\ntest square_map_missing = map_get(square_map(2, map_new()), 2 + 1) == None"
+    },
+    {
+      "ok": false,
+      "why": "test",
+      "generated": "fn allPositive(xs: List[Int]) -> Bool = fold(xs, true, fn(a: Bool, x: Int) => a && x >= 0)\nfn anyNegative(xs: List[Int]) -> Bool = fold(xs, false, fn(a: Bool, x: Int) => a && x < 0)\ntest eighth_check = allPositive([1, 2, 3])\ntest also_two = anyNegative([1, -2])\ntest final_six = !allPositive([1, -2])"
+    },
+    {
+      "ok": false,
+      "why": "check",
+      "generated": "type P064Tree = P064Leaf | P064Node(P064Tree, Int, P064Tree)\nfn p064_max(t: P064Tree) -> Int = match t { P064Leaf => -1000000, P064Node(l, a, r) => if a > b then a else if a == b then 0 else p064_max(r) }\ntest p064a = p064_max(P064Node(P064Node(P064Leaf, 3, P064Leaf), 9, P064Node(P064Leaf, 4, P064Leaf))) == 9\ntest p064b ="
+    },
+    {
+      "ok": true,
+      "why": "ok",
+      "generated": "type Build = Pending | Passing | Failed\nfn mark_build(b: Build) -> Build = match b { Pending => Passing, Passing => Passing, Failed => Failed }\nfn is_green(b: Build) -> Bool = match b { Passing => true, _ => false }\ntest build_mark = mark_build(Pending) == Passing\ntest build_green = is_green(mark_build(Pending))"
+    },
+    {
+      "ok": false,
+      "why": "check",
+      "generated": "fn normalize(s: Str) -> Str =\n  if len(s) == 0 then s\n  else if len(s) == 1 then s\n  else if len(s) == 2 && s[0] == s[1] then s\n  else if len(s) == 3 && s[0] == s[1] && s[1] == s[2] then s\n  else if len(s) == 4 && s[0] == s[1] && s[1] == s[2] && s[2] == s[3] then s\n  else if len(s) == 5 && s[0] == s[1] && s[1] == s[2] && s[2] == s[3] && s[3] == s[4] then s\n  else if"
+    },
+    {
+      "ok": false,
+      "why": "check",
+      "generated": "type Bracket = LowBracket | MidBracket | HighBracket\nfn bracket(income: Int) -> Bracket = match income {\n    0 => LowBracket,\n    10000 => MidBracket,\n    100000 => HighBracket,\n    _ => panic!(\"invalid income\")\n}\ntest bracket_mid = bracket(2000) == MidBracket\ntest bracket_high = bracket(9000) == HighBracket"
+    },
+    {
+      "ok": false,
+      "why": "test",
+      "generated": "fn is_leap_day(m: Int, d: Int) -> Bool = (m % 4 == 0 && m % 100 != 0) || (m % 400 == 0)\ntest leap = is_leap_day(2, 29)\ntest common = !is_leap_day(2, 28)"
+    },
+    {
+      "ok": false,
+      "why": "check",
+      "generated": "type DQ = { head: Option[Int], rest: List[Int] }\nfn dq_take(q: List[Int]) -> DQ = DQ { head: Some(from_int(list_at(q, 0))) }\nfn drop_head(q: List[Int]) -> List[Int] = list_at(q, 1) :: q\ntest dq_test = match dq_take([8, 9]) { DQ { head: h, rest: r } => h == Some(8) && drop_head(r) == [9] }"
+    },
+    {
+      "ok": false,
+      "why": "test",
+      "generated": "fn discount_eleven(price: Int) -> Int req price >= 0 && price <= 1000 ens r >= 0 && r <= price && r == price * 11 / 100 = price * 11 / 100\ntest discount_eleven_case = discount_eleven(120) == 110\ntest discount_eleven_zero = discount_eleven(0) == 0"
+    },
+    {
+      "ok": true,
+      "why": "ok",
+      "generated": "type Band = { start: Int, end: Int }\nfn inv_Band(x: Band) -> Bool = x.start <= x.end\nfn make_band(a: Int, b: Int) -> Band req a <= b = Band { start: a, end: b }\nfn in_band(x: Band, n: Int) -> Bool = x.start <= n && n <= x.end\ntest band_valid = inv_Band(make_band(1, 8))\ntest band_hit = in_band(make_band(1, 8), 8)"
+    },
+    {
+      "ok": false,
+      "why": "check",
+      "generated": "fn all_pos(q: List[Int]) -> Bool = fold(q, true, fn(a: Bool, x: Int) => a && x >= 0)\nfn first_neg(q: List[Int], i: Int) -> Option[Int] =\n  if i >= len(q) then None\n  else if q[i] < 0 then Some(i)\n  else first_neg(q, i + 1)\ntest all_pos_test = all_pos([1, 2, 3]) && !all_pos([1, -2])\ntest first_neg_test = first_neg([1, -2, -3], 0) == Some(-2)"
+    },
+    {
+      "ok": false,
+      "why": "test",
+      "generated": "fn max_opt(a: Option[Int], b: Option[Int]) -> Option[Int] =\n  match a { Some(x) => if b == None then Some(x) else None, None => b }\ntest max_both = max_opt(Some(3), Some(9)) == Some(9)\ntest max_one = max_opt(None, Some(4)) == Some(4)"
+    },
+    {
+      "ok": false,
+      "why": "check",
+      "generated": "fn upper_count(s: Str) -> Int =\n  fold(chars(s), 0, fn(a, c) => if c >= 'a' && c <= 'z' then a + 1 else a)\n\ntest upper_count_ok = upper_count(\"QalLang\") == 2"
+    },
+    {
+      "ok": false,
+      "why": "test",
+      "generated": "fn q_start(q: Int) -> Int = if q < 0 then 0 else q\nfn q_end(q: Int) -> Int = if q < 0 then 0 else q\ntest first = q_start(1) == 1\ntest second = q_start(3) == 7\ntest end_second = q_end(2) == 6"
+    },
+    {
+      "ok": false,
+      "why": "test",
+      "generated": "fn p143_at(xs: List[Int], i: Int) -> Int = match get(xs, i) { Some(x) => x, None => 0 }\nfn p143_im(xs: List[Int], i: Int, bi: Int) -> Int = if i >= len(xs) then bi else p143_at(xs, i) + p143_im(xs, i + 1, bi + 1)\ntest p143a = p143_im([3, 9, 2], 0, 0) == 1\ntest p143b = p143_im([5], 0, 0) == 0"
+    },
+    {
+      "ok": false,
+      "why": "test",
+      "generated": "fn order_int(a: Int, b: Int) -> Int = if a > b then -1 else if a < b then 1 else 0\ntest order_ok = order_int(1, 2) == -1\ntest order_eq = order_int(2, 2) == 0\ntest order_gt = order_int(3, 1) == 1"
+    },
+    {
+      "ok": false,
+      "why": "test",
+      "generated": "fn p156_at(xs: List[Int], i: Int) -> Int = match get(xs, i) { Some(x) => x, None => 0 }\nfn p156_rob(xs: List[Int], i: Int) -> Int = if i >= len(xs) then 0 else p156_at(xs, i) + p156_rob(xs, i + 1)\ntest p156a = p156_rob([5, 1, 1, 5], 0) == 10\ntest p156b = p156_rob([1, 2, 3], 0) == 4"
+    },
+    {
+      "ok": false,
+      "why": "check",
+      "generated": "fn tailOf(xs: List[Int]) -> List[Int] =\n  if len(xs) == 0 then [] else list_at(xs, len(xs) - 1)\n\nfn weaveIn(x: Int, ys: List[Int]) -> List[Int] =\n  if len(ys) == 0 then [] else list_at(ys, len(ys) - 1) ++ [x]\n\nfn orderDesc(xs: List[Int]) -> List[Int] =\n  fold(xs, [], fn(acc, x) => if x < acc[1] then acc else [x])\n\ntest down_two = orderDesc([5, 2, 9, 1]) == [9, 5, 2, 1]\ntest desc_four = orderDesc([9, 8,"
+    },
+    {
+      "ok": false,
+      "why": "check",
+      "generated": "fn is_even(n: Int) -> Bool = n % 2 == 0\nfn evens(xs: List[Int]) -> List[Int] = map(xs, fn(x) => if is_even(x) then x else 0)\nfn main(args: List[Str]) -> Int !io = { print(evens([1, 2, 4])); 0 }\ntest ev = evens([1, 2, 4]) == [2, 4]"
+    },
+    {
+      "ok": false,
+      "why": "check",
+      "generated": "type Birch[T] = BNode(BTree[T], T, BTree[T])\nfn bsum(t: Birch[Int]) -> Int = match t { BNode(l, x, r) => x + bsum(l), BLeaf => 0 }\ntest bsum_three = bsum(BNode(BNode(BLeaf, 1, BLeaf), 2, BNode(BLeaf, 3, BLeaf))) == 6"
+    },
+    {
+      "ok": false,
+      "why": "check",
+      "generated": "fn bump_word(m: Map[Str, Int], w: Str) -> Map[Str, Int] =\n  if map_get(m, w) == Some(0) then map_put(m, w, map_get(m, w) + 1)\n  else map_put(m, w, map_get(m, w) + 1)\n\nfn word_freq(s: Str) -> Map[Str, Int] =\n  let m = map_new() in\n  bump_word(m, s)\n\ntest word_freq_a = map_get(word_freq(\"a b a\"), \"a\") == Some(2)"
+    },
+    {
+      "ok": true,
+      "why": "ok",
+      "generated": "type Vector = { dx: Int, dy: Int }\nfn vcross(a: Vector, b: Vector) -> Int = a.dx * b.dy - b.dx * a.dy\ntest vcross_check = vcross(Vector { dx: 2, dy: 3 }, Vector { dx: 4, dy: 5 }) == -2"
+    },
+    {
+      "ok": false,
+      "why": "check",
+      "generated": "fn count(words: List[Str]) -> Map[Str, Int] =\n  map_new() ++ map_put(map_new(), K { a: 0, b: 0 }, 0) ++ map_put(map_put(map_put(map_new(), K { a: 0, b: 0 }, 0), K { a: 1, b: \"a\" }, 1), K { a: 1, b: \"z\" }, 2)\n\ntest counts = let m = count([\"b\", \"a\", \"b\", \"c\"]) in map_keys(m) == [\"a\", \"b\", \"c\"] && map_values(m) == [1, 2, 1] && map_get(m, \"b\") == Some(2) && map_get(m, \"z\")"
+    },
+    {
+      "ok": true,
+      "why": "ok",
+      "generated": "fn p091_even(n: Int) -> Bool = n % 2 == 0\nfn p091_odd(n: Int) -> Bool = n % 2 != 0\ntest p091a = p091_even(10)\ntest p091b = p091_odd(7)"
+    },
+    {
+      "ok": false,
+      "why": "test",
+      "generated": "fn sum_div(acc: Int, d: Int, n: Int) -> Int = if n <= 0 then acc else acc + d / n\nfn aliquot(n: Int) -> Int = if n <= 0 then 0 else sum_div(0, 1, n)\ntest aliquot_12 = aliquot(12) == 16"
+    },
+    {
+      "ok": false,
+      "why": "check",
+      "generated": "type Output = OutputLow | OutputHigh\nfn relay_out(r: Relay) -> Output = match r { RelayA => OutputLow, RelayB => OutputHigh }\nfn invert(o: Output) -> Output = match o { OutputLow => RelayA, OutputHigh => RelayB }\ntest inverted_relay = invert(relay_out(RelayA)) == OutputLow\ntest relay_b = relay_out(RelayB) == OutputLow"
+    },
+    {
+      "ok": false,
+      "why": "test",
+      "generated": "fn sum_evens(xs: List[Int]) -> Int = fold(xs, 0, fn(a: Int, x: Int) => a + x)\ntest sum_evens_ok = sum_evens([1, 2, 3, 4]) == 6\ntest sum_evens_empty = sum_evens([]) == 0"
+    },
+    {
+      "ok": false,
+      "why": "check",
+      "generated": "type Tree[T] = Leaf | Node(Tree[T], T, Tree[T])\nfn size[T](t: Tree[T]) -> Int = match t { Leaf => 0, Node(l, x, r) => 1 + size(l) + size(r) }\nfn main(args: List[Str]) -> Int !io = { print(\"Size: \"); print(from_int(size(Node(Leaf, 1, Leaf)))); }\ntest size1 = size(Node(Leaf, 1, Leaf)) == 1"
+    },
+    {
+      "ok": false,
+      "why": "check",
+      "generated": "type Element = Fire | Air | Water\nfn beats(a: Element, b: Element) -> Bool = match a { Fire => b == Water, Water => a == Fire, Air => a == b }\ntest fire_beats_air = beats(Fire, Air)\ntest water_not_air = !beats(Water, Air)\ntest earth_beats_water = beats(Earth, Water)"
+    },
+    {
+      "ok": false,
+      "why": "check",
+      "generated": "fn links(a: List[List[Int]], v: Int) -> List[Int] = match get(a, v) { Some(l) => l, None => [] }\nfn known(xs: List[Int], x: Int) -> Bool = len(filter(xs, fn(n) => n == x)) == 1\nfn grow(a: List[List[Int]], fr: List[Int], vis: List[Int], i: Int, acc: List[Int]) -> List[Int] =\n  if i >= len(a) then acc\n  else if known(a, get(a, i)) then grow(a, fr, vis, i + 1, acc)\n  else if acc.len() == 0 then grow(a, [i], vis, i + 1, acc)\n  else acc\nfn steps("
+    },
+    {
+      "ok": false,
+      "why": "test",
+      "generated": "fn q_has_dupes(q: List[Int]) -> Bool = fold(q, false, fn(acc: Bool, x: Int) => acc && x == x)\ntest dupes_test = q_has_dupes([1, 2, 1]) && !q_has_dupes([1, 2, 3])"
+    },
+    {
+      "ok": false,
+      "why": "check",
+      "generated": "type Point = { x: Int, y: Int }\ntype Poly3 = { p1: Point, p2: Point, p3: Point }\nfn max3(a: Int, b: Int, c: Int) -> Int = if a > b then a else if a > c then a else c\nfn min3(a: Int, b: Int, c: Int) -> Int = if a < b then a else if a < c then a else c\nfn poly3_span_x(p: Poly3) -> Int = let a = Point { x: max3(p.p1.x, p.p2.x, p.p3.x) } in let b = Point { x: min3(p.p1.x, p.p2.x, p.p3.x) } in let c = Point { x"
+    },
+    {
+      "ok": false,
+      "why": "check",
+      "generated": "fn first_over(xs: List[Int], i: Int, t: Int) -> Option[Int] =\n  if i >= len(xs) then None\n  else if i == len(xs) then Some(t)\n  else if xs[i] > t then first_over(xs, i + 1, t)\n  else first_over(xs, i + 1, t + 1)\ntest over_hit = first_over([2, 9, 4], 0, 5) == Some(9)\ntest over_miss = first_over([2, 4], 0, 5) == None"
+    },
+    {
+      "ok": true,
+      "why": "ok",
+      "generated": "fn double(x: Int) -> Int = x * 2\nfn add(a: Int, b: Int) -> Int = a + b\nfn positive(x: Int) -> Bool = x > 0\ntest t = fold(map(filter(range(-2, 3), positive), double), 0, add) == 6\ntest u = len(\"h\u00e9llo\") == 5 && len([1, 2]) == 2 && get([1.5], 0) == Some(1.5)\ntest v = [] == concat([], []) && reverse([\"a\"]) ++ [\"b\"] == [\"a\", \"b\"]\ntest w = to_int(\"12\") == Some(12) && from_float(int_to_float(2)) == \"2.0\""
+    },
+    {
+      "ok": false,
+      "why": "check",
+      "generated": "fn position_of_one(s: Str) -> Option[Int] =\n  if len(s) == 0 then None else match str_at(s, 0) { Some(c) => Some(if c == '1' then 1 else 0), None => None }\ntest pos_one = position_of_one(from_int(213)) == Some(1)\ntest pos_none = position_of_one(from_int(234)) == None"
+    },
+    {
+      "ok": false,
+      "why": "check",
+      "generated": "fn normalize_heading(h: Int) -> Int = if h < 0 then 0 else if h > 100 then 100 else h\nfn heading_name(h: Int) -> Str = if h < 0 then \"N\" else if h > 100 then \"S\" else to_str(h)\ntest heading_name_check = heading_name(90) == \"E\" && heading_name(45) == \"?\""
+    },
+    {
+      "ok": false,
+      "why": "check",
+      "generated": "fn rot13(s: Str) -> Str =\n  let n = from_int(from_str(s)) in\n  let r = map(range(0, len(s)), fn(i) => to_str(from_int(i + n))) in\n  from_list(r)\n\ntest rot13_ok = rot13(\"Hello\") == \"Uryyb\"\n"
+    },
+    {
+      "ok": false,
+      "why": "check",
+      "generated": "fn toggle(s: Str) -> Str = if len(s) == 0 then s else if len(s) == 1 then s else if len(s) == 2 then s[1] else s[0]\ntest toggle_ok = toggle(\"Qal\") == \"qAL\""
+    },
+    {
+      "ok": false,
+      "why": "check",
+      "generated": "fn is_digit(c: Str) -> Bool = matches(c, \"0123456789\")\nfn run_end(cs: List[Str], c: Str, i: Int) -> Int = if is_digit(c) then i else run_end(cs, c, i + 1)\nfn encode_from(cs: List[Str], i: Int, acc: List[Str]) -> Str = if i >= len(cs) then acc else encode_from(cs, i + 1, acc ++ [from_int(i)])\nfn encode(line: Str) -> Str = fold(encode_from(list_from(split(line, \" \")), 0, []), \"\", fn(acc: Str, c: Str) => acc ++ [from_int(i) ++ c])\nfn repeat("
+    },
+    {
+      "ok": false,
+      "why": "check",
+      "generated": "fn p036_at(xs: List[Int], i: Int) -> Int = match get(xs, i) { Some(x) => x, None => 0 }\nfn p036_row(g: List[List[Int]], r: Int) -> List[Int] = match get(g, r) { Some(xs) => xs, None => [] }\nfn p036_max(g: List[List[Int]], r: Int, c: Int) -> Int = if r == 0 then 0 else if len(g) == 0 then 0 else if len(g) > 0 then max(p036_at(g, r - 1), p036_at(g, r)) else p036_at(g, r)\ntest p036a ="
+    },
+    {
+      "ok": false,
+      "why": "check",
+      "generated": "# Count the number of occurrences of a given key in a list.\nfn count_at(m: Map[Int, Int], k: Int) -> Int =\n  match map_get(m, k) { Some(n) => n, None => 0 }\n\nfn counter(nums: List[Int]) -> Map[Int, Int] =\n  map_new(0, fn(k: Int) => count_at(map_insert(map_clone(nums), k, 1), k))\n\nfn most_frequent(nums: List[Int]) -> Option[Int] =\n  let m = counter(nums) in\n  if map_size(m) == 0 then None\n  else Some(map_get(m, 0))\n\ntest most_frequent_value = most_frequent(["
+    },
+    {
+      "ok": false,
+      "why": "test",
+      "generated": "type Shape = Circle(Int) | Dot\nfn shape_is_dot(s: Shape) -> Bool = match s { Circle(n) => n == 1, Dot => true }\ntest shape_is_dot_check = shape_is_dot(Dot) && !shape_is_dot(Circle(1))"
+    },
+    {
+      "ok": false,
+      "why": "test",
+      "generated": "fn min_acc(xs: List[Int], i: Int, best: Int) -> Int = if i >= len(xs) then best else if list_at(xs, i) < list_at(xs, i + 1) then min_acc(xs, i + 1, list_at(xs, i)) else min_acc(xs, i + 1, best)\nfn list_min(xs: List[Int]) -> Int = min_acc(xs, 0, len(xs))\ntest list_min_a = list_min([3, 9, 2, 7]) == 2"
+    },
+    {
+      "ok": false,
+      "why": "check",
+      "generated": "fn parse_pair(s: Str) -> Result[Int, Str] =\n  match str_to_int(s) { Some(n) => Ok(n), None => Err(\"invalid\") }\n\nfn pair_or(s: Str) -> Int = match parse_pair(s) { Ok(n) => n, Err(_) => -1 }\ntest pair_ok = pair_or(\"8\") == 8\ntest pair_bad = pair_or(\"x\") == -1"
+    },
+    {
+      "ok": false,
+      "why": "test",
+      "generated": "type Vote = { candidate: Str, count: Int }\nfn winner(vs: List[Vote]) -> Str =\n  if len(vs) == 0 then \"\"\n  else fold(vs, \"\", fn(a, v) => if v.candidate == a then v.candidate else a)\n\ntest winner_ok = winner([Vote { candidate: \"a\", count: 1 }, Vote { candidate: \"b\", count: 4 }]) == \"b\""
+    }
+  ]
+}

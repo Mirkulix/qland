@@ -1,0 +1,1 @@
+fn small(m: Map[Int, Int]) -> Int ens r <= 1 = map_size(m)

@@ -1,0 +1,322 @@
+# Built-in prelude types, reserved names, and diagnostic constructors for QAL self-hosting compiler (spec §7: qc_prelude)
+
+fn qc_prelude_types() -> List[QcTypeDef] =
+  let headers_ty = QcTList(QcTNamed("HttpHeader")) in
+  let str_ty = QcTStr in
+  let int_ty = QcTInt in
+  let float_ty = QcTFloat in
+  let sql_val_ty = QcTNamed("SqlValue") in
+  let http_header = QcTypeDef {
+    name: "HttpHeader",
+    params: [],
+    body: QcBodyRecord([
+      QcFieldType { name: "name", ty: str_ty },
+      QcFieldType { name: "value", ty: str_ty }
+    ])
+  } in
+  let http_req = QcTypeDef {
+    name: "HttpRequest",
+    params: [],
+    body: QcBodyRecord([
+      QcFieldType { name: "method", ty: str_ty },
+      QcFieldType { name: "path", ty: str_ty },
+      QcFieldType { name: "query", ty: str_ty },
+      QcFieldType { name: "headers", ty: headers_ty },
+      QcFieldType { name: "body", ty: str_ty }
+    ])
+  } in
+  let http_resp = QcTypeDef {
+    name: "HttpResponse",
+    params: [],
+    body: QcBodyRecord([
+      QcFieldType { name: "status", ty: int_ty },
+      QcFieldType { name: "headers", ty: headers_ty },
+      QcFieldType { name: "body", ty: str_ty }
+    ])
+  } in
+  let http_call = QcTypeDef {
+    name: "HttpCall",
+    params: [],
+    body: QcBodyRecord([
+      QcFieldType { name: "method", ty: str_ty },
+      QcFieldType { name: "url", ty: str_ty },
+      QcFieldType { name: "headers", ty: headers_ty },
+      QcFieldType { name: "body", ty: str_ty }
+    ])
+  } in
+  let net_error = QcTypeDef {
+    name: "NetError",
+    params: [],
+    body: QcBodyEnum([
+      QcVariant { name: "NetDenied", fields: [str_ty] },
+      QcVariant { name: "NetInvalid", fields: [str_ty] },
+      QcVariant { name: "NetConnect", fields: [str_ty] },
+      QcVariant { name: "NetTimeout", fields: [] },
+      QcVariant { name: "NetTooLarge", fields: [] }
+    ])
+  } in
+  let sql_val = QcTypeDef {
+    name: "SqlValue",
+    params: [],
+    body: QcBodyEnum([
+      QcVariant { name: "SqlNull", fields: [] },
+      QcVariant { name: "SqlInt", fields: [int_ty] },
+      QcVariant { name: "SqlFloat", fields: [float_ty] },
+      QcVariant { name: "SqlText", fields: [str_ty] }
+    ])
+  } in
+  let db_rows = QcTypeDef {
+    name: "DbRows",
+    params: [],
+    body: QcBodyRecord([
+      QcFieldType { name: "columns", ty: QcTList(str_ty) },
+      QcFieldType { name: "rows", ty: QcTList(QcTList(sql_val_ty)) }
+    ])
+  } in
+  let db_error = QcTypeDef {
+    name: "DbError",
+    params: [],
+    body: QcBodyEnum([
+      QcVariant { name: "DbConstraint", fields: [str_ty] },
+      QcVariant { name: "DbSql", fields: [str_ty] },
+      QcVariant { name: "DbBusy", fields: [] },
+      QcVariant { name: "DbFull", fields: [] },
+      QcVariant { name: "DbTooLarge", fields: [] }
+    ])
+  } in
+  let model_resp = QcTypeDef {
+    name: "ModelResponse",
+    params: [],
+    body: QcBodyRecord([
+      QcFieldType { name: "text", ty: str_ty },
+      QcFieldType { name: "model", ty: str_ty },
+      QcFieldType { name: "in_tokens", ty: int_ty },
+      QcFieldType { name: "out_tokens", ty: int_ty },
+      QcFieldType { name: "cost_microcents", ty: int_ty }
+    ])
+  } in
+  let model_error = QcTypeDef {
+    name: "ModelError",
+    params: [],
+    body: QcBodyEnum([
+      QcVariant { name: "ModelDenied", fields: [str_ty] },
+      QcVariant { name: "ModelBudgetExceeded", fields: [int_ty] },
+      QcVariant { name: "ModelFailed", fields: [str_ty] },
+      QcVariant { name: "ModelInvalid", fields: [str_ty] },
+      QcVariant { name: "ModelTimeout", fields: [] }
+    ])
+  } in
+  let accum_t = QcTypeDef {
+    name: "Accum",
+    params: ["T"],
+    body: QcBodyEnum([
+      QcVariant { name: "AccEnd", fields: [] },
+      QcVariant { name: "AccPush", fields: [QcTApp("Accum", [QcTNamed("T")]), QcTNamed("T")] }
+    ])
+  } in
+  [http_header, http_req, http_resp, http_call, net_error, sql_val, db_rows, db_error, model_resp, model_error, accum_t]
+
+fn qc_prelude_is_type(name: Str) -> Bool =
+  name == "HttpHeader" || name == "HttpRequest" || name == "HttpResponse" ||
+  name == "HttpCall" || name == "NetError" || name == "SqlValue" ||
+  name == "DbRows" || name == "DbError" || name == "ModelResponse" || name == "ModelError" || name == "Accum"
+
+fn qc_prelude_arity(name: Str) -> Option[Int] =
+  if name == "Accum" then Some(1)
+  else if qc_prelude_is_type(name) then Some(0)
+  else None
+
+
+fn qc_prelude_is_reserved(name: Str) -> Bool =
+  qc_prelude_is_type(name) || (match qc_prelude_variant_owner(name) { Some(_) => true, None => false })
+
+fn qc_is_builtin_type_name(name: Str) -> Bool =
+  name == "Int" || name == "Float" || name == "Bool" || name == "Unit" ||
+  name == "Str" || name == "List" || name == "Option" || name == "Result" ||
+  name == "Map" || name == "Bytes"
+
+fn qc_foreign_name_hint(name: Str) -> Option[Str] =
+  let qal_name =
+    if name == "String" || name == "string" || name == "str" then Some("`Str`")
+    else if name == "i64" || name == "i32" || name == "int" || name == "Integer" || name == "u64" || name == "usize" || name == "long" then Some("`Int` (64-bit)")
+    else if name == "f64" || name == "f32" || name == "float" || name == "double" || name == "Double" then Some("`Float`")
+    else if name == "bool" || name == "boolean" || name == "Boolean" then Some("`Bool`")
+    else if name == "Vec" || name == "Array" || name == "list" || name == "ArrayList" || name == "vector" then Some("`List[T]`")
+    else if name == "HashMap" || name == "Dict" || name == "dict" || name == "BTreeMap" || name == "HashTable" then Some("`Map[K, V]`")
+    else if name == "Optional" || name == "Maybe" || name == "option" then Some("`Option[T]`")
+    else if name == "void" || name == "unit" then Some("`Unit` (value `()`)")
+    else if name == "char" || name == "Char" || name == "rune" then Some("a one-character `Str` (`chars(s)` splits a Str into them)")
+    else if name == "u8" || name == "byte" || name == "Byte" then Some("`Int` (an element of `Bytes`, 0..=255)")
+    else None in
+  match qal_name {
+    Some(qn) => Some("QAL has no type `" ++ name ++ "`; use " ++ qn),
+    None => None
+  }
+
+# Diagnostic constructors
+fn qc_diag_new(code: Str, kind: Str, def: Str, path: Str, msg: Str) -> QcDiag =
+  QcDiag {
+    code: code,
+    kind: kind,
+    def: def,
+    path: path,
+    message: msg,
+    expected: None,
+    found: None,
+    hints: [],
+    dependents: [],
+    counterexample: None
+  }
+
+fn qc_diag_expected_found(d: QcDiag, exp: Str, fnd: Str) -> QcDiag =
+  QcDiag {
+    code: d.code,
+    kind: d.kind,
+    def: d.def,
+    path: d.path,
+    message: d.message,
+    expected: Some(exp),
+    found: Some(fnd),
+    hints: d.hints,
+    dependents: d.dependents,
+    counterexample: d.counterexample
+  }
+
+fn qc_diag_hint(d: QcDiag, h: Str) -> QcDiag =
+  QcDiag {
+    code: d.code,
+    kind: d.kind,
+    def: d.def,
+    path: d.path,
+    message: d.message,
+    expected: d.expected,
+    found: d.found,
+    hints: push(d.hints, h),
+    dependents: d.dependents,
+    counterexample: d.counterexample
+  }
+
+fn qc_diag_type_mismatch(def: Str, path: Str, exp: Str, fnd: Str) -> QcDiag =
+  qc_diag_expected_found(qc_diag_new("E0203", "type_mismatch", def, path, "expected " ++ exp ++ ", found " ++ fnd), exp, fnd)
+
+fn qc_diag_arity(def: Str, path: Str, callee: Str, exp: Int, fnd: Int) -> QcDiag =
+  let exp_s = from_int(exp) in
+  let fnd_s = from_int(fnd) in
+  qc_diag_expected_found(qc_diag_new("E0204", "type_mismatch", def, path, "`" ++ callee ++ "` takes " ++ exp_s ++ " argument(s), " ++ fnd_s ++ " given"), exp_s, fnd_s)
+
+fn qc_diag_unknown_name(def: Str, path: Str, name: Str) -> QcDiag =
+  qc_diag_new("E0201", "unknown_name", def, path, "unknown name `" ++ name ++ "`")
+
+fn qc_diag_duplicate_name(def: Str, path: Str, name: Str) -> QcDiag =
+  qc_diag_new("E0202", "duplicate_name", def, path, "`" ++ name ++ "` is defined more than once")
+
+fn qc_diag_builtin_name(name: Str) -> QcDiag =
+  qc_diag_hint(
+    qc_diag_new("E0202", "duplicate_name", name, "", "`" ++ name ++ "` is the name of a built-in function"),
+    "choose another name; a `" ++ name ++ "` stored before this built-in existed must be renamed first: qal_rename it, e.g. to `my_" ++ name ++ "`"
+  )
+
+fn qc_diag_effect_violation(def: Str, path: Str, callee: Str, missing: List[Str]) -> QcDiag =
+  let miss_str = join(missing, ", ") in
+  let hint_effs = join(missing, " !") in
+  qc_diag_hint(
+    qc_diag_new("E0301", "effect_violation", def, path, "call to `" ++ callee ++ "` needs effect(s) " ++ miss_str ++ " not declared here"),
+    "add `!" ++ hint_effs ++ "` to the signature of `" ++ def ++ "`"
+  )
+
+fn qc_diag_non_exhaustive(def: Str, path: Str, missing: Str) -> QcDiag =
+  qc_diag_hint(
+    qc_diag_new("E0205", "non_exhaustive_match", def, path, "match does not cover `" ++ missing ++ "`"),
+    "add an arm `" ++ missing ++ " => ...` or a final `_ => ...` arm"
+  )
+
+fn qc_diag_type_too_deep(def: Str, path: Str, max_depth: Int) -> QcDiag =
+  qc_diag_hint(
+    qc_diag_new("E0207", "type_too_deep", def, path, "inferred type is nested too deeply (max " ++ from_int(max_depth) ++ " levels)"),
+    "declare a record or enum type for the nested data instead of nesting List/Option/Result this deeply"
+  )
+
+fn qc_diag_type_too_large(def: Str, path: Str, max_size: Int) -> QcDiag =
+  qc_diag_hint(
+    qc_diag_new("E0208", "type_too_large", def, path, "inferred type is too large (max " ++ from_int(max_size) ++ " nodes)"),
+    "annotate the values with `let x: T = ...` or declare a record or enum type; shared `Ok`/`Err`/`None` values can make inferred types grow exponentially"
+  )
+
+fn qc_diag_unused_type_param(def: Str, path: Str, param: Str) -> QcDiag =
+  qc_diag_hint(
+    qc_diag_new("E0211", "unused_type_parameter", def, path, "type parameter `" ++ param ++ "` does not occur in the parameter or result types"),
+    "remove `" ++ param ++ "` or use it in a parameter type"
+  )
+
+# E0310: more than one effect parameter.
+fn qc_diag_effect_params(def: Str, path: Str, names: List[Str]) -> QcDiag =
+  qc_diag_hint(
+    qc_diag_new("E0310", "effect_params", def, path, "`" ++ def ++ "` declares " ++ from_int(len(names)) ++ " effect parameters (" ++ join(names, ", ") ++ "); a function has at most one"),
+    "use one effect parameter for every callback: `fn both[!e](a: fn() -> Unit !e, b: fn() -> Unit !e) -> Unit !e`; a call binds it to the union of the arguments' effects"
+  )
+
+# E0311: an effect parameter that occurs in no parameter type.
+fn qc_diag_effect_param_unused(def: Str, path: Str, param: Str) -> QcDiag =
+  qc_diag_hint(
+    qc_diag_new("E0311", "effect_param_unused", def, path, "effect parameter `" ++ param ++ "` occurs in no parameter type"),
+    "give a parameter a function type with it, e.g. `f: fn(T) -> Unit !" ++ param ++ "`; a call determines `" ++ param ++ "` from that argument"
+  )
+
+fn qc_diag_irregular_recursion(def: Str, path: Str, used: Str) -> QcDiag =
+  qc_diag_hint(
+    qc_diag_new("E0212", "irregular_recursion", def, path, "recursive use `" ++ used ++ "` must pass plain type parameters"),
+    "inside its own definition, a recursive generic type can only be applied to type parameters, e.g. `Tree[T]`"
+  )
+
+fn qc_diag_polymorphic_recursion(def: Str, path: Str, callee: Str, targs: Str) -> QcDiag =
+  qc_diag_hint(
+    qc_diag_new("E0213", "polymorphic_recursion", def, path, "recursive call of `" ++ callee ++ "` at type [" ++ targs ++ "]"),
+    "recursive calls of a generic function must use its own type parameters (e.g. `f[T]` calls `f[T]`)"
+  )
+
+fn qc_diag_instantiation_limit(def: Str, path: Str, instance: Str, max_inst: Int) -> QcDiag =
+  qc_diag_hint(
+    qc_diag_new("E0214", "instantiation_limit", def, path, "instantiating `" ++ instance ++ "` exceeds the limit of " ++ from_int(max_inst) ++ " generic instances, the type size or depth limit or the size limit of all instances"),
+    "deeply nested generic calls multiply instances; use fewer distinct type arguments"
+  )
+
+fn qc_diag_reserved_name(def: Str, path: Str, name: Str) -> QcDiag =
+  qc_diag_hint(
+    qc_diag_new("E0240", "reserved_name", def, path, "`" ++ name ++ "` is a built-in prelude name"),
+    "prelude types (HttpHeader, HttpRequest, HttpResponse, HttpCall, NetError, SqlValue, DbRows, DbError, ModelResponse, ModelError, Accum) and their variants exist in every program; choose another name"
+  )
+
+fn qc_diag_prelude_shadowed(def: Str, path: Str, callee: Str) -> QcDiag =
+  qc_diag_hint(
+    qc_diag_new("E0240", "reserved_name", def, path, "`" ++ callee ++ "` needs the prelude types, but this codebase defines prelude names itself"),
+    "rename the stored types (qal_rename) or redefine the enums whose names or variants are prelude names (HttpHeader, HttpRequest, HttpResponse, HttpCall, NetError, SqlValue, DbRows, DbError, ModelResponse, ModelError, Accum and their variants)"
+  )
+
+fn qc_diag_sql_not_literal(def: Str, path: Str, callee: Str) -> QcDiag =
+  qc_diag_hint(
+    qc_diag_new("E0241", "sql_not_literal", def, path, "the SQL text of `" ++ callee ++ "` must be a string literal"),
+    "values belong in `params` as `?` placeholders, e.g. db_query(\"SELECT * FROM t WHERE id = ?\", [SqlInt(id)]); for variants (e.g. ORDER BY) write one literal per variant and choose with `match`"
+  )
+
+fn qc_diag_sql_invalid(def: Str, path: Str, reason: Str) -> QcDiag =
+  qc_diag_hint(
+    qc_diag_new("E0242", "sql_invalid", def, path, "invalid SQL literal: " ++ reason),
+    "one statement, positional `?` parameters only; ATTACH, DETACH, PRAGMA, VACUUM and transaction statements are not allowed (one transaction per execution is automatic)"
+  )
+
+fn qc_diag_missing_field(def: Str, path: Str, record_name: Str, field_name: Str) -> QcDiag =
+  qc_diag_hint(
+    qc_diag_new("E0206", "type_mismatch", def, path, "`" ++ record_name ++ "` needs field `" ++ field_name ++ "`"),
+    "add `" ++ field_name ++ ": ...` to the `" ++ record_name ++ " { ... }` literal"
+  )
+
+test qc_prelude_test =
+  let ts = qc_prelude_types() in
+  len(ts) == 11 &&
+  qc_prelude_is_type("Accum") &&
+  qc_prelude_is_type("ModelResponse") &&
+  qc_prelude_is_reserved("SqlInt") &&
+  qc_prelude_is_reserved("ModelDenied") &&
+  qc_prelude_variant_owner("AccPush") == Some("Accum") &&
+  qc_prelude_variant_owner("ModelDenied") == Some("ModelError") &&
+  qc_foreign_name_hint("String") == Some("QAL has no type `String`; use `Str`")

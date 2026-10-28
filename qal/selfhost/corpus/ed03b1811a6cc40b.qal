@@ -1,0 +1,2 @@
+type E = A | B(Bool)
+fn f(x: E) -> Int = match x { A => 1, B(true) => 2 }

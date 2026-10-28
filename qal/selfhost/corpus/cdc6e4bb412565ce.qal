@@ -1,0 +1,1 @@
+fn qal_alloc() -> Int = 1

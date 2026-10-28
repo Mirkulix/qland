@@ -1,0 +1,1004 @@
+{
+  "results": [
+    {
+      "id": "len_trim-0",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "len_trim-1",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "len_trim-2",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "len_trim-3",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "len_trim-4",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "len_trim-5",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "len_trim-6",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "len_trim-7",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "len_trim-8",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "len_trim-9",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "upper-0",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "upper-1",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "upper-2",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "upper-3",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "upper-4",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "upper-5",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "upper-6",
+      "qal": {
+        "ok": false,
+        "detail": "\u00df\n"
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "upper-7",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "upper-8",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "upper-9",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "lower-0",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "lower-1",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "lower-2",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "lower-3",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "lower-4",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "lower-5",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "lower-6",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "lower-7",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "lower-8",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "lower-9",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "replace_space-0",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "replace_space-1",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": false
+      }
+    },
+    {
+      "id": "replace_space-2",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": false
+      }
+    },
+    {
+      "id": "replace_space-3",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": false
+      }
+    },
+    {
+      "id": "replace_space-4",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "replace_space-5",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": false
+      }
+    },
+    {
+      "id": "replace_space-6",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": false
+      }
+    },
+    {
+      "id": "replace_space-7",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": false
+      }
+    },
+    {
+      "id": "replace_space-8",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": false
+      }
+    },
+    {
+      "id": "replace_space-9",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": false
+      }
+    },
+    {
+      "id": "slice02-0",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "slice02-1",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "slice02-2",
+      "qal": {
+        "ok": false,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "slice02-3",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "slice02-4",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "slice02-5",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "slice02-6",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "slice02-7",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "slice02-8",
+      "qal": {
+        "ok": false,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "slice02-9",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "slice13-0",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "slice13-1",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "slice13-2",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "slice13-3",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "slice13-4",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "slice13-5",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "slice13-6",
+      "qal": {
+        "ok": false,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "slice13-7",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "slice13-8",
+      "qal": {
+        "ok": false,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "slice13-9",
+      "qal": {
+        "ok": false,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "contains_a-0",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "contains_a-1",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "contains_a-2",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "contains_a-3",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "contains_a-4",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "contains_a-5",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "contains_a-6",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "contains_a-7",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "contains_a-8",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "contains_a-9",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "starts_a-0",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "starts_a-1",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "starts_a-2",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "starts_a-3",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "starts_a-4",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "starts_a-5",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "starts_a-6",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "starts_a-7",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "starts_a-8",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "starts_a-9",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "comma_count-0",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "comma_count-1",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "comma_count-2",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "comma_count-3",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": false
+      }
+    },
+    {
+      "id": "comma_count-4",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "comma_count-5",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "comma_count-6",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "comma_count-7",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "comma_count-8",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "comma_count-9",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "space_count-0",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "space_count-1",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "space_count-2",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "space_count-3",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": false
+      }
+    },
+    {
+      "id": "space_count-4",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "space_count-5",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "space_count-6",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "space_count-7",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "space_count-8",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "space_count-9",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    }
+  ]
+}

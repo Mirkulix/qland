@@ -1,0 +1,134 @@
+{
+  "results": [
+    {
+      "task": "02-roman",
+      "mutator": "drop_req",
+      "status": "escaped",
+      "passed": 9,
+      "total": 9,
+      "proven": 0,
+      "refuted": 0,
+      "unknown": 0
+    },
+    {
+      "task": "02-roman",
+      "mutator": "weaken_contract_ge",
+      "status": "caught_tests",
+      "passed": 8,
+      "total": 9,
+      "proven": 10,
+      "refuted": 1,
+      "unknown": 4
+    },
+    {
+      "task": "09-rle",
+      "mutator": "drop_req",
+      "status": "escaped",
+      "passed": 14,
+      "total": 14,
+      "proven": 5,
+      "refuted": 0,
+      "unknown": 1
+    },
+    {
+      "task": "09-rle",
+      "mutator": "drop_ens",
+      "status": "escaped",
+      "passed": 14,
+      "total": 14,
+      "proven": 5,
+      "refuted": 0,
+      "unknown": 1
+    },
+    {
+      "task": "09-rle",
+      "mutator": "weaken_contract_ge",
+      "status": "caught_tests",
+      "passed": 8,
+      "total": 14,
+      "proven": 6,
+      "refuted": 0,
+      "unknown": 1
+    },
+    {
+      "task": "18-date-diff",
+      "mutator": "drop_req",
+      "status": "caught_tests",
+      "passed": 0,
+      "total": 7,
+      "proven": 0,
+      "refuted": 0,
+      "unknown": 0
+    },
+    {
+      "task": "18-date-diff",
+      "mutator": "weaken_contract_ge",
+      "status": "caught_tests",
+      "passed": 5,
+      "total": 7,
+      "proven": 1,
+      "refuted": 2,
+      "unknown": 2
+    },
+    {
+      "task": "22-expense-approval-contracts",
+      "mutator": "drop_req",
+      "status": "escaped",
+      "passed": 12,
+      "total": 12,
+      "proven": 19,
+      "refuted": 0,
+      "unknown": 12
+    },
+    {
+      "task": "22-expense-approval-contracts",
+      "mutator": "drop_ens",
+      "status": "escaped",
+      "passed": 12,
+      "total": 12,
+      "proven": 19,
+      "refuted": 0,
+      "unknown": 12
+    },
+    {
+      "task": "22-expense-approval-contracts",
+      "mutator": "weaken_contract_ge",
+      "status": "caught_tests",
+      "passed": 10,
+      "total": 12,
+      "proven": 19,
+      "refuted": 0,
+      "unknown": 13
+    },
+    {
+      "task": "23-expense-approval-change",
+      "mutator": "drop_req",
+      "status": "escaped",
+      "passed": 15,
+      "total": 15,
+      "proven": 6,
+      "refuted": 0,
+      "unknown": 0
+    },
+    {
+      "task": "23-expense-approval-change",
+      "mutator": "drop_ens",
+      "status": "escaped",
+      "passed": 15,
+      "total": 15,
+      "proven": 7,
+      "refuted": 0,
+      "unknown": 0
+    },
+    {
+      "task": "23-expense-approval-change",
+      "mutator": "weaken_contract_ge",
+      "status": "caught_tests",
+      "passed": 1,
+      "total": 15,
+      "proven": 7,
+      "refuted": 0,
+      "unknown": 1
+    }
+  ]
+}

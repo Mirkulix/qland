@@ -1,0 +1,277 @@
+# Bank account state machine.
+#
+# The whole behaviour is pure: run_text maps the input text to the list of
+# output lines. main only reads stdin and prints those lines.
+
+type State = { accounts: Map[Str, Int], out: List[Str] }
+
+fn empty_state() -> State = State { accounts: map_new(), out: [] }
+
+fn tok(xs: List[Str], i: Int) -> Str =
+  match get(xs, i) { Some(x) => x, None => "" }
+
+fn emit_msg(st: State, msg: Str) -> State =
+  State { accounts: st.accounts, out: push(st.out, msg) }
+
+fn balance_of(accounts: Map[Str, Int], name: Str) -> Int =
+  match map_get(accounts, name) { Some(b) => b, None => 0 }
+
+fn is_digit_char(c: Str) -> Bool = contains("0123456789", c)
+
+fn all_digits(s: Str) -> Bool =
+  fold(chars(s), true, fn(ok: Bool, c: Str) => ok && is_digit_char(c))
+
+# An amount is 1 to 12 decimal digits (no sign) with a value greater than 0.
+fn parse_amount(s: Str) -> Option[Int] =
+  if len(s) == 0 then None
+  else if len(s) > 12 then None
+  else if !all_digits(s) then None
+  else match to_int(s) {
+    Some(n) => if n > 0 then Some(n) else None,
+    None => None
+  }
+
+fn do_open(st: State, name: Str) -> State =
+  if map_has(st.accounts, name) then
+    emit_msg(st, "error: account " ++ name ++ " exists")
+  else State { accounts: map_put(st.accounts, name, 0), out: st.out }
+
+fn do_balance(st: State, name: Str) -> State =
+  match map_get(st.accounts, name) {
+    Some(b) => emit_msg(st, name ++ " " ++ from_int(b)),
+    None => emit_msg(st, "error: no account " ++ name)
+  }
+
+fn add_balance(st: State, name: Str, delta: Int) -> State =
+  State {
+    accounts: map_put(st.accounts, name, balance_of(st.accounts, name) + delta),
+    out: st.out
+  }
+
+fn do_deposit(st: State, name: Str, raw: Str) -> State =
+  if !map_has(st.accounts, name) then
+    emit_msg(st, "error: no account " ++ name)
+  else match parse_amount(raw) {
+    None => emit_msg(st, "error: invalid amount"),
+    Some(v) => add_balance(st, name, v)
+  }
+
+fn do_withdraw(st: State, name: Str, raw: Str) -> State =
+  if !map_has(st.accounts, name) then
+    emit_msg(st, "error: no account " ++ name)
+  else match parse_amount(raw) {
+    None => emit_msg(st, "error: invalid amount"),
+    Some(v) =>
+      if balance_of(st.accounts, name) < v then
+        emit_msg(st, "error: insufficient funds")
+      else add_balance(st, name, -v)
+  }
+
+fn do_transfer(st: State, from: Str, to: Str, raw: Str) -> State =
+  if !map_has(st.accounts, from) then
+    emit_msg(st, "error: no account " ++ from)
+  else if !map_has(st.accounts, to) then
+    emit_msg(st, "error: no account " ++ to)
+  else match parse_amount(raw) {
+    None => emit_msg(st, "error: invalid amount"),
+    Some(v) =>
+      if balance_of(st.accounts, from) < v then
+        emit_msg(st, "error: insufficient funds")
+      else if from == to then st
+      else {
+        let after = map_put(
+          st.accounts,
+          from,
+          balance_of(st.accounts, from) - v
+        ) in
+        State {
+          accounts: map_put(after, to, balance_of(st.accounts, to) + v),
+          out: st.out
+        }
+      }
+  }
+
+fn step(st: State, line: Str) -> State = {
+  let toks = split(line, " ") in
+  let n = len(toks) in
+  let cmd = tok(toks, 0) in
+  if n == 2 then {
+    let a = tok(toks, 1) in
+    if cmd == "open" then do_open(st, a)
+    else if cmd == "balance" then do_balance(st, a)
+    else emit_msg(st, "error: invalid command")
+  } else if n == 3 then {
+    let a = tok(toks, 1) in
+    let b = tok(toks, 2) in
+    if cmd == "deposit" then do_deposit(st, a, b)
+    else if cmd == "withdraw" then do_withdraw(st, a, b)
+    else emit_msg(st, "error: invalid command")
+  } else if n == 4 then {
+    let a = tok(toks, 1) in
+    let b = tok(toks, 2) in
+    let c = tok(toks, 3) in
+    if cmd == "transfer" then do_transfer(st, a, b, c)
+    else emit_msg(st, "error: invalid command")
+  } else emit_msg(st, "error: invalid command")
+}
+
+fn has_suffix(s: Str, suf: Str) -> Bool =
+  if len(suf) > len(s) then false
+  else slice(s, len(s) - len(suf), len(s)) == suf
+
+fn strip_cr(s: Str) -> Str =
+  if has_suffix(s, "\r") then slice(s, 0, len(s) - 1) else s
+
+fn split_lines(text: Str) -> List[Str] =
+  if text == "" then []
+  else {
+    let body =
+      if has_suffix(text, "\n") then slice(text, 0, len(text) - 1) else text in
+    map(split(body, "\n"), strip_cr)
+  }
+
+fn account_lines(accounts: Map[Str, Int]) -> List[Str] =
+  map(
+    sort_str(map_keys(accounts)),
+    fn(k) => k ++ " " ++ from_int(balance_of(accounts, k))
+  )
+
+fn render(st: State) -> List[Str] =
+  concat(st.out, concat(["---"], account_lines(st.accounts)))
+
+fn run_lines(lines: List[Str]) -> List[Str] =
+  render(fold(lines, empty_state(), step))
+
+fn run_text(text: Str) -> List[Str] = run_lines(split_lines(text))
+
+# ---------------------------------------------------------------- tests
+
+test example =
+  run_text(
+    "open alice\ndeposit alice 100\nwithdraw alice 30\nopen bob\ntransfer alice bob 50\nbalance alice\nwithdraw bob 80\n"
+  ) == ["alice 20", "error: insufficient funds", "---", "alice 20", "bob 50"]
+
+test errors =
+  run_text(
+    "deposit x 5\nopen x\nopen x\ndeposit x 0\ndeposit x -1\ndeposit x 1.5\nwithdraw x 1\ntransfer x y 1\ntransfer y x 1\nfly x\n\nbalance\n"
+  ) == [
+    "error: no account x",
+    "error: account x exists",
+    "error: invalid amount",
+    "error: invalid amount",
+    "error: invalid amount",
+    "error: insufficient funds",
+    "error: no account y",
+    "error: no account y",
+    "error: invalid command",
+    "error: invalid command",
+    "error: invalid command",
+    "---",
+    "x 0"
+  ]
+
+test same_account_transfer =
+  run_text(
+    "open a\ndeposit a 100\ntransfer a a 40\nbalance a\ntransfer a a 200\nbalance a\n"
+  ) == ["a 100", "error: insufficient funds", "a 100", "---", "a 100"]
+
+test account_order =
+  run_text(
+    "open alice\nopen Bob\nopen Zed\ndeposit Bob 5\ndeposit Zed 7\ndeposit alice 3\n"
+  ) == ["---", "Bob 5", "Zed 7", "alice 3"]
+
+test case_sensitive =
+  run_text("open A\nopen a\ndeposit A 5\nbalance a\nbalance A\n") ==
+    ["a 0", "A 5", "---", "A 5", "a 0"]
+
+test invalid_commands =
+  run_text(
+    "open\nopen a b\nfly\ndeposit a\nbalance a b\n  \ntransfer a b\ntransfer a b c d\n"
+  ) == [
+    "error: invalid command",
+    "error: invalid command",
+    "error: invalid command",
+    "error: invalid command",
+    "error: invalid command",
+    "error: invalid command",
+    "error: invalid command",
+    "error: invalid command",
+    "---"
+  ]
+
+test amount_bounds =
+  run_text(
+    "open a\ndeposit a 999999999999\ndeposit a 1\ndeposit a 0\ndeposit a 00\ndeposit a 0000000000000\nwithdraw a 999999999999\nbalance a\n"
+  ) == [
+    "error: invalid amount",
+    "error: invalid amount",
+    "error: invalid amount",
+    "a 1",
+    "---",
+    "a 1"
+  ]
+
+test amount_leading_zeros =
+  run_text("open a\ndeposit a 007\nbalance a\n") == ["a 7", "---", "a 7"]
+
+test check_order =
+  run_text(
+    "open a\nwithdraw b 0\ntransfer a c 0\ntransfer c a 0\ndeposit a 0\nbalance a\n"
+  ) == [
+    "error: no account b",
+    "error: no account c",
+    "error: no account c",
+    "error: invalid amount",
+    "a 0",
+    "---",
+    "a 0"
+  ]
+
+test insufficient_transfer =
+  run_text(
+    "open a\nopen b\ndeposit a 10\ntransfer a b 11\nbalance a\nbalance b\n"
+  ) == ["error: insufficient funds", "a 10", "b 0", "---", "a 10", "b 0"]
+
+test withdraw_to_zero =
+  run_text("open a\ndeposit a 5\nwithdraw a 5\nwithdraw a 1\nbalance a\n") ==
+    ["error: insufficient funds", "a 0", "---", "a 0"]
+
+test no_trailing_newline =
+  run_text("open a\nbalance a") == ["a 0", "---", "a 0"]
+
+test crlf_lines =
+  run_text("open a\r\nbalance a\r\n") == ["a 0", "---", "a 0"]
+
+test empty_input = run_text("") == ["---"]
+
+test blank_line = run_text("\n") == ["error: invalid command", "---"]
+
+test negative_and_garbage_amounts =
+  run_text(
+    "open a\ndeposit a -0\ndeposit a +5\ndeposit a 1e3\ndeposit a 12a\ndeposit a 1 \nbalance a\n"
+  ) == [
+    "error: invalid amount",
+    "error: invalid amount",
+    "error: invalid amount",
+    "error: invalid amount",
+    "error: invalid command",
+    "a 0",
+    "---",
+    "a 0"
+  ]
+
+# ---------------------------------------------------------------- io shell
+
+fn emit_at(xs: List[Str], i: Int) -> Unit !io =
+  if i >= len(xs) then ()
+  else {
+    print(tok(xs, i));
+    emit_at(xs, i + 1)
+  }
+
+fn main(args: List[Str]) -> Int !io = {
+  let text = read_all() in
+  let outs = run_text(text) in
+  emit_at(outs, 0);
+  0
+}

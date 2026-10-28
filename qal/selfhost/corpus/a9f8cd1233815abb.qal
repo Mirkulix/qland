@@ -1,0 +1,2 @@
+fn hold[!e](op: fn() -> Unit !e) -> Option[fn() -> Unit !e] = Some(op)
+fn bad7() -> Unit = match hold(fn() => print("x")) { Some(f) => f(), None => () }

@@ -1,0 +1,2 @@
+type L = Nil | Cons(Int, L)
+fn eq(a: L, b: L) -> Bool = a == b

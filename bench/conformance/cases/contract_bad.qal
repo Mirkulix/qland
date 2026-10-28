@@ -1,0 +1,4 @@
+fn bad(x: Int) -> Int
+  req x > 0
+  ens r > 0
+= x - 1

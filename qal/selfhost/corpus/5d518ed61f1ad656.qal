@@ -1,0 +1,4 @@
+fn put(m: Map[Int, Str], k: Int, v: Str) -> Map[Int, Str] = map_put(m, k, v)
+fn del(m: Map[Int, Str], k: Int) -> Map[Int, Str] = map_del(m, k)
+fn lookup(m: Map[Int, Str], k: Int) -> Option[Str] = map_get(m, k)
+fn same(a: Map[Int, Str], b: Map[Int, Str]) -> Bool = a == b

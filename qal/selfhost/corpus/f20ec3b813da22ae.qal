@@ -1,0 +1,1 @@
+fn s(a: Int) -> Int req a >= 0 ens r >= 0 && r <= a = shr(a, 3)

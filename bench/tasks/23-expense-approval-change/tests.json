@@ -1,0 +1,144 @@
+{
+ "id": "23-expense-approval-change",
+ "title": "Expense approval: change request",
+ "effects": [
+  "io"
+ ],
+ "cases": [
+  {
+   "name": "example",
+   "args": [],
+   "stdin": "alice;2026-10-23;travel;12000\nalice;2026-10-24;travel;12000\nalice;2026-10-24;meals;7500\nalice;2026-10-24;travel;12000\nbob;2026-10-25;travel;100\nbob;2026-11-02;meals;100\n",
+   "files": {},
+   "public": true,
+   "stdout": "OK 1 alice 12000\nREJECT 2 alice 12000 weekend\nOK 3 alice 7500\nREJECT 4 alice 12000 duplicate\nREJECT 5 bob 100 weekend\nOK 6 bob 100\n---\nalice 19500 2 2 1\nbob 100 1 1 1\n",
+   "exit_code": 1
+  },
+  {
+   "name": "invalid",
+   "args": [],
+   "stdin": "carol;2028-02-29;meals;500\ncarol;2025-02-29;meals;500\ndave;2026-04-01;snacks;500\n;2026-04-01;meals;500\nerin;2026-04-31;other;100\n",
+   "files": {},
+   "public": true,
+   "stdout": "OK 1 carol 500\nREJECT 2 carol invalid\nREJECT 3 dave invalid\nREJECT 4 ? invalid\nREJECT 5 erin invalid\n---\ncarol 500 1 1 1\ndave 0 0 1 0\nerin 0 0 1 0\n",
+   "exit_code": 1
+  },
+  {
+   "name": "empty",
+   "args": [],
+   "stdin": "",
+   "files": {},
+   "public": false,
+   "stdout": "---\n",
+   "exit_code": 0
+  },
+  {
+   "name": "all_ok",
+   "args": [],
+   "stdin": "a;2026-01-01;travel;50000\na;2026-01-02;meals;8000\nb;2026-01-01;other;10000\n",
+   "files": {},
+   "public": false,
+   "stdout": "OK 1 a 50000\nOK 2 a 8000\nOK 3 b 10000\n---\na 58000 2 0 1\nb 10000 1 0 1\n",
+   "exit_code": 0
+  },
+  {
+   "name": "meals_limit_edge",
+   "args": [],
+   "stdin": "m;2026-05-04;meals;8000\nm;2026-05-05;meals;8001\nm;2026-05-06;meals;6001\n",
+   "files": {},
+   "public": false,
+   "stdout": "OK 1 m 8000\nREJECT 2 m 8001 over_limit\nOK 3 m 6001\n---\nm 14001 2 1 1\n",
+   "exit_code": 1
+  },
+  {
+   "name": "weekend_dates",
+   "args": [],
+   "stdin": "w;2000-02-29;travel;10\nw;2026-01-03;travel;10\nw;2026-02-28;travel;10\nw;2026-03-01;travel;10\nw;1999-12-31;travel;10\nw;2024-02-29;travel;10\nw;2026-11-01;travel;10\nw;2100-03-01;travel;10\n",
+   "files": {},
+   "public": false,
+   "stdout": "OK 1 w 10\nREJECT 2 w 10 weekend\nREJECT 3 w 10 weekend\nREJECT 4 w 10 weekend\nOK 5 w 10\nOK 6 w 10\nREJECT 7 w 10 weekend\nOK 8 w 10\n---\nw 40 4 4 4\n",
+   "exit_code": 1
+  },
+  {
+   "name": "weekend_only_travel",
+   "args": [],
+   "stdin": "k;2026-10-24;meals;10\nk;2026-10-25;equipment;10\nk;2026-10-24;other;10\nk;2026-10-24;travel;10\n",
+   "files": {},
+   "public": false,
+   "stdout": "OK 1 k 10\nOK 2 k 10\nOK 3 k 10\nREJECT 4 k 10 weekend\n---\nk 30 3 1 1\n",
+   "exit_code": 1
+  },
+  {
+   "name": "weekend_order",
+   "args": [],
+   "stdin": "o;2026-10-24;travel;60000\no;2026-10-24;travel;60000\no;2026-10-26;travel;60000\n",
+   "files": {},
+   "public": false,
+   "stdout": "REJECT 1 o 60000 weekend\nREJECT 2 o 60000 duplicate\nREJECT 3 o 60000 over_limit\n---\no 0 0 3 0\n",
+   "exit_code": 1
+  },
+  {
+   "name": "cap_exact",
+   "args": [],
+   "stdin": "x;2026-05-01;equipment;150000\nx;2026-05-04;travel;50000\nx;2026-05-05;meals;1\nx;2026-06-01;meals;1\n",
+   "files": {},
+   "public": false,
+   "stdout": "OK 1 x 150000\nOK 2 x 50000\nREJECT 3 x 1 monthly_cap\nOK 4 x 1\n---\nx 200001 3 1 2\n",
+   "exit_code": 1
+  },
+  {
+   "name": "weekend_not_counted_in_cap",
+   "args": [],
+   "stdin": "y;2026-07-01;equipment;150000\ny;2026-07-04;travel;50000\ny;2026-07-06;travel;50000\ny;2026-07-07;meals;1\n",
+   "files": {},
+   "public": false,
+   "stdout": "OK 1 y 150000\nREJECT 2 y 50000 weekend\nOK 3 y 50000\nREJECT 4 y 1 monthly_cap\n---\ny 200000 2 2 1\n",
+   "exit_code": 1
+  },
+  {
+   "name": "months_column",
+   "args": [],
+   "stdin": "z;2026-01-05;meals;10\nz;2026-01-06;meals;10\nz;2026-02-05;meals;10\nz;2026-03-05;meals;9000\nz;2027-01-05;meals;10\nq;2026-01-05;meals;9000\n",
+   "files": {},
+   "public": false,
+   "stdout": "OK 1 z 10\nOK 2 z 10\nOK 3 z 10\nREJECT 4 z 9000 over_limit\nOK 5 z 10\nREJECT 6 q 9000 over_limit\n---\nq 0 0 1 0\nz 40 4 1 3\n",
+   "exit_code": 1
+  },
+  {
+   "name": "amount_edges",
+   "args": [],
+   "stdin": "q;2026-09-01;other;0\nq;2026-09-01;other;1000000000\nq;2026-09-01;other;000000001\nq;2026-09-01;other;1\nq;2026-09-01;other;+5\n",
+   "files": {},
+   "public": false,
+   "stdout": "REJECT 1 q invalid\nREJECT 2 q invalid\nOK 3 q 1\nREJECT 4 q 1 duplicate\nREJECT 5 q invalid\n---\nq 1 1 4 1\n",
+   "exit_code": 1
+  },
+  {
+   "name": "crlf_and_fields",
+   "args": [],
+   "stdin": "w;2026-10-12;travel;100\r\nw;2026-10-12;travel;100;extra\nw;2026-10-12\nw w;2026-10-12;travel;100\n",
+   "files": {},
+   "public": false,
+   "stdout": "OK 1 w 100\nREJECT 2 w invalid\nREJECT 3 w invalid\nREJECT 4 ? invalid\n---\nw 100 1 2 1\n",
+   "exit_code": 1
+  },
+  {
+   "name": "order_and_names",
+   "args": [],
+   "stdin": "Zed;2026-11-02;meals;10\nadam;2026-11-02;meals;10\n_x;2026-11-02;meals;10\nAdam;2026-11-02;meals;10\n",
+   "files": {},
+   "public": false,
+   "stdout": "OK 1 Zed 10\nOK 2 adam 10\nOK 3 _x 10\nOK 4 Adam 10\n---\nAdam 10 1 0 1\nZed 10 1 0 1\n_x 10 1 0 1\nadam 10 1 0 1\n",
+   "exit_code": 0
+  },
+  {
+   "name": "last_line_no_newline",
+   "args": [],
+   "stdin": "n;2026-12-24;other;10000\nn;2026-12-24;other;10001",
+   "files": {},
+   "public": false,
+   "stdout": "OK 1 n 10000\nREJECT 2 n 10001 over_limit\n---\nn 10000 1 1 1\n",
+   "exit_code": 1
+  }
+ ]
+}

@@ -1,0 +1,140 @@
+[
+  {
+    "task": "01-word-count",
+    "passed": 9,
+    "total": 9,
+    "error": null
+  },
+  {
+    "task": "02-roman",
+    "passed": 9,
+    "total": 9,
+    "error": null
+  },
+  {
+    "task": "03-csv-sum",
+    "passed": 12,
+    "total": 12,
+    "error": null
+  },
+  {
+    "task": "04-binary-search",
+    "passed": 7,
+    "total": 7,
+    "error": null
+  },
+  {
+    "task": "05-brackets",
+    "passed": 9,
+    "total": 9,
+    "error": null
+  },
+  {
+    "task": "06-bank",
+    "passed": 8,
+    "total": 8,
+    "error": null
+  },
+  {
+    "task": "07-tokenizer",
+    "passed": 8,
+    "total": 8,
+    "error": null
+  },
+  {
+    "task": "08-expr-eval",
+    "passed": 11,
+    "total": 11,
+    "error": null
+  },
+  {
+    "task": "09-rle",
+    "passed": 14,
+    "total": 14,
+    "error": null
+  },
+  {
+    "task": "10-file-stats",
+    "passed": 12,
+    "total": 12,
+    "error": null
+  },
+  {
+    "task": "11-prime-factors",
+    "passed": 8,
+    "total": 8,
+    "error": null
+  },
+  {
+    "task": "12-sort-words",
+    "passed": 8,
+    "total": 8,
+    "error": null
+  },
+  {
+    "task": "13-word-freq",
+    "passed": 11,
+    "total": 11,
+    "error": null
+  },
+  {
+    "task": "14-bst",
+    "passed": 9,
+    "total": 9,
+    "error": null
+  },
+  {
+    "task": "15-caesar",
+    "passed": 13,
+    "total": 13,
+    "error": null
+  },
+  {
+    "task": "16-anagrams",
+    "passed": 8,
+    "total": 8,
+    "error": null
+  },
+  {
+    "task": "17-word-wrap",
+    "passed": 12,
+    "total": 12,
+    "error": null
+  },
+  {
+    "task": "18-date-diff",
+    "passed": 7,
+    "total": 7,
+    "error": null
+  },
+  {
+    "task": "19-base-convert",
+    "passed": 7,
+    "total": 7,
+    "error": null
+  },
+  {
+    "task": "20-ini-query",
+    "passed": 11,
+    "total": 11,
+    "error": null
+  },
+  {
+    "task": "21-expense-approval",
+    "passed": 12,
+    "total": 12,
+    "error": null
+  },
+  {
+    "task": "22-expense-approval-contracts",
+    "passed": 12,
+    "total": 12,
+    "error": null
+  },
+  {
+    "task": "23-expense-approval-change",
+    "passed": 15,
+    "total": 15,
+    "error": null
+  }
+]

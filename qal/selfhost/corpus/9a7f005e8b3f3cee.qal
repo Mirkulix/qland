@@ -1,0 +1,1 @@
+fn qc_main(b: Str) -> Bytes = to_bytes(b)

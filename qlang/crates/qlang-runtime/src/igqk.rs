@@ -106,9 +106,7 @@ pub fn matrix_inverse_general(m: &[f64], n: usize) -> Option<Vec<f64>> {
         // Swap rows
         if max_row != col {
             for j in 0..(2 * n) {
-                let tmp = aug[col * 2 * n + j];
-                aug[col * 2 * n + j] = aug[max_row * 2 * n + j];
-                aug[max_row * 2 * n + j] = tmp;
+                aug.swap(col * 2 * n + j, max_row * 2 * n + j);
             }
         }
         // Scale pivot row
@@ -177,10 +175,7 @@ pub fn density_matrix_to_full(rho: &DensityMatrix) -> Vec<f64> {
 /// gradient vector for one sample.
 ///
 /// Returns a d x d matrix where d = weights.len().
-pub fn compute_fisher_metric(
-    weights: &[f32],
-    gradients_batch: &[Vec<f32>],
-) -> Vec<Vec<f32>> {
+pub fn compute_fisher_metric(weights: &[f32], gradients_batch: &[Vec<f32>]) -> Vec<Vec<f32>> {
     let d = weights.len();
     let n = gradients_batch.len();
     if n == 0 {
@@ -243,7 +238,10 @@ pub fn flatten_fisher(fisher: &[Vec<f32>]) -> Vec<f64> {
 /// implementations.
 pub fn laplace_beltrami(rho: &DensityMatrix, metric: &[f64]) -> Vec<f64> {
     let n = rho.dim;
-    assert!(metric.len() >= n, "metric must have at least n diagonal elements");
+    assert!(
+        metric.len() >= n,
+        "metric must have at least n diagonal elements"
+    );
     // Construct H as a diagonal matrix from metric eigenvalues
     let mut h = vec![0.0; n * n];
     for i in 0..n {
@@ -285,7 +283,11 @@ pub fn evolve_density_matrix(
 ) {
     let n = rho.dim;
     assert_eq!(hamiltonian.len(), n * n, "hamiltonian must be n x n");
-    assert_eq!(natural_gradient.len(), n * n, "natural_gradient must be n x n");
+    assert_eq!(
+        natural_gradient.len(),
+        n * n,
+        "natural_gradient must be n x n"
+    );
 
     // Reconstruct full density matrix
     let rho_full = density_matrix_to_full(rho);
@@ -306,8 +308,7 @@ pub fn evolve_density_matrix(
         // The commutator term [H, rho] is antisymmetric for Hermitian H and rho,
         // so -i[H,rho] is Hermitian. In the real case we keep the commutator
         // contribution directly (it drives exploration/mixing).
-        new_rho[idx] = rho_full[idx]
-            + dt * (-commutator[idx] - gamma * anticommutator[idx]);
+        new_rho[idx] = rho_full[idx] + dt * (-commutator[idx] - gamma * anticommutator[idx]);
     }
 
     // Symmetrize (enforce Hermiticity in real case)
@@ -479,7 +480,11 @@ pub fn igqk_training_step(
 
     // Step 1: Initialize density matrix as pure state from weights
     let mut state_vec = vec![0.0f64; dim];
-    let norm_sq: f64 = weights.iter().take(dim).map(|&w| (w as f64) * (w as f64)).sum();
+    let norm_sq: f64 = weights
+        .iter()
+        .take(dim)
+        .map(|&w| (w as f64) * (w as f64))
+        .sum();
     let norm = if norm_sq > 1e-15 { norm_sq.sqrt() } else { 1.0 };
     for i in 0..dim {
         state_vec[i] = if i < d { weights[i] as f64 / norm } else { 0.0 };
@@ -621,8 +626,7 @@ pub fn compress_with_bound(
         CompressionMethod::LowRank(rank) => {
             // For a vector, low-rank means keeping the top `rank` components
             // by magnitude
-            let mut indexed: Vec<(usize, f32)> =
-                weights.iter().cloned().enumerate().collect();
+            let mut indexed: Vec<(usize, f32)> = weights.iter().cloned().enumerate().collect();
             indexed.sort_by(|a, b| b.1.abs().partial_cmp(&a.1.abs()).unwrap());
             let mut comp = vec![0.0f32; n];
             let actual_rank = rank.min(n);
@@ -633,8 +637,7 @@ pub fn compress_with_bound(
             (comp, actual_rank)
         }
         CompressionMethod::Sparse(top_k) => {
-            let mut indexed: Vec<(usize, f32)> =
-                weights.iter().cloned().enumerate().collect();
+            let mut indexed: Vec<(usize, f32)> = weights.iter().cloned().enumerate().collect();
             indexed.sort_by(|a, b| b.1.abs().partial_cmp(&a.1.abs()).unwrap());
             let mut comp = vec![0.0f32; n];
             let actual_k = top_k.min(n);
@@ -692,8 +695,8 @@ fn estimate_sigma_sq_min(weights: &[f32]) -> f64 {
     let q_end = (sorted.len() / 4).max(1);
     let subset = &sorted[..q_end];
     let mean: f64 = subset.iter().sum::<f64>() / subset.len() as f64;
-    let var: f64 = subset.iter().map(|&x| (x - mean) * (x - mean)).sum::<f64>()
-        / subset.len() as f64;
+    let var: f64 =
+        subset.iter().map(|&x| (x - mean) * (x - mean)).sum::<f64>() / subset.len() as f64;
     var.max(1e-10) // regularize
 }
 
@@ -735,10 +738,7 @@ pub fn check_convergence(
     hbar: f64,
 ) -> ConvergenceResult {
     let current_loss = loss_history.last().copied().unwrap_or(f64::INFINITY);
-    let estimated_min = loss_history
-        .iter()
-        .copied()
-        .fold(f64::INFINITY, f64::min);
+    let estimated_min = loss_history.iter().copied().fold(f64::INFINITY, f64::min);
 
     // O(hbar) quantum uncertainty floor
     // The constant factor depends on the problem; we use entropy as a scaling
@@ -915,7 +915,10 @@ mod tests {
                 quad += (v[i] as f64) * (fisher[i][j] as f64) * (v[j] as f64);
             }
         }
-        assert!(quad >= -1e-10, "Fisher metric quadratic form should be non-negative");
+        assert!(
+            quad >= -1e-10,
+            "Fisher metric quadratic form should be non-negative"
+        );
     }
 
     #[test]
@@ -933,20 +936,15 @@ mod tests {
         let state = vec![1.0, 0.0, 0.0];
         let mut rho = DensityMatrix::pure_state(&state);
 
-        let hamiltonian = vec![
-            -1.0, 0.1, 0.0,
-            0.1, -2.0, 0.1,
-            0.0, 0.1, -3.0,
-        ];
-        let nat_grad = vec![
-            0.1, 0.0, 0.0,
-            0.0, 0.2, 0.0,
-            0.0, 0.0, 0.3,
-        ];
+        let hamiltonian = vec![-1.0, 0.1, 0.0, 0.1, -2.0, 0.1, 0.0, 0.1, -3.0];
+        let nat_grad = vec![0.1, 0.0, 0.0, 0.0, 0.2, 0.0, 0.0, 0.0, 0.3];
 
         evolve_density_matrix(&mut rho, &hamiltonian, &nat_grad, 0.01, 0.001);
 
-        assert!(rho.is_valid(), "Density matrix should remain valid after evolution");
+        assert!(
+            rho.is_valid(),
+            "Density matrix should remain valid after evolution"
+        );
         assert!(
             (rho.trace() - 1.0).abs() < 1e-10,
             "Trace should be 1.0 after evolution"
@@ -976,10 +974,7 @@ mod tests {
     #[test]
     fn test_igqk_training_step_produces_valid_output() {
         let weights = vec![0.5, -0.3, 0.8, 0.1];
-        let grads = vec![
-            vec![0.1, -0.2, 0.3, -0.1],
-            vec![-0.1, 0.1, -0.2, 0.2],
-        ];
+        let grads = vec![vec![0.1, -0.2, 0.3, -0.1], vec![-0.1, 0.1, -0.2, 0.2]];
         let loss_grad = vec![0.05, -0.1, 0.15, -0.05];
 
         let result = igqk_training_step(&weights, &grads, &loss_grad, 0.1, 0.01, 0.001);
@@ -1024,7 +1019,12 @@ mod tests {
         let weights = vec![0.1, 0.5, -0.9, 0.3, -0.7];
         let result = compress_with_bound(&weights, CompressionMethod::Sparse(2), 1.0);
         // Should keep the 2 largest by magnitude: -0.9 and -0.7
-        let nonzero: Vec<f32> = result.compressed.iter().copied().filter(|&w| w != 0.0).collect();
+        let nonzero: Vec<f32> = result
+            .compressed
+            .iter()
+            .copied()
+            .filter(|&w| w != 0.0)
+            .collect();
         assert_eq!(nonzero.len(), 2, "Sparse(2) should keep exactly 2 weights");
     }
 
@@ -1032,7 +1032,12 @@ mod tests {
     fn test_low_rank_compression() {
         let weights = vec![0.1, 0.5, -0.9, 0.3, -0.7, 0.2];
         let result = compress_with_bound(&weights, CompressionMethod::LowRank(3), 1.0);
-        let nonzero: Vec<f32> = result.compressed.iter().copied().filter(|&w| w != 0.0).collect();
+        let nonzero: Vec<f32> = result
+            .compressed
+            .iter()
+            .copied()
+            .filter(|&w| w != 0.0)
+            .collect();
         assert_eq!(nonzero.len(), 3);
         assert!(result.distortion >= 0.0);
     }
@@ -1083,7 +1088,10 @@ mod tests {
         let id = identity_matrix(3);
         let (evals, _evecs) = symmetric_eigen(&id, 3);
         for &e in &evals {
-            assert!((e - 1.0).abs() < 1e-10, "Identity eigenvalues should be 1.0");
+            assert!(
+                (e - 1.0).abs() < 1e-10,
+                "Identity eigenvalues should be 1.0"
+            );
         }
     }
 

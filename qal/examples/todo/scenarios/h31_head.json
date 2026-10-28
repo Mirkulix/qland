@@ -1,0 +1,98 @@
+{
+ "name": "h31_head",
+ "description": "HEAD is GET without a body",
+ "steps": [
+  {
+   "name": "create a",
+   "request": {
+    "method": "POST",
+    "path": "/todos",
+    "json": {
+     "title": "x"
+    }
+   },
+   "expect": {
+    "status": 201,
+    "json": {
+     "id": {
+      "$var": "a"
+     },
+     "title": "x",
+     "done": false,
+     "created_at": {
+      "$type": "int"
+     }
+    },
+    "headers": {
+     "location": "/todos/{{a}}",
+     "content-type": "application/json"
+    }
+   },
+   "capture": {
+    "a": "/id"
+   }
+  },
+  {
+   "name": "HEAD list",
+   "request": {
+    "method": "HEAD",
+    "path": "/todos"
+   },
+   "expect": {
+    "status": 200,
+    "body": "",
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "HEAD item",
+   "request": {
+    "method": "HEAD",
+    "path": "/todos/{{a}}"
+   },
+   "expect": {
+    "status": 200,
+    "body": "",
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "HEAD missing",
+   "request": {
+    "method": "HEAD",
+    "path": "/todos/99"
+   },
+   "expect": {
+    "status": 404,
+    "body": ""
+   }
+  },
+  {
+   "name": "HEAD bad id",
+   "request": {
+    "method": "HEAD",
+    "path": "/todos/x"
+   },
+   "expect": {
+    "status": 400,
+    "body": ""
+   }
+  },
+  {
+   "name": "HEAD bad filter",
+   "request": {
+    "method": "HEAD",
+    "path": "/todos",
+    "query": "done=x"
+   },
+   "expect": {
+    "status": 400,
+    "body": ""
+   }
+  }
+ ]
+}

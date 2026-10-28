@@ -1,0 +1,1 @@
+fn p() -> Unit !io = print("x")

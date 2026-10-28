@@ -1,0 +1,2 @@
+fn app_main() -> Int = std.a.f(1)
+fn app_plain() -> Int = 1

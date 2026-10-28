@@ -1,0 +1,2 @@
+fn h() -> Int = 1
+type P = { x: Int }

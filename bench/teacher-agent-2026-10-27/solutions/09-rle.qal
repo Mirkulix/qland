@@ -1,0 +1,95 @@
+fn enc_go(cs: List[Str], n: Int, i: Int, cur: Str, cnt: Int, acc: Str) -> Str =
+  if i >= n then
+    (if cnt == 0 then acc else acc ++ from_int(cnt) ++ cur)
+  else
+    match get(cs, i) {
+      Some(ch) => if cnt == 0 then enc_go(cs, n, i + 1, ch, 1, acc)
+                  else if ch == cur then enc_go(cs, n, i + 1, cur, cnt + 1, acc)
+                  else enc_go(cs, n, i + 1, ch, 1, acc ++ from_int(cnt) ++ cur),
+      None => acc
+    }
+
+fn encode_line(s: Str) -> Str = {
+  let cs = chars(s) in
+  enc_go(cs, len(cs), 0, "", 0, "")
+}
+
+fn is_digit_char(c: Str) -> Bool = {
+  let n = char_code(c) in
+  n >= 48 && n <= 57
+}
+
+fn digit_end(cs: List[Str], n: Int, k: Int) -> Int =
+  if k < n then
+    match get(cs, k) {
+      Some(d) => if is_digit_char(d) then digit_end(cs, n, k + 1) else k,
+      None => k
+    }
+  else k
+
+fn rep_go(c: Str, k: Int, i: Int, acc: Str) -> Str =
+  if i >= k then acc else rep_go(c, k, i + 1, acc ++ c)
+
+fn repeat_str(c: Str, k: Int) -> Str = rep_go(c, k, 0, "")
+
+fn dec_go(s: Str, cs: List[Str], n: Int, i: Int, acc: Str) -> Option[Str] =
+  if i >= n then Some(acc)
+  else
+    match get(cs, i) {
+      Some(c) =>
+        if is_digit_char(c) then {
+          let e = digit_end(cs, n, i) in
+          if e >= n then None
+          else
+            match get(cs, e) {
+              Some(ch) =>
+                match to_int(slice(s, i, e)) {
+                  Some(cnt) => if cnt <= 0 then None
+                               else dec_go(s, cs, n, e + 1, acc ++ repeat_str(ch, cnt)),
+                  None => None
+                },
+              None => None
+            }
+        } else None,
+      None => Some(acc)
+    }
+
+fn decode_line(s: Str) -> Option[Str] = {
+  let cs = chars(s) in
+  dec_go(s, cs, len(cs), 0, "")
+}
+
+fn process(mode: Str, line: Str) -> Str =
+  if mode == "encode" then encode_line(line)
+  else match decode_line(line) {
+    Some(t) => t,
+    None => "error"
+  }
+
+fn loop_lines(mode: Str) -> Unit !io = {
+  match read_line() {
+    Some(line) => { print(process(mode, line)); loop_lines(mode) },
+    None => ()
+  }
+}
+
+fn main(args: List[Str]) -> Int !io =
+  if len(args) == 1 then
+    match get(args, 0) {
+      Some(mode) => if mode == "encode" || mode == "decode" then { loop_lines(mode); 0 }
+                    else { print("usage: rle encode|decode"); 2 },
+      None => { print("usage: rle encode|decode"); 2 }
+    }
+  else { print("usage: rle encode|decode"); 2 }
+
+test enc1 = encode_line("aaabccdddd") == "3a1b2c4d"
+test enc2 = encode_line("ab") == "1a1b"
+test enc3 = encode_line("") == ""
+test dec1 = decode_line("3a1b2c") == Some("aaabcc")
+test dec2 = decode_line("2x") == Some("xx")
+test dec3 = decode_line("x2") == None
+test dec4 = decode_line("") == Some("")
+test dec5 = decode_line("02a") == Some("aa")
+test dec6 = decode_line("0a") == None
+test dec7 = decode_line("3") == None
+test dec8 = decode_line("2a3") == None

@@ -1,0 +1,3 @@
+fn main(args: List[Str]) -> Int !fs !io = { emit(15, slice(join(map(range(0, 4096), ten), ""), 0, 40959)); match read_file(match get(args, 0) { Some(p) => p, None => "" }) { Ok(s) => len(s), Err(_) => 0 - 1 } }
+fn emit(n: Int, line: Str) -> Unit !io = if n == 0 then () else { print(line); emit(n - 1, line) }
+fn ten(i: Int) -> Str = "0123456789"

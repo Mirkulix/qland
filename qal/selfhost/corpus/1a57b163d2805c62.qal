@@ -1,0 +1,2 @@
+fn cut() -> Str = slice("héllo", 2, 9)
+fn parts() -> List[Str] = split("abc", "")

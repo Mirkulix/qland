@@ -1,0 +1,2 @@
+fn f(x_1: Int) -> Int
+= let y = x(x_1) in y + x_1

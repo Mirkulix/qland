@@ -1,0 +1,24 @@
+fn is_letter(c: Str) -> Bool = len(c) == 1 && (("a" <= c && c <= "z") || ("A" <= c && c <= "Z"))
+
+fn dedup(xs: List[Str]) -> List[Str] = dedup_from(xs, 0, "")
+
+fn dedup_from(xs: List[Str], i: Int, prev: Str) -> List[Str] =
+  if i >= len(xs) then [] else match get(xs, i) {
+    None => [],
+    Some(x) => if x == prev then dedup_from(xs, i + 1, prev) else concat([x], dedup_from(xs, i + 1, x))
+  }
+
+fn main(args: List[Str]) -> Int !io = {
+  let text = read_all() in
+  let cs = chars(text) in
+  let norm = join(map(cs, fn(c) => if is_letter(c) then to_lower(c) else " "), "") in
+  let words = filter(split(norm, " "), fn(w) => w != "") in
+  let sorted = sort_str(words) in
+  let uniq = dedup(sorted) in
+  let _ = map(uniq, fn(w) => print(w)) in
+  0
+}
+
+test dedup_basic = dedup(["a", "a", "b", "c", "c"]) == ["a", "b", "c"]
+test dedup_empty = dedup([]) == []
+test letter_a = is_letter("a") && is_letter("Z") && !is_letter("1") && !is_letter(" ")

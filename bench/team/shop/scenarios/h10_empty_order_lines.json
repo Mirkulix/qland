@@ -1,0 +1,11 @@
+{
+  "name": "h10_empty_order_lines",
+  "description": "POST /orders with empty lines gives 400",
+  "steps": [
+    {
+      "name": "empty lines",
+      "request": {"method": "POST", "path": "/orders", "json": {"lines": []}},
+      "expect": {"status": 400}
+    }
+  ]
+}

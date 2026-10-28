@@ -1,0 +1,236 @@
+# Expression evaluator: one integer expression per input line.
+#   expr  = term (("+" | "-") term)*
+#   term  = unary (("*" | "/" | "%") unary)*
+#   unary = "-" unary | atom
+#   atom  = number | "(" expr ")"
+# Operators are left-associative; "/" truncates toward zero and "%" takes the
+# sign of the left operand (both are QAL's Int semantics).  Every line is
+# checked for syntax completely before it is evaluated; spaces and tabs may
+# appear anywhere between tokens.
+
+type Ast = Num(Int) | Neg(Ast) | Add(Ast, Ast) | Sub(Ast, Ast) | Mul(Ast, Ast) | Div(Ast, Ast) | Mod(Ast, Ast)
+type Parsed = POk(Ast, Int) | PErr
+type NumRes = NOk(Str, Int) | NErr
+type Val = VInt(Int) | VZero
+type Op = OAdd | OSub | OMul | ODiv | OMod
+
+# --- characters -------------------------------------------------------------
+
+fn char_at(cs: List[Str], i: Int) -> Str = match get(cs, i) { Some(c) => c, None => "" }
+
+fn is_space(c: Str) -> Bool = c == " " || c == "\t"
+
+fn is_digit(c: Str) -> Bool = if c == "" then false else char_code(c) >= 48 && char_code(c) <= 57
+
+fn skip_ws(cs: List[Str], i: Int) -> Int =
+  if i < len(cs) && is_space(char_at(cs, i)) then skip_ws(cs, i + 1) else i
+
+# --- numbers ----------------------------------------------------------------
+
+# A number is a non-empty run of decimal digits; collect it as text and let
+# `to_int` convert it (None if it does not fit in 64 bits).
+fn digit_run(cs: List[Str], i: Int, acc: Str) -> NumRes =
+  if i < len(cs) && is_digit(char_at(cs, i))
+  then digit_run(cs, i + 1, acc ++ char_at(cs, i))
+  else NOk(acc, i)
+
+fn parse_num(cs: List[Str], i: Int) -> NumRes =
+  if i < len(cs) && is_digit(char_at(cs, i)) then digit_run(cs, i, "") else NErr
+
+# --- recursive descent parser (returns the AST and the next position) -------
+
+fn parse_expr(cs: List[Str], i: Int) -> Parsed =
+  match parse_term(cs, i) {
+    PErr => PErr,
+    POk(a, j) => expr_rest(cs, a, j)
+  }
+
+fn expr_rest(cs: List[Str], a: Ast, i: Int) -> Parsed =
+  let j = skip_ws(cs, i) in
+  let c = char_at(cs, j) in
+  if j >= len(cs) then POk(a, j)
+  else if c == "+" then
+    match parse_term(cs, j + 1) { PErr => PErr, POk(b, k) => expr_rest(cs, Add(a, b), k) }
+  else if c == "-" then
+    match parse_term(cs, j + 1) { PErr => PErr, POk(b, k) => expr_rest(cs, Sub(a, b), k) }
+  else POk(a, j)
+
+fn parse_term(cs: List[Str], i: Int) -> Parsed =
+  match parse_unary(cs, i) {
+    PErr => PErr,
+    POk(a, j) => term_rest(cs, a, j)
+  }
+
+fn term_rest(cs: List[Str], a: Ast, i: Int) -> Parsed =
+  let j = skip_ws(cs, i) in
+  let c = char_at(cs, j) in
+  if j >= len(cs) then POk(a, j)
+  else if c == "*" then
+    match parse_unary(cs, j + 1) { PErr => PErr, POk(b, k) => term_rest(cs, Mul(a, b), k) }
+  else if c == "/" then
+    match parse_unary(cs, j + 1) { PErr => PErr, POk(b, k) => term_rest(cs, Div(a, b), k) }
+  else if c == "%" then
+    match parse_unary(cs, j + 1) { PErr => PErr, POk(b, k) => term_rest(cs, Mod(a, b), k) }
+  else POk(a, j)
+
+fn parse_unary(cs: List[Str], i: Int) -> Parsed =
+  let j = skip_ws(cs, i) in
+  if j < len(cs) && char_at(cs, j) == "-" then
+    match parse_unary(cs, j + 1) { PErr => PErr, POk(a, k) => POk(Neg(a), k) }
+  else parse_atom(cs, j)
+
+fn parse_atom(cs: List[Str], i: Int) -> Parsed =
+  let c = char_at(cs, i) in
+  if i >= len(cs) then PErr
+  else if is_digit(c) then
+    match parse_num(cs, i) {
+      NErr => PErr,
+      NOk(t, j) => match to_int(t) { Some(n) => POk(Num(n), j), None => PErr }
+    }
+  else if c == "(" then
+    match parse_expr(cs, skip_ws(cs, i + 1)) {
+      PErr => PErr,
+      POk(a, k) => let m = skip_ws(cs, k) in
+        if m < len(cs) && char_at(cs, m) == ")" then POk(a, m + 1) else PErr
+    }
+  else PErr
+
+# The whole line must match; leading and trailing whitespace is ignored.
+fn parse_top(cs: List[Str]) -> Option[Ast] =
+  match parse_expr(cs, skip_ws(cs, 0)) {
+    PErr => None,
+    POk(a, i) => if skip_ws(cs, i) == len(cs) then Some(a) else None
+  }
+
+# --- evaluation -------------------------------------------------------------
+
+fn apply(op: Op, u: Int, v: Int) -> Val =
+  match op {
+    OAdd => VInt(u + v),
+    OSub => VInt(u - v),
+    OMul => VInt(u * v),
+    ODiv => if v == 0 then VZero else VInt(u / v),
+    OMod => if v == 0 then VZero else VInt(u % v)
+  }
+
+# Both operands are always evaluated, so any division or remainder by zero on
+# the line is reported as such.
+fn eval_bin(op: Op, x: Ast, y: Ast) -> Val =
+  match eval_ast(x) {
+    VZero => VZero,
+    VInt(u) => match eval_ast(y) { VZero => VZero, VInt(v) => apply(op, u, v) }
+  }
+
+fn eval_ast(a: Ast) -> Val =
+  match a {
+    Num(n) => VInt(n),
+    Neg(x) => match eval_ast(x) { VZero => VZero, VInt(v) => VInt(0 - v) },
+    Add(x, y) => eval_bin(OAdd, x, y),
+    Sub(x, y) => eval_bin(OSub, x, y),
+    Mul(x, y) => eval_bin(OMul, x, y),
+    Div(x, y) => eval_bin(ODiv, x, y),
+    Mod(x, y) => eval_bin(OMod, x, y)
+  }
+
+fn eval_line(line: Str) -> Str =
+  match parse_top(chars(line)) {
+    None => "error: syntax",
+    Some(a) => match eval_ast(a) { VZero => "error: division by zero", VInt(v) => from_int(v) }
+  }
+
+fn run_lines() -> Unit !io =
+  match read_line() {
+    None => (),
+    Some(line) => { print(eval_line(line)); run_lines() }
+  }
+
+fn main(args: List[Str]) -> Int !io = { run_lines(); 0 }
+
+# --- tests ------------------------------------------------------------------
+
+# The example from the task description.
+test example_add_mul = eval_line("1 + 2 * 3") == "7"
+test example_parens = eval_line("(1 + 2) * 3") == "9"
+test example_div_zero = eval_line("7 / 0") == "error: division by zero"
+test example_syntax = eval_line("2 +") == "error: syntax"
+
+# Precedence and associativity.
+test add_assoc = eval_line("10 - 3 - 2") == "5"
+test div_assoc = eval_line("100 / 5 / 2") == "10"
+test mul_over_add = eval_line("2 + 3 * 4") == "14"
+test parens_override = eval_line("(2 + 3) * 4") == "20"
+test mixed = eval_line("2 * 3 + 4 * 5") == "26"
+test all_ops = eval_line("20 / 3 * 3 % 7") == "4"
+test sub_negative = eval_line("1 - 2 - 3") == "-4"
+
+# Unary minus.
+test unary_chain = eval_line("--5") == "5"
+test unary_triple = eval_line("---5") == "-5"
+test unary_prec = eval_line("-2 * 3") == "-6"
+test unary_after_mul = eval_line("2 * -3") == "-6"
+test unary_paren = eval_line("-(1 + 2)") == "-3"
+
+# Division and remainder semantics.
+test div_trunc_neg = eval_line("-7 / 2") == "-3"
+test div_trunc_pos = eval_line("7 / 2") == "3"
+test mod_neg_left = eval_line("-7 % 3") == "-1"
+test mod_neg_right = eval_line("7 % -3") == "1"
+test div_zero_nested = eval_line("1 + 2 / 0") == "error: division by zero"
+test mod_zero = eval_line("5 % 0") == "error: division by zero"
+test div_zero_in_product = eval_line("0 * (1 / 0)") == "error: division by zero"
+test div_zero_parens = eval_line("(1 + 2) % (3 - 3)") == "error: division by zero"
+test no_false_zero = eval_line("0 / 5") == "0"
+test mod_basic = eval_line("5 % 2") == "1"
+test mixed_ops = eval_line("2 * (3 + 4) % 5") == "4"
+test div_neg_chain = eval_line("-8 / -2 / -2") == "-2"
+test mod_neg_both = eval_line("-7 % -3") == "-1"
+test unary_of_paren_expr = eval_line("-(2 * (3 + 4))") == "-14"
+test neg_paren = eval_line("-(-3)") == "3"
+test double_div_zero = eval_line("1 / 0 / 0") == "error: division by zero"
+test div_by_expr_zero = eval_line("4 / (2 - 2)") == "error: division by zero"
+test many_zeros = eval_line("0000000000000000000000001") == "1"
+test min_int_exact = eval_line("0 - 9223372036854775807 - 1") == "-9223372036854775808"
+test neg_min_plus = eval_line("0 - 9223372036854775807 - 1 + 1") == "-9223372036854775807"
+
+# A line is checked for syntax before it is evaluated: a syntax error wins over
+# a division by zero inside the same line.
+test syntax_before_eval = eval_line("((1 % 0)") == "error: syntax"
+test syntax_before_eval2 = eval_line("1 / 0 +") == "error: syntax"
+test syntax_before_eval3 = eval_line("(1 + 2") == "error: syntax"
+test div_zero_valid = eval_line("((1) / (0))") == "error: division by zero"
+
+# Whitespace is ignored between tokens (but not inside a number).
+test ws_tabs = eval_line("  1\t+\t2  ") == "3"
+test ws_all = eval_line(" ( 1 + 2 ) * 3 ") == "9"
+test ws_inside_number_bad = eval_line("1 2") == "error: syntax"
+
+# Syntax errors.
+test empty_line = eval_line("") == "error: syntax"
+test spaces_only = eval_line("   \t ") == "error: syntax"
+test bad_char = eval_line("1 $ 2") == "error: syntax"
+test unbalanced_open = eval_line("((1 + 2)") == "error: syntax"
+test unbalanced_close = eval_line("1 + 2)") == "error: syntax"
+test trailing_op = eval_line("1 *") == "error: syntax"
+test leading_op = eval_line("* 1") == "error: syntax"
+test two_numbers = eval_line("1 2 + 3") == "error: syntax"
+test empty_parens = eval_line("()") == "error: syntax"
+test dot_number = eval_line("1.5") == "error: syntax"
+test equals = eval_line("1 = 1") == "error: syntax"
+
+# Large values that fit in a signed 64-bit integer.
+test max_int = eval_line("9223372036854775807") == "9223372036854775807"
+test min_int = eval_line("0 - 9223372036854775807") == "-9223372036854775807"
+test big_mul = eval_line("1000000 * 1000000") == "1000000000000"
+
+# A line may have leading zeros; the value is the numeric value.
+test leading_zeros = eval_line("007 + 1") == "8"
+
+# Deep nesting (100 levels) and maximum-length lines, as the limits allow.
+test deep_nesting_100 = eval_line("((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((1 + 1))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))") == "2"
+test deep_nesting_99 = eval_line("(((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((7)))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))") == "7"
+test deep_unary_50 = eval_line("--------------------------------------------------7") == "7"
+test deep_unary_49 = eval_line("-------------------------------------------------7") == "-7"
+test long_line_299 = eval_line("1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1") == "150"
+test long_chain = eval_line("0-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1") == "-100"
+test big_div = eval_line("9223372036854775807 / 1") == "9223372036854775807"
+test big_mix = eval_line("(1000000 * 1000000) / 4") == "250000000000"

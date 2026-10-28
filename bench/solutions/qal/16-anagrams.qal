@@ -1,0 +1,27 @@
+# Groups of anagrams: sort `<sorted letters> <word>` entries, then collect equal keys.
+
+fn entry(w: Str) -> Str = join(sort_str(chars(w)), "") ++ " " ++ w
+
+fn non_empty(s: Str) -> Bool = s != ""
+
+type G = { lines: List[Str], key: Str, words: List[Str], last: Str }
+
+fn close(g: G) -> List[Str] = if len(g.words) >= 2 then push(g.lines, join(g.words, " ")) else g.lines
+
+fn part(e: Str, i: Int) -> Str = match get(split(e, " "), i) { Some(s) => s, None => "" }
+
+fn group_step(g: G, e: Str) -> G =
+  if e == g.last then g
+  else if part(e, 0) == g.key then G { lines: g.lines, key: g.key, words: push(g.words, part(e, 1)), last: e }
+  else G { lines: close(g), key: part(e, 0), words: [part(e, 1)], last: e }
+
+fn groups(words: List[Str]) -> List[Str] =
+  sort_str(close(fold(sort_str(map(filter(words, non_empty), entry)), G { lines: [], key: "", words: [], last: "" }, group_step)))
+
+test example = groups(["listen", "silent", "cat", "act", "dog", "enlist", "cat"]) == ["act cat", "enlist listen silent"]
+
+fn read_words(acc: List[Str]) -> List[Str] !io = match read_line() { None => acc, Some(l) => read_words(push(acc, trim(l))) }
+
+fn show(n: Int, line: Str) -> Int !io = { print(line); n }
+
+fn main(args: List[Str]) -> Int !io = fold(groups(read_words([])), 0, show)

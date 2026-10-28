@@ -26,11 +26,7 @@ pub enum ShapeError {
     },
 
     #[error("node {node}: incompatible shapes {a} and {b}")]
-    IncompatibleShapes {
-        node: NodeId,
-        a: Shape,
-        b: Shape,
-    },
+    IncompatibleShapes { node: NodeId, a: Shape, b: Shape },
 
     #[error("node {node}: unknown shape — no input edges found")]
     UnknownShape { node: NodeId },
@@ -187,10 +183,18 @@ fn infer_node(
         Op::MatMul => {
             let (a, b) = binary_inputs(nid, inputs)?;
             if a.shape.rank() != 2 {
-                return Err(ShapeError::RankMismatch { node: nid, expected: 2, got: a.shape.rank() });
+                return Err(ShapeError::RankMismatch {
+                    node: nid,
+                    expected: 2,
+                    got: a.shape.rank(),
+                });
             }
             if b.shape.rank() != 2 {
-                return Err(ShapeError::RankMismatch { node: nid, expected: 2, got: b.shape.rank() });
+                return Err(ShapeError::RankMismatch {
+                    node: nid,
+                    expected: 2,
+                    got: b.shape.rank(),
+                });
             }
             // Check inner dims match
             check_dim_match(nid, 1, &a.shape.0[1], &b.shape.0[0])?;
@@ -203,7 +207,11 @@ fn infer_node(
         Op::Transpose => {
             let a = unary_input(nid, inputs)?;
             if a.shape.rank() != 2 {
-                return Err(ShapeError::RankMismatch { node: nid, expected: 2, got: a.shape.rank() });
+                return Err(ShapeError::RankMismatch {
+                    node: nid,
+                    expected: 2,
+                    got: a.shape.rank(),
+                });
             }
             let reversed: Vec<Dim> = a.shape.0.iter().copied().rev().collect();
             Ok(vec![TensorType::new(a.dtype, Shape(reversed))])
@@ -301,12 +309,13 @@ fn infer_node(
 // ---------------------------------------------------------------------------
 
 fn unary_input(nid: NodeId, inputs: &[TensorType]) -> Result<&TensorType, ShapeError> {
-    inputs
-        .first()
-        .ok_or(ShapeError::UnknownShape { node: nid })
+    inputs.first().ok_or(ShapeError::UnknownShape { node: nid })
 }
 
-fn binary_inputs(nid: NodeId, inputs: &[TensorType]) -> Result<(&TensorType, &TensorType), ShapeError> {
+fn binary_inputs(
+    nid: NodeId,
+    inputs: &[TensorType],
+) -> Result<(&TensorType, &TensorType), ShapeError> {
     if inputs.len() < 2 {
         return Err(ShapeError::UnknownShape { node: nid });
     }
@@ -326,7 +335,11 @@ fn check_compatible(nid: NodeId, a: &Shape, b: &Shape) -> Result<(), ShapeError>
 
 fn check_axis(nid: NodeId, axis: usize, rank: usize) -> Result<(), ShapeError> {
     if axis >= rank {
-        return Err(ShapeError::AxisOutOfBounds { node: nid, axis, rank });
+        return Err(ShapeError::AxisOutOfBounds {
+            node: nid,
+            axis,
+            rank,
+        });
     }
     Ok(())
 }
@@ -372,21 +385,38 @@ mod tests {
     /// Helper: build a unary graph (input -> op -> output) and infer.
     fn infer_unary(op: Op, input_tt: TensorType) -> HashMap<NodeId, Vec<TensorType>> {
         let mut g = Graph::new("test");
-        let inp = g.add_node(Op::Input { name: "x".into() }, vec![], vec![input_tt.clone()]);
+        let inp = g.add_node(
+            Op::Input { name: "x".into() },
+            vec![],
+            vec![input_tt.clone()],
+        );
         let mid = g.add_node(op, vec![input_tt.clone()], vec![input_tt.clone()]);
-        let out = g.add_node(Op::Output { name: "y".into() }, vec![input_tt.clone()], vec![]);
+        let out = g.add_node(
+            Op::Output { name: "y".into() },
+            vec![input_tt.clone()],
+            vec![],
+        );
         g.add_edge(inp, 0, mid, 0, input_tt.clone());
         g.add_edge(mid, 0, out, 0, input_tt);
         infer_shapes(&g).unwrap()
     }
 
     /// Helper: build a binary graph (two inputs -> op -> output) and infer.
-    fn infer_binary(op: Op, a: TensorType, b: TensorType, out_tt: TensorType) -> HashMap<NodeId, Vec<TensorType>> {
+    fn infer_binary(
+        op: Op,
+        a: TensorType,
+        b: TensorType,
+        out_tt: TensorType,
+    ) -> HashMap<NodeId, Vec<TensorType>> {
         let mut g = Graph::new("test");
         let i0 = g.add_node(Op::Input { name: "a".into() }, vec![], vec![a.clone()]);
         let i1 = g.add_node(Op::Input { name: "b".into() }, vec![], vec![b.clone()]);
         let mid = g.add_node(op, vec![a.clone(), b.clone()], vec![out_tt.clone()]);
-        let out = g.add_node(Op::Output { name: "y".into() }, vec![out_tt.clone()], vec![]);
+        let out = g.add_node(
+            Op::Output { name: "y".into() },
+            vec![out_tt.clone()],
+            vec![],
+        );
         g.add_edge(i0, 0, mid, 0, a);
         g.add_edge(i1, 0, mid, 1, b);
         g.add_edge(mid, 0, out, 0, out_tt);
@@ -412,7 +442,10 @@ mod tests {
         g.add_edge(i1, 0, add, 1, f32_vec(5));
         let result = infer_shapes(&g);
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), ShapeError::IncompatibleShapes { .. }));
+        assert!(matches!(
+            result.unwrap_err(),
+            ShapeError::IncompatibleShapes { .. }
+        ));
     }
 
     // --- 3. MatMul: [m,k] x [k,n] -> [m,n] ---
@@ -431,12 +464,19 @@ mod tests {
         let mut g = Graph::new("test");
         let i0 = g.add_node(Op::Input { name: "a".into() }, vec![], vec![f32_mat(3, 4)]);
         let i1 = g.add_node(Op::Input { name: "b".into() }, vec![], vec![f32_mat(5, 6)]);
-        let mm = g.add_node(Op::MatMul, vec![f32_mat(3, 4), f32_mat(5, 6)], vec![f32_mat(3, 6)]);
+        let mm = g.add_node(
+            Op::MatMul,
+            vec![f32_mat(3, 4), f32_mat(5, 6)],
+            vec![f32_mat(3, 6)],
+        );
         g.add_edge(i0, 0, mm, 0, f32_mat(3, 4));
         g.add_edge(i1, 0, mm, 1, f32_mat(5, 6));
         let result = infer_shapes(&g);
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), ShapeError::DimensionMismatch { .. }));
+        assert!(matches!(
+            result.unwrap_err(),
+            ShapeError::DimensionMismatch { .. }
+        ));
     }
 
     // --- 5. Relu: shape preserved ---
@@ -463,7 +503,11 @@ mod tests {
         let input = f32_mat(4, 6);
         let mut g = Graph::new("test");
         let inp = g.add_node(Op::Input { name: "x".into() }, vec![], vec![input.clone()]);
-        let red = g.add_node(Op::ReduceSum { axis: Some(1) }, vec![input.clone()], vec![f32_vec(4)]);
+        let red = g.add_node(
+            Op::ReduceSum { axis: Some(1) },
+            vec![input.clone()],
+            vec![f32_vec(4)],
+        );
         g.add_edge(inp, 0, red, 0, input);
         let shapes = infer_shapes(&g).unwrap();
         assert_eq!(shapes[&1][0].shape, Shape::vector(4));
@@ -475,7 +519,11 @@ mod tests {
         let input = f32_mat(4, 6);
         let mut g = Graph::new("test");
         let inp = g.add_node(Op::Input { name: "x".into() }, vec![], vec![input.clone()]);
-        let red = g.add_node(Op::ReduceSum { axis: None }, vec![input.clone()], vec![TensorType::f32_scalar()]);
+        let red = g.add_node(
+            Op::ReduceSum { axis: None },
+            vec![input.clone()],
+            vec![TensorType::f32_scalar()],
+        );
         g.add_edge(inp, 0, red, 0, input);
         let shapes = infer_shapes(&g).unwrap();
         assert_eq!(shapes[&1][0].shape, Shape::scalar());
@@ -527,7 +575,10 @@ mod tests {
         g.add_edge(inp, 0, sm, 0, tt);
         let result = infer_shapes(&g);
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), ShapeError::AxisOutOfBounds { .. }));
+        assert!(matches!(
+            result.unwrap_err(),
+            ShapeError::AxisOutOfBounds { .. }
+        ));
     }
 
     // --- 13. LayerNorm: shape preserved ---

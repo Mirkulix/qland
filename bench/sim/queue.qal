@@ -1,0 +1,36 @@
+# A deterministic event queue in QAL, ordered by (at, sequence).
+
+type Event = { at: Int, kind: Str, payload: Str }
+type Queue = { events: Map[Int, Event], seq: Int }
+type Popped = { ev: Event, q: Queue }
+
+fn empty() -> Queue = Queue { events: map_new(), seq: 0 }
+
+fn enqueue(q: Queue, at: Int, kind: Str, payload: Str) -> Queue
+  req at >= 0 && at <= 1000000
+= Queue {
+    events: map_put(q.events, at * 1000000 + q.seq, Event { at: at, kind: kind, payload: payload }),
+    seq: q.seq + 1,
+  }
+
+fn size(q: Queue) -> Int = map_size(q.events)
+
+fn pop(q: Queue) -> Option[Popped] =
+  let keys = sort_int(map_keys(q.events)) in
+  match get(keys, 0) {
+    None => None,
+    Some(k) => match map_get(q.events, k) {
+      None => None,
+      Some(ev) => Some(Popped {
+        ev: ev,
+        q: Queue { events: map_del(q.events, k), seq: q.seq },
+      }),
+    },
+  }
+
+test push_size = size(enqueue(empty(), 5, "x", "")) == 1
+test pop_order = match pop(enqueue(enqueue(empty(), 2, "b", ""), 1, "a", "")) {
+  None => false,
+  Some(p) => p.ev.kind == "a" && size(p.q) == 1,
+}
+test pop_empty = pop(empty()) == None

@@ -1,0 +1,667 @@
+# Type variables and unification for local type inference (spec §7: qc_unify, matching qal-check/src/unify.rs)
+
+# An effect variable (spec 2026-10-22 §4): the effects it must at least carry (names, or `?M` for
+# other variables), and whether it may still grow. It grows while it stands on the expected side
+# of a check; it is frozen as soon as a check depends on its value staying as it is.
+type QcEvar = {
+  lower: List[Str],
+  frozen: Bool
+}
+
+type QcSubst = {
+  vars: List[Option[QcType]],
+  depth: List[Int],
+  size: List[Int],
+  users: List[List[Int]],
+  evars: List[QcEvar],
+  too_deep: Bool,
+  too_large: Bool
+}
+
+type QcFreshEffRes = {
+  subst: QcSubst,
+  name: Str
+}
+
+# The effects an effect list carries (following variables, a sorted set) and the variables in it
+# that may still grow (sorted).
+type QcEffRes = {
+  names: List[Str],
+  open: List[Int]
+}
+
+type QcSubstRes = {
+  subst: QcSubst,
+  ok: Bool
+}
+
+type QcFreshRes = {
+  subst: QcSubst,
+  ty: QcType
+}
+
+type QcJoinRes = {
+  subst: QcSubst,
+  res: Option[QcType],
+  changed: Bool
+}
+
+fn qc_subst_new() -> QcSubst =
+  QcSubst {
+    vars: [],
+    depth: [],
+    size: [],
+    users: [],
+    evars: [],
+    too_deep: false,
+    too_large: false
+  }
+
+fn qc_list_set_loop[T](xs: List[T], idx: Int, val: T, cur: Int, acc: Accum[T]) -> List[T] =
+  if cur >= len(xs) then acc_list(acc)
+  else if cur == idx then qc_list_set_loop(xs, idx, val, cur + 1, AccPush(acc, val))
+  else qc_list_set_loop(xs, idx, val, cur + 1, AccPush(acc, list_at(xs, cur)))
+
+fn qc_list_set[T](xs: List[T], idx: Int, val: T) -> List[T] =
+  qc_list_set_loop(xs, idx, val, 0, AccEnd)
+
+fn qc_subst_fresh(s: QcSubst) -> QcFreshRes =
+  let id = len(s.vars) in
+  let next_s = QcSubst {
+    vars: push(s.vars, None),
+    depth: push(s.depth, 1),
+    size: push(s.size, 1),
+    users: push(s.users, []),
+    evars: s.evars,
+    too_deep: s.too_deep,
+    too_large: s.too_large
+  } in
+  QcFreshRes { subst: next_s, ty: QcTVar(id) }
+
+fn qc_subst_resolve_loop(s: QcSubst, t: QcType) -> QcType =
+  match t {
+    QcTVar(v) =>
+      if v < len(s.vars) then
+        match list_at(s.vars, v) {
+          Some(bound) => qc_subst_resolve_loop(s, bound),
+          None => t
+        }
+      else t,
+    _ => t
+  }
+
+fn qc_subst_resolve(s: QcSubst, t: QcType) -> QcType =
+  qc_subst_resolve_loop(s, t)
+
+fn qc_subst_finish(s: QcSubst, t: QcType) -> QcType =
+  match qc_subst_resolve(s, t) {
+    QcTVar(_) => QcTUnit,
+    QcTList(x) => QcTList(qc_subst_finish(s, x)),
+    QcTOption(x) => QcTOption(qc_subst_finish(s, x)),
+    QcTResult(a, b) => QcTResult(qc_subst_finish(s, a), qc_subst_finish(s, b)),
+    QcTMap(a, b) => QcTMap(qc_subst_finish(s, a), qc_subst_finish(s, b)),
+    QcTApp(n, args) => QcTApp(n, map(args, fn(arg: QcType) => qc_subst_finish(s, arg))),
+    QcTFn(ps, r, effs) => QcTFn(map(ps, fn(p: QcType) => qc_subst_finish(s, p)), qc_subst_finish(s, r), (qc_subst_resolve_effects(s, effs)).names),
+    other => other
+  }
+
+fn qc_max_int(a: Int, b: Int) -> Int = if a > b then a else b
+
+fn qc_max_list_int_loop(xs: List[Int], idx: Int, cur_max: Int) -> Int =
+  if idx >= len(xs) then cur_max
+  else qc_max_list_int_loop(xs, idx + 1, qc_max_int(cur_max, list_at(xs, idx)))
+
+fn qc_subst_depth_of(s: QcSubst, t: QcType) -> Int =
+  match t {
+    QcTVar(v) => if v < len(s.depth) then list_at(s.depth, v) else 1,
+    QcTList(x) => 1 + qc_subst_depth_of(s, x),
+    QcTOption(x) => 1 + qc_subst_depth_of(s, x),
+    QcTResult(a, b) => 1 + qc_max_int(qc_subst_depth_of(s, a), qc_subst_depth_of(s, b)),
+    QcTMap(a, b) => 1 + qc_max_int(qc_subst_depth_of(s, a), qc_subst_depth_of(s, b)),
+    QcTApp(_, args) =>
+      let ds = map(args, fn(a: QcType) => qc_subst_depth_of(s, a)) in
+      1 + qc_max_list_int_loop(ds, 0, 0),
+    QcTFn(ps, r, _) =>
+      let ds = map(ps, fn(p: QcType) => qc_subst_depth_of(s, p)) in
+      1 + qc_max_int(qc_max_list_int_loop(ds, 0, 0), qc_subst_depth_of(s, r)),
+    _ => 1
+  }
+
+fn qc_sat_add(a: Int, b: Int) -> Int =
+  let sum = a + b in
+  if sum > 4097 then 4097 else sum
+
+fn qc_subst_size_of(s: QcSubst, t: QcType) -> Int =
+  let n = match t {
+    QcTVar(v) => if v < len(s.size) then list_at(s.size, v) else 1,
+    QcTList(x) => 1 + qc_subst_size_of(s, x),
+    QcTOption(x) => 1 + qc_subst_size_of(s, x),
+    QcTResult(a, b) => qc_sat_add(1 + qc_subst_size_of(s, a), qc_subst_size_of(s, b)),
+    QcTMap(a, b) => qc_sat_add(1 + qc_subst_size_of(s, a), qc_subst_size_of(s, b)),
+    QcTApp(_, args) =>
+      fold(args, 1, fn(acc_n: Int, arg: QcType) => qc_sat_add(acc_n, qc_subst_size_of(s, arg))),
+    QcTFn(ps, r, _) =>
+      fold(ps, 1 + qc_subst_size_of(s, r), fn(acc_n: Int, p: QcType) => qc_sat_add(acc_n, qc_subst_size_of(s, p))),
+    _ => 1
+  } in
+  if n > 4097 then 4097 else n
+
+fn qc_subst_within_limits(s: QcSubst, depth: Int, size: Int) -> QcSubstRes =
+  if depth > 256 then
+    QcSubstRes {
+      subst: QcSubst { vars: s.vars, depth: s.depth, size: s.size, users: s.users, evars: s.evars, too_deep: true, too_large: s.too_large },
+      ok: false
+    }
+  else if size > 4096 then
+    QcSubstRes {
+      subst: QcSubst { vars: s.vars, depth: s.depth, size: s.size, users: s.users, evars: s.evars, too_deep: s.too_deep, too_large: true },
+      ok: false
+    }
+  else
+    QcSubstRes { subst: s, ok: true }
+
+fn qc_subst_vars_in_walk(t: QcType, acc: Accum[Int]) -> Accum[Int] =
+  match t {
+    QcTVar(v) => AccPush(acc, v),
+    QcTList(x) => qc_subst_vars_in_walk(x, acc),
+    QcTOption(x) => qc_subst_vars_in_walk(x, acc),
+    QcTResult(a, b) => qc_subst_vars_in_walk(b, qc_subst_vars_in_walk(a, acc)),
+    QcTMap(a, b) => qc_subst_vars_in_walk(b, qc_subst_vars_in_walk(a, acc)),
+    QcTApp(_, args) => fold(args, acc, fn(st: Accum[Int], a: QcType) => qc_subst_vars_in_walk(a, st)),
+    QcTFn(ps, r, _) =>
+      let st1 = fold(ps, acc, fn(st: Accum[Int], p: QcType) => qc_subst_vars_in_walk(p, st)) in
+      qc_subst_vars_in_walk(r, st1),
+    _ => acc
+  }
+
+fn qc_subst_vars_in(t: QcType) -> List[Int] =
+  acc_list(qc_subst_vars_in_walk(t, AccEnd))
+
+fn qc_subst_has_vars(t: QcType) -> Bool =
+  match t {
+    QcTVar(_) => true,
+    QcTList(x) => qc_subst_has_vars(x),
+    QcTOption(x) => qc_subst_has_vars(x),
+    QcTResult(a, b) => qc_subst_has_vars(a) || qc_subst_has_vars(b),
+    QcTMap(a, b) => qc_subst_has_vars(a) || qc_subst_has_vars(b),
+    QcTApp(_, args) => fold(args, false, fn(acc: Bool, a: QcType) => acc || qc_subst_has_vars(a)),
+    QcTFn(ps, r, _) => fold(ps, qc_subst_has_vars(r), fn(acc: Bool, p: QcType) => acc || qc_subst_has_vars(p)),
+    _ => false
+  }
+
+type QcOccursRes = {
+  seen: Map[Int, Bool],
+  found: Bool
+}
+
+fn qc_subst_occurs(s: QcSubst, v: Int, t: QcType, seen: Map[Int, Bool]) -> QcOccursRes =
+  match t {
+    QcTVar(w) =>
+      if w == v then QcOccursRes { seen: seen, found: true }
+      else if map_has(seen, w) then QcOccursRes { seen: seen, found: false }
+      else
+        let next_seen = map_put(seen, w, true) in
+        if w < len(s.vars) then
+          match list_at(s.vars, w) {
+            Some(bound) => qc_subst_occurs(s, v, bound, next_seen),
+            None => QcOccursRes { seen: next_seen, found: false }
+          }
+        else QcOccursRes { seen: next_seen, found: false },
+    QcTList(x) => qc_subst_occurs(s, v, x, seen),
+    QcTOption(x) => qc_subst_occurs(s, v, x, seen),
+    QcTResult(a, b) =>
+      let res_a = qc_subst_occurs(s, v, a, seen) in
+      if res_a.found then res_a
+      else qc_subst_occurs(s, v, b, res_a.seen),
+    QcTMap(a, b) =>
+      let res_a = qc_subst_occurs(s, v, a, seen) in
+      if res_a.found then res_a
+      else qc_subst_occurs(s, v, b, res_a.seen),
+    QcTApp(_, args) => qc_subst_occurs_list_loop(s, v, args, 0, seen),
+    QcTFn(ps, r, _) =>
+      let res_ps = qc_subst_occurs_list_loop(s, v, ps, 0, seen) in
+      if res_ps.found then res_ps
+      else qc_subst_occurs(s, v, r, res_ps.seen),
+    _ => QcOccursRes { seen: seen, found: false }
+  }
+
+fn qc_subst_occurs_list_loop(s: QcSubst, v: Int, ts: List[QcType], idx: Int, seen: Map[Int, Bool]) -> QcOccursRes =
+  if idx >= len(ts) then QcOccursRes { seen: seen, found: false }
+  else
+    let res = qc_subst_occurs(s, v, list_at(ts, idx), seen) in
+    if res.found then res
+    else qc_subst_occurs_list_loop(s, v, ts, idx + 1, res.seen)
+
+fn qc_subst_add_user(s: QcSubst, target_var: Int, user_var: Int) -> QcSubst =
+  if target_var < len(s.users) then
+    let cur_users = list_at(s.users, target_var) in
+    let next_users = qc_list_set(s.users, target_var, push(cur_users, user_var)) in
+    QcSubst { vars: s.vars, depth: s.depth, size: s.size, users: next_users, evars: s.evars, too_deep: s.too_deep, too_large: s.too_large }
+  else s
+
+fn qc_subst_propagate_loop(s: QcSubst, changed: List[Int]) -> QcSubstRes =
+  if len(changed) == 0 then QcSubstRes { subst: s, ok: true }
+  else
+    let v = list_at(changed, len(changed) - 1) in
+    let rest_changed = bytes_slice(to_bytes(""), 0, 0) in # dummy
+    let next_changed = fold(changed, AccEnd, fn(acc: Accum[Int], x: Int) => AccPush(acc, x)) in
+    let pop_changed = match qc_list_pop(changed) { Some(xs) => xs, None => [] } in
+    let users_v = if v < len(s.users) then list_at(s.users, v) else [] in
+    qc_subst_propagate_users_loop(s, users_v, 0, pop_changed)
+
+fn qc_list_pop[T](xs: List[T]) -> Option[List[T]] =
+  let n = len(xs) in
+  if n == 0 then None
+  else Some(qc_list_take_loop(xs, n - 1, 0, AccEnd))
+
+fn qc_list_take_loop[T](xs: List[T], count: Int, cur: Int, acc: Accum[T]) -> List[T] =
+  if cur >= count then acc_list(acc)
+  else qc_list_take_loop(xs, count, cur + 1, AccPush(acc, list_at(xs, cur)))
+
+fn qc_subst_propagate_users_loop(s: QcSubst, users: List[Int], k: Int, changed: List[Int]) -> QcSubstRes =
+  if k >= len(users) then qc_subst_propagate_loop(s, changed)
+  else
+    let u = list_at(users, k) in
+    if u < len(s.vars) then
+      match list_at(s.vars, u) {
+        None => qc_subst_propagate_users_loop(s, users, k + 1, changed),
+        Some(bound) =>
+          let nd = qc_subst_depth_of(s, bound) in
+          let nn = qc_subst_size_of(s, bound) in
+          let cur_d = list_at(s.depth, u) in
+          let cur_n = list_at(s.size, u) in
+          if nd > cur_d || nn > cur_n then
+            let lim_res = qc_subst_within_limits(s, nd, nn) in
+            if !lim_res.ok then lim_res
+            else
+              let s1 = lim_res.subst in
+              let next_depth = qc_list_set(s1.depth, u, nd) in
+              let next_size = qc_list_set(s1.size, u, nn) in
+              let s2 = QcSubst { vars: s1.vars, depth: next_depth, size: next_size, users: s1.users, evars: s1.evars, too_deep: s1.too_deep, too_large: s1.too_large } in
+              qc_subst_propagate_users_loop(s2, users, k + 1, push(changed, u))
+          else
+            qc_subst_propagate_users_loop(s, users, k + 1, changed)
+      }
+    else qc_subst_propagate_users_loop(s, users, k + 1, changed)
+
+fn qc_subst_bind(s: QcSubst, x: Int, t: QcType) -> QcSubstRes =
+  let d = qc_subst_depth_of(s, t) in
+  let n = qc_subst_size_of(s, t) in
+  let lim_res = qc_subst_within_limits(s, d, n) in
+  if !lim_res.ok then lim_res
+  else
+    let s0 = lim_res.subst in
+    let direct = qc_subst_vars_in(t) in
+    let s1 = fold(direct, s0, fn(acc_s: QcSubst, w: Int) => qc_subst_add_user(acc_s, w, x)) in
+    let next_vars = qc_list_set(s1.vars, x, Some(t)) in
+    let next_depth = qc_list_set(s1.depth, x, d) in
+    let next_size = qc_list_set(s1.size, x, n) in
+    let s2 = QcSubst { vars: next_vars, depth: next_depth, size: next_size, users: s1.users, evars: s1.evars, too_deep: s1.too_deep, too_large: s1.too_large } in
+    qc_subst_propagate_loop(s2, [x])
+
+fn qc_subst_wrap(s: QcSubst, t: QcType) -> QcFreshRes =
+  let fresh_res = qc_subst_fresh(s) in
+  let v = fresh_res.ty in
+  let un_res = qc_subst_unify(fresh_res.subst, v, t) in
+  QcFreshRes { subst: un_res.subst, ty: v }
+
+fn qc_subst_unify(s: QcSubst, expected: QcType, found: QcType) -> QcSubstRes =
+  qc_subst_unify_in(s, expected, found, false)
+
+fn qc_subst_unify_exact(s: QcSubst, a: QcType, b: QcType) -> QcSubstRes =
+  qc_subst_unify_in(s, a, b, true)
+
+# Effect variables (unify.rs: fresh_effect, resolve_effects, freeze_effects, unify_effects).
+fn qc_subst_fresh_effect(s: QcSubst) -> QcFreshEffRes =
+  let id = len(s.evars) in
+  let next_s = QcSubst { vars: s.vars, depth: s.depth, size: s.size, users: s.users, evars: push(s.evars, QcEvar { lower: [], frozen: false }), too_deep: s.too_deep, too_large: s.too_large } in
+  QcFreshEffRes { subst: next_s, name: "?" ++ from_int(id) }
+
+fn qc_evar_of(e: Str) -> Option[Int] =
+  if starts_with(e, "?") then
+    match to_int(slice(e, 1, len(e))) {
+      Some(n) => if n >= 0 then Some(n) else None,
+      None => None
+    }
+  else None
+
+fn qc_subst_set_evar(s: QcSubst, v: Int, ev: QcEvar) -> QcSubst =
+  QcSubst { vars: s.vars, depth: s.depth, size: s.size, users: s.users, evars: qc_list_set(s.evars, v, ev), too_deep: s.too_deep, too_large: s.too_large }
+
+fn qc_subst_freeze_evar(s: QcSubst, v: Int) -> QcSubst =
+  if v < len(s.evars) then qc_subst_set_evar(s, v, QcEvar { lower: (list_at(s.evars, v)).lower, frozen: true })
+  else s
+
+fn qc_subst_resolve_effects(s: QcSubst, effs: List[Str]) -> QcEffRes =
+  qc_resolve_effects_loop(s, effs, [], AccEnd, AccEnd)
+
+fn qc_resolve_effects_loop(s: QcSubst, stack: List[Str], seen: List[Int], names: Accum[Str], open: Accum[Int]) -> QcEffRes =
+  if len(stack) == 0 then QcEffRes { names: qc_sort_dedup_strs(acc_list(names)), open: qc_sort_dedup_ints(acc_list(open)) }
+  else
+    let e = list_at(stack, len(stack) - 1) in
+    let rest = match qc_list_pop(stack) { Some(xs) => xs, None => [] } in
+    match qc_evar_of(e) {
+      Some(v) =>
+        if qc_int_list_contains(seen, v) || v >= len(s.evars) then qc_resolve_effects_loop(s, rest, push(seen, v), names, open)
+        else
+          let ev = list_at(s.evars, v) in
+          let next_open = if ev.frozen then open else AccPush(open, v) in
+          qc_resolve_effects_loop(s, rest ++ ev.lower, push(seen, v), names, next_open),
+      None => qc_resolve_effects_loop(s, rest, seen, AccPush(names, e), open)
+    }
+
+fn qc_subst_freeze_effects(s: QcSubst, effs: List[Str]) -> QcSubst =
+  fold((qc_subst_resolve_effects(s, effs)).open, s, fn(st: QcSubst, v: Int) => qc_subst_freeze_evar(st, v))
+
+# `found ⊆ expected` as effect sets (`exact`: equal). A growable variable on the expected side
+# takes what `found` has beyond `expected`; without one, the check is on the effects as they are,
+# and the variables of `found` are frozen.
+fn qc_subst_unify_effects(s: QcSubst, expected: List[Str], found: List[Str], exact: Bool) -> QcSubstRes =
+  let r1 = qc_effects_sub(s, expected, found) in
+  if !r1.ok || !exact then r1
+  else qc_effects_sub(r1.subst, found, expected)
+
+fn qc_effects_sub(s: QcSubst, expected: List[Str], found: List[Str]) -> QcSubstRes =
+  let r1 = qc_subst_resolve_effects(s, expected) in
+  let r2 = qc_subst_resolve_effects(s, found) in
+  if len(r1.open) > 0 then
+    let v = list_at(r1.open, 0) in
+    let extra_names = filter(r2.names, fn(e: Str) => !qc_contains_str_loop(r1.names, e, 0)) in
+    let extra_vars = map(filter(r2.open, fn(w: Int) => !qc_int_list_contains(r1.open, w)), fn(w: Int) => "?" ++ from_int(w)) in
+    let ev = list_at(s.evars, v) in
+    let next_lower = fold(extra_names ++ extra_vars, ev.lower, fn(acc: List[Str], e: Str) => if qc_contains_str_loop(acc, e, 0) then acc else push(acc, e)) in
+    QcSubstRes { subst: qc_subst_set_evar(s, v, QcEvar { lower: next_lower, frozen: ev.frozen }), ok: true }
+  else if !qc_all_contained_loop(r2.names, r1.names, 0) then QcSubstRes { subst: s, ok: false }
+  else QcSubstRes { subst: fold(r2.open, s, fn(st: QcSubst, w: Int) => qc_subst_freeze_evar(st, w)), ok: true }
+
+fn qc_contains_str_loop(xs: List[Str], s: Str, idx: Int) -> Bool =
+  if idx >= len(xs) then false
+  else if list_at(xs, idx) == s then true
+  else qc_contains_str_loop(xs, s, idx + 1)
+
+fn qc_all_contained_loop(sub: List[Str], super_set: List[Str], idx: Int) -> Bool =
+  if idx >= len(sub) then true
+  else if !qc_contains_str_loop(super_set, list_at(sub, idx), 0) then false
+  else qc_all_contained_loop(sub, super_set, idx + 1)
+
+fn qc_subst_unify_in(s: QcSubst, expected: QcType, found: QcType, exact: Bool) -> QcSubstRes =
+  match expected {
+    QcTVar(x) => match found {
+      QcTVar(y) =>
+        if x == y then QcSubstRes { subst: s, ok: true }
+        else qc_subst_unify_resolved(s, expected, found, exact),
+      _ => qc_subst_unify_resolved(s, expected, found, exact)
+    },
+    _ => qc_subst_unify_resolved(s, expected, found, exact)
+  }
+
+fn qc_subst_unify_resolved(s: QcSubst, expected: QcType, found: QcType, exact: Bool) -> QcSubstRes =
+  let a = qc_subst_resolve(s, expected) in
+  let b = qc_subst_resolve(s, found) in
+  if a == b && !qc_subst_has_vars(a) then QcSubstRes { subst: s, ok: true }
+  else
+    match a {
+      QcTVar(x) => match b {
+        QcTVar(y) =>
+          if x == y then QcSubstRes { subst: s, ok: true }
+          else
+            let occ_res = qc_subst_occurs(s, x, b, map_new()) in
+            if occ_res.found then QcSubstRes { subst: s, ok: false }
+            else qc_subst_bind(s, x, b),
+        _ =>
+          let occ_res = qc_subst_occurs(s, x, b, map_new()) in
+          if occ_res.found then QcSubstRes { subst: s, ok: false }
+          else qc_subst_bind(s, x, b)
+      },
+      _ => match b {
+        QcTVar(x) =>
+          let occ_res = qc_subst_occurs(s, x, a, map_new()) in
+          if occ_res.found then QcSubstRes { subst: s, ok: false }
+          else qc_subst_bind(s, x, a),
+        _ => match a {
+          QcTList(x) => match b {
+            QcTList(y) => qc_subst_unify_in(s, x, y, exact),
+            _ => QcSubstRes { subst: s, ok: false }
+          },
+          QcTOption(x) => match b {
+            QcTOption(y) => qc_subst_unify_in(s, x, y, exact),
+            _ => QcSubstRes { subst: s, ok: false }
+          },
+          QcTResult(a1, b1) => match b {
+            QcTResult(a2, b2) =>
+              let res1 = qc_subst_unify_in(s, a1, a2, exact) in
+              if !res1.ok then res1
+              else qc_subst_unify_in(res1.subst, b1, b2, exact),
+            _ => QcSubstRes { subst: s, ok: false }
+          },
+          QcTMap(a1, b1) => match b {
+            QcTMap(a2, b2) =>
+              let res1 = qc_subst_unify_in(s, a1, a2, exact) in
+              if !res1.ok then res1
+              else qc_subst_unify_in(res1.subst, b1, b2, exact),
+            _ => QcSubstRes { subst: s, ok: false }
+          },
+          QcTApp(n1, x1) => match b {
+            QcTApp(n2, x2) =>
+              if n1 != n2 || len(x1) != len(x2) then QcSubstRes { subst: s, ok: false }
+              else qc_subst_unify_exact_list_loop(s, x1, x2, 0),
+            _ => QcSubstRes { subst: s, ok: false }
+          },
+          QcTFn(p1, r1, e1) => match b {
+            QcTFn(p2, r2, e2) =>
+              if len(p1) != len(p2) then QcSubstRes { subst: s, ok: false }
+              else
+                let res_ps = qc_subst_unify_params_loop(s, p1, p2, 0, exact) in
+                if !res_ps.ok then res_ps
+                else
+                  let res_r = qc_subst_unify_in(res_ps.subst, r1, r2, exact) in
+                  if !res_r.ok then res_r
+                  else
+                    qc_subst_unify_effects(res_r.subst, e1, e2, exact),
+            _ => QcSubstRes { subst: s, ok: false }
+          },
+          _ => QcSubstRes { subst: s, ok: a == b }
+        }
+      }
+    }
+
+fn qc_subst_unify_exact_list_loop(s: QcSubst, xs1: List[QcType], xs2: List[QcType], idx: Int) -> QcSubstRes =
+  if idx >= len(xs1) then QcSubstRes { subst: s, ok: true }
+  else
+    let res = qc_subst_unify_in(s, list_at(xs1, idx), list_at(xs2, idx), true) in
+    if !res.ok then res
+    else qc_subst_unify_exact_list_loop(res.subst, xs1, xs2, idx + 1)
+
+fn qc_subst_unify_params_loop(s: QcSubst, p1: List[QcType], p2: List[QcType], idx: Int, exact: Bool) -> QcSubstRes =
+  if idx >= len(p1) then QcSubstRes { subst: s, ok: true }
+  else
+    # p2 is found, p1 is expected -> unify_in(p2, p1)
+    let res = qc_subst_unify_in(s, list_at(p2, idx), list_at(p1, idx), exact) in
+    if !res.ok then res
+    else qc_subst_unify_params_loop(res.subst, p1, p2, idx + 1, exact)
+
+fn qc_subst_has_join_fn(s: QcSubst, t: QcType) -> Bool =
+  qc_subst_join_fn_in(s, t, map_new()).found
+
+fn qc_subst_join_fn_in(s: QcSubst, t: QcType, seen: Map[Int, Bool]) -> QcOccursRes =
+  match t {
+    QcTVar(v) =>
+      if map_has(seen, v) then QcOccursRes { seen: seen, found: false }
+      else
+        let next_seen = map_put(seen, v, true) in
+        if v < len(s.vars) then
+          match list_at(s.vars, v) {
+            Some(bound) => qc_subst_join_fn_in(s, bound, next_seen),
+            None => QcOccursRes { seen: next_seen, found: false }
+          }
+        else QcOccursRes { seen: next_seen, found: false },
+    QcTFn(_, _, _) => QcOccursRes { seen: seen, found: true },
+    QcTList(x) => qc_subst_join_fn_in(s, x, seen),
+    QcTOption(x) => qc_subst_join_fn_in(s, x, seen),
+    QcTResult(a, b) =>
+      let res_a = qc_subst_join_fn_in(s, a, seen) in
+      if res_a.found then res_a
+      else qc_subst_join_fn_in(s, b, res_a.seen),
+    QcTMap(a, b) =>
+      let res_a = qc_subst_join_fn_in(s, a, seen) in
+      if res_a.found then res_a
+      else qc_subst_join_fn_in(s, b, res_a.seen),
+    _ => QcOccursRes { seen: seen, found: false }
+  }
+
+fn qc_subst_join(s: QcSubst, a: QcType, b: QcType, covariant: Bool) -> QcJoinRes =
+  qc_subst_join_in(s, a, b, covariant)
+
+fn qc_subst_join_in(s: QcSubst, a: QcType, b: QcType, covariant: Bool) -> QcJoinRes =
+  match a {
+    QcTVar(x) => match b {
+      QcTVar(y) =>
+        if x == y then QcJoinRes { subst: s, res: Some(a), changed: false }
+        else qc_subst_join_resolved(s, a, b, covariant),
+      _ => qc_subst_join_resolved(s, a, b, covariant)
+    },
+    _ => qc_subst_join_resolved(s, a, b, covariant)
+  }
+
+fn qc_subst_join_default(s: QcSubst, ra: QcType, rb: QcType, a: QcType) -> QcJoinRes =
+  let un_res = qc_subst_unify_exact(s, ra, rb) in
+  if un_res.ok then QcJoinRes { subst: un_res.subst, res: Some(a), changed: false }
+  else QcJoinRes { subst: un_res.subst, res: None, changed: false }
+
+fn qc_subst_join_resolved(s: QcSubst, a: QcType, b: QcType, covariant: Bool) -> QcJoinRes =
+  let ra = qc_subst_resolve(s, a) in
+  let rb = qc_subst_resolve(s, b) in
+  match ra {
+    QcTList(x) => match rb {
+      QcTList(y) =>
+        let j_res = qc_subst_join_in(s, x, y, covariant) in
+        match j_res.res {
+          None => QcJoinRes { subst: j_res.subst, res: None, changed: false },
+          Some(j) =>
+            if j_res.changed then
+              let wrap_res = qc_subst_wrap(j_res.subst, QcTList(j)) in
+              QcJoinRes { subst: wrap_res.subst, res: Some(wrap_res.ty), changed: true }
+            else
+              QcJoinRes { subst: j_res.subst, res: Some(a), changed: false }
+        },
+      _ => qc_subst_join_default(s, ra, rb, a)
+    },
+    QcTOption(x) => match rb {
+      QcTOption(y) =>
+        let j_res = qc_subst_join_in(s, x, y, covariant) in
+        match j_res.res {
+          None => QcJoinRes { subst: j_res.subst, res: None, changed: false },
+          Some(j) =>
+            if j_res.changed then
+              let wrap_res = qc_subst_wrap(j_res.subst, QcTOption(j)) in
+              QcJoinRes { subst: wrap_res.subst, res: Some(wrap_res.ty), changed: true }
+            else
+              QcJoinRes { subst: j_res.subst, res: Some(a), changed: false }
+        },
+      _ => qc_subst_join_default(s, ra, rb, a)
+    },
+    QcTResult(a1, b1) => match rb {
+      QcTResult(a2, b2) =>
+        let ja_res = qc_subst_join_in(s, a1, a2, covariant) in
+        match ja_res.res {
+          None => QcJoinRes { subst: ja_res.subst, res: None, changed: false },
+          Some(ja) =>
+            let jb_res = qc_subst_join_in(ja_res.subst, b1, b2, covariant) in
+            match jb_res.res {
+              None => QcJoinRes { subst: jb_res.subst, res: None, changed: false },
+              Some(jb) =>
+                let changed = ja_res.changed || jb_res.changed in
+                if changed then
+                  let wrap_res = qc_subst_wrap(jb_res.subst, QcTResult(ja, jb)) in
+                  QcJoinRes { subst: wrap_res.subst, res: Some(wrap_res.ty), changed: true }
+                else
+                  QcJoinRes { subst: jb_res.subst, res: Some(a), changed: false }
+            }
+        },
+      _ => qc_subst_join_default(s, ra, rb, a)
+    },
+    QcTMap(a1, b1) => match rb {
+      QcTMap(a2, b2) =>
+        let ja_res = qc_subst_join_in(s, a1, a2, covariant) in
+        match ja_res.res {
+          None => QcJoinRes { subst: ja_res.subst, res: None, changed: false },
+          Some(ja) =>
+            let jb_res = qc_subst_join_in(ja_res.subst, b1, b2, covariant) in
+            match jb_res.res {
+              None => QcJoinRes { subst: jb_res.subst, res: None, changed: false },
+              Some(jb) =>
+                let changed = ja_res.changed || jb_res.changed in
+                if changed then
+                  let wrap_res = qc_subst_wrap(jb_res.subst, QcTMap(ja, jb)) in
+                  QcJoinRes { subst: wrap_res.subst, res: Some(wrap_res.ty), changed: true }
+                else
+                  QcJoinRes { subst: jb_res.subst, res: Some(a), changed: false }
+            }
+        },
+      _ => qc_subst_join_default(s, ra, rb, a)
+    },
+    QcTFn(p1, r1, e1) => match rb {
+      QcTFn(p2, r2, e2) =>
+        if len(p1) != len(p2) then QcJoinRes { subst: s, res: None, changed: false }
+        else
+          let ps_res = qc_subst_join_params_loop(s, p1, p2, 0, !covariant, AccEnd, false) in
+          if !ps_res.ok then QcJoinRes { subst: ps_res.subst, res: None, changed: false }
+          else
+            let r_res = qc_subst_join_in(ps_res.subst, r1, r2, covariant) in
+            match r_res.res {
+              None => QcJoinRes { subst: r_res.subst, res: None, changed: false },
+              Some(r) =>
+                # Open effect variables stay in a union (the join may still grow) and leave an
+                # intersection.
+                let r1e = qc_subst_resolve_effects(r_res.subst, e1) in
+                let r2e = qc_subst_resolve_effects(r_res.subst, e2) in
+                let effs =
+                  if covariant then qc_sort_dedup_strs(r1e.names ++ r2e.names) ++ map(qc_sort_dedup_ints(r1e.open ++ r2e.open), fn(v: Int) => "?" ++ from_int(v))
+                  else qc_eff_intersect(r1e.names, r2e.names) in
+                let eff_changed = len(effs) != len(e1) || !qc_all_contained_loop(effs, e1, 0) in
+                let changed = ps_res.changed || r_res.changed || eff_changed in
+                if changed then
+                  let wrap_res = qc_subst_wrap(r_res.subst, QcTFn(ps_res.ps, r, effs)) in
+                  QcJoinRes { subst: wrap_res.subst, res: Some(wrap_res.ty), changed: true }
+                else
+                  QcJoinRes { subst: r_res.subst, res: Some(a), changed: false }
+            },
+      _ => qc_subst_join_default(s, ra, rb, a)
+    },
+    _ => qc_subst_join_default(s, ra, rb, a)
+  }
+
+fn qc_eff_intersect_loop(e1: List[Str], e2: List[Str], idx: Int, acc: Accum[Str]) -> List[Str] =
+  if idx >= len(e1) then qc_sort_dedup_strs(acc_list(acc))
+  else
+    let ef = list_at(e1, idx) in
+    if qc_contains_str_loop(e2, ef, 0) then qc_eff_intersect_loop(e1, e2, idx + 1, AccPush(acc, ef))
+    else qc_eff_intersect_loop(e1, e2, idx + 1, acc)
+
+fn qc_eff_intersect(e1: List[Str], e2: List[Str]) -> List[Str] =
+  qc_eff_intersect_loop(e1, e2, 0, AccEnd)
+
+type QcJoinParamsRes = {
+  subst: QcSubst,
+  ps: List[QcType],
+  changed: Bool,
+  ok: Bool
+}
+
+fn qc_subst_join_params_loop(s: QcSubst, p1: List[QcType], p2: List[QcType], idx: Int, param_cov: Bool, acc: Accum[QcType], cur_changed: Bool) -> QcJoinParamsRes =
+  if idx >= len(p1) then
+    QcJoinParamsRes { subst: s, ps: acc_list(acc), changed: cur_changed, ok: true }
+  else
+    let j_res = qc_subst_join_in(s, list_at(p1, idx), list_at(p2, idx), param_cov) in
+    match j_res.res {
+      None => QcJoinParamsRes { subst: j_res.subst, ps: [], changed: false, ok: false },
+      Some(j) =>
+        qc_subst_join_params_loop(j_res.subst, p1, p2, idx + 1, param_cov, AccPush(acc, j), cur_changed || j_res.changed)
+    }
+
+test qc_unify_test =
+  let s0 = qc_subst_new() in
+  let f_res = qc_subst_fresh(s0) in
+  let a = f_res.ty in
+  let un_res = qc_subst_unify(f_res.subst, QcTList(a), QcTList(QcTInt)) in
+  un_res.ok && qc_subst_finish(un_res.subst, QcTOption(a)) == QcTOption(QcTInt)

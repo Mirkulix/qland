@@ -1,0 +1,101 @@
+{
+ "name": "h46_control_chars_in_title",
+ "description": "inner control characters are kept",
+ "steps": [
+  {
+   "name": "create a",
+   "request": {
+    "method": "POST",
+    "path": "/todos",
+    "json": {
+     "title": "line1\nline2"
+    }
+   },
+   "expect": {
+    "status": 201,
+    "json": {
+     "id": {
+      "$var": "a"
+     },
+     "title": "line1\nline2",
+     "done": false,
+     "created_at": {
+      "$type": "int"
+     }
+    },
+    "headers": {
+     "location": "/todos/{{a}}",
+     "content-type": "application/json"
+    }
+   },
+   "capture": {
+    "a": "/id"
+   }
+  },
+  {
+   "name": "create b",
+   "request": {
+    "method": "POST",
+    "path": "/todos",
+    "json": {
+     "title": "tab\tinside"
+    }
+   },
+   "expect": {
+    "status": 201,
+    "json": {
+     "id": {
+      "$var": "b"
+     },
+     "title": "tab\tinside",
+     "done": false,
+     "created_at": {
+      "$type": "int"
+     }
+    },
+    "headers": {
+     "location": "/todos/{{b}}",
+     "content-type": "application/json"
+    }
+   },
+   "capture": {
+    "b": "/id"
+   }
+  },
+  {
+   "name": "list",
+   "request": {
+    "method": "GET",
+    "path": "/todos"
+   },
+   "expect": {
+    "status": 200,
+    "json": [
+     {
+      "id": {
+       "$var": "a"
+      },
+      "title": "line1\nline2",
+      "done": false,
+      "created_at": {
+       "$type": "int"
+      }
+     },
+     {
+      "id": {
+       "$var": "b"
+      },
+      "title": "tab\tinside",
+      "done": false,
+      "created_at": {
+       "$type": "int"
+      }
+     }
+    ],
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  }
+ ]
+}

@@ -1,0 +1,2 @@
+fn shout(s: Str) -> Str !io = { print(s); s }
+fn all(xs: List[Str]) -> List[Str] = map(xs, shout)

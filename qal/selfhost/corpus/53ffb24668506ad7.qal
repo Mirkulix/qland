@@ -1,0 +1,2 @@
+fn price(q: Int) -> Int = if q >= 10 then q * 95 else q * 100
+fn main(args: List[Str]) -> Int !io = { print(from_int(price(len(read_all())))); 0 }

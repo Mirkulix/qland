@@ -1,0 +1,131 @@
+# Run-length encoding: `qal run main --allow io -- encode` (stdin: one record per line).
+# encode: each maximal run of the same character -> decimal length ++ character ("aaabcc" -> "3a1b2c").
+# decode: each pair of decimal digits (count > 0, leading zeros allowed) followed by one non-digit
+#         character -> the character repeated count times; anything else prints "error".
+# Unicode characters, at most 250 lines, every line at most 200 characters.
+
+# --- shared helpers ---------------------------------------------------------
+
+fn is_digit(c: Str) -> Bool = len(c) > 0 && char_code(c) >= 48 && char_code(c) <= 57
+
+# Builds a string of `n` copies of `c` by doubling, so it stays O(n log n).
+fn repeat(c: Str, n: Int) -> Str =
+  if n <= 0 then "" else
+  if n == 1 then c else
+  let h = repeat(c, n / 2) in
+  let d = h ++ h in
+  if n % 2 == 0 then d else d ++ c
+
+# Splits the raw input into lines; a final newline ends the last line rather
+# than starting an extra empty one, and empty input has no lines at all.
+fn ends_with_nl(s: Str) -> Bool =
+  len(s) > 0 && slice(s, len(s) - 1, len(s)) == "\n"
+
+fn parse_lines(text: Str) -> List[Str] =
+  if text == "" then []
+  else if ends_with_nl(text) then split(slice(text, 0, len(text) - 1), "\n")
+  else split(text, "\n")
+
+# --- encode -----------------------------------------------------------------
+
+type EncState = { cur: Str, n: Int, out: Str }
+
+fn enc_flush(cur: Str, n: Int) -> Str = if n == 0 then "" else from_int(n) ++ cur
+
+fn enc_step(st: EncState, c: Str) -> EncState =
+  if st.n > 0 && c == st.cur then
+    EncState { cur: st.cur, n: st.n + 1, out: st.out }
+  else
+    EncState { cur: c, n: 1, out: st.out ++ enc_flush(st.cur, st.n) }
+
+fn encode_line(s: Str) -> Str =
+  let st = fold(chars(s), EncState { cur: "", n: 0, out: "" }, enc_step) in
+  st.out ++ enc_flush(st.cur, st.n)
+
+# --- decode -----------------------------------------------------------------
+
+fn digit_value(c: Str) -> Int req len(c) > 0 ens r >= 0 && r <= 9 =
+  match c {
+    "0" => 0, "1" => 1, "2" => 2, "3" => 3, "4" => 4,
+    "5" => 5, "6" => 6, "7" => 7, "8" => 8, "9" => 9,
+    _ => 0,
+  }
+
+# A run length above 100000 is far outside the task's limits (an output line has
+# at most 200 characters); saturating keeps the counter clear of Int overflow.
+fn next_count(count: Int, c: Str) -> Int
+req count >= 0 && count <= 100000
+ens r >= 0 && r <= 100000
+=
+  if len(c) == 0 then 0
+  else if count >= 100000 then 100000
+  else
+    let v = count * 10 + digit_value(c) in
+    if v > 100000 then 100000 else v
+
+fn dec_parse(xs: List[Str], i: Int, count: Int, digits: Bool, acc: Accum[Str]) -> Option[Str]
+req i >= 0 && count >= 0 && count <= 100000
+=
+  if i < 0 || i >= len(xs) then
+    (if digits then None else Some(join(acc_list(acc), "")))
+  else
+    match get(xs, i) {
+      None => None,
+      Some(c) =>
+        if is_digit(c) then dec_parse(xs, i + 1, next_count(count, c), true, acc)
+        else if digits && count > 0 then dec_parse(xs, i + 1, 0, false, AccPush(acc, repeat(c, count)))
+        else None,
+    }
+
+fn decode_line(s: Str) -> Str =
+  match dec_parse(chars(s), 0, 0, false, AccEnd) {
+    None => "error",
+    Some(out) => out,
+  }
+
+# --- entry point ------------------------------------------------------------
+
+fn run_lines(lines: List[Str], f: fn(Str) -> Str, i: Int) -> Unit !io =
+  if i >= len(lines) then ()
+  else
+    match get(lines, i) {
+      None => (),
+      Some(line) => { print(f(line)); run_lines(lines, f, i + 1) },
+    }
+
+fn main(args: List[Str]) -> Int !io =
+  match get(args, 0) {
+    Some(mode) =>
+      if mode == "encode" then { run_lines(parse_lines(read_all()), encode_line, 0); 0 }
+      else if mode == "decode" then { run_lines(parse_lines(read_all()), decode_line, 0); 0 }
+      else { print("usage: rle encode|decode"); 2 },
+    None => { print("usage: rle encode|decode"); 2 },
+  }
+
+# --- tests ------------------------------------------------------------------
+
+test enc_example_a = encode_line("aaabccdddd") == "3a1b2c4d"
+test enc_example_b = encode_line("ab") == "1a1b"
+test enc_empty = encode_line("") == ""
+test enc_single = encode_line("z") == "1z"
+test enc_unicode = encode_line("ééé😀😀 a") == "3é2😀1 1a"
+test enc_long_run = encode_line(repeat("q", 200)) == "200q"
+test enc_mixed_run = encode_line("aaaaabaaaaaaaaaaaaaaaaabbbbbaa") == "5a1b17a5b2a"
+
+test dec_example_a = decode_line("3a1b2c") == "aaabcc"
+test dec_example_b = decode_line("2x") == "xx"
+test dec_error_char_first = decode_line("x2") == "error"
+test dec_error_trailing_digits = decode_line("1a2") == "error"
+test dec_error_zero_count = decode_line("0a") == "error"
+test dec_error_zero_in_middle = decode_line("3a0b") == "error"
+test dec_error_only_digits = decode_line("3") == "error"
+test dec_error_empty_count_between = decode_line("12ab") == "error"
+test dec_empty = decode_line("") == ""
+test dec_multi_digit = decode_line("12x100y") == repeat("x", 12) ++ repeat("y", 100)
+test dec_leading_zeros = decode_line("007z") == "zzzzzzz"
+test dec_unicode = decode_line("2é3😀1 ") == "éé😀😀😀 "
+
+test lines_empty = len(parse_lines("")) == 0
+test lines_trailing_newline = parse_lines("a\nb\n") == ["a", "b"]
+test lines_blank_middle = parse_lines("\n\nzz\n") == ["", "", "zz"]
+test lines_no_trailing_newline = parse_lines("ab") == ["ab"]

@@ -1,0 +1,4 @@
+type Tree = Leaf | Node(Tree, Int, Tree)
+type A = HasB(B) | NoB
+type B = HasA(A)
+fn size(t: Tree) -> Int = match t { Leaf => 0, Node(l, _, r) => size(l) + 1 + size(r) }

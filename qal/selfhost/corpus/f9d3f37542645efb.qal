@@ -1,0 +1,3 @@
+
+fn ask_summary(q: Str) -> Result[ModelResponse, ModelError] !model
+  = model_ask(q, "{\"type\": \"object\"}")

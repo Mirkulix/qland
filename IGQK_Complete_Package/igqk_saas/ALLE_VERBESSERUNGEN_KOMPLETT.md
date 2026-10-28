@@ -34,7 +34,7 @@
 **Was wurde gemacht:**
 - ✅ IGQK-Bibliothek importiert und verifiziert
 - ✅ Echte Quantum-Algorithmen aktiv
-- ✅ Keine Mock-Implementierungen mehr
+- ✅ Kernpfade echt; die generische Validierung meldet Parameter-Ähnlichkeit, keine Genauigkeit (siehe `NEUE_FEATURES_AKTIVIERT.md`)
 
 **Integrierte Module:**
 ```python

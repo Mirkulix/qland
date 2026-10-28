@@ -1,0 +1,45 @@
+# A deterministic-in-shape, auditable 100-agent cash simulation.
+# The only nondeterminism is rand_int; the total is invariant.
+
+type Agent = { cash: Int }
+type Sim = { agents: Map[Int, Agent], tick: Int }
+
+fn add_cash(acc: Int, a: Agent) -> Int = acc + a.cash
+fn total(sim: Sim) -> Int = fold(map_values(sim.agents), 0, add_cash)
+
+fn add_agent(m: Map[Int, Agent], i: Int) -> Map[Int, Agent] =
+  map_put(m, i, Agent { cash: 1000 })
+
+fn init(n: Int) -> Sim = Sim { agents: fold(range(0, n), map_new(), add_agent), tick: 0 }
+
+fn transfer(sim: Sim, from: Int, to: Int, amount: Int) -> Sim
+  req amount >= 0
+  ens total(r) == total(sim)
+= if from == to then sim else match map_get(sim.agents, from) {
+    None => sim,
+    Some(src) => if src.cash < amount then sim
+      else match map_get(sim.agents, to) {
+        None => sim,
+        Some(dst) => Sim {
+          agents: map_put(map_put(sim.agents, from, Agent { cash: src.cash - amount }),
+                          to, Agent { cash: dst.cash + amount }),
+          tick: sim.tick + 1,
+        },
+      },
+  }
+
+fn step(sim: Sim) -> Sim !rand =
+  let n = map_size(sim.agents) in
+  if n < 2 then sim
+  else transfer(sim, rand_int(0, n - 1), rand_int(0, n - 1), rand_int(0, 50))
+
+fn run(sim: Sim, n: Int) -> Sim !rand =
+  if n <= 0 then sim else run(step(sim), n - 1)
+
+fn main(args: List[Str]) -> Int !io !rand =
+  let s = run(init(100), 1000) in
+  let t = total(s) in
+  { print("agents=100 total=" ++ from_int(t) ++ " tick=" ++ from_int(s.tick)); 0 }
+
+test transfer_conserves = total(transfer(init(2), 0, 1, 100)) == 2000
+test self_transfer_is_noop = total(transfer(init(1), 0, 0, 100)) == 1000

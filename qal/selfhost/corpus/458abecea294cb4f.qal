@@ -1,0 +1,3 @@
+fn f() -> (fn(Int) -> Int) !io = g
+fn h() -> fn(Int) -> Int !io = g
+fn k(x: fn() -> (fn() -> Int !io)) -> Int = 1

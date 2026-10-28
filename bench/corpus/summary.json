@@ -1,0 +1,18 @@
+{
+  "programs": 5323,
+  "ok": 4986,
+  "error": 337,
+  "corrections": 10,
+  "sources": [
+    "bench",
+    "model",
+    "qal"
+  ],
+  "phase8_target": [
+    5000,
+    20000
+  ],
+  "model_written_solutions": 4390,
+  "note": "Seed + DeepSeek-generated + 23 verified DeepSeek teacher solutions; all kept programs pass qal check/test. LoRA/3-arm evaluation open.",
+  "teacher_solutions": 23
+}

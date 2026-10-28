@@ -1,0 +1,2 @@
+# The project store and database files (qal init, qal serve --allow db); the package todo.qalpkg is checked in.
+.qal/

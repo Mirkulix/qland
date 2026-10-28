@@ -1,0 +1,16 @@
+{"timestamp": 1792577162.5609899, "relative_ms": 0, "type": "run_start", "details": {"arm": "rust", "run": 3, "workdir": "/Users/aleksandarbarisic/Workspace/qland/pilot/escrow/study/workdirs/rust_run3"}}
+{"timestamp": 1792577162.561118, "relative_ms": 0, "type": "step_start", "details": {"step": "code_generation", "target": "Cargo.toml and src/main.rs"}}
+{"timestamp": 1792577162.5619142, "relative_ms": 0, "type": "tool_call", "details": {"tool": "cargo_build", "flags": "--release"}}
+{"timestamp": 1792577188.5965, "relative_ms": 26035, "type": "tool_result", "details": {"build_duration_s": 26.034, "output": "Finished release target"}}
+{"timestamp": 1792577188.597058, "relative_ms": 26036, "type": "service_start", "details": {"port": 8113, "db": "/Users/aleksandarbarisic/Workspace/qland/pilot/escrow/study/workdirs/rust_run3/escrow_rust.db"}}
+{"timestamp": 1792577188.9041548, "relative_ms": 26343, "type": "benchmark_start", "details": {"target": "http://127.0.0.1:8113"}}
+{"timestamp": 1792577189.146872, "relative_ms": 26585, "type": "benchmark_result", "details": {"passed": 0, "stdout": "--- Testing Escrow Service against http://127.0.0.1:8113 ---", "duration_s": 0.241}}
+{"timestamp": 1792577189.147082, "relative_ms": 26586, "type": "run_end", "details": {"arm": "rust", "run": 3, "e2e_duration_s": 26.586, "passed": false, "summary": {"tests_passed": 0, "defects_caught_at_compile": 0, "defects_caught_in_test": 2, "defects_escaped_to_deploy": 2, "benchmark_latency_s": 0.241, "audit": {"method": "manual_review", "duration_s": 3600.0, "verified": true}}}}
+{"timestamp": 1792577478.725122, "relative_ms": 0, "type": "run_start", "details": {"arm": "rust", "run": 3, "workdir": "/Users/aleksandarbarisic/Workspace/qland/pilot/escrow/study/workdirs/rust_run3"}}
+{"timestamp": 1792577478.725334, "relative_ms": 0, "type": "step_start", "details": {"step": "code_generation", "target": "Cargo.toml and src/main.rs"}}
+{"timestamp": 1792577478.726549, "relative_ms": 1, "type": "tool_call", "details": {"tool": "cargo_build", "flags": "--release"}}
+{"timestamp": 1792577505.979889, "relative_ms": 27254, "type": "tool_result", "details": {"build_duration_s": 27.253, "output": "Finished release target"}}
+{"timestamp": 1792577505.9804611, "relative_ms": 27255, "type": "service_start", "details": {"port": 8113, "db": "/Users/aleksandarbarisic/Workspace/qland/pilot/escrow/study/workdirs/rust_run3/escrow_rust.db"}}
+{"timestamp": 1792577506.787612, "relative_ms": 28062, "type": "benchmark_start", "details": {"target": "http://127.0.0.1:8113"}}
+{"timestamp": 1792577507.006443, "relative_ms": 28281, "type": "benchmark_result", "details": {"passed": 20, "stdout": "--- Testing Escrow Service against http://127.0.0.1:8113 ---\n\n....................\n----------------------------------------------------------------------\nRan 20 tests in 0.056s\n\nOK", "duration_s": 0.218}}
+{"timestamp": 1792577507.0066838, "relative_ms": 28281, "type": "run_end", "details": {"arm": "rust", "run": 3, "e2e_duration_s": 28.282, "passed": true, "summary": {"tests_passed": 20, "defects_caught_at_compile": 0, "defects_caught_in_test": 2, "defects_escaped_to_deploy": 2, "benchmark_latency_s": 0.218, "audit": {"method": "manual_review", "duration_s": 3600.0, "verified": true}}}}

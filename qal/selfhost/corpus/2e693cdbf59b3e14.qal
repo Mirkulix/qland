@@ -1,0 +1,2 @@
+fn g2(s: Str) -> Int req slice(s, 5, 3) == "" || true = 0
+fn f(s: Str) -> Int = g2(s)

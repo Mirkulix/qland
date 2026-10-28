@@ -136,7 +136,7 @@ pub fn compile_graph<'ctx>(
         .into_float_value();
 
     // Apply operation(s) from the graph
-    let result_val = emit_ops(&builder, &context, &ops, a_val, b_val)?;
+    let result_val = emit_ops(&builder, context, &ops, a_val, b_val)?;
 
     // Store result[i]
     let out_elem_ptr = unsafe {
@@ -232,10 +232,20 @@ pub fn emit_ops<'ctx>(
                 let zero = context.f32_type().const_float(0.0);
 
                 let is_pos = builder
-                    .build_float_compare(inkwell::FloatPredicate::OGT, current, pos_thresh, "is_pos")
+                    .build_float_compare(
+                        inkwell::FloatPredicate::OGT,
+                        current,
+                        pos_thresh,
+                        "is_pos",
+                    )
                     .unwrap();
                 let is_neg = builder
-                    .build_float_compare(inkwell::FloatPredicate::OLT, current, neg_thresh, "is_neg")
+                    .build_float_compare(
+                        inkwell::FloatPredicate::OLT,
+                        current,
+                        neg_thresh,
+                        "is_neg",
+                    )
                     .unwrap();
 
                 let neg_or_zero = builder
@@ -354,10 +364,26 @@ mod tests {
 
     fn make_binop_graph(op: Op) -> Graph {
         let mut g = Graph::new("test");
-        let a = g.add_node(Op::Input { name: "a".into() }, vec![], vec![TensorType::f32_vector(4)]);
-        let b = g.add_node(Op::Input { name: "b".into() }, vec![], vec![TensorType::f32_vector(4)]);
-        let compute = g.add_node(op, vec![TensorType::f32_vector(4), TensorType::f32_vector(4)], vec![TensorType::f32_vector(4)]);
-        let out = g.add_node(Op::Output { name: "y".into() }, vec![TensorType::f32_vector(4)], vec![]);
+        let a = g.add_node(
+            Op::Input { name: "a".into() },
+            vec![],
+            vec![TensorType::f32_vector(4)],
+        );
+        let b = g.add_node(
+            Op::Input { name: "b".into() },
+            vec![],
+            vec![TensorType::f32_vector(4)],
+        );
+        let compute = g.add_node(
+            op,
+            vec![TensorType::f32_vector(4), TensorType::f32_vector(4)],
+            vec![TensorType::f32_vector(4)],
+        );
+        let out = g.add_node(
+            Op::Output { name: "y".into() },
+            vec![TensorType::f32_vector(4)],
+            vec![],
+        );
         g.add_edge(a, 0, compute, 0, TensorType::f32_vector(4));
         g.add_edge(b, 0, compute, 1, TensorType::f32_vector(4));
         g.add_edge(compute, 0, out, 0, TensorType::f32_vector(4));
@@ -393,10 +419,26 @@ mod tests {
     #[test]
     fn jit_relu() {
         let mut g = Graph::new("relu_test");
-        let a = g.add_node(Op::Input { name: "a".into() }, vec![], vec![TensorType::f32_vector(4)]);
-        let b = g.add_node(Op::Input { name: "b".into() }, vec![], vec![TensorType::f32_vector(4)]);
-        let relu = g.add_node(Op::Relu, vec![TensorType::f32_vector(4)], vec![TensorType::f32_vector(4)]);
-        let out = g.add_node(Op::Output { name: "y".into() }, vec![TensorType::f32_vector(4)], vec![]);
+        let a = g.add_node(
+            Op::Input { name: "a".into() },
+            vec![],
+            vec![TensorType::f32_vector(4)],
+        );
+        let b = g.add_node(
+            Op::Input { name: "b".into() },
+            vec![],
+            vec![TensorType::f32_vector(4)],
+        );
+        let relu = g.add_node(
+            Op::Relu,
+            vec![TensorType::f32_vector(4)],
+            vec![TensorType::f32_vector(4)],
+        );
+        let out = g.add_node(
+            Op::Output { name: "y".into() },
+            vec![TensorType::f32_vector(4)],
+            vec![],
+        );
         g.add_edge(a, 0, relu, 0, TensorType::f32_vector(4));
         g.add_edge(relu, 0, out, 0, TensorType::f32_vector(4));
 
@@ -413,10 +455,26 @@ mod tests {
     #[test]
     fn jit_ternary() {
         let mut g = Graph::new("ternary_test");
-        let a = g.add_node(Op::Input { name: "a".into() }, vec![], vec![TensorType::f32_vector(4)]);
-        let b = g.add_node(Op::Input { name: "b".into() }, vec![], vec![TensorType::f32_vector(4)]);
-        let ternary = g.add_node(Op::ToTernary, vec![TensorType::f32_vector(4)], vec![TensorType::f32_vector(4)]);
-        let out = g.add_node(Op::Output { name: "y".into() }, vec![TensorType::f32_vector(4)], vec![]);
+        let a = g.add_node(
+            Op::Input { name: "a".into() },
+            vec![],
+            vec![TensorType::f32_vector(4)],
+        );
+        let b = g.add_node(
+            Op::Input { name: "b".into() },
+            vec![],
+            vec![TensorType::f32_vector(4)],
+        );
+        let ternary = g.add_node(
+            Op::ToTernary,
+            vec![TensorType::f32_vector(4)],
+            vec![TensorType::f32_vector(4)],
+        );
+        let out = g.add_node(
+            Op::Output { name: "y".into() },
+            vec![TensorType::f32_vector(4)],
+            vec![],
+        );
         g.add_edge(a, 0, ternary, 0, TensorType::f32_vector(4));
         g.add_edge(ternary, 0, out, 0, TensorType::f32_vector(4));
 
@@ -443,10 +501,26 @@ mod tests {
     #[test]
     fn jit_sigmoid() {
         let mut g = Graph::new("sigmoid_test");
-        let a = g.add_node(Op::Input { name: "a".into() }, vec![], vec![TensorType::f32_vector(3)]);
-        let b = g.add_node(Op::Input { name: "b".into() }, vec![], vec![TensorType::f32_vector(3)]);
-        let sig = g.add_node(Op::Sigmoid, vec![TensorType::f32_vector(3)], vec![TensorType::f32_vector(3)]);
-        let out = g.add_node(Op::Output { name: "y".into() }, vec![TensorType::f32_vector(3)], vec![]);
+        let a = g.add_node(
+            Op::Input { name: "a".into() },
+            vec![],
+            vec![TensorType::f32_vector(3)],
+        );
+        let b = g.add_node(
+            Op::Input { name: "b".into() },
+            vec![],
+            vec![TensorType::f32_vector(3)],
+        );
+        let sig = g.add_node(
+            Op::Sigmoid,
+            vec![TensorType::f32_vector(3)],
+            vec![TensorType::f32_vector(3)],
+        );
+        let out = g.add_node(
+            Op::Output { name: "y".into() },
+            vec![TensorType::f32_vector(3)],
+            vec![],
+        );
         g.add_edge(a, 0, sig, 0, TensorType::f32_vector(3));
         g.add_edge(sig, 0, out, 0, TensorType::f32_vector(3));
 

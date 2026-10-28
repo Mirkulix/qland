@@ -1,0 +1,10 @@
+{
+  "main": {
+    "let": [{"name": "s", "value": {"call": "read_all", "args": []}}],
+    "in": {"call": "print", "args": [
+      {"call": "from_int", "args": [
+        {"call": "sum_all", "args": [{"var": "s"}]}
+      ]}
+    ]}
+  }
+}

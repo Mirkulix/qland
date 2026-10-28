@@ -1,0 +1,62 @@
+{
+  "name": "qal-vscode",
+  "displayName": "QAL (Query & Agent Language)",
+  "description": "Deterministic, formally verifiable language support for QAL: Syntax highlighting, Live Z3 contract checking, and LSP integration.",
+  "version": "0.1.0",
+  "publisher": "qland",
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Linters"
+  ],
+  "main": "./out/extension.js",
+  "activationEvents": [
+    "onLanguage:qal"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "qal",
+        "aliases": [
+          "QAL",
+          "qal"
+        ],
+        "extensions": [
+          ".qal"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "qal",
+        "scopeName": "source.qal",
+        "path": "./syntaxes/qal.tmLanguage.json"
+      }
+    ],
+    "configuration": {
+      "type": "object",
+      "title": "QAL Configuration",
+      "properties": {
+        "qal.path": {
+          "type": "string",
+          "default": "qal",
+          "description": "Path to the qal binary (defaults to 'qal' on PATH or './bin/qal')"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "devDependencies": {
+    "@types/node": "^18.14.6",
+    "@types/vscode": "^1.75.0",
+    "typescript": "^5.0.0",
+    "vscode-languageclient": "^8.1.0"
+  }
+}

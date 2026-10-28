@@ -1,0 +1,36 @@
+# qal-pkg 1
+# package qal_sim_snapshot e06eef2ec8e34e40beb26f375cefebc390a9be2aedd4f8160f9faa46efb0ed24
+# def Compacted 672e386bb20be32ae39c42db584602d20bf8812377b41c958e858a00ceed9aec cli
+# def LogEntry 634cc0ac3f335324f5d00a4fcc157f619ca4306d33237525aae3107d79a75716 cli
+# def RaftLog 53eb66dc57ece21123d4e7d7560e128f27f8a29df17115ff9e8b9cb8e425effb cli
+# def Snapshot 04d8a7350bbf5c9cee41c152b873591ac22bf7a242659c02b8b8d95f4c03dd9d cli
+# def at 0774ce2e1e82118f50d345b9a3fc109b623d95c173286d0602e2cabbddab057f cli
+# def compact 8d34614fc0b17731c3ff8ec6ef6c4a6574cb99e1c0c8dce70505f99809d6adf5 cli
+# def compact_after_all 1f3128992361d6a58128a0b188d0b8fdad88fbf6dde00464a15f0422ff715c3e cli
+# def compact_beyond_commit_is_refused cf52a5b94bb9a4898e15f71b6f2f32dec0f8bc7a2f73cfdaab21834af08a7bf2 cli
+# def compact_keeps_suffix 3d00af60f1ef35f144e619a2854ed9300568a74e042f4ce4f3e60e48a7f77249 cli
+# def sample 399cf7cceebf5bc6b58efaf312d7811b1c7143dcff1cf1c74eee32a39dea06f0 cli
+
+type LogEntry = { index: Int, term: Int, cmd: Str }
+
+type Snapshot = { last_index: Int, last_term: Int, state: Str }
+
+type RaftLog = { entries: List[LogEntry], commit: Int }
+
+type Compacted = { log: RaftLog, snapshot: Option[Snapshot] }
+
+fn at(log: RaftLog, index: Int) -> Option[LogEntry]
+= if index <= 0 then None else get(log.entries, index - 1)
+
+fn sample() -> RaftLog
+= RaftLog { entries: [LogEntry { index: 1, term: 1, cmd: "a" }, LogEntry { index: 2, term: 1, cmd: "b" }, LogEntry { index: 3, term: 2, cmd: "c" }], commit: 3 }
+
+fn compact(log: RaftLog, index: Int, state: Str) -> Compacted
+  req index >= 0
+= if index > log.commit then Compacted { log: log, snapshot: None } else match at(log, index) { None => Compacted { log: log, snapshot: None }, Some(e) => Compacted { log: RaftLog { entries: filter(log.entries, fn(x) => x.index > index), commit: log.commit }, snapshot: Some(Snapshot { last_index: e.index, last_term: e.term, state: state }) } }
+
+test compact_after_all = len(compact(sample(), 3, "snap").log.entries) == 0
+
+test compact_beyond_commit_is_refused = match compact(sample(), 4, "snap").snapshot { Some(_) => false, None => true }
+
+test compact_keeps_suffix = let c = compact(sample(), 2, "snap") in len(c.log.entries) == 1 && (match c.snapshot { Some(s) => s.last_index == 2 && s.last_term == 1, None => false })

@@ -1,0 +1,16 @@
+{"timestamp": 1792577189.1480162, "relative_ms": 0, "type": "run_start", "details": {"arm": "python", "run": 2, "workdir": "/Users/aleksandarbarisic/Workspace/qland/pilot/escrow/study/workdirs/python_run2"}}
+{"timestamp": 1792577189.1481442, "relative_ms": 0, "type": "step_start", "details": {"step": "code_generation", "target": "server.py"}}
+{"timestamp": 1792577189.148673, "relative_ms": 0, "type": "tool_call", "details": {"tool": "python_check", "file": "server.py"}}
+{"timestamp": 1792577189.178833, "relative_ms": 30, "type": "tool_result", "details": {"output": "Syntax & bytecode check passed"}}
+{"timestamp": 1792577189.179233, "relative_ms": 31, "type": "service_start", "details": {"port": 8102, "db": "/Users/aleksandarbarisic/Workspace/qland/pilot/escrow/study/workdirs/python_run2/escrow.db"}}
+{"timestamp": 1792577190.38549, "relative_ms": 1237, "type": "benchmark_start", "details": {"target": "http://127.0.0.1:8102"}}
+{"timestamp": 1792577190.7794402, "relative_ms": 1631, "type": "benchmark_result", "details": {"passed": 0, "stdout": "--- Testing Escrow Service against http://127.0.0.1:8102 ---", "duration_s": 0.255}}
+{"timestamp": 1792577190.779822, "relative_ms": 1631, "type": "run_end", "details": {"arm": "python", "run": 2, "e2e_duration_s": 1.632, "passed": false, "summary": {"tests_passed": 0, "defects_caught_at_compile": 0, "defects_caught_in_test": 2, "defects_escaped_to_deploy": 2, "benchmark_latency_s": 0.255, "audit": {"method": "manual_review", "duration_s": 2700.0, "verified": true}}}}
+{"timestamp": 1792577507.0089679, "relative_ms": 0, "type": "run_start", "details": {"arm": "python", "run": 2, "workdir": "/Users/aleksandarbarisic/Workspace/qland/pilot/escrow/study/workdirs/python_run2"}}
+{"timestamp": 1792577507.0091572, "relative_ms": 0, "type": "step_start", "details": {"step": "code_generation", "target": "server.py"}}
+{"timestamp": 1792577507.009729, "relative_ms": 0, "type": "tool_call", "details": {"tool": "python_check", "file": "server.py"}}
+{"timestamp": 1792577507.043796, "relative_ms": 34, "type": "tool_result", "details": {"output": "Syntax & bytecode check passed"}}
+{"timestamp": 1792577507.044327, "relative_ms": 35, "type": "service_start", "details": {"port": 8102, "db": "/Users/aleksandarbarisic/Workspace/qland/pilot/escrow/study/workdirs/python_run2/escrow.db"}}
+{"timestamp": 1792577508.2506502, "relative_ms": 1241, "type": "benchmark_start", "details": {"target": "http://127.0.0.1:8102"}}
+{"timestamp": 1792577508.66463, "relative_ms": 1655, "type": "benchmark_result", "details": {"passed": 20, "stdout": "--- Testing Escrow Service against http://127.0.0.1:8102 ---\n\n....................\n----------------------------------------------------------------------\nRan 20 tests in 0.098s\n\nOK", "duration_s": 0.244}}
+{"timestamp": 1792577508.66515, "relative_ms": 1656, "type": "run_end", "details": {"arm": "python", "run": 2, "e2e_duration_s": 1.656, "passed": true, "summary": {"tests_passed": 20, "defects_caught_at_compile": 0, "defects_caught_in_test": 2, "defects_escaped_to_deploy": 2, "benchmark_latency_s": 0.244, "audit": {"method": "manual_review", "duration_s": 2700.0, "verified": true}}}}

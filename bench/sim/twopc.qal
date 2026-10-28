@@ -1,0 +1,71 @@
+# Two-phase commit over two shard states: prepare -> commit/abort.
+
+type Agent = { cash: Int }
+type Sim = { agents: Map[Int, Agent], tick: Int }
+type Pair = { a: Sim, b: Sim }
+type Coord = { pair: Pair, state: Map[Int, Str] }
+
+fn add_cash(acc: Int, a: Agent) -> Int = acc + a.cash
+fn total(sim: Sim) -> Int = fold(map_values(sim.agents), 0, add_cash)
+fn add_agent(m: Map[Int, Agent], i: Int) -> Map[Int, Agent] = map_put(m, i, Agent { cash: 1000 })
+fn init(n: Int) -> Sim = Sim { agents: fold(range(0, n), map_new(), add_agent), tick: 0 }
+
+fn transfer_between(x: Pair, from: Int, to: Int, amount: Int) -> Pair
+  req amount >= 0
+  ens total(r.a) + total(r.b) == total(x.a) + total(x.b)
+= match map_get(x.a.agents, from) {
+    None => x,
+    Some(src) => if src.cash < amount then x
+      else match map_get(x.b.agents, to) {
+        None => x,
+        Some(dst) => Pair {
+          a: Sim { agents: map_put(x.a.agents, from, Agent { cash: src.cash - amount }), tick: x.a.tick + 1 },
+          b: Sim { agents: map_put(x.b.agents, to, Agent { cash: dst.cash + amount }), tick: x.b.tick + 1 },
+        },
+      },
+  }
+
+fn prepare(c: Coord, id: Int, from: Int, to: Int, amount: Int) -> Coord
+  req id >= 0 && amount >= 0
+  ens total(r.pair.a) + total(r.pair.b) == total(c.pair.a) + total(c.pair.b)
+= if map_has(c.state, id) then c
+  else match map_get(c.pair.a.agents, from) {
+    None => c,
+    Some(src) => if src.cash < amount then c
+      else Coord { pair: c.pair, state: map_put(c.state, id, "prepared") },
+  }
+
+fn commit(c: Coord, id: Int, from: Int, to: Int, amount: Int) -> Coord
+  req id >= 0 && amount >= 0
+  ens total(r.pair.a) + total(r.pair.b) == total(c.pair.a) + total(c.pair.b)
+= match map_get(c.state, id) {
+    Some("prepared") => Coord {
+      pair: transfer_between(c.pair, from, to, amount),
+      state: map_put(c.state, id, "committed"),
+    },
+    _ => c,
+  }
+
+fn abort(c: Coord, id: Int) -> Coord
+  req id >= 0
+= match map_get(c.state, id) {
+    None => c,
+    Some("committed") => c,
+    Some(_) => Coord { pair: c.pair, state: map_put(c.state, id, "aborted") },
+  }
+
+test commit_once =
+  let c0 = Coord { pair: Pair { a: init(1), b: init(1) }, state: map_new() } in
+  let c1 = prepare(c0, 1, 0, 0, 300) in
+  let c2 = commit(c1, 1, 0, 0, 300) in
+  let c3 = commit(c2, 1, 0, 0, 300) in
+  match map_get(c3.pair.a.agents, 0) {
+    None => false,
+    Some(a) => a.cash == 700 && total(c3.pair.a) + total(c3.pair.b) == 2000,
+  }
+
+test abort_noop =
+  let c0 = Coord { pair: Pair { a: init(1), b: init(1) }, state: map_new() } in
+  let c1 = abort(prepare(c0, 2, 0, 0, 300), 2) in
+  let c2 = commit(c1, 2, 0, 0, 300) in
+  match map_get(c2.pair.a.agents, 0) { None => false, Some(a) => a.cash == 1000 }

@@ -1,0 +1,17 @@
+# Native !tensor matmul: no HTTP sidecar, no NumPy at runtime.
+
+fn parse_floats(s: Str) -> List[Float] =
+  map(split(s, ","), fn(x) => match to_float(x) { None => 0.0, Some(f) => f })
+
+fn matmul(a: List[Float], b: List[Float], n: Int) -> List[Float] !tensor
+  req n > 0 && len(a) == n * n && len(b) == n * n
+  ens len(r) == n * n
+= let a_csv = join(map(a, fn(x) => from_float(x)), ",") in
+  let b_csv = join(map(b, fn(x) => from_float(x)), ",") in
+  parse_floats(tensor_matmul(a_csv, b_csv, n))
+
+fn main(args: List[Str]) -> Int !io !tensor =
+  let a = [1.0, 2.0, 3.0, 4.0] in
+  let b = [5.0, 6.0, 7.0, 8.0] in
+  let r = matmul(a, b, 2) in
+  { print(join(map(r, fn(x) => from_float(x)), ",")); 0 }

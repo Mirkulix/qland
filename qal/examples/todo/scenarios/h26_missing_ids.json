@@ -1,0 +1,167 @@
+{
+ "name": "h26_missing_ids",
+ "description": "valid but unknown ids",
+ "steps": [
+  {
+   "name": "get 1 empty db",
+   "request": {
+    "method": "GET",
+    "path": "/todos/1"
+   },
+   "expect": {
+    "status": 404,
+    "json": {
+     "error": {
+      "code": "not_found",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "create a",
+   "request": {
+    "method": "POST",
+    "path": "/todos",
+    "json": {
+     "title": "x"
+    }
+   },
+   "expect": {
+    "status": 201,
+    "json": {
+     "id": {
+      "$var": "a"
+     },
+     "title": "x",
+     "done": false,
+     "created_at": {
+      "$type": "int"
+     }
+    },
+    "headers": {
+     "location": "/todos/{{a}}",
+     "content-type": "application/json"
+    }
+   },
+   "capture": {
+    "a": "/id"
+   }
+  },
+  {
+   "name": "get 2",
+   "request": {
+    "method": "GET",
+    "path": "/todos/2"
+   },
+   "expect": {
+    "status": 404,
+    "json": {
+     "error": {
+      "code": "not_found",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "get max int",
+   "request": {
+    "method": "GET",
+    "path": "/todos/9223372036854775807"
+   },
+   "expect": {
+    "status": 404,
+    "json": {
+     "error": {
+      "code": "not_found",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "delete 2",
+   "request": {
+    "method": "DELETE",
+    "path": "/todos/2"
+   },
+   "expect": {
+    "status": 404,
+    "json": {
+     "error": {
+      "code": "not_found",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "patch 2",
+   "request": {
+    "method": "PATCH",
+    "path": "/todos/2",
+    "json": {
+     "done": true
+    }
+   },
+   "expect": {
+    "status": 404,
+    "json": {
+     "error": {
+      "code": "not_found",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "unaffected",
+   "request": {
+    "method": "GET",
+    "path": "/todos/{{a}}"
+   },
+   "expect": {
+    "status": 200,
+    "json": {
+     "id": {
+      "$var": "a"
+     },
+     "title": "x",
+     "done": false,
+     "created_at": {
+      "$type": "int"
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  }
+ ]
+}

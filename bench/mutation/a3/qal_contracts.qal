@@ -1,0 +1,48 @@
+# A3 of the mutation study: the invariants of the design (stock and sold >= 0, outstanding >= 0,
+
+# tax <= spent, returned <= ordered, discount <= 50) as contracts on every function that writes a
+
+# customer, order or product record; bodies unchanged. The stage-12 examples are the only tests.
+
+fn cust_ok(c: CustRec) -> Bool = c.orders >= 0 && c.spent >= 0 && c.taxes >= 0 && c.taxes <= c.spent && c.outstanding >= 0
+
+fn order_ok(o: OrderRec) -> Bool = o.qty >= 0 && o.returned >= 0 && o.returned <= o.qty && o.total >= 0 && o.tax >= 0 && o.tax <= o.total
+
+fn prod_ok(p: ProdRec) -> Bool = p.stock >= 0 && p.sold >= 0
+
+fn cust_at(st: St, cid: Str) -> Bool = match map_get(st.customers, cid) { Some(x) => cust_ok(x), None => true }
+
+fn order_at(st: St, oid: Str) -> Bool = match map_get(st.orders, oid) { Some(x) => order_ok(x), None => true }
+
+fn prod_at(m: Map[Str, ProdRec], pid: Str) -> Bool = match map_get(m, pid) { Some(x) => prod_ok(x), None => true }
+
+fn play(st: St, lines: List[Str], n: Int, acc: List[Str]) -> List[Str] = if n > len(lines) then acc else let r = step(st, n, list_at(lines, n - 1)) in play(r.st, lines, n + 1, acc ++ r.out)
+
+fn put_back(st: St, o: OrderRec, c: CustRec) -> Step
+  req c.orders >= 1 && cust_ok(c) && order_ok(o) && o.total <= c.spent && o.tax <= c.taxes && c.spent - c.taxes >= o.total - o.tax
+  ens cust_at(r.st, c.id) && order_at(r.st, o.id)
+= Step { st: St { products: back_units(st.products, o.lines, 0, o.qty), customers: map_put(st.customers, c.id, CustRec { id: c.id, orders: c.orders - 1, spent: c.spent - o.total, taxes: c.taxes - o.tax, tier: c.tier, limit: c.limit, outstanding: owed_after(c.outstanding, o.total) }), used: st.used, orders: map_put(st.orders, o.id, OrderRec { id: o.id, cid: o.cid, lines: o.lines, qty: o.qty, total: o.total, tax: o.tax, open: false, returned: o.returned }), bad: st.bad, tax: st.tax, pending: st.pending, promo: st.promo }, out: ["CANCELLED " ++ o.id ++ " " ++ from_int(o.total)] }
+
+fn take_back(st: St, o: OrderRec, c: CustRec, qty: Int) -> Step
+  req cust_ok(c) && order_ok(o) && qty > 0 && qty <= o.qty - o.returned && c.spent >= o.total * qty / o.qty && c.taxes >= o.tax * qty / o.qty && c.spent - c.taxes >= o.total * qty / o.qty - o.tax * qty / o.qty
+  ens cust_at(r.st, c.id) && order_at(r.st, o.id)
+= let refund = o.total * qty / o.qty in let tax_back = o.tax * qty / o.qty in Step { st: St { products: back_units(st.products, o.lines, o.returned, qty), customers: map_put(st.customers, c.id, CustRec { id: c.id, orders: c.orders, spent: c.spent - refund, taxes: c.taxes - tax_back, tier: c.tier, limit: c.limit, outstanding: owed_after(c.outstanding, refund) }), used: st.used, orders: map_put(st.orders, o.id, OrderRec { id: o.id, cid: o.cid, lines: o.lines, qty: o.qty, total: o.total, tax: o.tax, open: true, returned: o.returned + qty }), bad: st.bad, tax: st.tax, pending: st.pending, promo: st.promo }, out: ["RETURNED " ++ o.id ++ " " ++ from_int(refund)] }
+
+fn fill(st: St, oid: Str, c: CustRec, lines: List[OrderLine], word: Str) -> Step
+  req cust_ok(c) && cust_at(st, c.id) && order_at(st, oid) && st.tax >= 0 && st.tax <= 100
+  ens cust_at(r.st, c.id) && order_at(r.st, oid)
+= if !order_lines_ok(st, lines, c.tier) || !fits(st, lines) then Step { st: st, out: [] } else let u = order_units(lines) in let nets = map(lines, fn(l: OrderLine) => line_total(line_price(st, l.pid), l.qty, u, c.tier, promo_of(st, l.pid))) in let net = fold(nets, 0, fn(acc: Int, x: Int) => acc + x) in let tax = tax_of(net, st.tax) in let amt = net + tax in if over_limit(c, amt) then Step { st: St { products: st.products, customers: st.customers, used: map_put(st.used, oid, true), orders: map_put(st.orders, oid, OrderRec { id: oid, cid: c.id, lines: lines, qty: u, total: 0, tax: 0, open: false, returned: 0 }), bad: true, tax: st.tax, pending: st.pending, promo: st.promo }, out: ["REJECT " ++ oid ++ " credit"] } else Step { st: St { products: fold(lines, st.products, fn(acc: Map[Str, ProdRec], l: OrderLine) => sell(acc, l)), customers: map_put(st.customers, c.id, CustRec { id: c.id, orders: c.orders + 1, spent: c.spent + amt, taxes: c.taxes + tax, tier: c.tier, limit: c.limit, outstanding: c.outstanding + amt }), used: map_put(st.used, oid, true), orders: map_put(st.orders, oid, OrderRec { id: oid, cid: c.id, lines: lines, qty: u, total: amt, tax: tax, open: true, returned: 0 }), bad: st.bad, tax: st.tax, pending: st.pending, promo: st.promo }, out: [word ++ " " ++ oid ++ " " ++ from_int(amt)] }
+
+fn pay(st: St, n: Int, cid: Str, cents: Int) -> Step
+  req cust_at(st, cid)
+  ens cust_at(r.st, cid)
+= match map_get(st.customers, cid) { None => err_step(st, n, "unknown_customer"), Some(c) => if cents > c.outstanding then err_step(st, n, "overpay") else Step { st: St { products: st.products, customers: map_put(st.customers, cid, CustRec { id: c.id, orders: c.orders, spent: c.spent, taxes: c.taxes, tier: c.tier, limit: c.limit, outstanding: owed_after(c.outstanding, cents) }), used: st.used, orders: st.orders, bad: st.bad, tax: st.tax, pending: st.pending, promo: st.promo }, out: [] } }
+
+fn sell(products: Map[Str, ProdRec], l: OrderLine) -> Map[Str, ProdRec]
+  req l.qty > 0 && prod_at(products, l.pid)
+  ens prod_at(r, l.pid)
+= match map_get(products, l.pid) { None => products, Some(p) => if l.qty > p.stock then products else map_put(products, p.id, ProdRec { id: p.id, name: p.name, price: p.price, stock: p.stock - l.qty, sold: p.sold + l.qty }) }
+
+test example_one = play(initial(), ["product p1 widget 1000 5", "product p2 gadget 250 20", "customer c1 ann", "customer c2 bob", "order o1 c1 p1:2,p2:8", "order o2 c2 p1:3,p9:1", "order o3 c2 p1:4,p2:1", "restock p1 10", "return o1 3", "report", "top"], 1, []) == ["OK o1 3800", "ERR 6 unknown_product", "BACKORDER o3", "FILLED o3 4250", "RETURNED o1 1140", "--- customers", "c1 1 2660 0 2660", "c2 1 4250 0 4250", "--- products", "p1 11 4", "p2 12 8", "--- top", "p2 8", "p1 4"]
+
+test example_two = play(initial(), ["product p1 a 100 10", "product p2 b 10 10", "customer c1 x silver", "promo p2 40", "tax 10", "order o1 c1 p1:5,p2:5", "order o2 c1 p1 5", "order o3 c1 p1:0", "order o4 c1 p1:1,", "order o5 c1 p1:1,p1:1", "report"], 1, []) == ["OK o1 534", "OK o2 533", "ERR 8 invalid", "ERR 9 invalid", "BACKORDER o5", "--- customers", "c1 2 1067 96 1067", "--- products", "p1 0 10", "p2 5 5"]

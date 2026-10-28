@@ -154,12 +154,13 @@ class ValidationService:
             }
 
         except Exception as e:
-            print(f"⚠️ Classification validation failed, using approximation: {str(e)}")
-            # Return approximate values
+            print(f"⚠️ Classification validation failed: {str(e)}")
+            # No measurement: report that, never invented numbers.
             return {
-                "original_accuracy": 89.5,
-                "compressed_accuracy": 88.7,
-                "accuracy_loss": 0.8
+                "original_accuracy": None,
+                "compressed_accuracy": None,
+                "accuracy_loss": None,
+                "validation_error": str(e)
             }
 
     def _evaluate_classifier(
@@ -246,12 +247,8 @@ class ValidationService:
             }
 
         except Exception as e:
-            print(f"⚠️ Masked LM validation failed, using approximation: {str(e)}")
-            return {
-                "original_accuracy": 92.3,
-                "compressed_accuracy": 91.5,
-                "accuracy_loss": 0.8
-            }
+            print(f"⚠️ Masked LM validation failed, falling back to parameter similarity: {str(e)}")
+            return self._validate_generic(original_model, compressed_model, model_identifier, len(test_sentences))
 
     def _evaluate_masked_lm(
         self,
@@ -320,12 +317,19 @@ class ValidationService:
             }
 
         except Exception as e:
-            print(f"⚠️ Generic validation failed, using defaults: {str(e)}")
-            return {
-                "original_accuracy": 100.0,
-                "compressed_accuracy": 99.2,
-                "accuracy_loss": 0.8
-            }
+            # Fall back to direct Frobenius / L2 weight fidelity calculation
+            try:
+                p_orig = torch.cat([p.flatten() for p in original_model.parameters()])
+                p_comp = torch.cat([p.flatten() for p in compressed_model.parameters()])
+                rel_diff = (torch.norm(p_orig - p_comp) / (torch.norm(p_orig) + 1e-8)).item()
+                retention = max(0.0, min(100.0, (1.0 - rel_diff) * 100.0))
+                return {
+                    "original_accuracy": 100.0,
+                    "compressed_accuracy": round(retention, 2),
+                    "accuracy_loss": round(100.0 - retention, 2)
+                }
+            except Exception as inner_err:
+                raise RuntimeError(f"Generic parameter validation failed: {e} / {inner_err}")
 
     def quick_validate(
         self,
@@ -339,11 +343,14 @@ class ValidationService:
 
         try:
             # Compare weight statistics
-            original_mean = torch.mean(torch.cat([p.flatten() for p in original_model.parameters()])).item()
-            compressed_mean = torch.mean(torch.cat([p.flatten() for p in compressed_model.parameters()])).item()
+            p_orig = torch.cat([p.flatten() for p in original_model.parameters()])
+            p_comp = torch.cat([p.flatten() for p in compressed_model.parameters()])
 
-            original_std = torch.std(torch.cat([p.flatten() for p in original_model.parameters()])).item()
-            compressed_std = torch.std(torch.cat([p.flatten() for p in compressed_model.parameters()])).item()
+            original_mean = torch.mean(p_orig).item()
+            compressed_mean = torch.mean(p_comp).item()
+
+            original_std = torch.std(p_orig).item()
+            compressed_std = torch.std(p_comp).item()
 
             # Similarity score based on statistics
             mean_diff = abs(original_mean - compressed_mean)
@@ -359,8 +366,13 @@ class ValidationService:
             }
 
         except Exception as e:
+            # Exact Frobenius norm fallback
+            p_orig = torch.cat([p.flatten() for p in original_model.parameters()])
+            p_comp = torch.cat([p.flatten() for p in compressed_model.parameters()])
+            rel_diff = (torch.norm(p_orig - p_comp) / (torch.norm(p_orig) + 1e-8)).item()
+            retention = max(0.0, min(100.0, (1.0 - rel_diff) * 100.0))
             return {
                 "original_accuracy": 100.0,
-                "compressed_accuracy": 99.0,
-                "accuracy_loss": 1.0
+                "compressed_accuracy": round(retention, 2),
+                "accuracy_loss": round(100.0 - retention, 2)
             }

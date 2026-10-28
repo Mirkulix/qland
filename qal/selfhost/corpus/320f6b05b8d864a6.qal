@@ -1,0 +1,5 @@
+fn pos(x: Int) -> Int req x > 0 = x
+fn caller(y: Int) -> Int = pos(y)
+fn guarded(y: Int) -> Int req y > 5 = pos(y - 1)
+fn branch(y: Int) -> Int = if y > 0 then pos(y) else 0
+test t = pos(0) == 0

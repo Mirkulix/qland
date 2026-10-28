@@ -1,0 +1,16 @@
+[package]
+name = "qal-compiler"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = []
+reference = ["dep:qal-text", "dep:qal-check", "dep:qal-wasm", "qal-core/canon-encode"]
+
+[dependencies]
+qal-core = { workspace = true }
+qal-text = { workspace = true, optional = true }
+qal-check = { workspace = true, optional = true }
+qal-wasm = { workspace = true, optional = true }
+serde_json = { workspace = true }

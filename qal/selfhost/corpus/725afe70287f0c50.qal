@@ -1,0 +1,19 @@
+fn can_self_approve(requester: Str, approver: Str) -> Bool
+ens (r == true) == (requester != approver)
+= requester != approver
+fn is_admin(user: Str) -> Bool
+ens (r == true) == (user == "admin")
+= user == "admin"
+fn admin_check() -> Bool ens r == true = is_admin("admin")
+fn guest_check() -> Bool ens r == false = is_admin("guest")
+fn str_order() -> Bool ens r == true = "apple" < "banana"
+fn str_concat_len(a: Str, b: Str) -> Int
+ens r == len(a) + len(b)
+= len(a ++ b)
+fn hello_len(name: Str) -> Int
+ens r == len(name) + 5
+= len("Hello" ++ name)
+fn str_prefix(s: Str) -> Bool
+req starts_with(s, "abc")
+ens len(s) >= 3
+= starts_with(s, "abc")

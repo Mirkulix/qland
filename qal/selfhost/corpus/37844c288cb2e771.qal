@@ -1,0 +1,1 @@
+fn spin(n: Int) -> Int = spin(n)

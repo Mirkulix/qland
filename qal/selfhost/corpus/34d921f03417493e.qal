@@ -1,0 +1,18 @@
+type User = { id: Int, name: Str, tags: List[Str] }
+type Shape = Circle(Float) | Rect(Float, Float) | Empty
+type Tree = Leaf | Node(Tree, Int, Tree)
+fn area(s: Shape) -> Float = match s { Circle(r) => 3.0 * r * r, Rect(w, h) => w * h, Empty => 0.0 }
+fn sum(t: Tree) -> Int = match t { Leaf => 0, Node(l, v, r) => sum(l) + v + sum(r) }
+fn classify(n: Int) -> Str = match n { 0 => "zero", -1 => "minus one", x if x > 0 => "pos", _ => "neg" }
+fn greet(u: User) -> Str = match u { User { name: "root" } => "admin", User { id, name } => name ++ from_int(id) }
+fn first(xs: List[Int]) -> Int = match get(xs, 0) { Some(n) => n, None => -1 }
+fn word(s: Str) -> Int = match s { "one" => 1, "two" => 2, _ => 0 }
+fn both(a: Bool, b: Bool) -> Int = match a { true => match b { true => 3, false => 2 }, false => 1 }
+test records = User { id: 1, name: "a", tags: [] }.name == "a" && User { id: 1, name: "a", tags: ["x"] } == User { tags: ["x"], name: "a", id: 1 }
+test record_ne = User { id: 1, name: "a", tags: [] } != User { id: 2, name: "a", tags: [] }
+test enums = area(Rect(2.0, 3.0)) == 6.0 && area(Empty) == 0.0 && Circle(1.0) == Circle(1.0) && Circle(1.0) != Rect(1.0, 1.0) && Empty == Empty
+test trees = sum(Node(Node(Leaf, 1, Leaf), 2, Node(Leaf, 3, Leaf))) == 6 && Node(Leaf, 1, Leaf) == Node(Leaf, 1, Leaf)
+test literals = classify(0) == "zero" && classify(-1) == "minus one" && classify(5) == "pos" && classify(-5) == "neg"
+test record_patterns = greet(User { id: 7, name: "root", tags: [] }) == "admin" && greet(User { id: 7, name: "bob", tags: [] }) == "bob7"
+test options = first([4, 5]) == 4 && first([]) == -1 && Some(Some(1)) == Some(Some(1)) && Ok(1) != Err("x")
+test strings_and_bools = word("two") == 2 && word("three") == 0 && both(true, false) == 2 && both(false, true) == 1

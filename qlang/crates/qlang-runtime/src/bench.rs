@@ -59,10 +59,7 @@ impl Default for BenchmarkSuite {
         Self {
             element_wise_sizes: vec![256, 1024, 4096],
             matmul_sizes: vec![(32, 32, 32), (64, 64, 64), (128, 128, 128)],
-            mlp_configs: vec![
-                (64, 32, 10, 8),
-                (128, 64, 10, 16),
-            ],
+            mlp_configs: vec![(64, 32, 10, 8), (128, 64, 10, 16)],
             ternary_sizes: vec![256, 1024, 4096],
             warmup_iters: 2,
             bench_iters: 5,
@@ -146,7 +143,11 @@ pub fn bench_element_wise(n: usize, op_name: &str) -> BenchmarkResult {
             (g, map)
         }
         "Relu" | "Sigmoid" => {
-            let op = if op_name == "Relu" { Op::Relu } else { Op::Sigmoid };
+            let op = if op_name == "Relu" {
+                Op::Relu
+            } else {
+                Op::Sigmoid
+            };
             let mut g = Graph::new(format!("bench_{op_name}_{n}"));
             let a = g.add_node(Op::Input { name: "x".into() }, vec![], vec![vtype.clone()]);
             let op_node = g.add_node(op, vec![vtype.clone()], vec![vtype.clone()]);
@@ -209,7 +210,11 @@ pub fn bench_matmul(m: usize, k: usize, n: usize) -> BenchmarkResult {
     let mut g = Graph::new(format!("bench_matmul_{m}x{k}x{n}"));
     let na = g.add_node(Op::Input { name: "a".into() }, vec![], vec![atype.clone()]);
     let nb = g.add_node(Op::Input { name: "b".into() }, vec![], vec![btype.clone()]);
-    let mm = g.add_node(Op::MatMul, vec![atype.clone(), btype.clone()], vec![ctype.clone()]);
+    let mm = g.add_node(
+        Op::MatMul,
+        vec![atype.clone(), btype.clone()],
+        vec![ctype.clone()],
+    );
     let out = g.add_node(Op::Output { name: "y".into() }, vec![ctype.clone()], vec![]);
     g.add_edge(na, 0, mm, 0, atype.clone());
     g.add_edge(nb, 0, mm, 1, btype.clone());
@@ -218,8 +223,14 @@ pub fn bench_matmul(m: usize, k: usize, n: usize) -> BenchmarkResult {
     let data_a = make_f32_vector(m * k, 0.5);
     let data_b = make_f32_vector(k * n, 0.5);
     let mut inputs = HashMap::new();
-    inputs.insert("a".to_string(), TensorData::from_f32(Shape::matrix(m, k), &data_a.as_f32_slice().unwrap()));
-    inputs.insert("b".to_string(), TensorData::from_f32(Shape::matrix(k, n), &data_b.as_f32_slice().unwrap()));
+    inputs.insert(
+        "a".to_string(),
+        TensorData::from_f32(Shape::matrix(m, k), &data_a.as_f32_slice().unwrap()),
+    );
+    inputs.insert(
+        "b".to_string(),
+        TensorData::from_f32(Shape::matrix(k, n), &data_b.as_f32_slice().unwrap()),
+    );
 
     let start = Instant::now();
     let _ = executor::execute(&g, inputs);
@@ -266,8 +277,7 @@ pub fn bench_mlp_forward(
     // FLOPs estimate: batch*(input*hidden + hidden + hidden*output + output + softmax)
     // ~= batch * (2*input*hidden + 2*hidden*output)
     let total_flops = batch_size as u64
-        * (2 * input_dim as u64 * hidden_dim as u64
-            + 2 * hidden_dim as u64 * output_dim as u64);
+        * (2 * input_dim as u64 * hidden_dim as u64 + 2 * hidden_dim as u64 * output_dim as u64);
     let throughput_gflops = if interpreter_ns > 0 {
         total_flops as f64 / interpreter_ns as f64
     } else {
@@ -296,12 +306,20 @@ pub fn bench_ternary_compression(n: usize) -> BenchmarkResult {
         vec![TensorType::new(Dtype::Ternary, Shape::vector(n))],
     );
     let out = g.add_node(
-        Op::Output { name: "compressed".into() },
+        Op::Output {
+            name: "compressed".into(),
+        },
         vec![TensorType::new(Dtype::Ternary, Shape::vector(n))],
         vec![],
     );
     g.add_edge(inp, 0, tern, 0, vtype.clone());
-    g.add_edge(tern, 0, out, 0, TensorType::new(Dtype::Ternary, Shape::vector(n)));
+    g.add_edge(
+        tern,
+        0,
+        out,
+        0,
+        TensorType::new(Dtype::Ternary, Shape::vector(n)),
+    );
 
     let weights = make_f32_vector_alternating(n);
     let mut inputs = HashMap::new();
@@ -455,7 +473,10 @@ mod tests {
         assert_eq!(result.name, "Add[128]");
         assert_eq!(result.input_size, 128);
         assert!(result.interpreter_ns > 0, "timing should be nonzero");
-        assert!(result.throughput_gflops > 0.0, "throughput should be positive");
+        assert!(
+            result.throughput_gflops > 0.0,
+            "throughput should be positive"
+        );
     }
 
     #[test]
@@ -497,10 +518,7 @@ mod tests {
 
     #[test]
     fn bench_format_table_not_empty() {
-        let results = vec![
-            bench_element_wise(64, "Add"),
-            bench_matmul(8, 8, 8),
-        ];
+        let results = vec![bench_element_wise(64, "Add"), bench_matmul(8, 8, 8)];
         let table = format_benchmark_table(&results);
         assert!(table.contains("Benchmark"));
         assert!(table.contains("Add[64]"));
@@ -528,7 +546,11 @@ mod tests {
         // 4 element-wise ops * 1 size + 1 matmul + 1 mlp + 1 ternary = 7
         assert_eq!(results.len(), 7);
         for r in &results {
-            assert!(r.interpreter_ns > 0, "all benchmarks should have timing: {}", r.name);
+            assert!(
+                r.interpreter_ns > 0,
+                "all benchmarks should have timing: {}",
+                r.name
+            );
         }
     }
 

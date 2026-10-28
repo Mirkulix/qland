@@ -2,22 +2,21 @@
 
 **Version:** 4.0.0
 **Release Date:** 2026-02-05
-**Status:** ✅ PRODUCTION-READY
+**Status:** 🧪 Research prototype (nicht produktionsreif)
 
 ---
 
 ## 📋 WAS IST NEU IN v4.0?
 
-IGQK v4.0 vereint **v2.0 Vision** (Quantum Training from Scratch) mit **v3.0 Enterprise Platform** und fügt bahnbrechende neue Features hinzu:
+IGQK v4.0 bündelt den Quantum-Training-Ansatz (v2.0) und die SaaS-Plattform (v3.0). Mehrere der unten beschriebenen Features sind Roadmap und im Prototyp nicht implementiert.
 
 ### 🆕 HAUPTFEATURES
 
 1. **🌟 QUANTUM TRAINING FROM SCRATCH**
-   - Trainiere neuronale Netze VON GRUND AUF mit Quantum Gradient Flow
-   - DIREKTE Kompression während des Trainings (kein separater Schritt!)
-   - +3% bessere Accuracy als klassisches Training
-   - -50% weniger Trainingszeit
-   - -30% weniger Daten benötigt
+   - Training mit Quantum Gradient Flow (Forschungsansatz)
+   - Ternäre 2-Bit-Kompression während des Trainings
+   - Gemessener Optimizer-Vergleich: IGQK 90,02 % vs. SGD 89,68 % (MNIST, 20.000 Bilder, MLP 784-128-10, 1 Epoche, 1 Seed) — kein belegter Vorteil
+   - Kein gemessener Geschwindigkeits- oder Dateneffizienz-Vorteil
 
 2. **🔬 ADVANCED MATHEMATICAL FRAMEWORKS**
    - **HLWT** (Hybrid Laplace-Wavelet Transform) - Adaptive Lernraten
@@ -29,20 +28,20 @@ IGQK v4.0 vereint **v2.0 Vision** (Quantum Training from Scratch) mit **v3.0 Ent
    - Audio + Text (Whisper-ähnlich)
    - Quantum Entanglement für Cross-Modal Fusion
 
-4. **🌐 DISTRIBUTED TRAINING**
+4. **🌐 DISTRIBUTED TRAINING** (Roadmap, nicht implementiert)
    - Multi-GPU Support (DDP, FSDP)
    - Multi-Node Cluster Training
    - Quantum State Sharding
 
-5. **🤖 AUTO-TUNING**
+5. **🤖 AUTO-TUNING** (Roadmap, nicht implementiert)
    - Automatische Hyperparameter-Optimierung
    - Neural Architecture Search (NAS)
    - Meta-Learning
 
-6. **⚡ HARDWARE ACCELERATION**
+6. **⚡ HARDWARE ACCELERATION** (Roadmap, nicht implementiert)
    - Custom CUDA Kernels für Ternary Operations
    - FPGA Support
-   - TPU-T (Ternary Processing Unit) Ready
+   - TPU-T (Ternary Processing Unit) geplant
 
 ---
 
@@ -136,9 +135,9 @@ model = trainer.fit(
 )
 
 # Ergebnis:
-# • 16× komprimiertes Modell
-# • +3% bessere Accuracy
-# • -50% Trainingszeit
+# • 16.0× ternäre Nutzdaten (15.6× auf der Checkpoint-Datei)
+# • Genauigkeitsverlust modellabhängig: −3.8 bis −7.9 Pp. (gemessen)
+# • Kein gemessener Trainingszeit-Vorteil
 ```
 
 ### Beispiel 2: Multi-Modal AI
@@ -156,7 +155,7 @@ config = QuantumTrainingConfig(
 trainer = QuantumLLMTrainer(config)
 model = trainer.fit(vision_text_dataset)
 
-# Ergebnis: CLIP-like model, aber 50× kleiner!
+# Ergebnis: CLIP-ähnliches Modell; Kompression und Qualität im Prototyp nicht gemessen
 ```
 
 ### Beispiel 3: Auto-Tuning
@@ -193,10 +192,10 @@ dρ/dt = -i[H, ρ] - γ{G^{-1}∇L, ρ}  # Tunnelt durch Barrieren!
 ```
 
 **Vorteile:**
-- ✅ Findet BESSERE Minima (+3% Accuracy)
-- ✅ Schnellere Konvergenz (-50% Zeit)
-- ✅ Weniger Daten nötig (-30%)
-- ✅ Direkt komprimiert (16×)
+- ✅ Quantum Gradient Flow als Forschungsansatz
+- ⚠️ Kein gemessener Genauigkeitsvorteil (IGQK ≈ SGD)
+- ⚠️ Kein gemessener Geschwindigkeitsvorteil
+- ✅ Ternäre 2-Bit-Kompression (16,0× Nutzdaten, 15,6× Datei)
 
 ### 2. Advanced Mathematical Frameworks
 
@@ -205,9 +204,9 @@ dρ/dt = -i[H, ρ] - γ{G^{-1}∇L, ρ}  # Tunnelt durch Barrieren!
 **Was:** Analysiert lokale Stabilität in Zeit-Frequenz-Raum.
 
 **Effekt:**
-- Adaptive Lernraten basierend auf lokaler Landschaft
-- Automatische Erkennung von Sattelpoints
-- 1.5× schnellere Konvergenz
+- Adaptive Lernraten basierend auf lokaler Landschaft (Konzept)
+- Automatische Erkennung von Sattelpoints (Konzept)
+- Keine gemessene Konvergenz-Beschleunigung (Roadmap Phase 2)
 
 **Verwendung:**
 ```python
@@ -220,9 +219,9 @@ config.hlwt_wavelet_type = 'morlet'  # oder 'mexican_hat', 'haar'
 **Was:** Optimierung auf Geodäten der ternären Mannigfaltigkeit.
 
 **Effekt:**
-- Optimale Schritte im ternären Raum
-- +1-2% höhere Genauigkeit
-- Glattere Konvergenz
+- Optimale Schritte im ternären Raum (Konzept)
+- Keine gemessene Genauigkeitsverbesserung (Roadmap Phase 2)
+- Glattere Konvergenz (nicht gemessen)
 
 **Verwendung:**
 ```python
@@ -235,9 +234,9 @@ config.tlgt_geodesic_steps = 5
 **Was:** Langzeit-Gedächtnis durch fraktionale Ableitungen.
 
 **Effekt:**
-- Power-Law Memory (biologisch plausibler)
-- Bessere Langzeit-Abhängigkeiten
-- +2% bei Sequenz-Modellen
+- Power-Law Memory (biologisch plausibles Konzept)
+- Bessere Langzeit-Abhängigkeiten (Konzept)
+- Keine gemessene Verbesserung bei Sequenzmodellen (Roadmap Phase 2)
 
 **Verwendung:**
 ```python
@@ -275,8 +274,8 @@ config.quantum_state_sharding = True  # 🔥 Verteilt Quantum State
 ```
 
 **Performance:**
-- 8 GPUs: 6.5× Speedup
-- 32 GPUs: 22× Speedup
+- 8 GPUs: nicht gemessen (keine Implementierung im Prototyp)
+- 32 GPUs: nicht gemessen (keine Implementierung im Prototyp)
 
 ### 5. Auto-Tuning
 
@@ -293,66 +292,59 @@ config.quantum_state_sharding = True  # 🔥 Verteilt Quantum State
 - Neural Architecture Search
 - Meta-Learning (MAML)
 
-### 6. Hardware Acceleration
+### 6. Hardware Acceleration (geplant, nicht implementiert)
 
-**Custom CUDA Kernels:**
-- Ternary Matrix Multiplication: 5× schneller
-- Ternary Convolution: 8× schneller
-- Quantum State Updates: 3× schneller
+**Custom CUDA Kernels (geplant):**
+- Ternary Matrix Multiplication: nicht implementiert
+- Ternary Convolution: nicht implementiert
+- Quantum State Updates: nicht implementiert
 
-**FPGA:**
-- 50× Speedup vs. GPU
-- Ultra-niedrige Latenz (<1ms)
+**FPGA (geplant):**
+- Keine Implementierung, keine Messung
 
-**TPU-T (Prototype):**
-- 100× Speedup vs. GPU
-- Native ternary arithmetic
+**TPU-T (Konzept):**
+- Keine Implementierung, keine Messung
 
 ---
 
-## 📊 PERFORMANCE BENCHMARKS
+## 📊 GEMESSENE ERGEBNISSE
 
-### Training Performance
+### Kompression und Genauigkeit
 
-| Metrik | Classical (Adam) | IGQK v4.0 | Improvement |
-|--------|------------------|-----------|-------------|
-| Training Time (1B model) | 7 days | 3.5 days | **2× faster** |
-| Data Required | 100GB | 70GB | **-30%** |
-| Final Accuracy | 85.0% | 88.0% | **+3.0%** |
-| Model Size | 2GB | 125MB | **16× smaller** |
-| GPU Memory | 32GB | 8GB | **4× less** |
+| Metrik | Gemessen | Kontext |
+|--------|----------|---------|
+| Checkpoint-Datei | 1,53 MB → 0,099 MB (**15,6×**) | MLP 3072-128-64-10, MNIST, 3 Epochen |
+| Ternäre Nutzdaten | 3,81 MB → 0,24 MB (**16,0×**) | 1 Mio. Parameter, 2 Bit/Gewicht |
+| Genauigkeit | 97,45 % → 93,68 % (**−3,77 Pp.**) | Adam, lr 0,001, MNIST, 3 Epochen |
+| Genauigkeit (2. Lauf) | 94,10 % → 86,25 % (**−7,85 Pp.**) | MNISTNet, 10.000/10.000 Bilder, anderes Netz |
 
-### Multi-Modal Compression
+Quelle: `AGENT_COLLABORATION.md:127` (Plattform-Trainingspfad) und `:229-230` (Gemini-Lauf, MNISTNet).
 
-| Model | Original | v4.0 Compressed | Ratio |
-|-------|----------|-----------------|-------|
-| CLIP (ViT-L/14) | 1.7GB | 35MB | **49×** |
-| Multi-Modal GPT | 10GB | 150MB | **67×** |
+### Training
 
-### Hardware Acceleration
-
-| Platform | Speed | vs PyTorch |
-|----------|-------|------------|
-| PyTorch GPU | 100 tok/s | 1× |
-| Custom CUDA | 500 tok/s | 5× |
-| FPGA | 5,000 tok/s | 50× |
-| TPU-T | 10,000 tok/s | 100× |
+| Vergleich | Ergebnis | Kontext |
+|-----------|----------|---------|
+| IGQK vs. SGD | 90,02 % vs. 89,68 % | MNIST, 20.000 Bilder, MLP 784-128-10, 1 Epoche, 1 Seed |
+| Trainingszeit-Vorteil | nicht gemessen | – |
+| Genauigkeitsvorteil | nicht gemessen | – |
+| Multi-Modal-/Hardware-Zahlen | nicht gemessen | frühere Angaben (49×, 67×, 5×, 50×, 100×) entfernt |
 
 ---
 
 ## 🧪 TESTS
 
-```bash
-# Run all tests
-cd tests
-python run_all_tests.py
+21 Tests (Stand 2026-10-26), collect-only bestätigt:
 
-# Run specific tests
-python test_quantum_training.py
-python test_hlwt.py
-python test_tlgt.py
-python test_fchl.py
-python test_multimodal.py
+```bash
+# Aus dem Workspace-Root
+python3 -m pytest IGQK_Complete_Package/igqk_v4/tests -q   # 21 passed
+
+# Einzelne Suiten (aus IGQK_Complete_Package/igqk_v4)
+python3 -m pytest tests/test_compression.py -q
+python3 -m pytest tests/test_integration.py -q
+python3 -m pytest tests/test_models.py -q
+python3 -m pytest tests/test_multimodal.py -q
+python3 -m pytest tests/test_training.py -q
 ```
 
 ---
@@ -404,17 +396,16 @@ MIT License - See `LICENSE` file.
 ## 🎉 ZUSAMMENFASSUNG
 
 **IGQK v4.0 ist:**
-- ✅ **Weltweit ERSTE** Quantum Training Platform
-- ✅ **Mathematisch bewiesen** (4 Theoreme)
-- ✅ **Production-ready** (100% getestet)
-- ✅ **2× schneller** als klassisches Training
-- ✅ **16× kleinere** Modelle
-- ✅ **+3% bessere** Accuracy
+- 🧪 **Research prototype** (Forschungsprototyp, keine Produktionsfreigabe)
+- ✅ **21 Tests** in der igqk_v4-Suite
+- ⚠️ **Mathematisch formuliert** (Theoreme in der Theorie dokumentiert)
+- ✅ **Ternäre 2-Bit-Kompression** (16,0× Nutzdaten, 15,6× Datei)
+- ⚠️ **Kein gemessener Vorteil** bei Trainingszeit oder Genauigkeit
 
-**Die nächste Generation des Machine Learning ist hier!** 🚀
+**Die nächste Generation des Machine Learning ist ein Forschungsziel, nicht der aktuelle Stand.** 🧪
 
 ---
 
-**Letzte Aktualisierung:** 2026-02-05
+**Letzte Aktualisierung:** 2026-02-05 (Messungen: 2026-10-26)
 **Version:** 4.0.0
 **Kontakt:** igqk@example.com

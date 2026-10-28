@@ -1,0 +1,24 @@
+# Spec §4 example: parse an age from the command line.
+
+type Err = Empty | NotNumber(Str) | Negative(Int)
+
+fn parse_age(s: Str) -> Result[Int, Err]
+  ens match r { Ok(n) => n >= 0, _ => true }
+= if len(trim(s)) == 0 then Err(Empty)
+  else match to_int(trim(s)) {
+    None => Err(NotNumber(s)),
+    Some(n) if n < 0 => Err(Negative(n)),
+    Some(n) => Ok(n),
+  }
+
+test parse_age_ok = parse_age(" 42 ") == Ok(42)
+test parse_age_neg = parse_age("-1") == Err(Negative(-1))
+
+fn main(args: List[Str]) -> Int !io
+= match get(args, 0) {
+    None => { print("usage: age <n>"); 2 },
+    Some(a) => match parse_age(a) {
+      Ok(n) => { print("ok " ++ from_int(n)); 0 },
+      Err(_) => { print("invalid"); 1 },
+    },
+  }

@@ -1,0 +1,3 @@
+fn make(q: Int) -> Int req q > 0 ens r == q ens r > 0 = todo()
+fn use_it(q: Int) -> Int req q > 0 = make(q)
+test t = make(1) == 1

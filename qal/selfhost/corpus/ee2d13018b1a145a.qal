@@ -1,0 +1,5 @@
+fn d(n: Int) -> Str req n > 0 = "d"
+fn c(n: Int) -> Str ens let z = d(0) in true = "c"
+fn b(n: Int) -> Str ens let z = c(n) in true = "b"
+fn a(n: Int) -> Str ens let z = b(n) in true = "a"
+fn f(n: Int) -> Str ens let z = a(n) in true = "f"

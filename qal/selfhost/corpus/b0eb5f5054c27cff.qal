@@ -1,0 +1,2 @@
+fn f() -> Int = base() + 1
+test f_works = f() == 2

@@ -1,0 +1,149 @@
+# Word wrap: greedy paragraph filler.
+# The single argument is the line width W (decimal digits only, at least 1);
+# otherwise print the usage line and exit with code 2.  The text is read from
+# standard input, paragraphs are separated by one or more blank lines (lines
+# that are empty or hold only spaces and tabs) and wrapped greedily so that no
+# output line except a lone over-long word exceeds W characters.
+#
+# Lists are built with Accum (O(1) append); push copies the whole list and is
+# quadratic in a loop.
+
+type PAcc = { paras: Accum[Str], cur: Accum[Str], curCount: Int }
+type WAcc = { lines: Accum[Str], cur: Accum[Str], curCount: Int, curLen: Int }
+
+# A line is blank when every character is a space or a tab (the empty line is
+# blank too).  Carriage returns are removed before the lines are built.
+fn is_blank(line: Str) -> Bool =
+  let cs = chars(line) in
+  fold(cs, true, fn(acc: Bool, c: Str) => acc && (c == " " || c == "\t"))
+
+fn all_digits(s: Str) -> Bool =
+  let cs = chars(s) in
+  len(cs) > 0 && fold(cs, true, fn(acc: Bool, c: Str) => acc && contains("0123456789", c))
+
+# One paragraph as a list of its maximal runs of non-blank characters, in
+# reading order.  The paragraph text holds a single \n per input line.
+fn words_of_para(p: Str) -> List[Str] =
+  let spaced = replace(replace(p, "\n", " "), "\t", " ") in
+  filter(split(spaced, " "), fn(w: Str) => len(w) > 0)
+
+# Accumulate the input lines into paragraph texts.
+fn p_step(acc: PAcc, line: Str) -> PAcc =
+  if is_blank(line) then
+    if acc.curCount == 0 then acc
+    else PAcc { paras: AccPush(acc.paras, join(acc_list(acc.cur), "\n"))
+              , cur: AccEnd
+              , curCount: 0 }
+  else PAcc { paras: acc.paras, cur: AccPush(acc.cur, line), curCount: 1 }
+
+fn paragraphs(text: Str) -> List[Str] =
+  let clean = replace(replace(text, "\r\n", "\n"), "\r", "\n") in
+  let a = fold(split(clean, "\n"), PAcc { paras: AccEnd, cur: AccEnd, curCount: 0 }, p_step) in
+  acc_list(if a.curCount == 0 then a.paras else AccPush(a.paras, join(acc_list(a.cur), "\n")))
+
+# Greedy placement of one word.  A word that does not fit starts a new output
+# line; a word longer than the width therefore stands alone.
+fn w_step(acc: WAcc, w: Str, width: Int) -> WAcc =
+  let wl = len(w) in
+  if acc.curCount == 0 then
+    WAcc { lines: acc.lines, cur: AccPush(AccEnd, w), curCount: 1, curLen: wl }
+  else if acc.curLen + 1 + wl <= width then
+    WAcc { lines: acc.lines, cur: AccPush(acc.cur, w), curCount: acc.curCount + 1, curLen: acc.curLen + 1 + wl }
+  else
+    WAcc { lines: AccPush(acc.lines, join(acc_list(acc.cur), " "))
+         , cur: AccPush(AccEnd, w)
+         , curCount: 1
+         , curLen: wl }
+
+fn wrap_para(words: List[Str], width: Int) -> List[Str] =
+  let a = fold(words, WAcc { lines: AccEnd, cur: AccEnd, curCount: 0, curLen: 0 },
+               fn(x: WAcc, w: Str) => w_step(x, w, width)) in
+  acc_list(if a.curCount == 0
+           then a.lines
+           else AccPush(a.lines, join(acc_list(a.cur), " ")))
+
+fn wrap_text(text: Str, width: Int) -> Str =
+  join(map(paragraphs(text), fn(p: Str) => join(wrap_para(words_of_para(p), width), "\n")), "\n\n")
+
+fn has_nonzero_digit(s: Str) -> Bool =
+  len(filter(chars(s), fn(c: Str) => c != "0")) > 0
+
+fn parse_width(args: List[Str]) -> Option[Int] =
+  if len(args) != 1 then None
+  else match get(args, 0) {
+    None => None,
+    Some(s) =>
+      if !all_digits(s) then None
+      else match to_int(s) {
+        Some(n) => if n >= 1 then Some(n) else None,
+        # A positive value beyond Int range: any width that large never wraps
+        # (input is at most 50 KB), so clamp it instead of refusing the call.
+        None => if has_nonzero_digit(s) then Some(1000000) else None
+      }
+  }
+
+fn main(args: List[Str]) -> Int !io =
+  match parse_width(args) {
+    None => { print("usage: word_wrap <width>"); 2 },
+    Some(w) => {
+      let out = wrap_text(read_all(), w) in
+      if len(out) > 0 then { print(out); 0 } else { 0 }
+    }
+  }
+
+# --- tests -----------------------------------------------------------------
+
+test example =
+  wrap_text("The quick brown fox jumps over the lazy dog.\n\nSecond paragraph here.\n", 16) ==
+    "The quick brown\nfox jumps over\nthe lazy dog.\n\nSecond paragraph\nhere."
+
+test example_with_blank_line_padding =
+  wrap_text("The quick brown fox jumps over the lazy dog.\n \t \nSecond paragraph here.", 16) ==
+    "The quick brown\nfox jumps over\nthe lazy dog.\n\nSecond paragraph\nhere."
+
+test long_word_stands_alone =
+  wrap_text("ab abcdefghijkl cd\n", 5) == "ab\nabcdefghijkl\ncd"
+
+test joins_input_lines_in_one_paragraph =
+  wrap_text("one   two\nthree\tfour\n\nfive\n", 11) == "one two\nthree four\n\nfive"
+
+test several_blank_lines_make_one_separator =
+  wrap_text("a\n\n\n\n \n\t\nb\n", 3) == "a\n\nb"
+
+test crlf_input =
+  wrap_text("a b\r\n\r\nc\r\n", 10) == "a b\n\nc"
+
+test width_one =
+  wrap_text("hi there\n", 1) == "hi\nthere"
+
+test exact_fit =
+  wrap_text("abc def\n", 7) == "abc def"
+
+test unicode_width_counts_characters =
+  wrap_text("äää ööö üüü\n", 7) == "äää ööö\nüüü"
+
+test multi_blank =
+  wrap_text("\n\n  x y \n \n\t\n z\n\n", 10) == "x y\n\nz"
+
+test joined_lines_wide_width =
+  wrap_text("one\ntwo\nthree\n", 100) == "one two three"
+
+test empty_input =
+  wrap_text("", 10) == ""
+
+test blank_only_input =
+  wrap_text("   \n\t\n", 10) == ""
+
+test parse_width_ok = parse_width(["16"]) == Some(16)
+test parse_width_leading_zeros = parse_width(["007"]) == Some(7)
+test parse_width_zero = parse_width(["0"]) == None
+test parse_width_zeros = parse_width(["000"]) == None
+test parse_width_letter = parse_width(["1a"]) == None
+test parse_width_sign = parse_width(["+1"]) == None
+test parse_width_space = parse_width([" 1"]) == None
+test parse_width_empty_arg = parse_width([""]) == None
+test parse_width_no_arg = parse_width([]) == None
+test parse_width_two_args = parse_width(["1", "2"]) == None
+test parse_width_huge = parse_width(["99999999999999999999"]) == Some(1000000)
+test parse_width_huge_zeros = parse_width(["0000000000000000000000"]) == None
+test parse_width_negative = parse_width(["-3"]) == None

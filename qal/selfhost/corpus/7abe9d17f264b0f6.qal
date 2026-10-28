@@ -1,0 +1,1 @@
+fn k(a: Int) -> Int ens r == a = shr(shl(a, 0), 0)

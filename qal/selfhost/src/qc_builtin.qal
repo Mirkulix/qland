@@ -1,0 +1,167 @@
+# Typing signatures and properties of built-in function calls (spec §7: qc_builtin, matching qal-check/src/builtins.rs)
+
+type QcBuiltinSig = {
+  builtin: QcBuiltin,
+  params: List[QcType],
+  ret: QcType
+}
+
+fn qc_builtin_fn_type(ps: List[QcType], r: QcType) -> QcType =
+  QcTFn(ps, r, [])
+
+fn qc_builtin_signature(name: Str, a: QcType, b: QcType) -> Option[QcBuiltinSig] =
+  let t_int = QcTInt in
+  let t_float = QcTFloat in
+  let t_bool = QcTBool in
+  let t_unit = QcTUnit in
+  let t_str = QcTStr in
+  let t_bytes = QcTBytes in
+  let t_list_str = QcTList(t_str) in
+  let t_list_int = QcTList(t_int) in
+  let t_opt_int = QcTOption(t_int) in
+  let t_opt_float = QcTOption(t_float) in
+  let t_opt_str = QcTOption(t_str) in
+  let t_res_str_str = QcTResult(t_str, t_str) in
+  let t_res_unit_str = QcTResult(t_unit, t_str) in
+  let t_list_a = QcTList(a) in
+  let t_list_b = QcTList(b) in
+  let t_opt_a = QcTOption(a) in
+  let t_opt_b = QcTOption(b) in
+  let t_map_a_b = QcTMap(a, b) in
+  let http_call_ty = QcTNamed("HttpCall") in
+  let http_resp_ty = QcTNamed("HttpResponse") in
+  let net_err_ty = QcTNamed("NetError") in
+  let sql_val_ty = QcTNamed("SqlValue") in
+  let db_rows_ty = QcTNamed("DbRows") in
+  let db_err_ty = QcTNamed("DbError") in
+  let model_resp_ty = QcTNamed("ModelResponse") in
+  let model_err_ty = QcTNamed("ModelError") in
+  let accum_a_ty = QcTApp("Accum", [a]) in
+
+  if name == "slice" then Some(QcBuiltinSig { builtin: QcBSlice, params: [t_str, t_int, t_int], ret: t_str })
+  else if name == "split" then Some(QcBuiltinSig { builtin: QcBSplit, params: [t_str, t_str], ret: t_list_str })
+  else if name == "join" then Some(QcBuiltinSig { builtin: QcBJoin, params: [t_list_str, t_str], ret: t_str })
+  else if name == "trim" then Some(QcBuiltinSig { builtin: QcBTrim, params: [t_str], ret: t_str })
+  else if name == "contains" then Some(QcBuiltinSig { builtin: QcBContains, params: [t_str, t_str], ret: t_bool })
+  else if name == "starts_with" then Some(QcBuiltinSig { builtin: QcBStartsWith, params: [t_str, t_str], ret: t_bool })
+  else if name == "to_int" then Some(QcBuiltinSig { builtin: QcBToInt, params: [t_str], ret: t_opt_int })
+  else if name == "to_float" then Some(QcBuiltinSig { builtin: QcBToFloat, params: [t_str], ret: t_opt_float })
+  else if name == "from_int" then Some(QcBuiltinSig { builtin: QcBFromInt, params: [t_int], ret: t_str })
+  else if name == "from_float" then Some(QcBuiltinSig { builtin: QcBFromFloat, params: [t_float], ret: t_str })
+  else if name == "chars" then Some(QcBuiltinSig { builtin: QcBChars, params: [t_str], ret: t_list_str })
+  else if name == "get" then Some(QcBuiltinSig { builtin: QcBGet, params: [t_list_a, t_int], ret: t_opt_a })
+  else if name == "push" then Some(QcBuiltinSig { builtin: QcBPush, params: [t_list_a, a], ret: t_list_a })
+  else if name == "concat" then Some(QcBuiltinSig { builtin: QcBConcat, params: [t_list_a, t_list_a], ret: t_list_a })
+  else if name == "map" then Some(QcBuiltinSig { builtin: QcBMap, params: [t_list_a, qc_builtin_fn_type([a], b)], ret: t_list_b })
+  else if name == "filter" then Some(QcBuiltinSig { builtin: QcBFilter, params: [t_list_a, qc_builtin_fn_type([a], t_bool)], ret: t_list_a })
+  else if name == "fold" then Some(QcBuiltinSig { builtin: QcBFold, params: [t_list_a, b, qc_builtin_fn_type([b, a], b)], ret: b })
+  else if name == "range" then Some(QcBuiltinSig { builtin: QcBRange, params: [t_int, t_int], ret: t_list_int })
+  else if name == "reverse" then Some(QcBuiltinSig { builtin: QcBReverse, params: [t_list_a], ret: t_list_a })
+  else if name == "sort_int" then Some(QcBuiltinSig { builtin: QcBSortInt, params: [t_list_int], ret: t_list_int })
+  else if name == "int_to_float" then Some(QcBuiltinSig { builtin: QcBIntToFloat, params: [t_int], ret: t_float })
+  else if name == "float_to_int" then Some(QcBuiltinSig { builtin: QcBFloatToInt, params: [t_float], ret: t_opt_int })
+  else if name == "print" then Some(QcBuiltinSig { builtin: QcBPrint, params: [t_str], ret: t_unit })
+  else if name == "read_line" then Some(QcBuiltinSig { builtin: QcBReadLine, params: [], ret: t_opt_str })
+  else if name == "read_file" then Some(QcBuiltinSig { builtin: QcBReadFile, params: [t_str], ret: t_res_str_str })
+  else if name == "write_file" then Some(QcBuiltinSig { builtin: QcBWriteFile, params: [t_str, t_str], ret: t_res_unit_str })
+  else if name == "now_ms" then Some(QcBuiltinSig { builtin: QcBNowMs, params: [], ret: t_int })
+  else if name == "rand_int" then Some(QcBuiltinSig { builtin: QcBRandInt, params: [t_int, t_int], ret: t_int })
+  else if name == "read_all" then Some(QcBuiltinSig { builtin: QcBReadAll, params: [], ret: t_str })
+  else if name == "sort_str" then Some(QcBuiltinSig { builtin: QcBSortStr, params: [t_list_str], ret: t_list_str })
+  else if name == "char_code" then Some(QcBuiltinSig { builtin: QcBCharCode, params: [t_str], ret: t_int })
+  else if name == "from_char_code" then Some(QcBuiltinSig { builtin: QcBFromCharCode, params: [t_int], ret: t_str })
+  else if name == "to_upper" then Some(QcBuiltinSig { builtin: QcBToUpper, params: [t_str], ret: t_str })
+  else if name == "to_lower" then Some(QcBuiltinSig { builtin: QcBToLower, params: [t_str], ret: t_str })
+  else if name == "replace" then Some(QcBuiltinSig { builtin: QcBReplace, params: [t_str, t_str, t_str], ret: t_str })
+  else if name == "index_of" then Some(QcBuiltinSig { builtin: QcBIndexOf, params: [t_str, t_str], ret: t_opt_int })
+  else if name == "map_new" then Some(QcBuiltinSig { builtin: QcBMapNew, params: [], ret: t_map_a_b })
+  else if name == "map_get" then Some(QcBuiltinSig { builtin: QcBMapGet, params: [t_map_a_b, a], ret: t_opt_b })
+  else if name == "map_put" then Some(QcBuiltinSig { builtin: QcBMapPut, params: [t_map_a_b, a, b], ret: t_map_a_b })
+  else if name == "map_del" then Some(QcBuiltinSig { builtin: QcBMapDel, params: [t_map_a_b, a], ret: t_map_a_b })
+  else if name == "map_has" then Some(QcBuiltinSig { builtin: QcBMapHas, params: [t_map_a_b, a], ret: t_bool })
+  else if name == "map_size" then Some(QcBuiltinSig { builtin: QcBMapSize, params: [t_map_a_b], ret: t_int })
+  else if name == "map_keys" then Some(QcBuiltinSig { builtin: QcBMapKeys, params: [t_map_a_b], ret: t_list_a })
+  else if name == "map_values" then Some(QcBuiltinSig { builtin: QcBMapValues, params: [t_map_a_b], ret: t_list_b })
+  else if name == "to_bytes" then Some(QcBuiltinSig { builtin: QcBToBytes, params: [t_str], ret: t_bytes })
+  else if name == "bytes_len" then Some(QcBuiltinSig { builtin: QcBBytesLen, params: [t_bytes], ret: t_int })
+  else if name == "bytes_get" then Some(QcBuiltinSig { builtin: QcBBytesGet, params: [t_bytes, t_int], ret: t_opt_int })
+  else if name == "bytes_slice" then Some(QcBuiltinSig { builtin: QcBBytesSlice, params: [t_bytes, t_int, t_int], ret: t_bytes })
+  else if name == "bytes_from" then Some(QcBuiltinSig { builtin: QcBBytesFrom, params: [t_list_int], ret: t_bytes })
+  else if name == "bytes_to_list" then Some(QcBuiltinSig { builtin: QcBBytesToList, params: [t_bytes], ret: t_list_int })
+  else if name == "bytes_to_str" then Some(QcBuiltinSig { builtin: QcBBytesToStr, params: [t_bytes], ret: t_opt_str })
+  else if name == "compare" then Some(QcBuiltinSig { builtin: QcBCompare, params: [a, a], ret: t_int })
+  else if name == "http" then Some(QcBuiltinSig { builtin: QcBHttp, params: [http_call_ty], ret: QcTResult(http_resp_ty, net_err_ty) })
+  else if name == "db_exec" then Some(QcBuiltinSig { builtin: QcBDbExec, params: [t_str, QcTList(sql_val_ty)], ret: QcTResult(t_int, db_err_ty) })
+  else if name == "db_query" then Some(QcBuiltinSig { builtin: QcBDbQuery, params: [t_str, QcTList(sql_val_ty)], ret: QcTResult(db_rows_ty, db_err_ty) })
+  else if name == "bit_and" then Some(QcBuiltinSig { builtin: QcBBitAnd, params: [t_int, t_int], ret: t_int })
+  else if name == "bit_or" then Some(QcBuiltinSig { builtin: QcBBitOr, params: [t_int, t_int], ret: t_int })
+  else if name == "bit_xor" then Some(QcBuiltinSig { builtin: QcBBitXor, params: [t_int, t_int], ret: t_int })
+  else if name == "bit_not" then Some(QcBuiltinSig { builtin: QcBBitNot, params: [t_int], ret: t_int })
+  else if name == "shl" then Some(QcBuiltinSig { builtin: QcBShl, params: [t_int, t_int], ret: t_int })
+  else if name == "shr" then Some(QcBuiltinSig { builtin: QcBShr, params: [t_int, t_int], ret: t_int })
+  else if name == "ushr" then Some(QcBuiltinSig { builtin: QcBUshr, params: [t_int, t_int], ret: t_int })
+  else if name == "float_bits" then Some(QcBuiltinSig { builtin: QcBFloatBits, params: [t_float], ret: t_int })
+  else if name == "float_of_bits" then Some(QcBuiltinSig { builtin: QcBFloatOfBits, params: [t_int], ret: t_float })
+  else if name == "list_at" then Some(QcBuiltinSig { builtin: QcBListAt, params: [t_list_a, t_int], ret: a })
+  else if name == "bytes_at" then Some(QcBuiltinSig { builtin: QcBBytesAt, params: [t_bytes, t_int], ret: t_int })
+  else if name == "acc_list" then Some(QcBuiltinSig { builtin: QcBAccList, params: [accum_a_ty], ret: t_list_a })
+  else if name == "bytes_join" then Some(QcBuiltinSig { builtin: QcBBytesJoin, params: [QcTList(t_bytes)], ret: t_bytes })
+  else if name == "sha256" then Some(QcBuiltinSig { builtin: QcBSha256, params: [t_bytes], ret: t_bytes })
+  else if name == "todo" then Some(QcBuiltinSig { builtin: QcBTodo, params: [], ret: a })
+  else if name == "model_ask" then Some(QcBuiltinSig { builtin: QcBModelAsk, params: [t_str, t_str], ret: QcTResult(model_resp_ty, model_err_ty) })
+  else if name == "tensor_matmul" then Some(QcBuiltinSig { builtin: QcBTensorMatmul, params: [t_str, t_str, t_int], ret: t_str })
+  else None
+
+fn qc_builtin_arity(name: Str) -> Option[Int] =
+  if name == "len" then Some(1)
+  else
+    match qc_builtin_signature(name, QcTUnit, QcTUnit) {
+      Some(s) => Some(len(s.params)),
+      None => None
+    }
+
+fn qc_builtin_is_name(name: Str) -> Bool =
+  if name == "len" then true
+  else match qc_builtin_signature(name, QcTUnit, QcTUnit) {
+    Some(_) => true,
+    None => false
+  }
+
+fn qc_builtin_effect(b: QcBuiltin) -> Option[Str] =
+  match b {
+    QcBPrint => Some("io"),
+    QcBReadLine => Some("io"),
+    QcBReadAll => Some("io"),
+    QcBReadFile => Some("fs"),
+    QcBWriteFile => Some("fs"),
+    QcBNowMs => Some("time"),
+    QcBRandInt => Some("rand"),
+    QcBHttp => Some("net"),
+    QcBDbExec => Some("db"),
+    QcBDbQuery => Some("db"),
+    QcBModelAsk => Some("model"),
+    QcBTensorMatmul => Some("tensor"),
+    _ => None
+  }
+
+fn qc_builtin_needs_prelude(b: QcBuiltin) -> Bool =
+  match b {
+    QcBHttp => true,
+    QcBDbExec => true,
+    QcBDbQuery => true,
+    QcBAccList => true,
+    QcBModelAsk => true,
+    _ => false
+  }
+
+test qc_builtin_test =
+  qc_builtin_is_name("len") &&
+  qc_builtin_is_name("map") &&
+  qc_builtin_is_name("sha256") &&
+  qc_builtin_is_name("model_ask") &&
+  qc_builtin_arity("slice") == Some(3) &&
+  qc_builtin_arity("model_ask") == Some(2) &&
+  qc_builtin_effect(QcBPrint) == Some("io") &&
+  qc_builtin_effect(QcBModelAsk) == Some("model") &&
+  qc_builtin_effect(QcBTensorMatmul) == Some("tensor") &&
+  qc_builtin_effect(QcBSha256) == None

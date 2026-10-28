@@ -16,10 +16,10 @@ fn main() {
     println!("╚══════════════════════════════════════════════╝\n");
 
     use qlang_runtime::autograd::train_mlp_autograd;
-    use qlang_runtime::checkpoint::{Checkpoint, WeightTensor, CompressionState};
-    use qlang_runtime::mnist::MnistData;
-    use qlang_runtime::training::MlpWeights;
+    use qlang_runtime::checkpoint::{Checkpoint, CompressionState, WeightTensor};
+
     use qlang_agent::distributed;
+    use qlang_runtime::training::MlpWeights;
     use std::time::Instant;
 
     let total_start = Instant::now();
@@ -44,7 +44,11 @@ graph classifier {
 "#;
 
     let graph = qlang_compile::parser::parse(qlang_source).unwrap();
-    println!("  Parsed: {} nodes, {} edges ✓", graph.nodes.len(), graph.edges.len());
+    println!(
+        "  Parsed: {} nodes, {} edges ✓",
+        graph.nodes.len(),
+        graph.edges.len()
+    );
     let verify = qlang_core::verify::verify_graph(&graph);
     println!("  Verified: {} checks passed ✓\n", verify.passed.len());
 
@@ -58,9 +62,13 @@ graph classifier {
 
     let scale1 = (2.0 / (input_dim + hidden_dim) as f64).sqrt() as f32;
     let scale2 = (2.0 / (hidden_dim + output_dim) as f64).sqrt() as f32;
-    let mut w1: Vec<f32> = (0..input_dim * hidden_dim).map(|i| (i as f32 * 0.371).sin() * scale1).collect();
+    let mut w1: Vec<f32> = (0..input_dim * hidden_dim)
+        .map(|i| (i as f32 * 0.371).sin() * scale1)
+        .collect();
     let mut b1 = vec![0.0f32; hidden_dim];
-    let mut w2: Vec<f32> = (0..hidden_dim * output_dim).map(|i| (i as f32 * 0.529).sin() * scale2).collect();
+    let mut w2: Vec<f32> = (0..hidden_dim * output_dim)
+        .map(|i| (i as f32 * 0.529).sin() * scale2)
+        .collect();
     let mut b2 = vec![0.0f32; output_dim];
 
     let train_start = Instant::now();
@@ -70,15 +78,30 @@ graph classifier {
         let n_batches = data.n_train / 25;
         for batch in 0..n_batches {
             let (x, y) = data.train_batch(batch * 25, 25);
-            train_mlp_autograd(&mut w1, &mut b1, &mut w2, &mut b2, x, y,
-                input_dim, hidden_dim, output_dim, 0.03);
+            train_mlp_autograd(
+                &mut w1, &mut b1, &mut w2, &mut b2, x, y, input_dim, hidden_dim, output_dim, 0.03,
+            );
         }
         if epoch == 0 || epoch == epochs - 1 {
             let (loss, acc) = train_mlp_autograd(
-                &mut w1.clone(), &mut b1.clone(), &mut w2.clone(), &mut b2.clone(),
-                &data.test_images, &data.test_labels,
-                input_dim, hidden_dim, output_dim, 0.0);
-            println!("  Epoch {:>2}/{}: loss={:.4}, acc={:.1}%", epoch + 1, epochs, loss, acc * 100.0);
+                &mut w1.clone(),
+                &mut b1.clone(),
+                &mut w2.clone(),
+                &mut b2.clone(),
+                &data.test_images,
+                &data.test_labels,
+                input_dim,
+                hidden_dim,
+                output_dim,
+                0.0,
+            );
+            println!(
+                "  Epoch {:>2}/{}: loss={:.4}, acc={:.1}%",
+                epoch + 1,
+                epochs,
+                loss,
+                acc * 100.0
+            );
         }
     }
     let train_time = train_start.elapsed();
@@ -86,27 +109,54 @@ graph classifier {
 
     // ═══ 3. IGQK Compression ═══
     println!("━━━ [3/7] IGQK ternary compression ━━━");
-    let mlp = MlpWeights { w1: w1.clone(), b1: b1.clone(), w2: w2.clone(), b2: b2.clone(),
-        input_dim, hidden_dim, output_dim };
+    let mlp = MlpWeights {
+        w1: w1.clone(),
+        b1: b1.clone(),
+        w2: w2.clone(),
+        b2: b2.clone(),
+        input_dim,
+        hidden_dim,
+        output_dim,
+    };
     let compressed = mlp.compress_ternary();
 
     let (_, orig_acc) = train_mlp_autograd(
-        &mut w1.clone(), &mut b1.clone(), &mut w2.clone(), &mut b2.clone(),
-        &data.test_images, &data.test_labels, input_dim, hidden_dim, output_dim, 0.0);
+        &mut w1.clone(),
+        &mut b1.clone(),
+        &mut w2.clone(),
+        &mut b2.clone(),
+        &data.test_images,
+        &data.test_labels,
+        input_dim,
+        hidden_dim,
+        output_dim,
+        0.0,
+    );
     let comp_probs = compressed.forward(&data.test_images);
     let comp_acc = compressed.accuracy(&comp_probs, &data.test_labels);
 
     println!("  Original:   {:.1}% accuracy", orig_acc * 100.0);
     println!("  Compressed: {:.1}% accuracy", comp_acc * 100.0);
-    println!("  Ratio:      {:.1}x ✓\n", mlp.param_count() as f64 * 4.0 /
-        ((w1.len() + w2.len()) as f64 + (b1.len() + b2.len()) as f64 * 4.0));
+    println!(
+        "  Ratio:      {:.1}x ✓\n",
+        mlp.param_count() as f64 * 4.0
+            / ((w1.len() + w2.len()) as f64 + (b1.len() + b2.len()) as f64 * 4.0)
+    );
 
     // ═══ 4. Save checkpoint ═══
     println!("━━━ [4/7] SAVE checkpoint ━━━");
     let mut ckpt = Checkpoint::new(graph.clone());
-    ckpt.add_weight(WeightTensor::from_f32("W1", vec![input_dim, hidden_dim], &w1));
+    ckpt.add_weight(WeightTensor::from_f32(
+        "W1",
+        vec![input_dim, hidden_dim],
+        &w1,
+    ));
     ckpt.add_weight(WeightTensor::from_f32("b1", vec![hidden_dim], &b1));
-    ckpt.add_weight(WeightTensor::from_f32("W2", vec![hidden_dim, output_dim], &w2));
+    ckpt.add_weight(WeightTensor::from_f32(
+        "W2",
+        vec![hidden_dim, output_dim],
+        &w2,
+    ));
     ckpt.add_weight(WeightTensor::from_f32("b2", vec![output_dim], &b2));
     ckpt.metadata.epochs_trained = epochs;
     ckpt.metadata.final_accuracy = orig_acc;
@@ -122,7 +172,11 @@ graph classifier {
     let ckpt_path = "/tmp/qlang_model.qlm";
     let ckpt_size = ckpt.save_binary(ckpt_path).unwrap();
     println!("  Saved: {} ({} bytes)", ckpt_path, ckpt_size);
-    println!("  Params: {} ({:.1} KB)", ckpt.param_count(), ckpt.total_bytes() as f64 / 1024.0);
+    println!(
+        "  Params: {} ({:.1} KB)",
+        ckpt.param_count(),
+        ckpt.total_bytes() as f64 / 1024.0
+    );
     println!("  ✓\n");
 
     // ═══ 5. Export to all targets ═══
@@ -133,19 +187,67 @@ graph classifier {
     {
         // Build a simple graph for LLVM demo
         let mut llvm_graph = qlang_core::graph::Graph::new("llvm_demo");
-        let la = llvm_graph.add_node(qlang_core::ops::Op::Input { name: "a".into() }, vec![], vec![qlang_core::tensor::TensorType::f32_vector(64)]);
-        let lb = llvm_graph.add_node(qlang_core::ops::Op::Input { name: "b".into() }, vec![], vec![qlang_core::tensor::TensorType::f32_vector(64)]);
-        let ladd = llvm_graph.add_node(qlang_core::ops::Op::Add, vec![qlang_core::tensor::TensorType::f32_vector(64); 2], vec![qlang_core::tensor::TensorType::f32_vector(64)]);
-        let lrelu = llvm_graph.add_node(qlang_core::ops::Op::Relu, vec![qlang_core::tensor::TensorType::f32_vector(64)], vec![qlang_core::tensor::TensorType::f32_vector(64)]);
-        let lout = llvm_graph.add_node(qlang_core::ops::Op::Output { name: "y".into() }, vec![qlang_core::tensor::TensorType::f32_vector(64)], vec![]);
-        llvm_graph.add_edge(la, 0, ladd, 0, qlang_core::tensor::TensorType::f32_vector(64));
-        llvm_graph.add_edge(lb, 0, ladd, 1, qlang_core::tensor::TensorType::f32_vector(64));
-        llvm_graph.add_edge(ladd, 0, lrelu, 0, qlang_core::tensor::TensorType::f32_vector(64));
-        llvm_graph.add_edge(lrelu, 0, lout, 0, qlang_core::tensor::TensorType::f32_vector(64));
+        let la = llvm_graph.add_node(
+            qlang_core::ops::Op::Input { name: "a".into() },
+            vec![],
+            vec![qlang_core::tensor::TensorType::f32_vector(64)],
+        );
+        let lb = llvm_graph.add_node(
+            qlang_core::ops::Op::Input { name: "b".into() },
+            vec![],
+            vec![qlang_core::tensor::TensorType::f32_vector(64)],
+        );
+        let ladd = llvm_graph.add_node(
+            qlang_core::ops::Op::Add,
+            vec![qlang_core::tensor::TensorType::f32_vector(64); 2],
+            vec![qlang_core::tensor::TensorType::f32_vector(64)],
+        );
+        let lrelu = llvm_graph.add_node(
+            qlang_core::ops::Op::Relu,
+            vec![qlang_core::tensor::TensorType::f32_vector(64)],
+            vec![qlang_core::tensor::TensorType::f32_vector(64)],
+        );
+        let lout = llvm_graph.add_node(
+            qlang_core::ops::Op::Output { name: "y".into() },
+            vec![qlang_core::tensor::TensorType::f32_vector(64)],
+            vec![],
+        );
+        llvm_graph.add_edge(
+            la,
+            0,
+            ladd,
+            0,
+            qlang_core::tensor::TensorType::f32_vector(64),
+        );
+        llvm_graph.add_edge(
+            lb,
+            0,
+            ladd,
+            1,
+            qlang_core::tensor::TensorType::f32_vector(64),
+        );
+        llvm_graph.add_edge(
+            ladd,
+            0,
+            lrelu,
+            0,
+            qlang_core::tensor::TensorType::f32_vector(64),
+        );
+        llvm_graph.add_edge(
+            lrelu,
+            0,
+            lout,
+            0,
+            qlang_core::tensor::TensorType::f32_vector(64),
+        );
 
         let context = inkwell::context::Context::create();
-        let compiled = qlang_compile::codegen::compile_graph(&context, &llvm_graph,
-            inkwell::OptimizationLevel::Aggressive).unwrap();
+        let compiled = qlang_compile::codegen::compile_graph(
+            &context,
+            &llvm_graph,
+            inkwell::OptimizationLevel::Aggressive,
+        )
+        .unwrap();
         println!("  LLVM IR:       {} bytes ✓", compiled.llvm_ir.len());
     }
     #[cfg(not(feature = "llvm"))]
@@ -167,20 +269,70 @@ graph classifier {
     #[cfg(feature = "llvm")]
     {
         let mut aot_graph = qlang_core::graph::Graph::new("aot_demo");
-        let aa = aot_graph.add_node(qlang_core::ops::Op::Input { name: "a".into() }, vec![], vec![qlang_core::tensor::TensorType::f32_vector(64)]);
-        let ab = aot_graph.add_node(qlang_core::ops::Op::Input { name: "b".into() }, vec![], vec![qlang_core::tensor::TensorType::f32_vector(64)]);
-        let aadd = aot_graph.add_node(qlang_core::ops::Op::Add, vec![qlang_core::tensor::TensorType::f32_vector(64); 2], vec![qlang_core::tensor::TensorType::f32_vector(64)]);
-        let arelu = aot_graph.add_node(qlang_core::ops::Op::Relu, vec![qlang_core::tensor::TensorType::f32_vector(64)], vec![qlang_core::tensor::TensorType::f32_vector(64)]);
-        let aout = aot_graph.add_node(qlang_core::ops::Op::Output { name: "y".into() }, vec![qlang_core::tensor::TensorType::f32_vector(64)], vec![]);
-        aot_graph.add_edge(aa, 0, aadd, 0, qlang_core::tensor::TensorType::f32_vector(64));
-        aot_graph.add_edge(ab, 0, aadd, 1, qlang_core::tensor::TensorType::f32_vector(64));
-        aot_graph.add_edge(aadd, 0, arelu, 0, qlang_core::tensor::TensorType::f32_vector(64));
-        aot_graph.add_edge(arelu, 0, aout, 0, qlang_core::tensor::TensorType::f32_vector(64));
+        let aa = aot_graph.add_node(
+            qlang_core::ops::Op::Input { name: "a".into() },
+            vec![],
+            vec![qlang_core::tensor::TensorType::f32_vector(64)],
+        );
+        let ab = aot_graph.add_node(
+            qlang_core::ops::Op::Input { name: "b".into() },
+            vec![],
+            vec![qlang_core::tensor::TensorType::f32_vector(64)],
+        );
+        let aadd = aot_graph.add_node(
+            qlang_core::ops::Op::Add,
+            vec![qlang_core::tensor::TensorType::f32_vector(64); 2],
+            vec![qlang_core::tensor::TensorType::f32_vector(64)],
+        );
+        let arelu = aot_graph.add_node(
+            qlang_core::ops::Op::Relu,
+            vec![qlang_core::tensor::TensorType::f32_vector(64)],
+            vec![qlang_core::tensor::TensorType::f32_vector(64)],
+        );
+        let aout = aot_graph.add_node(
+            qlang_core::ops::Op::Output { name: "y".into() },
+            vec![qlang_core::tensor::TensorType::f32_vector(64)],
+            vec![],
+        );
+        aot_graph.add_edge(
+            aa,
+            0,
+            aadd,
+            0,
+            qlang_core::tensor::TensorType::f32_vector(64),
+        );
+        aot_graph.add_edge(
+            ab,
+            0,
+            aadd,
+            1,
+            qlang_core::tensor::TensorType::f32_vector(64),
+        );
+        aot_graph.add_edge(
+            aadd,
+            0,
+            arelu,
+            0,
+            qlang_core::tensor::TensorType::f32_vector(64),
+        );
+        aot_graph.add_edge(
+            arelu,
+            0,
+            aout,
+            0,
+            qlang_core::tensor::TensorType::f32_vector(64),
+        );
 
-        match qlang_compile::aot::compile_to_object(&aot_graph, "/tmp/qlang_graph.o",
-            inkwell::OptimizationLevel::Aggressive) {
+        match qlang_compile::aot::compile_to_object(
+            &aot_graph,
+            "/tmp/qlang_graph.o",
+            inkwell::OptimizationLevel::Aggressive,
+        ) {
             Ok(aot) => {
-                println!("  Native .o:     {} bytes ({}) ✓", aot.file_size, aot.target_triple);
+                println!(
+                    "  Native .o:     {} bytes ({}) ✓",
+                    aot.file_size, aot.target_triple
+                );
                 let _ = std::fs::remove_file("/tmp/qlang_graph.o");
             }
             Err(e) => println!("  Native .o:     error: {e}"),
@@ -207,20 +359,26 @@ graph classifier {
 
     // ═══ 7. Distributed training simulation ═══
     println!("━━━ [7/7] DISTRIBUTED training simulation ━━━");
-    let mut job = distributed::create_data_parallel_job(
-        "demo_job", 4, distributed::Hyperparams::default());
+    let mut job =
+        distributed::create_data_parallel_job("demo_job", 4, distributed::Hyperparams::default());
     println!("  Job: {} workers", job.workers.len());
 
     let mut worker_grads = std::collections::HashMap::new();
     for i in 0..4 {
-        let grad: Vec<f32> = (0..100).map(|j| ((i * 100 + j) as f32 * 0.01).sin()).collect();
+        let grad: Vec<f32> = (0..100)
+            .map(|j| ((i * 100 + j) as f32 * 0.01).sin())
+            .collect();
         worker_grads.insert(format!("trainer_{i}"), grad);
     }
 
     let aggregated = distributed::simulate_distributed_step(&mut job, &worker_grads);
     println!("  Aggregated gradients: {} values", aggregated.len());
-    println!("  All workers done: {} ✓",
-        job.workers.iter().all(|w| w.status == distributed::WorkerStatus::Done));
+    println!(
+        "  All workers done: {} ✓",
+        job.workers
+            .iter()
+            .all(|w| w.status == distributed::WorkerStatus::Done)
+    );
 
     // ═══ Summary ═══
     let total_time = total_start.elapsed();

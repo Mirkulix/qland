@@ -1,0 +1,1 @@
+fn main(args: List[Str]) -> Int !io !model = match std.model.ask("say pong", "") { Ok(t) => { print(t); 0 }, Err(_) => 1 }

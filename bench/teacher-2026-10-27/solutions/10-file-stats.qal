@@ -1,0 +1,101 @@
+# File statistics: lines / words / chars / longest / top word.
+# The pure core (stats_text) is testable; main only adds fs/io plumbing.
+
+type WordCount = { word: Str, count: Int }
+
+# A line is terminated by "\n"; a last line without "\n" still counts.
+# An empty file has 0 lines.
+fn count_lines(s: Str) -> Int =
+  let nl = len(split(s, "\n")) - 1 in
+  if len(s) == 0 then 0
+  else if slice(s, len(s) - 1, len(s)) == "\n" then nl
+  else nl + 1
+
+# Longest line in characters, without its "\n" (0 for an empty file).
+fn longest_line(s: Str) -> Int =
+  fold(split(s, "\n"), 0, fn(acc: Int, l: Str) => if len(l) > acc then len(l) else acc)
+
+# Words: maximal runs of characters other than space, tab, "\r" and "\n".
+# Mapping every separator to " " and splitting once yields exactly those runs.
+fn words_of(s: Str) -> List[Str] =
+  let norm = replace(replace(replace(s, "\t", " "), "\r", " "), "\n", " ") in
+  filter(split(norm, " "), fn(w: Str) => len(w) > 0)
+
+fn bump(m: Map[Str, Int], k: Str) -> Map[Str, Int] =
+  let c = match map_get(m, k) { Some(n) => n, None => 0 } in
+  map_put(m, k, c + 1)
+
+# Frequency of every word after lowering only the ASCII letters A-Z.
+fn word_freq(ws: List[Str]) -> Map[Str, Int] =
+  let empty: Map[Str, Int] = map_new() in
+  fold(ws, empty, fn(acc: Map[Str, Int], w: Str) => bump(acc, to_lower(w)))
+
+# Most frequent word; ties go to the word that is first in byte order.
+fn best_word(m: Map[Str, Int]) -> Option[WordCount] =
+  let none: Option[WordCount] = None in
+  fold(map_keys(m), none, fn(acc: Option[WordCount], k: Str) => {
+    let c = match map_get(m, k) { Some(n) => n, None => 0 } in
+    match acc {
+      None => Some(WordCount { word: k, count: c }),
+      Some(b) => if c > b.count || (c == b.count && k < b.word)
+                 then Some(WordCount { word: k, count: c })
+                 else acc
+    }
+  })
+
+fn report(s: Str) -> Str =
+  let ws = words_of(s) in
+  let base = "lines " ++ from_int(count_lines(s))
+             ++ "\nwords " ++ from_int(len(ws))
+             ++ "\nchars " ++ from_int(len(s))
+             ++ "\nlongest " ++ from_int(longest_line(s)) in
+  match best_word(word_freq(ws)) {
+    None => base,
+    Some(t) => base ++ "\ntop " ++ t.word ++ " " ++ from_int(t.count)
+  }
+
+fn main(args: List[Str]) -> Int !io !fs =
+  if len(args) != 1 then { print("usage: file_stats <path>"); 2 }
+  else match get(args, 0) {
+    None => { print("usage: file_stats <path>"); 2 },
+    Some(path) => match read_file(path) {
+      Ok(s) => { print(report(s)); 0 },
+      Err(_) => { print("error: cannot read " ++ path); 1 }
+    }
+  }
+
+# --- tests: the examples from the task, plus the documented edge rules ---
+
+test example =
+  report("The cat\nthe dog and THE bird\n")
+  == "lines 2\nwords 7\nchars 29\nlongest 20\ntop the 3"
+
+test empty_file =
+  report("") == "lines 0\nwords 0\nchars 0\nlongest 0"
+
+test no_final_newline =
+  report("one two\nthree") == "lines 2\nwords 3\nchars 13\nlongest 7\ntop one 1"
+
+test blank_lines =
+  report("\n\nx  y\n\n") == "lines 4\nwords 2\nchars 8\nlongest 4\ntop x 1"
+
+test tie_alphabetical =
+  report("b a c\nB A\n") == "lines 2\nwords 5\nchars 10\nlongest 5\ntop a 2"
+
+test unicode_ascii_lowering =
+  report("Grüße grüße\nÄpfel äpfel ÄPFEL\n")
+  == "lines 2\nwords 5\nchars 30\nlongest 17\ntop grüße 2"
+
+test punctuation =
+  report("Hi, hi. hi, HI,\n") == "lines 1\nwords 4\nchars 16\nlongest 15\ntop hi, 3"
+
+test lines_rule = count_lines("a\nb") == 2 && count_lines("\n") == 1 && count_lines("a") == 1
+
+test words_separators =
+  len(words_of("a\tb\r\nc  d")) == 4 && len(words_of("  \t\r\n ")) == 0
+
+test word_tie_byte_order =
+  match best_word(word_freq(["b", "a"])) {
+    Some(t) => t.word == "a" && t.count == 1,
+    None => false
+  }

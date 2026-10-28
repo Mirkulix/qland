@@ -1,0 +1,5 @@
+type P = { x: Int, name: Str }
+type Shape = Dot | Box(P, Option[Bytes])
+fn nest() -> Map[Map[Int, Int], Str] = map_put(map_put(map_new(), map_put(map_new(), 2, 0), "b"), map_put(map_new(), 1, 9), "a")
+fn first(m: Map[Map[Int, Int], Str]) -> List[Str] = map_values(m)
+fn echo(s: Shape, p: P, r: Result[Int, Str]) -> List[Shape] = [s, Box(p, None), match r { Ok(_) => Dot, Err(e) => Box(P { x: 0, name: e }, Some(to_bytes(e))) }]

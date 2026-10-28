@@ -1,0 +1,4 @@
+fn one() -> Int = 1
+fn uno() -> Int = 1
+fn user() -> Int = one() + 1
+fn user2() -> Int = uno() * 2

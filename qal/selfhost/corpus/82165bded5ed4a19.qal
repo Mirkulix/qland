@@ -1,0 +1,1 @@
+fn m(a: Int) -> Int ens r >= 0 && r <= 255 = bit_and(a, 255)

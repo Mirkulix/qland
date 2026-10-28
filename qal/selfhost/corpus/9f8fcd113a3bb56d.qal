@@ -1,0 +1,1 @@
+fn each[T, !e](xs: List[T], f: fn(T) -> Unit !e) -> Unit !e = f(xs)

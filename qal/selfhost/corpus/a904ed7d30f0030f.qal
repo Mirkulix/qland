@@ -1,0 +1,2 @@
+fn fill(m: Map[Int, Int]) -> Int req map_size(m) <= 1 = 0
+fn settle(m: Map[Int, Int]) -> Int = fill(m)

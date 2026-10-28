@@ -60,6 +60,9 @@ class QuantumBERT(nn.Module):
         self.pooler = nn.Linear(config.d_model, config.d_model)
         self.pooler_activation = nn.Tanh()
 
+        # Language Model Head (for pretraining / masked LM)
+        self.lm_head = nn.Linear(config.d_model, config.vocab_size)
+
         # Dropout
         self.dropout = nn.Dropout(config.dropout)
 

@@ -1,0 +1,1 @@
+fn main(args: List[Str]) -> Int !rand = rand_int(-9223372036854775807 - 1, 9223372036854775807)

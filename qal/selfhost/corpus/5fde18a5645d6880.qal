@@ -1,0 +1,1 @@
+fn sq(x: Int) -> Int ens r >= 0 = x * x

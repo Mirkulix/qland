@@ -1,0 +1,2 @@
+type B = HasA(A)
+type A = NoB | HasB(B)

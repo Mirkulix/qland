@@ -127,5 +127,42 @@ class TestQuantumGradientFlow:
         assert correlation > 0  # Moving toward -gradient
 
 
+class TestIGQKOptimizerLearns:
+    """The optimizer must learn: it stayed at chance on MNIST (9-16%) while SGD reached 88.7%."""
+
+    def _task(self):
+        torch.manual_seed(0)
+        x = torch.randn(2000, 20)
+        y = (x @ torch.randn(20, 4)).argmax(dim=1)  # 4 classes, learnable by a linear model
+        return x[:1500], y[:1500], x[1500:], y[1500:]
+
+    def _accuracy(self, **kw):
+        import torch.nn as nn
+        import torch.nn.functional as F
+        from igqk.optimizers.igqk_optimizer import IGQKOptimizer
+        xtr, ytr, xte, yte = self._task()
+        model = nn.Linear(20, 4)
+        opt = IGQKOptimizer(model.parameters(), lr=0.1, **kw)
+        for _ in range(5):
+            for i in range(0, 1500, 50):
+                opt.zero_grad()
+                F.cross_entropy(model(xtr[i:i + 50]), ytr[i:i + 50]).backward()
+                opt.step()
+        with torch.no_grad():
+            return (model(xte).argmax(dim=1) == yte).float().mean().item()
+
+    def test_quantum_branch_learns(self):
+        assert self._accuracy(use_quantum=True) > 0.85
+
+    def test_classical_branch_learns(self):
+        assert self._accuracy(use_quantum=False, n_data=1500) > 0.85
+
+    def test_to_classical_is_the_mean(self):
+        params = torch.randn(100)
+        state = QuantumState.from_classical(params, hbar=0.1)
+        assert torch.equal(state.to_classical(), params)
+        assert torch.allclose(state.sample(4000).mean(dim=0), params, atol=0.05)
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])

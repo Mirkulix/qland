@@ -1,0 +1,4 @@
+fn rep(s: Str) -> Str = s ++ "!"
+fn up(s: Str) -> Str = s
+fn shout(s: Str) -> Str = up(rep(s))
+test t = shout("a") == "a!"

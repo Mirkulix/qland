@@ -1,0 +1,2 @@
+test f_one = f() == 1
+test f_two = f() >= 1

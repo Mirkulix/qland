@@ -1,0 +1,1 @@
+fn user() -> Int = spare() + 1

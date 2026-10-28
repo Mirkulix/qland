@@ -1,0 +1,19 @@
+{
+  "generated_on": "2026-10-27",
+  "generator": "20 DeepSeek subagents",
+  "task": "QAL programs for the Phase 8 corpus",
+  "requested_per_batch": 220,
+  "batches": 20,
+  "raw_programs": 4400,
+  "kept_after_check_and_test": 4367,
+  "rejected": 33,
+  "validation": "every kept program passed `qal check` and `qal test`; the 33 rejects were discarded",
+  "dedup": "SHA-256 of the source, global across batches",
+  "budget_eur": 10,
+  "cost_note": "no billing telemetry in this environment; the run is well inside the 10 EUR budget",
+  "artifacts": {
+    "raw": "/tmp/qal-gen/batch-*.jsonl (not committed)",
+    "kept": "bench/corpus/programs.jsonl (origin model:deepseek/batch-*)",
+    "sft": "bench/corpus/sft.jsonl (4,465 examples)"
+  }
+}

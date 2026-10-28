@@ -1,0 +1,20 @@
+# Majority quorum over replica votes; no strict majority means no decision.
+
+type Vote = { node: Int, value: Str }
+
+fn count(votes: List[Vote], value: Str) -> Int =
+  len(filter(votes, fn(v) => v.value == value))
+
+fn distinct(values: List[Str]) -> List[Str] =
+  fold(values, [], fn(acc, v) => if len(filter(acc, fn(x) => x == v)) > 0 then acc else push(acc, v))
+
+fn quorum(votes: List[Vote], n: Int) -> Option[Str]
+  req n >= 1
+= let values = distinct(map(votes, fn(v) => v.value)) in
+  let winners = filter(values, fn(v) => count(votes, v) * 2 > n) in
+  get(winners, 0)
+
+test majority_wins = quorum([Vote { node: 1, value: "a" }, Vote { node: 2, value: "a" }, Vote { node: 3, value: "b" }], 3) == Some("a")
+test single_wins = quorum([Vote { node: 1, value: "x" }], 1) == Some("x")
+test tie_has_no_quorum = quorum([Vote { node: 1, value: "a" }, Vote { node: 2, value: "b" }], 2) == None
+test empty_has_no_quorum = quorum([], 3) == None

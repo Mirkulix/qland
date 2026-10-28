@@ -1,0 +1,87 @@
+# Bank account state machine: commands from stdin, errors as output, final balances by name.
+
+type Acct = { name: Str, balance: Int }
+
+type Step = { accts: List[Acct], out: Option[Str] }
+
+fn balance_of(xs: List[Acct], name: Str, i: Int) -> Option[Int] =
+  match get(xs, i) { None => None, Some(a) => if a.name == name then Some(a.balance) else balance_of(xs, name, i + 1) }
+
+fn add(xs: List[Acct], name: Str, delta: Int, i: Int) -> List[Acct] =
+  match get(xs, i) {
+    None => [],
+    Some(a) => concat([if a.name == name then Acct { name: a.name, balance: a.balance + delta } else a], add(xs, name, delta, i + 1)),
+  }
+
+fn is_digit(c: Str) -> Bool = c >= "0" && c <= "9"
+
+fn amount(s: Str) -> Option[Int] =
+  if len(s) < 1 || len(s) > 12 || len(filter(chars(s), is_digit)) != len(s) then None
+  else match to_int(s) { Some(n) if n > 0 => Some(n), _ => None }
+
+fn say(xs: List[Acct], msg: Str) -> Step = Step { accts: xs, out: Some(msg) }
+
+fn quiet(xs: List[Acct]) -> Step = Step { accts: xs, out: None }
+
+fn exists(xs: List[Acct], name: Str) -> Bool = balance_of(xs, name, 0) != None
+
+fn change(xs: List[Acct], name: Str, amt: Str, sign: Int) -> Step =
+  match balance_of(xs, name, 0) {
+    None => say(xs, "error: no account " ++ name),
+    Some(b) => match amount(amt) {
+      None => say(xs, "error: invalid amount"),
+      Some(n) => if sign < 0 && b < n then say(xs, "error: insufficient funds") else quiet(add(xs, name, sign * n, 0)),
+    },
+  }
+
+fn transfer(xs: List[Acct], from: Str, to: Str, amt: Str) -> Step =
+  match balance_of(xs, from, 0) {
+    None => say(xs, "error: no account " ++ from),
+    Some(b) =>
+      if !exists(xs, to) then say(xs, "error: no account " ++ to)
+      else match amount(amt) {
+        None => say(xs, "error: invalid amount"),
+        Some(n) => if b < n then say(xs, "error: insufficient funds") else quiet(add(add(xs, from, 0 - n, 0), to, n, 0)),
+      },
+  }
+
+fn tok(ts: List[Str], i: Int) -> Str = match get(ts, i) { Some(t) => t, None => "" }
+
+fn command(xs: List[Acct], line: Str) -> Step =
+  let ts = split(line, " ") in
+  let n = len(ts) in
+  match tok(ts, 0) {
+    "open" if n == 2 => if exists(xs, tok(ts, 1)) then say(xs, "error: account " ++ tok(ts, 1) ++ " exists") else quiet(push(xs, Acct { name: tok(ts, 1), balance: 0 })),
+    "deposit" if n == 3 => change(xs, tok(ts, 1), tok(ts, 2), 1),
+    "withdraw" if n == 3 => change(xs, tok(ts, 1), tok(ts, 2), -1),
+    "transfer" if n == 4 => transfer(xs, tok(ts, 1), tok(ts, 2), tok(ts, 3)),
+    "balance" if n == 2 => match balance_of(xs, tok(ts, 1), 0) {
+      None => say(xs, "error: no account " ++ tok(ts, 1)),
+      Some(b) => say(xs, tok(ts, 1) ++ " " ++ from_int(b)),
+    },
+    _ => say(xs, "error: invalid command"),
+  }
+
+test flow = command(quiet([]).accts, "deposit a 1").out == Some("error: no account a")
+test amounts = amount("12") == Some(12) && amount("0") == None && amount("+3") == None && amount("1234567890123") == None
+
+fn name_of(a: Acct) -> Str = a.name
+
+fn report(xs: List[Acct], names: List[Str], i: Int) -> Int !io =
+  match get(names, i) {
+    None => 0,
+    Some(n) => { print(n ++ " " ++ from_int(match balance_of(xs, n, 0) { Some(b) => b, None => 0 })); report(xs, names, i + 1) },
+  }
+
+fn run(xs: List[Acct]) -> Int !io =
+  match read_line() {
+    None => { print("---"); report(xs, sort_str(map(xs, name_of)), 0) },
+    Some(line) =>
+      let s = command(xs, line) in
+      match s.out {
+        Some(msg) => { print(msg); run(s.accts) },
+        None => run(s.accts),
+      },
+  }
+
+fn main(args: List[Str]) -> Int !io = run([])

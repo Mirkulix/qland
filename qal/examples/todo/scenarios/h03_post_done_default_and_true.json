@@ -1,0 +1,143 @@
+{
+ "name": "h03_post_done_default_and_true",
+ "description": "done defaults to false",
+ "steps": [
+  {
+   "name": "create a",
+   "request": {
+    "method": "POST",
+    "path": "/todos",
+    "json": {
+     "title": "default"
+    }
+   },
+   "expect": {
+    "status": 201,
+    "json": {
+     "id": {
+      "$var": "a"
+     },
+     "title": "default",
+     "done": false,
+     "created_at": {
+      "$type": "int"
+     }
+    },
+    "headers": {
+     "location": "/todos/{{a}}",
+     "content-type": "application/json"
+    }
+   },
+   "capture": {
+    "a": "/id"
+   }
+  },
+  {
+   "name": "create b",
+   "request": {
+    "method": "POST",
+    "path": "/todos",
+    "json": {
+     "title": "explicit false",
+     "done": false
+    }
+   },
+   "expect": {
+    "status": 201,
+    "json": {
+     "id": {
+      "$var": "b"
+     },
+     "title": "explicit false",
+     "done": false,
+     "created_at": {
+      "$type": "int"
+     }
+    },
+    "headers": {
+     "location": "/todos/{{b}}",
+     "content-type": "application/json"
+    }
+   },
+   "capture": {
+    "b": "/id"
+   }
+  },
+  {
+   "name": "create c",
+   "request": {
+    "method": "POST",
+    "path": "/todos",
+    "json": {
+     "title": "explicit true",
+     "done": true
+    }
+   },
+   "expect": {
+    "status": 201,
+    "json": {
+     "id": {
+      "$var": "c"
+     },
+     "title": "explicit true",
+     "done": true,
+     "created_at": {
+      "$type": "int"
+     }
+    },
+    "headers": {
+     "location": "/todos/{{c}}",
+     "content-type": "application/json"
+    }
+   },
+   "capture": {
+    "c": "/id"
+   }
+  },
+  {
+   "name": "list",
+   "request": {
+    "method": "GET",
+    "path": "/todos"
+   },
+   "expect": {
+    "status": 200,
+    "json": [
+     {
+      "id": {
+       "$var": "a"
+      },
+      "title": "default",
+      "done": false,
+      "created_at": {
+       "$type": "int"
+      }
+     },
+     {
+      "id": {
+       "$var": "b"
+      },
+      "title": "explicit false",
+      "done": false,
+      "created_at": {
+       "$type": "int"
+      }
+     },
+     {
+      "id": {
+       "$var": "c"
+      },
+      "title": "explicit true",
+      "done": true,
+      "created_at": {
+       "$type": "int"
+      }
+     }
+    ],
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  }
+ ]
+}

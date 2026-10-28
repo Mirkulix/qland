@@ -1,0 +1,26 @@
+{"timestamp": 1792577130.019721, "relative_ms": 0, "type": "run_start", "details": {"arm": "qal", "run": 1, "workdir": "/Users/aleksandarbarisic/Workspace/qland/pilot/escrow/study/workdirs/qal_run1"}}
+{"timestamp": 1792577130.019865, "relative_ms": 0, "type": "step_start", "details": {"step": "team_init", "target": ".qal/store.db"}}
+{"timestamp": 1792577130.611147, "relative_ms": 591, "type": "tool_call", "details": {"agent": "arch-1", "tool": "qal_change", "action": "open"}}
+{"timestamp": 1792577130.6224372, "relative_ms": 602, "type": "tool_result", "details": {"change_id": "c0fba24029da8"}}
+{"timestamp": 1792577130.6228201, "relative_ms": 603, "type": "tool_call", "details": {"agent": "arch-1", "tool": "qal_define", "change": "c0fba24029da8"}}
+{"timestamp": 1792577130.753643, "relative_ms": 733, "type": "tool_result", "details": {"defined": 0}}
+{"timestamp": 1792577130.7601438, "relative_ms": 740, "type": "tool_call", "details": {"agent": "ver-1", "tool": "qal_prove", "change": "c0fba24029da8"}}
+{"timestamp": 1792577130.847575, "relative_ms": 827, "type": "tool_result", "details": {"prove_duration_s": 0.087, "proven": 22, "refuted": 0}}
+{"timestamp": 1792577131.4856372, "relative_ms": 1465, "type": "tool_result", "details": {"merge": "fast_forward"}}
+{"timestamp": 1792577131.4857569, "relative_ms": 1466, "type": "service_start", "details": {"port": 8121}}
+{"timestamp": 1792577131.7925792, "relative_ms": 1772, "type": "benchmark_start", "details": {"target": "http://127.0.0.1:8121"}}
+{"timestamp": 1792577132.109301, "relative_ms": 2089, "type": "benchmark_result", "details": {"passed": 0, "stdout": "--- Testing Escrow Service against http://127.0.0.1:8121 ---", "duration_s": 0.297}}
+{"timestamp": 1792577132.144542, "relative_ms": 2124, "type": "run_end", "details": {"arm": "qal", "run": 1, "e2e_duration_s": 2.125, "passed": false, "summary": {"tests_passed": 0, "defects_caught_at_compile": 2, "defects_caught_in_test": 0, "defects_escaped_to_deploy": 0, "benchmark_latency_s": 0.297, "audit": {"method": "cryptographic_and_z3", "verify_duration_s": 0.0349, "prove_duration_s": 0.087, "head": "1bcf6b48c98c6419cc95e83dd82227bfabc77136082c205a48fd531fbc9c4c96", "verified": true}}}}
+{"timestamp": 1792577444.1774101, "relative_ms": 0, "type": "run_start", "details": {"arm": "qal", "run": 1, "workdir": "/Users/aleksandarbarisic/Workspace/qland/pilot/escrow/study/workdirs/qal_run1"}}
+{"timestamp": 1792577444.177633, "relative_ms": 0, "type": "step_start", "details": {"step": "team_init", "target": ".qal/store.db"}}
+{"timestamp": 1792577445.165594, "relative_ms": 988, "type": "tool_call", "details": {"agent": "arch-1", "tool": "qal_change", "action": "open"}}
+{"timestamp": 1792577445.177588, "relative_ms": 1000, "type": "tool_result", "details": {"change_id": "c3bf91cf0d88b"}}
+{"timestamp": 1792577445.178039, "relative_ms": 1000, "type": "tool_call", "details": {"agent": "arch-1", "tool": "qal_define", "change": "c3bf91cf0d88b"}}
+{"timestamp": 1792577445.3521001, "relative_ms": 1174, "type": "tool_result", "details": {"defined": 0}}
+{"timestamp": 1792577445.3569221, "relative_ms": 1179, "type": "tool_call", "details": {"agent": "ver-1", "tool": "qal_prove", "change": "c3bf91cf0d88b"}}
+{"timestamp": 1792577445.489415, "relative_ms": 1312, "type": "tool_result", "details": {"prove_duration_s": 0.132, "proven": 22, "refuted": 0}}
+{"timestamp": 1792577446.1864572, "relative_ms": 2009, "type": "tool_result", "details": {"merge": "fast_forward"}}
+{"timestamp": 1792577446.186656, "relative_ms": 2009, "type": "service_start", "details": {"port": 8121}}
+{"timestamp": 1792577446.694217, "relative_ms": 2516, "type": "benchmark_start", "details": {"target": "http://127.0.0.1:8121"}}
+{"timestamp": 1792577446.9507961, "relative_ms": 2773, "type": "benchmark_result", "details": {"passed": 20, "stdout": "--- Testing Escrow Service against http://127.0.0.1:8121 ---\n\n....................\n----------------------------------------------------------------------\nRan 20 tests in 0.064s\n\nOK", "duration_s": 0.239}}
+{"timestamp": 1792577446.986052, "relative_ms": 2808, "type": "run_end", "details": {"arm": "qal", "run": 1, "e2e_duration_s": 2.809, "passed": true, "summary": {"tests_passed": 20, "defects_caught_at_compile": 2, "defects_caught_in_test": 0, "defects_escaped_to_deploy": 0, "benchmark_latency_s": 0.239, "audit": {"method": "cryptographic_and_z3", "verify_duration_s": 0.0349, "prove_duration_s": 0.132, "head": "0dbc1cf339224af9443db595482b9e587b32d715adf7a22a7e9a4c250db4cc93", "verified": true}}}}

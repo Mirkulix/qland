@@ -1,0 +1,1 @@
+fn std.db.first(x: Int) -> Int = x

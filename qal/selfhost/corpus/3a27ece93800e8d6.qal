@@ -1,0 +1,4 @@
+fn leaf(x: Int) -> Int = x
+fn mid(x: Int) -> Int = leaf(x) + 1
+fn top(x: Int) -> Int = mid(x) * 2
+test t_top = top(1) == 4

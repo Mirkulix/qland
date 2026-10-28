@@ -1,0 +1,73 @@
+# Word count: lines, words, characters of the standard input, like `wc -lwm`.
+
+type Wc = { lines: Int, words: Int, chars: Int, in_word: Bool }
+
+# A counter never holds a negative tally.
+fn inv_Wc(x: Wc) -> Bool = x.lines >= 0 && x.words >= 0 && x.chars >= 0
+
+fn empty_wc() -> Wc = Wc { lines: 0, words: 0, chars: 0, in_word: false }
+
+fn is_word_sep(c: Str) -> Bool =
+  c == " " || c == "\t" || c == "\r" || c == "\n"
+
+# Feed one character into the accumulator: a word starts at a non-separator
+# character that follows a separator (or the start of the input).
+fn wc_step(acc: Wc, c: Str) -> Wc =
+  let sep = is_word_sep(c) in
+  let nl = c == "\n" in
+  Wc {
+    lines: if nl then acc.lines + 1 else acc.lines,
+    words: if sep then acc.words else (if acc.in_word then acc.words else acc.words + 1),
+    chars: acc.chars + 1,
+    in_word: !sep
+  }
+
+fn count(s: Str) -> Wc = fold(chars(s), empty_wc(), wc_step)
+
+fn wc_line(w: Wc) -> Str =
+  from_int(w.lines) ++ " " ++ from_int(w.words) ++ " " ++ from_int(w.chars)
+
+fn main(args: List[Str]) -> Int !io =
+  let input = read_all() in
+  {
+    print(wc_line(count(input)));
+    0
+  }
+
+# --- tests: the benchmark examples and the edge cases of the definition ---
+
+test example =
+  count("hello world\nsecond line here\n") == Wc { lines: 2, words: 5, chars: 29, in_word: false }
+
+test no_trailing_newline =
+  count("one two\nthree") == Wc { lines: 1, words: 3, chars: 13, in_word: true }
+
+test empty_input =
+  count("") == empty_wc()
+
+test only_newlines =
+  count("\n\n\n") == Wc { lines: 3, words: 0, chars: 3, in_word: false }
+
+test whitespace_only =
+  count(" \t\r\n") == Wc { lines: 1, words: 0, chars: 4, in_word: false }
+
+test runs_of_separators =
+  count("  a   bb\t\tc\r\nd") == Wc { lines: 1, words: 4, chars: 14, in_word: true }
+
+test crlf_lines =
+  count("a b\r\nc d\r\n") == Wc { lines: 2, words: 4, chars: 10, in_word: false }
+
+test unicode_code_points =
+  count("héllo wörld") == Wc { lines: 0, words: 2, chars: 11, in_word: true }
+
+test unicode_spaces_are_not_separators =
+  count("a\u{00A0}b") == Wc { lines: 0, words: 1, chars: 3, in_word: true }
+
+test tab_between_words =
+  count("a\tb") == Wc { lines: 0, words: 2, chars: 3, in_word: true }
+
+test wc_line_format =
+  wc_line(Wc { lines: 2, words: 5, chars: 29, in_word: false }) == "2 5 29"
+
+test inv_after_step =
+  inv_Wc(wc_step(empty_wc(), "x")) && inv_Wc(wc_step(empty_wc(), " "))

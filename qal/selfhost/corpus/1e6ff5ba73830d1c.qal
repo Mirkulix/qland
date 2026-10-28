@@ -1,0 +1,1 @@
+fn g(n: Int) -> Int = { let x = n + 2 in x; x }

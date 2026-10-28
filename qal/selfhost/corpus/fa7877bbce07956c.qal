@@ -1,0 +1,2 @@
+type P = { x: Int, y: Int }
+fn f(p: P) -> Int = match p { P { x: 0, y } => y, P { x, y: 1 } => x, _ => 0 }

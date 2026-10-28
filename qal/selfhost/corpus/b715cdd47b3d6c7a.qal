@@ -1,0 +1,3 @@
+fn code(s: Str) -> Int = char_code(s)
+fn text(n: Int) -> Str = from_char_code(n)
+fn rep(s: Str, f: Str) -> Str = replace(s, f, "-")

@@ -1,0 +1,1 @@
+test t = let X = 1 in X

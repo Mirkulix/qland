@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qal.dev/ast/v1",
+  "title": "QAL AST v1",
+  "type": "object",
+  "anyOf": [{"required": ["main"]}, {"required": ["tests"]}],
+  "additionalProperties": false,
+  "properties": {
+    "ast_version": {"const": 1},
+    "main": {"$ref": "#/$defs/expr"},
+    "types": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "fields"],
+        "additionalProperties": false,
+        "properties": {
+          "name": {"type": "string"},
+          "fields": {"type": "object", "additionalProperties": {"type": "string"}}
+        }
+      }
+    },
+    "effects": {"type": "array", "items": {"type": "string"}},
+    "returns": {"type": "string"},
+    "allowed_calls": {"type": "array", "items": {"type": "string"}},
+    "tests": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "body"],
+        "additionalProperties": false,
+        "properties": {"name": {"type": "string"}, "body": {"$ref": "#/$defs/expr"}}
+      }
+    }
+  },
+  "$defs": {
+    "expr": {
+      "oneOf": [
+        {"type": "object", "required": ["call", "args"], "additionalProperties": false,
+         "properties": {"call": {"type": "string"}, "args": {"type": "array", "items": {"$ref": "#/$defs/expr"}}}},
+        {"type": "object", "required": ["if", "then", "else"], "additionalProperties": false,
+         "properties": {"if": {"$ref": "#/$defs/expr"}, "then": {"$ref": "#/$defs/expr"}, "else": {"$ref": "#/$defs/expr"}}},
+        {"type": "object", "required": ["let", "in"], "additionalProperties": false,
+         "properties": {"let": {"type": "array", "items": {"type": "object", "required": ["name", "value"], "additionalProperties": false,
+           "properties": {"name": {"type": "string"}, "value": {"$ref": "#/$defs/expr"}}}}, "in": {"$ref": "#/$defs/expr"}}},
+        {"type": "object", "required": ["match", "cases"], "additionalProperties": false,
+         "properties": {"match": {"$ref": "#/$defs/expr"}, "cases": {"type": "array", "items": {"type": "object", "required": ["pattern", "body"], "additionalProperties": false,
+           "properties": {"pattern": {"type": "string"}, "body": {"$ref": "#/$defs/expr"}}}}}},
+        {"type": "object", "required": ["record", "fields"], "additionalProperties": false,
+         "properties": {"record": {"type": "string"}, "fields": {"type": "object", "additionalProperties": {"$ref": "#/$defs/expr"}}}},
+        {"type": "object", "required": ["field", "name"], "additionalProperties": false,
+         "properties": {"field": {"$ref": "#/$defs/expr"}, "name": {"type": "string"}}},
+        {"type": "object", "required": ["op", "args"], "additionalProperties": false,
+         "properties": {"op": {"type": "string"}, "args": {"type": "array", "items": {"$ref": "#/$defs/expr"}}}},
+        {"type": "object", "required": ["list"], "additionalProperties": false,
+         "properties": {"list": {"type": "array", "items": {"$ref": "#/$defs/expr"}}}},
+        {"type": "object", "required": ["var"], "additionalProperties": false, "properties": {"var": {"type": "string"}}},
+        {"type": "object", "required": ["int"], "additionalProperties": false, "properties": {"int": {"type": "integer"}}},
+        {"type": "object", "required": ["str"], "additionalProperties": false, "properties": {"str": {"type": "string"}}},
+        {"type": "object", "required": ["bool"], "additionalProperties": false, "properties": {"bool": {"type": "boolean"}}}
+      ]
+    }
+  }
+}

@@ -1,0 +1,184 @@
+{
+ "name": "h36_patch_rollback_invalid_values",
+ "description": "invalid PATCH values change nothing",
+ "steps": [
+  {
+   "name": "create a",
+   "request": {
+    "method": "POST",
+    "path": "/todos",
+    "json": {
+     "title": "orig"
+    }
+   },
+   "expect": {
+    "status": 201,
+    "json": {
+     "id": {
+      "$var": "a"
+     },
+     "title": "orig",
+     "done": false,
+     "created_at": {
+      "$type": "int"
+     }
+    },
+    "headers": {
+     "location": "/todos/{{a}}",
+     "content-type": "application/json"
+    }
+   },
+   "capture": {
+    "a": "/id",
+    "ca": "/created_at"
+   }
+  },
+  {
+   "name": "empty title",
+   "request": {
+    "method": "PATCH",
+    "path": "/todos/{{a}}",
+    "json": {
+     "title": ""
+    }
+   },
+   "expect": {
+    "status": 400,
+    "json": {
+     "error": {
+      "code": "invalid_value",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "blank title + done",
+   "request": {
+    "method": "PATCH",
+    "path": "/todos/{{a}}",
+    "json": {
+     "done": true,
+     "title": "  "
+    }
+   },
+   "expect": {
+    "status": 400,
+    "json": {
+     "error": {
+      "code": "invalid_value",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "201 chars",
+   "request": {
+    "method": "PATCH",
+    "path": "/todos/{{a}}",
+    "json": {
+     "title": "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz"
+    }
+   },
+   "expect": {
+    "status": 400,
+    "json": {
+     "error": {
+      "code": "invalid_value",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "good title, bad done",
+   "request": {
+    "method": "PATCH",
+    "path": "/todos/{{a}}",
+    "json": {
+     "title": "changed",
+     "done": "no"
+    }
+   },
+   "expect": {
+    "status": 400,
+    "json": {
+     "error": {
+      "code": "invalid_type",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "unchanged",
+   "request": {
+    "method": "GET",
+    "path": "/todos/{{a}}"
+   },
+   "expect": {
+    "status": 200,
+    "json": {
+     "id": {
+      "$var": "a"
+     },
+     "title": "orig",
+     "done": false,
+     "created_at": {
+      "$var": "ca"
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "list",
+   "request": {
+    "method": "GET",
+    "path": "/todos",
+    "query": "done=false"
+   },
+   "expect": {
+    "status": 200,
+    "json": [
+     {
+      "id": {
+       "$var": "a"
+      },
+      "title": "orig",
+      "done": false,
+      "created_at": {
+       "$var": "ca"
+      }
+     }
+    ],
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  }
+ ]
+}

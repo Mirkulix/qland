@@ -1,0 +1,2 @@
+test r = true
+fn f(r: Int) -> Int = r

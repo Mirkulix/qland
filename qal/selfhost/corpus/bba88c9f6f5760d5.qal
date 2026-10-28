@@ -1,0 +1,2 @@
+fn d14[T](x: T) -> Int = 0
+test t = d0(1) == 0

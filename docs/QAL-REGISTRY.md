@@ -1,0 +1,147 @@
+# QAL Package Registry (prototype)
+
+`qal-registry/registry.py` is a minimal **content-addressed registry** for the
+compiler's own `.qalpkg` files. It does not replace `qal import`; it stores and
+serves the exact bytes that `qal import` verifies.
+
+## Commands
+
+```sh
+python3 qal-registry/registry.py publish math.qalpkg
+python3 qal-registry/registry.py index
+python3 qal-registry/registry.py fetch <sha256> --out math.qalpkg
+python3 qal-registry/registry.py verify <sha256>
+
+# signing
+python3 qal-registry/registry.py publish math.qalpkg --key key.pem --version 1.0.0
+python3 qal-registry/registry.py trust --public pub.pem
+python3 qal-registry/registry.py verify <sha256> --trust
+python3 qal-registry/registry.py resolve --name math
+python3 qal-registry/registry.py resolve --name age --trust
+python3 qal-registry/registry.py fetch <sha256> --out math.qalpkg --trust
+
+# install the package and its whole dependency graph into a project
+python3 qal-registry/registry.py install --name age --root /path/to/project --trust
+```
+
+Dependencies are explicit package digests:
+
+```sh
+python3 qal-registry/registry.py publish age.qalpkg --key key.pem   --version 1.0.0 --depends <math-sha256>
+```
+
+`resolve --name age --trust` walks the dependency graph, re-hashes every
+package, requires a trusted signature for every node and fails on a missing
+package, a hash mismatch, an untrusted key or a cycle.
+
+Default store: `qal-registry/store`; override with `QAL_REGISTRY`.
+
+## Verified round-trip
+
+```sh
+qal init
+qal define qal/examples/math.qal
+qal export "" --out math.qalpkg --name math
+python3 qal-registry/registry.py publish math.qalpkg
+python3 qal-registry/registry.py fetch <sha256> --out math.qalpkg
+qal init && qal import math.qalpkg
+qal query --name fact
+```
+
+The fetched package imports with the recorded definition hashes
+(`fact 4519a78b…`, 8 definitions), and `qal prove` reports the same obligations
+as the original.
+
+## Verified signing
+
+- a signed publish stores `signature` (Ed25519 over the SHA-256 hex) and
+  `public_key` (raw, base64) in the index;
+- `trust --public` adds a key to `trusted.json`;
+- `verify --trust`/`fetch --trust` require a trusted signature;
+- unsigned or unknown-key packages are rejected when `--trust` is set.
+
+Measured:
+
+- signed math package: `signed: true`, `verify --trust` exit 0;
+- untrusted key: `signed: false`, exit 1;
+- tampered store file: `registry corruption: hash mismatch`, exit 1;
+- `resolve --name math` returns version 1.0.0 and the same SHA-256.
+
+## Self-test
+
+```sh
+QAL_BIN=$PWD/qal/target/release/qal python3 qal-registry/selftest.py
+```
+
+It creates a temporary store and Ed25519 key, exports `math` and `age`, publishes
+both signed with `age --depends math`, trusts the key, resolves the graph, then
+tampers with the dependency and removes it from the index. All thirteen cases pass
+(exit 0); the last two exit 1 with `check: hash` and `check: missing`. The
+install case resolves `age -> math`, imports both in dependency order and then
+queries `fact` from the fresh project.
+
+## Design
+
+- a package is the compiler's text format, not a new archive;
+- the registry key is **SHA-256 of the whole `.qalpkg` file**;
+- `verify` re-hashes the stored file before serving;
+- `qal import` independently checks the package header checksum and the hashes
+  of every listed definition (E0243 on mismatch).
+
+## Not yet
+
+- signatures cover the package digest, not the `# def … agent` provenance lines;
+- dependencies are registry metadata, not yet encoded inside `.qalpkg`;
+- no version ranges, no transitive fetch command, no HTTP server;
+- no mirroring or garbage collection;
+- no version ranges — a package is addressed by hash.
+
+Next: signed packages, an index by package name + version, and a resolver that
+refuses a package whose dependency hashes are not already verified.
+
+## HTTP front end
+
+```sh
+python3 qal-registry/server.py --registry /path/to/store --port 8899
+```
+
+Endpoints:
+
+- `GET /health` → `{"ok":true}`
+- `GET /index.json` → the signed index
+- `GET /packages/<sha256>.qalpkg` → package bytes, re-hashed before serving
+
+Verified against the signed `qal_event_queue` store:
+
+```text
+health 200 {"ok":true}
+index.json 200
+download /packages/<sha>.qalpkg -> cmp with qal/packages/event_queue.qalpkg -> identical
+```
+
+The server is read-only. Trust is still decided by `verify --trust`/`fetch
+--trust` on the client; the HTTP layer cannot bypass the Ed25519 check.
+
+## HTTP client
+
+```sh
+python3 qal-registry/client.py \
+  --url http://127.0.0.1:8899 \
+  --name qal_event_queue \
+  --root /path/to/project \
+  --trusted keys.json
+```
+
+It fetches `index.json`, resolves the dependency graph, downloads each
+`packages/<sha>.qalpkg`, re-hashes and verifies the Ed25519 signature, then runs
+`qal import` in dependency order.
+
+Verified against the local server:
+
+- signed install: `qal_event_queue`, then `qal query enqueue` and all three
+  queue tests pass;
+- no `--trusted`: `no trusted keys`, exit 1;
+- wrong trusted key: `untrusted package qal_event_queue`, exit 1.
+
+The server never decides trust; the client does, and `qal import` re-checks the
+package header and definition hashes after download.

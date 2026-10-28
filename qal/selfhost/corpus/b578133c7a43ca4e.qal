@@ -1,0 +1,1 @@
+fn h(x: Int) -> Int = max(x 3)

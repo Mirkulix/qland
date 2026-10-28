@@ -1,0 +1,90 @@
+# qal-pkg 1
+# package qal_prelude cb68f2528042fa09e1355cb536b32c926f981a7615955dd001c61a1289f77a8d
+# def abs2 85db3cd8fd91adb7d9c05f650a15b0e3db981f08b233f129975be9979b74160b cli
+# def abs_diff e9f9e474e24ceb65fe7a98b49f3f04ad3d2cf83c55a52446b6f37cb18a283596 cli
+# def add2 ddd9c0d4eb7591d4aeb924a46c8bb57766411947ef48f263d3cb85c9f9fee9ed cli
+# def add_int b80e93bfb078f70f3bd0fa2a2f345035697961556d9bc1ecca18732e50fb717b cli
+# def count_chars f60b1de4c589e436c7fc84c5d4844e039907d95652c9087dbea608a04d8c4068 cli
+# def count_words 6634963487ffc1a35c746f46ff8a01d2472fe8c7cfd34830637b89ca7005fdc0 cli
+# def fact d625e39bee2eb50209c0a9c04089de3e299472d01b19dd9fb2fbc486ba7b46cb cli
+# def fact_first 2e2306c31ee7c139bedb6ef1583a47593daaa7c8d41f651c40b14c21d76d8c08 cli
+# def first_int 2b412d7ffc29614c7b6905317a91d3e2daec7f6fee352ae7400ace0139f67912 cli
+# def max2 98f0a981ba6d44ddfa285a2f8f0fa9bcb561109e43da4327b3718abeb331a1aa cli
+# def max_all 4ef3740b1ad3feb2cfd47145e5fcff2488fa613816e3f525a3a7b26751ed6252 cli
+# def min2 9e7f7ed0bd73e1e86a6fc3f59d44c51b078e92b9b045b50e2459122a32e5bc72 cli
+# def min_all 5c14140422ad250e53163bb5f740d4327dd8e573913c66944ddf1359fe048687 cli
+# def mul2 44564c7903534d50ad275c5bc8ffad87e9468ee39adc1ae34b583a84fcd28e77 cli
+# def nonempty 73df982deff5dce571190a3e5c07965f5f9fcdd48f7e181881ada8904d049a70 cli
+# def norm_ws 52b56f562bae455219351f435131c3d3189009bbdee0d1b700740e232a320e56 cli
+# def parse_ints 74c4f569ed17a9a0642b738ed60eaf659d38e31b1c4097d51bf2e250f304ee7e cli
+# def product_all 8f4ba07bce899d58ca52d914dc0edf6756072d0fbc2202065772fd44aab8f71a cli
+# def rev_add 4433abedfe0f75b56c46bf8a142adc4965f93c00b836a6b99fcdd2efa027094f cli
+# def reverse_line e3625aa3ff0a8462785d5e293bc30a8a52a4aaa26c69999fad1d58af67ce4626 cli
+# def sum_all 75ab71c93b58a90071c559d3eee9541c3950cc345f082a940c4a8e2f0892f8a7 cli
+# def sum_expr 4dc97a03a9490843de1c7f57f50bcda2dfb80df6d1077dc8f330f5be4e47c61c cli
+
+fn abs2(a: Int) -> Int
+= if a < 0 then 0 - a else a
+
+fn add2(a: Int, b: Int) -> Int
+= a + b
+
+fn add_int(acc: List[Int], x: Str) -> List[Int]
+= match to_int(trim(x)) { None => acc, Some(n) => push(acc, n) }
+
+fn count_chars(s: Str) -> Int
+= len(trim(s))
+
+fn fact(n: Int) -> Int
+= if n <= 1 then 1 else n * fact(n - 1)
+
+fn max2(a: Int, b: Int) -> Int
+= if a > b then a else b
+
+fn min2(a: Int, b: Int) -> Int
+= if a < b then a else b
+
+fn mul2(a: Int, b: Int) -> Int
+= a * b
+
+fn nonempty(x: Str) -> Bool
+= len(trim(x)) > 0
+
+fn norm_ws(s: Str) -> Str
+= replace(replace(replace(s, "\t", " "), "\r", " "), "\n", " ")
+
+fn rev_add(acc: Str, x: Str) -> Str
+= x ++ acc
+
+fn count_words(s: Str) -> Int
+= len(filter(split(trim(norm_ws(s)), " "), nonempty))
+
+fn parse_ints(s: Str) -> List[Int]
+= fold(split(trim(s), " "), [], add_int)
+
+fn reverse_line(s: Str) -> Str
+= fold(chars(trim(s)), "", rev_add)
+
+fn abs_diff(s: Str) -> Int
+= match get(parse_ints(s), 0) { None => 0, Some(a) => match get(parse_ints(s), 1) { None => 0, Some(b) => abs2(a - b) } }
+
+fn fact_first(s: Str) -> Int
+= match get(parse_ints(s), 0) { None => 0, Some(n) => fact(n) }
+
+fn first_int(s: Str) -> Int
+= match get(parse_ints(s), 0) { None => 0, Some(n) => n }
+
+fn max_all(s: Str) -> Int
+= fold(parse_ints(s), -1000000000, max2)
+
+fn min_all(s: Str) -> Int
+= fold(parse_ints(s), 1000000000, min2)
+
+fn product_all(s: Str) -> Int
+= fold(parse_ints(s), 1, mul2)
+
+fn sum_all(s: Str) -> Int
+= fold(parse_ints(s), 0, add2)
+
+fn sum_expr(s: Str) -> Int
+= sum_all(s)

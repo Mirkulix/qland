@@ -164,6 +164,12 @@ START_SAAS.bat
 
 ## 🎨 DEMO-WORKFLOW
 
+> Die Ausgaben unten sind **illustrativ**. Gemessen werden im Code nur
+> Dateigrößen (Compression Ratio, gesparter Speicher) sowie Accuracy im
+> Klassifikations-/Trainings-Pfad; für GPT-/generische Modelle ist der
+> „Accuracy“-Wert eine Parameter-Ähnlichkeit (siehe Demo-Grenzen). Werte wie
+> Laufzeit-Gewinne oder €-Ersparnisse in alten Beispielen sind keine Messungen.
+
 ### **Workflow 1: COMPRESS Mode (5 Minuten)**
 
 ```
@@ -187,11 +193,11 @@ START_SAAS.bat
    ├─ Compressing...
    └─ Validating...
 
-6. Ergebnis:
-   ✅ 16× smaller!
-   ✅ 15× faster!
-   ✅ Only -0.5% accuracy loss!
-   ✅ €511/month saved!
+6. Ergebnis (illustrativ):
+   ✅ Datei kleiner (Ratio aus Dateigrößen berechnet)
+   ✅ Validierung: Accuracy nur im Klassifikations-Pfad,
+      sonst Parameter-Ähnlichkeit
+   ⚠️ Keine belastbaren Laufzeit-/Kostenzahlen im Repo
 
 7. Gehen Sie zu "📊 Results" Tab
    → Siehe Detaillierte Analyse
@@ -222,7 +228,7 @@ START_SAAS.bat
 
 5. Auto-Compression:
    ├─ Original: 42 MB
-   └─ Compressed: 2.6 MB (16×!)
+   └─ Compressed: 2.6 MB   (Beispielgrößen)
 
 6. ✅ Done!
 ```
@@ -336,19 +342,34 @@ GET    /api/auth/me              - Get current user
    - Menü funktioniert
    - Prozesse starten korrekt
 
-### ⚠️ **Mock-Daten (für MVP)**
+### ⚠️ **Demo-Grenzen (Stand Code, 2026-10-26)**
 
-Aktuell verwendet das System Mock-Daten:
-- Training simuliert Progress
-- Compression simuliert Results
-- Model Hub zeigt Beispiel-Modelle
+Die frühere Aussage „Training simuliert Progress, Compression simuliert Results,
+Model Hub zeigt Beispiel-Modelle“ ist **überholt**: Training lädt inzwischen
+MNIST/CIFAR-10 bzw. eine lokale Textdatei und führt echte
+`loss.backward()`/`optimizer.step()`-Schritte aus; Compression schreibt echte
+Dateien und misst deren Größe (`backend/tests/test_measured.py`).
+
+Was weiterhin **kein** Produktionsstand ist:
+
+| Bereich | Aktueller Zustand |
+|---|---|
+| Validierung GPT/generisch | `validation_service.py:307` meldet Kosinus-Ähnlichkeit der Parameter als „Accuracy“; `original_acc = 100.0` ist gesetzt, nicht gemessen |
+| Validierung Masked-LM | 5 hardcodierte Sätze (`validation_service.py:215-221`) |
+| Validierung Klassifikation | echte SST-2-Accuracy, aber Fallback `quick_validate` meldet Parameter-Statistik als Accuracy (`:363`) |
+| Job-Persistenz | Nur Prozess-RAM (`training.py:72`) – Restart/mehrere Worker verlieren Jobs |
+| Deployment | Nur `igqk_api`; Cloud-Ziele liefern **501** (`deployment.py:58`) |
+| Datenbank | SQLite (`database.py:3-6`), keine Server-DB |
+| Auth | `SECRET_KEY` hardcodiert, `.env` wirkungslos (`auth.py:19`) |
+| CORS | `allow_origins=["*"]` (`main.py:26`) |
 
 **Für Produktion benötigt:**
-- ✅ IGQK Core Integration (schon vorhanden!)
-- ❌ Datenbank (PostgreSQL) - noch nicht implementiert
-- ❌ Echte HuggingFace API Calls - noch nicht implementiert
-- ❌ GPU Cluster Integration - noch nicht implementiert
-- ❌ Storage (S3/Azure) - noch nicht implementiert
+- ❌ Validierungs-Fix (accuracy ≠ parameter similarity)
+- ❌ Datenbank (PostgreSQL) inkl. Job-Persistenz
+- ❌ Deployment-Ziele außer `igqk_api`
+- ❌ Storage (S3/Azure)
+- ✅ IGQK Core Integration (vorhanden)
+- ✅ HuggingFace Search/Download (vorhanden)
 
 ---
 
@@ -498,18 +519,20 @@ START_SAAS.bat
 
 ## 🎊 ZUSAMMENFASSUNG
 
-**Sie haben jetzt eine vollständige, funktionierende SaaS-Plattform!**
+**Sie haben ein funktionierendes MVP (Demo), keine production-ready Plattform.**
 
 ✅ **Frontend** - 5-Tab Web-UI
 ✅ **Backend** - 30+ API Endpoints
-✅ **CREATE Mode** - Quantum Training
-✅ **COMPRESS Mode** - 16× Compression
+✅ **CREATE Mode** - Training (real: `loss.backward()`/`optimizer.step()`, CPU/MPS/CUDA)
+✅ **COMPRESS Mode** - 2-Bit-Ternary-Kompression (bis zu 16× auf dem
+   Ternary-Payload; Datei-Ratio wird gemessen, Messung im Repo ≈ 15,6×)
 ✅ **Model Hub** - Model Management
-✅ **Deployment** - Multi-Cloud Deploy
+⚠️ **Deployment** - nur `igqk_api`; Cloud-Ziele 501 (kein Multi-Cloud)
+⚠️ **Validierung** - GPT/generisch: nur Parameter-Ähnlichkeit, keine Accuracy
 ✅ **Docs** - Komplett dokumentiert
 ✅ **Demo-Ready** - Sofort zeigbar
 
-**Status:** ⭐⭐⭐⭐⭐ **ERFOLGREICHER MVP!**
+**Status:** ⭐⭐⭐⭐⭐ **ERFOLGREICHER MVP – NICHT PRODUCTION-READY!**
 
 ---
 
@@ -528,6 +551,7 @@ START_SAAS.bat
 **Zeilen Code:** ~1,500+
 **Dateien:** 15+
 **Features:** 50+
-**Status:** ✅ **EINSATZBEREIT!**
+**Status:** ✅ **MVP/Demo einsatzbereit – nicht production-ready**
+(siehe Demo-Grenzen: hardcodierter JWT-Key, CORS `*`, RAM-Jobs, 501-Deploy, SQLite)
 
 **🎉 GRATULATION! Sie haben eine SaaS-Platform! 🎉**

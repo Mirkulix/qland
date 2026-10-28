@@ -1,0 +1,46 @@
+# Replicate a command from the leader and commit it on a majority.
+
+type LogEntry = { index: Int, term: Int, cmd: Str }
+type RaftLog = { entries: List[LogEntry], commit: Int }
+type Cluster = { logs: List[RaftLog], leader: Int }
+
+fn at(log: RaftLog, index: Int) -> Option[LogEntry] =
+  if index <= 0 then None else get(log.entries, index - 1)
+
+fn append(log: RaftLog, prev_index: Int, prev_term: Int, e: LogEntry) -> RaftLog
+  req prev_index >= 0
+= if prev_index == 0 || (match at(log, prev_index) { Some(x) => x.term == prev_term, None => false })
+  then RaftLog { entries: push(log.entries, LogEntry { index: prev_index + 1, term: e.term, cmd: e.cmd }), commit: log.commit }
+  else log
+
+fn advance(log: RaftLog, index: Int) -> RaftLog =
+  if index > log.commit && index <= len(log.entries) then RaftLog { entries: log.entries, commit: index } else log
+
+fn replicate(c: Cluster, e: LogEntry) -> Cluster
+  req c.leader >= 0
+= match get(c.logs, c.leader) {
+    None => c,
+    Some(ll) => let pi = len(ll.entries) in
+      let pt = match at(ll, pi) { None => 0, Some(x) => x.term } in
+      let logs = map(c.logs, fn(l) => append(l, pi, pt, e)) in
+      let matches = len(filter(logs, fn(l) => len(l.entries) > pi)) in
+      let logs2 = if matches * 2 > len(logs) then map(logs, fn(l) => advance(l, pi + 1)) else logs in
+      Cluster { logs: logs2, leader: c.leader },
+  }
+
+fn empty() -> RaftLog = RaftLog { entries: [], commit: 0 }
+fn three() -> Cluster = Cluster { logs: [empty(), empty(), empty()], leader: 0 }
+
+test majority_commits =
+  let c = replicate(three(), LogEntry { index: 1, term: 1, cmd: "x" }) in
+  len(filter(c.logs, fn(l) => l.commit == 1)) == 3
+
+test all_three_append =
+  let c = replicate(three(), LogEntry { index: 1, term: 1, cmd: "x" }) in
+  len(filter(c.logs, fn(l) => len(l.entries) == 1)) == 3
+
+test divergent_follower_rejected =
+  let bad = RaftLog { entries: [LogEntry { index: 1, term: 9, cmd: "z" }], commit: 0 } in
+  let c = Cluster { logs: [empty(), empty(), bad], leader: 0 } in
+  let c2 = replicate(c, LogEntry { index: 1, term: 1, cmd: "x" }) in
+  len(filter(c2.logs, fn(l) => len(l.entries) == 1)) == 2

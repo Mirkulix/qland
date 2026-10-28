@@ -1,0 +1,19 @@
+{
+  "name": "h08_cancel_nonexistent_order",
+  "description": "POST /orders/999/cancel gives 404 order_not_found",
+  "steps": [
+    {
+      "name": "cancel missing order",
+      "request": {"method": "POST", "path": "/orders/999/cancel"},
+      "expect": {
+        "status": 404,
+        "json": {
+          "error": {
+            "code": "order_not_found",
+            "message": {"$type": "str"}
+          }
+        }
+      }
+    }
+  ]
+}

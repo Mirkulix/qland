@@ -1,0 +1,30 @@
+# qal-pkg 1
+# package qal_sim_quorum dbfbbf631b080e70cee90e1b49113488fa92dcd9f393850cb1cc9dca238607dc
+# def Vote 9ab639a7e9cb0f70cf47b7f9c67964081e93ffa2b4348f99d468af0c6e9e9a2d cli
+# def count 91cfb739756651ba8048f439c88922534aecedacef3f4cd7cc11c0d7bdfea388 cli
+# def distinct 2fa808f651180711c35a0e65c37e008ad2967685ac4045696e14000ea783a4fa cli
+# def empty_has_no_quorum a54576dc1e789003ef1b1de09cf48247fcb4e65938bff07d3cd9e75722007102 cli
+# def majority_wins 1126f4d5077fd509f65aafbb6edb256d8369cc73158e475f69811e8b29367910 cli
+# def quorum 2c1cf16da4cc6eb94f79af824c0f0387d1025194c9eed3c4336b20779ce7b0d4 cli
+# def single_wins 4aec81af7e610ebd1793bf983e783b0624024ac374b5e068656018cac4980b08 cli
+# def tie_has_no_quorum 99004f42ba9e97159a4d924d1d8d914e4eb85c6827d2c13d57b0606af516a8c4 cli
+
+type Vote = { node: Int, value: Str }
+
+fn distinct(values: List[Str]) -> List[Str]
+= fold(values, [], fn(acc, v) => if len(filter(acc, fn(x) => x == v)) > 0 then acc else push(acc, v))
+
+fn count(votes: List[Vote], value: Str) -> Int
+= len(filter(votes, fn(v) => v.value == value))
+
+fn quorum(votes: List[Vote], n: Int) -> Option[Str]
+  req n >= 1
+= let values = distinct(map(votes, fn(v) => v.value)) in let winners = filter(values, fn(v) => count(votes, v) * 2 > n) in get(winners, 0)
+
+test empty_has_no_quorum = quorum([], 3) == None
+
+test majority_wins = quorum([Vote { node: 1, value: "a" }, Vote { node: 2, value: "a" }, Vote { node: 3, value: "b" }], 3) == Some("a")
+
+test single_wins = quorum([Vote { node: 1, value: "x" }], 1) == Some("x")
+
+test tie_has_no_quorum = quorum([Vote { node: 1, value: "a" }, Vote { node: 2, value: "b" }], 2) == None

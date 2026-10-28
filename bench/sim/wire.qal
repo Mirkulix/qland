@@ -1,0 +1,64 @@
+# Wire format for Raft messages between hosts.
+
+type Heartbeat = { leader: Int, term: Int, at: Int }
+type VoteMsg = { term: Int, candidate: Int, last_index: Int, last_term: Int }
+
+fn encode_heartbeat(h: Heartbeat) -> Str = "hb:" ++ from_int(h.leader) ++ ":" ++ from_int(h.term) ++ ":" ++ from_int(h.at)
+
+fn decode_heartbeat(s: Str) -> Option[Heartbeat] =
+  let p = split(s, ":") in
+  if len(p) != 4 then None
+  else match get(p, 0) {
+    Some("hb") => match get(p, 1) {
+      None => None,
+      Some(a) => match to_int(a) {
+        None => None,
+        Some(leader) => match get(p, 2) {
+          None => None,
+          Some(b) => match to_int(b) {
+            None => None,
+            Some(term) => match get(p, 3) {
+              None => None,
+              Some(c) => match to_int(c) { None => None, Some(at) => Some(Heartbeat { leader: leader, term: term, at: at }) },
+            },
+          },
+        },
+      },
+    },
+    _ => None,
+  }
+
+fn encode_vote(v: VoteMsg) -> Str = "rv:" ++ from_int(v.term) ++ ":" ++ from_int(v.candidate) ++ ":" ++ from_int(v.last_index) ++ ":" ++ from_int(v.last_term)
+
+fn decode_vote(s: Str) -> Option[VoteMsg] =
+  let p = split(s, ":") in
+  if len(p) != 5 then None
+  else match get(p, 0) {
+    Some("rv") => match get(p, 1) {
+      None => None,
+      Some(a) => match to_int(a) {
+        None => None,
+        Some(term) => match get(p, 2) {
+          None => None,
+          Some(b) => match to_int(b) {
+            None => None,
+            Some(candidate) => match get(p, 3) {
+              None => None,
+              Some(c) => match to_int(c) {
+                None => None,
+                Some(last_index) => match get(p, 4) {
+                  None => None,
+                  Some(d) => match to_int(d) { None => None, Some(last_term) => Some(VoteMsg { term: term, candidate: candidate, last_index: last_index, last_term: last_term }) },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+    _ => None,
+  }
+
+test heartbeat_roundtrip = decode_heartbeat(encode_heartbeat(Heartbeat { leader: 2, term: 7, at: 100 })) == Some(Heartbeat { leader: 2, term: 7, at: 100 })
+test heartbeat_bad = decode_heartbeat("hb:x:7:100") == None
+test vote_roundtrip = decode_vote(encode_vote(VoteMsg { term: 3, candidate: 1, last_index: 9, last_term: 2 })) == Some(VoteMsg { term: 3, candidate: 1, last_index: 9, last_term: 2 })

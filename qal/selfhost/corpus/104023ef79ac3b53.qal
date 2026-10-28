@@ -1,0 +1,4 @@
+fn adder(n: Int) -> fn(Int) -> Int = fn(x) => x + n
+fn logger() -> fn(Str) -> Unit !io = fn(s) => print(s)
+fn use_it(xs: List[Int], k: Int) -> List[Int] = map(xs, fn(x) => x * k)
+test t = let f = adder(2) in f(3) == 5

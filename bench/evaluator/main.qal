@@ -1,0 +1,76 @@
+# Benchmark Evaluator in QAL (Phase 7: Software für KI-Systeme)
+# Evaluates agent transcript tool results or unclassified outputs via `!model`.
+
+type EvalResult = {
+  category: Str,
+  reason: Str
+}
+
+fn get_str_field(j: std.json.Json, key: Str) -> Str
+= match std.json.get(j, key) {
+    Some(v) => match std.json.as_str(v) {
+      Some(s) => s,
+      None => "",
+    },
+    None => "",
+  }
+
+fn classify_tool_result(arm: Str, tool: Str, text: Str) -> Result[EvalResult, Str] !model
+= let end = if len(text) > 2000 then 2000 else len(text) in
+  let prompt = "Arm: " ++ arm ++ ". Tool: " ++ tool ++ ". Result:\n" ++ slice(text, 0, end) in
+  let schema = "{\"type\":\"object\",\"properties\":{\"category\":{\"type\":\"string\"},\"reason\":{\"type\":\"string\"}},\"required\":[\"category\",\"reason\"]}" in
+  match std.model.ask_json(prompt, schema) {
+    Ok(j) =>
+      let cat = get_str_field(j, "category") in
+      let reason = get_str_field(j, "reason") in
+      Ok(EvalResult { category: cat, reason: reason }),
+    Err(e) => Err("model error"),
+  }
+
+fn eval_file(path: Str) -> Int !model !io !fs
+= match read_file(path) {
+    Err(e) => {
+      print("error: cannot read file " ++ path ++ ": " ++ e);
+      1
+    },
+    Ok(content) => match std.json.parse(content) {
+      Err(err) => {
+        print("error: invalid JSON in " ++ path ++ ": " ++ err.message);
+        1
+      },
+      Ok(j) =>
+        let arm = get_str_field(j, "arm") in
+        let tool = get_str_field(j, "tool") in
+        let text = get_str_field(j, "text") in
+        let arm_val = if arm == "" then "qal" else arm in
+        let tool_val = if tool == "" then "Bash" else tool in
+        match classify_tool_result(arm_val, tool_val, text) {
+          Ok(res) => {
+            print("category: " ++ res.category);
+            print("reason: " ++ res.reason);
+            0
+          },
+          Err(err) => {
+            print("evaluation failed: " ++ err);
+            1
+          },
+        },
+    },
+  }
+
+fn main(args: List[Str]) -> Int !model !io !fs
+= match get(args, 0) {
+    None => {
+      print("usage: eval_transcripts <input.json>");
+      2
+    },
+    Some(path) => if path == "-h" || path == "--help" then {
+      print("usage: eval_transcripts <input.json>");
+      2
+    } else eval_file(path),
+  }
+
+test test_classify_logic =
+  # Logic test without external model call
+  let dummy = EvalResult { category: "lang.type", reason: "missing type annotation" } in
+  dummy.category == "lang.type"

@@ -1,0 +1,1 @@
+fn f1[T](x: T) -> Bool = f2(w(x))

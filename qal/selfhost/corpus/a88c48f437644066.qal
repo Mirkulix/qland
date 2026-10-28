@@ -1,0 +1,1 @@
+fn big(n: Int) -> Int !db = match db_query("SELECT length(randomblob(?))", [SqlInt(n)]) { Ok(r) => match get(r.rows, 0) { Some(row) => match get(row, 0) { Some(SqlInt(k)) => k, _ => 0 - 2 }, None => 0 - 3 }, Err(DbSql(_)) => 0 - 1, Err(_) => 0 - 4 }

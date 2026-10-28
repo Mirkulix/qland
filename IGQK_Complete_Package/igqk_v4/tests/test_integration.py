@@ -29,14 +29,10 @@ def test_gpt_trainer_integration():
         train_compressed=False,
     )
 
-    try:
-        trainer = QuantumLLMTrainer(config)
-        print("\n[PASS] QuantumLLMTrainer successfully initialized with QuantumGPT")
-        print(f"       Model type: {type(trainer.model).__name__}")
-        return True
-    except Exception as e:
-        print(f"\n[FAIL] Failed to initialize trainer: {e}")
-        return False
+    trainer = QuantumLLMTrainer(config)
+    print("\n[PASS] QuantumLLMTrainer successfully initialized with QuantumGPT")
+    print(f"       Model type: {type(trainer.model).__name__}")
+    assert trainer.model is not None
 
 
 def test_bert_trainer_integration():
@@ -57,14 +53,10 @@ def test_bert_trainer_integration():
         train_compressed=False,
     )
 
-    try:
-        trainer = QuantumLLMTrainer(config)
-        print("\n[PASS] QuantumLLMTrainer successfully initialized with QuantumBERT")
-        print(f"       Model type: {type(trainer.model).__name__}")
-        return True
-    except Exception as e:
-        print(f"\n[FAIL] Failed to initialize trainer: {e}")
-        return False
+    trainer = QuantumLLMTrainer(config)
+    print("\n[PASS] QuantumLLMTrainer successfully initialized with QuantumBERT")
+    print(f"       Model type: {type(trainer.model).__name__}")
+    assert trainer.model is not None
 
 
 def test_vit_trainer_integration():
@@ -89,14 +81,10 @@ def test_vit_trainer_integration():
     config.in_channels = 3
     config.num_classes = 10
 
-    try:
-        trainer = QuantumLLMTrainer(config)
-        print("\n[PASS] QuantumLLMTrainer successfully initialized with QuantumViT")
-        print(f"       Model type: {type(trainer.model).__name__}")
-        return True
-    except Exception as e:
-        print(f"\n[FAIL] Failed to initialize trainer: {e}")
-        return False
+    trainer = QuantumLLMTrainer(config)
+    print("\n[PASS] QuantumLLMTrainer successfully initialized with QuantumViT")
+    print(f"       Model type: {type(trainer.model).__name__}")
+    assert trainer.model is not None
 
 
 def main():
@@ -108,19 +96,22 @@ def main():
     results = []
 
     try:
-        results.append(("GPT Integration", test_gpt_trainer_integration()))
+        test_gpt_trainer_integration()
+        results.append(("GPT Integration", True))
     except Exception as e:
         print(f"[FAIL] GPT Integration failed: {e}")
         results.append(("GPT Integration", False))
 
     try:
-        results.append(("BERT Integration", test_bert_trainer_integration()))
+        test_bert_trainer_integration()
+        results.append(("BERT Integration", True))
     except Exception as e:
         print(f"[FAIL] BERT Integration failed: {e}")
         results.append(("BERT Integration", False))
 
     try:
-        results.append(("ViT Integration", test_vit_trainer_integration()))
+        test_vit_trainer_integration()
+        results.append(("ViT Integration", True))
     except Exception as e:
         print(f"[FAIL] ViT Integration failed: {e}")
         results.append(("ViT Integration", False))

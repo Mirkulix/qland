@@ -1,0 +1,1 @@
+fn t(xs: List[Int]) -> Int ens let x = get(xs, 3) in true = 0

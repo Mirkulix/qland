@@ -1,0 +1,1 @@
+fn other(args: List[Str]) -> Int = 7

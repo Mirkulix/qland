@@ -1,0 +1,4 @@
+fn add(a: Int, b: Int) -> Int
+  req a >= 0
+  ens r >= a
+= a + b

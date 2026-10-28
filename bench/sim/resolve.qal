@@ -1,0 +1,49 @@
+# Deterministic conflict resolution policies, with unresolved conflicts kept.
+
+type Entry = { id: Int, kind: Str, amount: Int }
+type Conflict = { id: Int, a: Entry, b: Entry }
+type Merged = { log: List[Entry], conflicts: List[Conflict] }
+
+fn has(log: List[Entry], id: Int) -> Bool = len(filter(log, fn(e) => e.id == id)) > 0
+fn find(log: List[Entry], id: Int) -> Option[Entry] = get(filter(log, fn(e) => e.id == id), 0)
+fn apply(log: List[Entry], e: Entry) -> List[Entry] = if has(log, e.id) then log else push(log, e)
+fn put_entry(log: List[Entry], e: Entry) -> List[Entry] = concat(filter(log, fn(x) => x.id != e.id), [e])
+
+fn resolve(a: Entry, b: Entry, policy: Str) -> Option[Entry] =
+  if policy == "min" then Some(if a.amount <= b.amount then a else b)
+  else if policy == "max" then Some(if a.amount >= b.amount then a else b)
+  else None
+
+fn conflicts(a: List[Entry], b: List[Entry]) -> List[Conflict] =
+  let found = map(a, fn(x) => match find(b, x.id) {
+    None => None,
+    Some(y) => if x.kind == y.kind && x.amount == y.amount then None else Some(Conflict { id: x.id, a: x, b: y }),
+  }) in
+  map(filter(found, fn(c) => c != None), fn(c) => match c {
+    Some(x) => x,
+    None => Conflict { id: 0, a: Entry { id: 0, kind: "", amount: 0 }, b: Entry { id: 0, kind: "", amount: 0 } },
+  })
+
+fn merge_policy(a: List[Entry], b: List[Entry], policy: Str) -> Merged =
+  let cs = conflicts(a, b) in
+  let log = fold(cs, a, fn(acc, c) => match resolve(c.a, c.b, policy) { None => acc, Some(e) => put_entry(acc, e) }) in
+  let log2 = fold(b, log, fn(acc, e) => apply(acc, e)) in
+  Merged { log: log2, conflicts: if policy == "min" || policy == "max" then [] else cs }
+
+test min_resolves_to_lower = match get(merge_policy(
+  [Entry { id: 1, kind: "debit", amount: 5 }],
+  [Entry { id: 1, kind: "debit", amount: 6 }], "min").log, 0) {
+    None => false,
+    Some(e) => e.amount == 5,
+  }
+
+test max_resolves_to_higher = match get(merge_policy(
+  [Entry { id: 1, kind: "debit", amount: 5 }],
+  [Entry { id: 1, kind: "debit", amount: 6 }], "max").log, 0) {
+    None => false,
+    Some(e) => e.amount == 6,
+  }
+
+test reject_keeps_conflict = len(merge_policy(
+  [Entry { id: 1, kind: "debit", amount: 5 }],
+  [Entry { id: 1, kind: "debit", amount: 6 }], "reject").conflicts) == 1

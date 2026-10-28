@@ -1,0 +1,659 @@
+{
+ "per_task": {
+  "01-word-count": {
+   "qal": {
+    "processed": 258794.75,
+    "rounds": 4.75,
+    "top": "ok.run",
+    "runs": 4
+   },
+   "rust": {
+    "processed": 125613.25,
+    "rounds": 2.5,
+    "top": "ok.other",
+    "runs": 4
+   },
+   "ratio": 2.060250411481273
+  },
+  "02-roman": {
+   "qal": {
+    "processed": 220810.75,
+    "rounds": 3.75,
+    "top": "ok.define",
+    "runs": 4
+   },
+   "rust": {
+    "processed": 146573.0,
+    "rounds": 3,
+    "top": "ok.other",
+    "runs": 4
+   },
+   "ratio": 1.5064899401663334
+  },
+  "03-csv-sum": {
+   "qal": {
+    "processed": 259559.25,
+    "rounds": 4.5,
+    "top": "ok.define",
+    "runs": 4
+   },
+   "rust": {
+    "processed": 170919.5,
+    "rounds": 3.5,
+    "top": "ok.other",
+    "runs": 4
+   },
+   "ratio": 1.5186052498398368
+  },
+  "04-binary-search": {
+   "qal": {
+    "processed": 237373.25,
+    "rounds": 4.25,
+    "top": "ok.define",
+    "runs": 4
+   },
+   "rust": {
+    "processed": 144753.75,
+    "rounds": 3,
+    "top": "ok.other",
+    "runs": 4
+   },
+   "ratio": 1.6398418002987833
+  },
+  "05-brackets": {
+   "qal": {
+    "processed": 210850.25,
+    "rounds": 3.75,
+    "top": "ok.define",
+    "runs": 4
+   },
+   "rust": {
+    "processed": 100015.0,
+    "rounds": 2,
+    "top": "ok.other",
+    "runs": 4
+   },
+   "ratio": 2.108186272059191
+  },
+  "06-bank": {
+   "qal": {
+    "processed": 268905.75,
+    "rounds": 4.5,
+    "top": "ok.define",
+    "runs": 4
+   },
+   "rust": {
+    "processed": 186418.0,
+    "rounds": 3.75,
+    "top": "ok.other",
+    "runs": 4
+   },
+   "ratio": 1.4424881181001834
+  },
+  "07-tokenizer": {
+   "qal": {
+    "processed": 156766.75,
+    "rounds": 2.75,
+    "top": "ok.define",
+    "runs": 4
+   },
+   "rust": {
+    "processed": 100685.0,
+    "rounds": 2,
+    "top": "ok.other",
+    "runs": 4
+   },
+   "ratio": 1.5570020360530368
+  },
+  "08-expr-eval": {
+   "qal": {
+    "processed": 846568.6666666666,
+    "rounds": 11.666666666666666,
+    "top": "ok.run",
+    "runs": 6
+   },
+   "rust": {
+    "processed": 179517.5,
+    "rounds": 3.5,
+    "top": "ok.other",
+    "runs": 4
+   },
+   "ratio": 4.715800223747917
+  },
+  "09-rle": {
+   "qal": {
+    "processed": 260727.0,
+    "rounds": 4.5,
+    "top": "ok.define",
+    "runs": 4
+   },
+   "rust": {
+    "processed": 181669.6,
+    "rounds": 3.8,
+    "top": "ok.other",
+    "runs": 5
+   },
+   "ratio": 1.4351713220043418
+  },
+  "10-file-stats": {
+   "qal": {
+    "processed": 246042.5,
+    "rounds": 4.25,
+    "top": "prompt.task",
+    "runs": 4
+   },
+   "rust": {
+    "processed": 112431.75,
+    "rounds": 2.25,
+    "top": "ok.other",
+    "runs": 4
+   },
+   "ratio": 2.1883720568255853
+  },
+  "11-prime-factors": {
+   "qal": {
+    "processed": 242657.5,
+    "rounds": 4.25,
+    "top": "ok.define",
+    "runs": 4
+   },
+   "rust": {
+    "processed": 122746.0,
+    "rounds": 2.5,
+    "top": "ok.other",
+    "runs": 4
+   },
+   "ratio": 1.9769075978035944
+  },
+  "12-sort-words": {
+   "qal": {
+    "processed": 296518.75,
+    "rounds": 5.25,
+    "top": "ok.run",
+    "runs": 4
+   },
+   "rust": {
+    "processed": 121634.0,
+    "rounds": 2.5,
+    "top": "ok.other",
+    "runs": 4
+   },
+   "ratio": 2.43779494220366
+  },
+  "13-word-freq": {
+   "qal": {
+    "processed": 370743.75,
+    "rounds": 6.25,
+    "top": "ok.run",
+    "runs": 4
+   },
+   "rust": {
+    "processed": 157415.25,
+    "rounds": 3.25,
+    "top": "ok.other",
+    "runs": 4
+   },
+   "ratio": 2.355195891122366
+  },
+  "14-bst": {
+   "qal": {
+    "processed": 367341.5,
+    "rounds": 6.25,
+    "top": "ok.run",
+    "runs": 4
+   },
+   "rust": {
+    "processed": 123378.0,
+    "rounds": 2.5,
+    "top": "prompt.task",
+    "runs": 4
+   },
+   "ratio": 2.977366305175963
+  },
+  "15-caesar": {
+   "qal": {
+    "processed": 269830.0,
+    "rounds": 4.75,
+    "top": "ok.define",
+    "runs": 4
+   },
+   "rust": {
+    "processed": 175295.75,
+    "rounds": 3.5,
+    "top": "ok.other",
+    "runs": 4
+   },
+   "ratio": 1.5392843237785285
+  },
+  "16-anagrams": {
+   "qal": {
+    "processed": 140926.75,
+    "rounds": 2.5,
+    "top": "ok.define",
+    "runs": 4
+   },
+   "rust": {
+    "processed": 121953.25,
+    "rounds": 2.5,
+    "top": "ok.other",
+    "runs": 4
+   },
+   "ratio": 1.1555801095911753
+  },
+  "17-word-wrap": {
+   "qal": {
+    "processed": 351122.5,
+    "rounds": 5.75,
+    "top": "ok.define",
+    "runs": 4
+   },
+   "rust": {
+    "processed": 171126.5,
+    "rounds": 3.5,
+    "top": "ok.other",
+    "runs": 4
+   },
+   "ratio": 2.0518300789182273
+  },
+  "18-date-diff": {
+   "qal": {
+    "processed": 247269.75,
+    "rounds": 4.25,
+    "top": "ok.define",
+    "runs": 4
+   },
+   "rust": {
+    "processed": 134505.75,
+    "rounds": 2.75,
+    "top": "ok.other",
+    "runs": 4
+   },
+   "ratio": 1.8383582114519268
+  },
+  "19-base-convert": {
+   "qal": {
+    "processed": 238800.5,
+    "rounds": 4.25,
+    "top": "ok.define",
+    "runs": 4
+   },
+   "rust": {
+    "processed": 169555.4,
+    "rounds": 3.2,
+    "top": "ok.other",
+    "runs": 5
+   },
+   "ratio": 1.4083921833217934
+  },
+  "20-ini-query": {
+   "qal": {
+    "processed": 259857.75,
+    "rounds": 4.5,
+    "top": "ok.define",
+    "runs": 4
+   },
+   "rust": {
+    "processed": 157531.75,
+    "rounds": 3.25,
+    "top": "ok.other",
+    "runs": 4
+   },
+   "ratio": 1.6495579462552787
+  }
+ },
+ "qal": {
+  "runs": 82,
+  "totals": {
+   "prompt.reference": {
+    "processed": 529386.1953625976,
+    "new": 185609.75,
+    "output": 10089.869931096424,
+    "calls": 62
+   },
+   "prompt.task": {
+    "processed": 3804190.8046374028,
+    "new": 1551182.25,
+    "output": 37811.13006890358,
+    "calls": 81
+   },
+   "lang.type": {
+    "processed": 718756,
+    "new": 49375,
+    "output": 423,
+    "calls": 11
+   },
+   "ok.define": {
+    "processed": 5617408,
+    "new": 225340,
+    "output": 14720,
+    "calls": 90
+   },
+   "lang.name": {
+    "processed": 1298777,
+    "new": 63528,
+    "output": 3021,
+    "calls": 20
+   },
+   "env.tool_error": {
+    "processed": 551956,
+    "new": 4903,
+    "output": 3144,
+    "calls": 9
+   },
+   "ok.run": {
+    "processed": 5450701,
+    "new": 56663,
+    "output": 9845,
+    "calls": 83
+   },
+   "lang.parse": {
+    "processed": 175361,
+    "new": 2639,
+    "output": 1616,
+    "calls": 3
+   },
+   "ok.other": {
+    "processed": 2279386,
+    "new": 33821,
+    "output": 9847,
+    "calls": 38
+   },
+   "lang.other_diag": {
+    "processed": 0,
+    "new": 0,
+    "output": 0,
+    "calls": 0
+   },
+   "lang.run_failed": {
+    "processed": 645854,
+    "new": 19232,
+    "output": 285,
+    "calls": 8
+   },
+   "lang.args": {
+    "processed": 65996,
+    "new": 5382,
+    "output": 3,
+    "calls": 1
+   },
+   "final": {
+    "processed": 60486,
+    "new": 21991,
+    "output": 6,
+    "calls": 1
+   },
+   "env.guard": {
+    "processed": 2419118,
+    "new": 133666,
+    "output": 40597,
+    "calls": 44
+   },
+   "env.read_task": {
+    "processed": 1081632,
+    "new": 255076,
+    "output": 37095,
+    "calls": 20
+   }
+  },
+  "means": {
+   "prompt.reference": {
+    "processed": 6455.929211738995,
+    "new": 2263.5335365853657,
+    "output": 123.0471942816637,
+    "calls": 0.7560975609756098
+   },
+   "prompt.task": {
+    "processed": 46392.57078826101,
+    "new": 18916.856707317074,
+    "output": 461.11134230370214,
+    "calls": 0.9878048780487805
+   },
+   "lang.type": {
+    "processed": 8765.317073170732,
+    "new": 602.1341463414634,
+    "output": 5.158536585365853,
+    "calls": 0.13414634146341464
+   },
+   "ok.define": {
+    "processed": 68504.9756097561,
+    "new": 2748.048780487805,
+    "output": 179.5121951219512,
+    "calls": 1.0975609756097562
+   },
+   "lang.name": {
+    "processed": 15838.743902439024,
+    "new": 774.7317073170732,
+    "output": 36.84146341463415,
+    "calls": 0.24390243902439024
+   },
+   "env.tool_error": {
+    "processed": 6731.170731707317,
+    "new": 59.792682926829265,
+    "output": 38.34146341463415,
+    "calls": 0.10975609756097561
+   },
+   "ok.run": {
+    "processed": 66471.96341463414,
+    "new": 691.0121951219512,
+    "output": 120.0609756097561,
+    "calls": 1.0121951219512195
+   },
+   "lang.parse": {
+    "processed": 2138.548780487805,
+    "new": 32.18292682926829,
+    "output": 19.70731707317073,
+    "calls": 0.036585365853658534
+   },
+   "ok.other": {
+    "processed": 27797.39024390244,
+    "new": 412.4512195121951,
+    "output": 120.08536585365853,
+    "calls": 0.4634146341463415
+   },
+   "lang.other_diag": {
+    "processed": 0.0,
+    "new": 0.0,
+    "output": 0.0,
+    "calls": 0.0
+   },
+   "lang.run_failed": {
+    "processed": 7876.268292682927,
+    "new": 234.53658536585365,
+    "output": 3.475609756097561,
+    "calls": 0.0975609756097561
+   },
+   "lang.args": {
+    "processed": 804.829268292683,
+    "new": 65.63414634146342,
+    "output": 0.036585365853658534,
+    "calls": 0.012195121951219513
+   },
+   "final": {
+    "processed": 737.6341463414634,
+    "new": 268.1829268292683,
+    "output": 0.07317073170731707,
+    "calls": 0.012195121951219513
+   },
+   "env.guard": {
+    "processed": 29501.439024390245,
+    "new": 1630.0731707317073,
+    "output": 495.0853658536585,
+    "calls": 0.5365853658536586
+   },
+   "env.read_task": {
+    "processed": 13190.634146341463,
+    "new": 3110.682926829268,
+    "output": 452.3780487804878,
+    "calls": 0.24390243902439024
+   }
+  },
+  "shares": {
+   "prompt": 0.17545550817263594,
+   "lang": 0.11760569493317302,
+   "ok": 0.5404061167152948,
+   "env": 0.16408375591440758,
+   "final": 0.002448924264488679
+  },
+  "top3": [
+   [
+    "ok.define",
+    5617408
+   ],
+   [
+    "ok.run",
+    5450701
+   ],
+   [
+    "prompt.task",
+    3804190.8046374028
+   ]
+  ],
+  "rounds": {
+   "mean": 5,
+   "median": 5.0,
+   "max": 18
+  },
+  "round_cost": {
+   "1": 52848.5,
+   "5": 59553.166666666664,
+   "10": 76703
+  },
+  "retries": 0,
+  "dispatch_tokens": 4318978,
+  "diag_codes": {
+   "E0201": 34,
+   "E0510": 25,
+   "E0203": 19,
+   "E0502": 7,
+   "E0701": 4,
+   "E0100": 3,
+   "E0601": 3,
+   "E0504": 2
+  }
+ },
+ "rust": {
+  "runs": 82,
+  "totals": {
+   "prompt.reference": {
+    "processed": 0.0,
+    "new": 0.0,
+    "output": 0.0,
+    "calls": 0
+   },
+   "prompt.task": {
+    "processed": 3937727.0,
+    "new": 1376700.0,
+    "output": 18458.0,
+    "calls": 82
+   },
+   "ok.other": {
+    "processed": 6054348,
+    "new": 258135,
+    "output": 11277,
+    "calls": 117
+   },
+   "final": {
+    "processed": 59858,
+    "new": 3906,
+    "output": 4,
+    "calls": 1
+   },
+   "env.guard": {
+    "processed": 782958,
+    "new": 36670,
+    "output": 14737,
+    "calls": 17
+   },
+   "env.read_task": {
+    "processed": 1085421,
+    "new": 111012,
+    "output": 28745,
+    "calls": 24
+   },
+   "rust.panic": {
+    "processed": 45865,
+    "new": 1617,
+    "output": 64,
+    "calls": 1
+   }
+  },
+  "means": {
+   "prompt.reference": {
+    "processed": 0.0,
+    "new": 0.0,
+    "output": 0.0,
+    "calls": 0.0
+   },
+   "prompt.task": {
+    "processed": 48021.060975609755,
+    "new": 16789.024390243903,
+    "output": 225.09756097560975,
+    "calls": 1.0
+   },
+   "ok.other": {
+    "processed": 73833.51219512195,
+    "new": 3147.987804878049,
+    "output": 137.52439024390245,
+    "calls": 1.4268292682926829
+   },
+   "final": {
+    "processed": 729.9756097560976,
+    "new": 47.63414634146341,
+    "output": 0.04878048780487805,
+    "calls": 0.012195121951219513
+   },
+   "env.guard": {
+    "processed": 9548.268292682927,
+    "new": 447.1951219512195,
+    "output": 179.71951219512195,
+    "calls": 0.2073170731707317
+   },
+   "env.read_task": {
+    "processed": 13236.841463414634,
+    "new": 1353.8048780487804,
+    "output": 350.5487804878049,
+    "calls": 0.2926829268292683
+   },
+   "rust.panic": {
+    "processed": 559.329268292683,
+    "new": 19.71951219512195,
+    "output": 0.7804878048780488,
+    "calls": 0.012195121951219513
+   }
+  },
+  "shares": {
+   "prompt": 0.3290714319201529,
+   "ok": 0.5059550765461684,
+   "final": 0.005002265970159058,
+   "env": 0.15613833891977363,
+   "rust": 0.0038328866437459517
+  },
+  "top3": [
+   [
+    "ok.other",
+    6054348
+   ],
+   [
+    "prompt.task",
+    3937727.0
+   ],
+   [
+    "env.read_task",
+    1085421
+   ]
+  ],
+  "rounds": {
+   "mean": 2.951219512195122,
+   "median": 2.0,
+   "max": 6
+  },
+  "round_cost": {
+   "1": 48021.060975609755,
+   "5": 47325.92307692308,
+   "10": null
+  },
+  "retries": 0,
+  "dispatch_tokens": 3379041,
+  "diag_codes": {}
+ }
+}

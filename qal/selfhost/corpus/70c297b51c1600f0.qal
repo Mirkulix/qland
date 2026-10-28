@@ -1,0 +1,1 @@
+fn m(n: Int) -> Int = { let y = n in y; y }

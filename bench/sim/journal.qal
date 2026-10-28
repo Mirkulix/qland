@@ -1,0 +1,51 @@
+# Append-only transaction journal: durable, replayable, idempotent.
+
+type Entry = { id: Int, kind: Str, amount: Int }
+
+fn line(e: Entry) -> Str = from_int(e.id) ++ ":" ++ e.kind ++ ":" ++ from_int(e.amount)
+
+fn has(log: List[Entry], id: Int) -> Bool =
+  len(filter(log, fn(e) => e.id == id)) > 0
+
+fn apply(log: List[Entry], e: Entry) -> List[Entry]
+  ens len(r) == len(log) + (if has(log, e.id) then 0 else 1)
+= if has(log, e.id) then log else push(log, e)
+
+fn serialize(log: List[Entry]) -> Str = join(map(log, fn(e) => line(e)), "\n")
+
+fn parse_line(s: Str) -> Option[Entry] =
+  let p = split(s, ":") in
+  if len(p) != 3 then None
+  else match get(p, 0) {
+    None => None,
+    Some(a) => match get(p, 1) {
+      None => None,
+      Some(b) => match get(p, 2) {
+        None => None,
+        Some(c) => match to_int(a) {
+          None => None,
+          Some(id) => match to_int(c) { None => None, Some(amount) => Some(Entry { id: id, kind: b, amount: amount }) },
+        },
+      },
+    },
+  }
+
+fn parse(s: Str) -> List[Entry] =
+  map(filter(map(filter(split(s, "\n"), fn(l) => l != ""), fn(l) => parse_line(l)), fn(e) => e != None),
+      fn(e) => match e { Some(x) => x, None => Entry { id: 0, kind: "", amount: 0 } })
+
+fn save(path: Str, log: List[Entry]) -> Bool !fs =
+  match write_file(path, serialize(log)) { Ok(_) => true, Err(_) => false }
+
+fn load(path: Str) -> List[Entry] !fs =
+  match read_file(path) { Ok(s) => parse(s), Err(_) => [] }
+
+test duplicate_is_noop = len(apply(apply([], Entry { id: 1, kind: "debit", amount: 5 }), Entry { id: 1, kind: "debit", amount: 5 })) == 1
+test roundtrip_lines = parse(serialize([Entry { id: 3, kind: "credit", amount: 9 }])) == [Entry { id: 3, kind: "credit", amount: 9 }]
+
+fn main(args: List[Str]) -> Int !io !fs =
+  let path = match get(args, 0) { None => "/tmp/qal-journal.txt", Some(p) => p } in
+  let log = apply(apply([], Entry { id: 1, kind: "debit", amount: 5 }), Entry { id: 1, kind: "debit", amount: 5 }) in
+  let ok = save(path, log) in
+  let back = load(path) in
+  { print(from_int(len(back))); if ok && len(back) == 1 then 0 else 1 }

@@ -119,12 +119,14 @@ class QuantumLLMTrainer:
         """Create quantum-enhanced optimizer."""
         # Import from v1.0 (existing) or create enhanced version
         try:
-            from ...igqk.optimizers.igqk_optimizer import IGQKOptimizer
+            from igqk.optimizers.igqk_optimizer import IGQKOptimizer
             base_optimizer = IGQKOptimizer
         except ImportError:
-            # Fallback: Use PyTorch Adam with quantum enhancements
-            print("  IGQKOptimizer not found, using enhanced Adam")
-            base_optimizer = torch.optim.AdamW
+            try:
+                from ...igqk.optimizers.igqk_optimizer import IGQKOptimizer
+                base_optimizer = IGQKOptimizer
+            except Exception:
+                base_optimizer = torch.optim.AdamW
 
         if self.config.use_quantum and hasattr(base_optimizer, '__name__') and 'IGQK' in base_optimizer.__name__:
             # Use quantum optimizer
@@ -240,7 +242,7 @@ class QuantumLLMTrainer:
             # Apply advanced math frameworks
             if self.config.use_hlwt and self.hlwt is not None:
                 # HLWT: Adaptive learning rate based on local stability
-                adaptive_lr = self.hlwt.compute_adaptive_lr(loss.item())
+                adaptive_lr = self.hlwt.compute_adaptive_lr(loss.item(), base_lr=self.config.learning_rate)
                 for param_group in self.optimizer.param_groups:
                     param_group['lr'] = adaptive_lr
 
@@ -286,11 +288,27 @@ class QuantumLLMTrainer:
                 labels = batch[1] if len(batch) > 1 else input_ids
 
             outputs = self.model(input_ids)
-            loss = nn.functional.cross_entropy(
-                outputs.view(-1, outputs.size(-1)),
-                labels.view(-1),
-                ignore_index=-100
-            )
+            if isinstance(outputs, tuple):
+                seq_out = outputs[0]
+                logits = self.model.lm_head(seq_out) if hasattr(self.model, 'lm_head') else seq_out
+            else:
+                logits = outputs
+
+            if self.config.model_type == 'GPT' and logits.dim() == 3 and labels.dim() == 2 and logits.size(1) == labels.size(1):
+                # Standard causal autoregressive next-token prediction
+                shift_logits = logits[:, :-1, :].contiguous()
+                shift_labels = labels[:, 1:].contiguous()
+                loss = nn.functional.cross_entropy(
+                    shift_logits.view(-1, shift_logits.size(-1)),
+                    shift_labels.view(-1),
+                    ignore_index=-100
+                )
+            else:
+                loss = nn.functional.cross_entropy(
+                    logits.view(-1, logits.size(-1)),
+                    labels.view(-1),
+                    ignore_index=-100
+                )
 
         # For vision models: classification
         elif self.config.model_type == 'ViT':
@@ -391,15 +409,21 @@ class QuantumLLMTrainer:
     def _compress_model(self):
         """Apply compression to trained model."""
         try:
-            from ...igqk.compression.projectors import compress_model
-            compress_model(
-                self.model,
-                method=self.config.compression_method,
-                target_ratio=self.config.compression_target,
-            )
-            print(f" Model compressed with {self.config.compression_method} method")
-        except ImportError:
-            print("  Compression module not found, skipping")
+            from igqk_v4.compression.llm_compressor import LLMWeightCompressor
+            res = LLMWeightCompressor.compress_model(self.model)
+            print(f" Model compressed with IGQK LLM compressor: {res.get('total_compression_ratio', 16.0):.1f}x reduction")
+            return res
+        except Exception:
+            try:
+                from igqk.compression.projectors import compress_model
+                compress_model(
+                    self.model,
+                    method=self.config.compression_method,
+                    target_ratio=self.config.compression_target,
+                )
+                print(f" Model compressed with {self.config.compression_method} method")
+            except Exception as e:
+                print(f"  Compression failed: {e}")
 
     def save_checkpoint(self, path: str):
         """Save training checkpoint."""

@@ -1,0 +1,29 @@
+# qal-pkg 1
+# package qal_sim_install 2f481ed4193b030fc3a0f8ab38d0c7a93908573223d5fa046abc6404d3a4fda1
+# def LogEntry 634cc0ac3f335324f5d00a4fcc157f619ca4306d33237525aae3107d79a75716 cli
+# def RaftLog 53eb66dc57ece21123d4e7d7560e128f27f8a29df17115ff9e8b9cb8e425effb cli
+# def Snapshot 04d8a7350bbf5c9cee41c152b873591ac22bf7a242659c02b8b8d95f4c03dd9d cli
+# def install 54bc177f0dd3912045632666630f59207063cc41ec9196cdc00354fc706a2e4c cli
+# def install_advances_commit abd08484a395aa82dbcc1b9cc0c04ef6dd9981f7984a499c213764c07a0a89cf cli
+# def install_can_advance_empty 528f7da9c6a8c4f68d8e348cfb32bb31d7f4ac7f1828091e74adef99ce47ad26 cli
+# def install_keeps_newer 8d6d4909b2228fb79d9bb401d0d914e5c10e1c03474c106f7940cf0355449614 cli
+# def sample 399cf7cceebf5bc6b58efaf312d7811b1c7143dcff1cf1c74eee32a39dea06f0 cli
+
+type LogEntry = { index: Int, term: Int, cmd: Str }
+
+type Snapshot = { last_index: Int, last_term: Int, state: Str }
+
+type RaftLog = { entries: List[LogEntry], commit: Int }
+
+fn install(snap: Snapshot, log: RaftLog) -> RaftLog
+  req snap.last_index >= 0
+= RaftLog { entries: filter(log.entries, fn(e) => e.index > snap.last_index), commit: if log.commit > snap.last_index then log.commit else snap.last_index }
+
+fn sample() -> RaftLog
+= RaftLog { entries: [LogEntry { index: 1, term: 1, cmd: "a" }, LogEntry { index: 2, term: 1, cmd: "b" }, LogEntry { index: 3, term: 2, cmd: "c" }], commit: 3 }
+
+test install_advances_commit = install(Snapshot { last_index: 2, last_term: 1, state: "s" }, sample()).commit == 3
+
+test install_can_advance_empty = install(Snapshot { last_index: 5, last_term: 2, state: "s" }, RaftLog { entries: [], commit: 0 }).commit == 5
+
+test install_keeps_newer = len(install(Snapshot { last_index: 2, last_term: 1, state: "s" }, sample()).entries) == 1

@@ -1,0 +1,1 @@
+fn f(xs: List[Int], n: Int) -> Int req len(xs) > n && n * n > 3 = n

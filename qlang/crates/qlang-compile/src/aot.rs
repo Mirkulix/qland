@@ -16,7 +16,7 @@ use inkwell::OptimizationLevel;
 
 use qlang_core::graph::Graph;
 
-use crate::codegen::{CodegenError, compile_graph};
+use crate::codegen::{compile_graph, CodegenError};
 
 /// Compile a QLANG graph to an object file (.o).
 ///
@@ -42,8 +42,8 @@ pub fn compile_to_object(
     let cpu = TargetMachine::get_host_cpu_name();
     let features = TargetMachine::get_host_cpu_features();
 
-    let target = Target::from_triple(&triple)
-        .map_err(|e| CodegenError::LlvmError(e.to_string()))?;
+    let target =
+        Target::from_triple(&triple).map_err(|e| CodegenError::LlvmError(e.to_string()))?;
 
     let machine = target
         .create_target_machine(
@@ -71,9 +71,7 @@ pub fn compile_to_object(
         .unwrap_or("<binary>")
         .to_string();
 
-    let file_size = std::fs::metadata(output_path)
-        .map(|m| m.len())
-        .unwrap_or(0);
+    let file_size = std::fs::metadata(output_path).map(|m| m.len()).unwrap_or(0);
 
     Ok(AotResult {
         object_path: output_path.to_string(),
@@ -111,15 +109,32 @@ mod tests {
     #[test]
     fn compile_to_object_file() {
         let mut g = Graph::new("aot_test");
-        let a = g.add_node(Op::Input { name: "a".into() }, vec![], vec![TensorType::f32_vector(4)]);
-        let b = g.add_node(Op::Input { name: "b".into() }, vec![], vec![TensorType::f32_vector(4)]);
-        let add = g.add_node(Op::Add, vec![TensorType::f32_vector(4); 2], vec![TensorType::f32_vector(4)]);
-        let out = g.add_node(Op::Output { name: "y".into() }, vec![TensorType::f32_vector(4)], vec![]);
+        let a = g.add_node(
+            Op::Input { name: "a".into() },
+            vec![],
+            vec![TensorType::f32_vector(4)],
+        );
+        let b = g.add_node(
+            Op::Input { name: "b".into() },
+            vec![],
+            vec![TensorType::f32_vector(4)],
+        );
+        let add = g.add_node(
+            Op::Add,
+            vec![TensorType::f32_vector(4); 2],
+            vec![TensorType::f32_vector(4)],
+        );
+        let out = g.add_node(
+            Op::Output { name: "y".into() },
+            vec![TensorType::f32_vector(4)],
+            vec![],
+        );
         g.add_edge(a, 0, add, 0, TensorType::f32_vector(4));
         g.add_edge(b, 0, add, 1, TensorType::f32_vector(4));
         g.add_edge(add, 0, out, 0, TensorType::f32_vector(4));
 
-        let result = compile_to_object(&g, "/tmp/qlang_test.o", OptimizationLevel::Aggressive).unwrap();
+        let result =
+            compile_to_object(&g, "/tmp/qlang_test.o", OptimizationLevel::Aggressive).unwrap();
 
         assert!(result.file_size > 0);
         assert!(result.assembly.contains("qlang_graph"));
@@ -132,21 +147,41 @@ mod tests {
     #[test]
     fn aot_relu_generates_native_code() {
         let mut g = Graph::new("aot_relu");
-        let a = g.add_node(Op::Input { name: "a".into() }, vec![], vec![TensorType::f32_vector(8)]);
-        let _b = g.add_node(Op::Input { name: "b".into() }, vec![], vec![TensorType::f32_vector(8)]);
-        let relu = g.add_node(Op::Relu, vec![TensorType::f32_vector(8)], vec![TensorType::f32_vector(8)]);
-        let out = g.add_node(Op::Output { name: "y".into() }, vec![TensorType::f32_vector(8)], vec![]);
+        let a = g.add_node(
+            Op::Input { name: "a".into() },
+            vec![],
+            vec![TensorType::f32_vector(8)],
+        );
+        let _b = g.add_node(
+            Op::Input { name: "b".into() },
+            vec![],
+            vec![TensorType::f32_vector(8)],
+        );
+        let relu = g.add_node(
+            Op::Relu,
+            vec![TensorType::f32_vector(8)],
+            vec![TensorType::f32_vector(8)],
+        );
+        let out = g.add_node(
+            Op::Output { name: "y".into() },
+            vec![TensorType::f32_vector(8)],
+            vec![],
+        );
         g.add_edge(a, 0, relu, 0, TensorType::f32_vector(8));
         g.add_edge(relu, 0, out, 0, TensorType::f32_vector(8));
 
-        let result = compile_to_object(&g, "/tmp/qlang_relu.o", OptimizationLevel::Aggressive).unwrap();
+        let result =
+            compile_to_object(&g, "/tmp/qlang_relu.o", OptimizationLevel::Aggressive).unwrap();
 
         // The assembly should contain x86 instructions
         assert!(result.assembly.len() > 100);
 
         println!("Target: {} ({})", result.target_triple, result.cpu);
         println!("Object size: {} bytes", result.file_size);
-        println!("Assembly excerpt:\n{}", &result.assembly[..result.assembly.len().min(500)]);
+        println!(
+            "Assembly excerpt:\n{}",
+            &result.assembly[..result.assembly.len().min(500)]
+        );
 
         let _ = std::fs::remove_file("/tmp/qlang_relu.o");
     }

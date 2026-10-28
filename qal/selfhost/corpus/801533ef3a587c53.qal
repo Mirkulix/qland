@@ -1,0 +1,2 @@
+fn fee(n: Int) -> Int = n + 3
+test fee_adds_three = fee(1) == 4

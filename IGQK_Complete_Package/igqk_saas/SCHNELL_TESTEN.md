@@ -60,7 +60,7 @@ Tabelle:
 ### **1. Backend API läuft!** 🔌
 ```
 ✅ Echter API-Server auf Port 8000
-✅ Keine Mock-Daten mehr
+✅ Kernpfade echt; Validierung: Parameter-Ähnlichkeit statt Genauigkeit (siehe `NEUE_FEATURES_AKTIVIERT.md`)
 ✅ HuggingFace Download funktioniert
 ```
 

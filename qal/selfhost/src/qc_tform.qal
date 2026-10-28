@@ -1,0 +1,1344 @@
+# Typed AST (TProgram) and QALT binary format codec for QAL self-hosting compiler (spec §7: qc_tform)
+
+type QcReader = {
+  bytes: Bytes,
+  pos: Int
+}
+
+type QcReadRes[T] = {
+  val: T,
+  r: QcReader
+}
+
+fn qc_reader_byte(r: QcReader) -> QcReadRes[Int] =
+  let b = bytes_at(r.bytes, r.pos) in
+  QcReadRes { val: b, r: QcReader { bytes: r.bytes, pos: r.pos + 1 } }
+
+fn qc_reader_varint_loop(r: QcReader, shift: Int, acc: Int) -> QcReadRes[Int] =
+  let b = bytes_at(r.bytes, r.pos) in
+  let r2 = QcReader { bytes: r.bytes, pos: r.pos + 1 } in
+  let val = bit_or(acc, shl(bit_and(b, 127), shift)) in
+  if bit_and(b, 128) == 0 then QcReadRes { val: val, r: r2 }
+  else qc_reader_varint_loop(r2, shift + 7, val)
+
+fn qc_reader_varint(r: QcReader) -> QcReadRes[Int] =
+  qc_reader_varint_loop(r, 0, 0)
+
+fn qc_reader_raw_bytes(r: QcReader, count: Int) -> QcReadRes[Bytes] =
+  let slice = bytes_slice(r.bytes, r.pos, r.pos + count) in
+  QcReadRes { val: slice, r: QcReader { bytes: r.bytes, pos: r.pos + count } }
+
+fn qc_reader_bytes(r: QcReader) -> QcReadRes[Bytes] =
+  let len_res = qc_reader_varint(r) in
+  qc_reader_raw_bytes(len_res.r, len_res.val)
+
+fn qc_reader_str(r: QcReader) -> QcReadRes[Str] =
+  let b_res = qc_reader_bytes(r) in
+  let s = match bytes_to_str(b_res.val) {
+    Some(str_val) => str_val,
+    None => ""
+  } in
+  QcReadRes { val: s, r: b_res.r }
+
+fn qc_reader_strs_loop(r: QcReader, count: Int, acc: Accum[Str]) -> QcReadRes[List[Str]] =
+  if count <= 0 then QcReadRes { val: acc_list(acc), r: r }
+  else
+    let s_res = qc_reader_str(r) in
+    qc_reader_strs_loop(s_res.r, count - 1, AccPush(acc, s_res.val))
+
+fn qc_reader_strs(r: QcReader) -> QcReadRes[List[Str]] =
+  let count_res = qc_reader_varint(r) in
+  qc_reader_strs_loop(count_res.r, count_res.val, AccEnd)
+
+fn qc_reader_ids_loop(r: QcReader, count: Int, acc: Accum[Int]) -> QcReadRes[List[Int]] =
+  if count <= 0 then QcReadRes { val: acc_list(acc), r: r }
+  else
+    let i_res = qc_reader_varint(r) in
+    qc_reader_ids_loop(i_res.r, count - 1, AccPush(acc, i_res.val))
+
+fn qc_reader_ids(r: QcReader) -> QcReadRes[List[Int]] =
+  let count_res = qc_reader_varint(r) in
+  qc_reader_ids_loop(count_res.r, count_res.val, AccEnd)
+
+fn qc_reader_int_loop(r: QcReader, shift: Int, acc: Int) -> QcReadRes[Int] =
+  let b = bytes_at(r.bytes, r.pos) in
+  let r2 = QcReader { bytes: r.bytes, pos: r.pos + 1 } in
+  let val = bit_or(acc, shl(bit_and(b, 127), shift)) in
+  let next_shift = shift + 7 in
+  if bit_and(b, 128) == 0 then
+    let final_val = if next_shift < 64 && bit_and(b, 64) != 0 then
+      bit_or(val, shl(-1, next_shift))
+    else val in
+    QcReadRes { val: final_val, r: r2 }
+  else
+    qc_reader_int_loop(r2, next_shift, val)
+
+fn qc_reader_int(r: QcReader) -> QcReadRes[Int] =
+  qc_reader_int_loop(r, 0, 0)
+
+fn qc_reader_float(r: QcReader) -> QcReadRes[Float] =
+  let b0 = bytes_at(r.bytes, r.pos) in
+  let b1 = bytes_at(r.bytes, r.pos + 1) in
+  let b2 = bytes_at(r.bytes, r.pos + 2) in
+  let b3 = bytes_at(r.bytes, r.pos + 3) in
+  let b4 = bytes_at(r.bytes, r.pos + 4) in
+  let b5 = bytes_at(r.bytes, r.pos + 5) in
+  let b6 = bytes_at(r.bytes, r.pos + 6) in
+  let b7 = bytes_at(r.bytes, r.pos + 7) in
+  let low = bit_or(b0, bit_or(shl(b1, 8), bit_or(shl(b2, 16), shl(b3, 24)))) in
+  let high = bit_or(b4, bit_or(shl(b5, 8), bit_or(shl(b6, 16), shl(b7, 24)))) in
+  let n = bit_or(bit_and(low, 4294967295), shl(high, 32)) in
+  QcReadRes { val: float_of_bits(n), r: QcReader { bytes: r.bytes, pos: r.pos + 8 } }
+
+# TForm AST encoder
+fn qc_tform_put_int_loop(n: Int, acc: Accum[Int]) -> Accum[Int] =
+  let b = bit_and(n, 127) in
+  let next_n = shr(n, 7) in
+  let b_sign = bit_and(b, 64) in
+  let done = (next_n == 0 && b_sign == 0) || (next_n == -1 && b_sign != 0) in
+  if done then AccPush(acc, b)
+  else qc_tform_put_int_loop(next_n, AccPush(acc, bit_or(b, 128)))
+
+fn qc_tform_type_acc(t: QcType, acc: Accum[Int]) -> Accum[Int] =
+  match t {
+    QcTInt => AccPush(acc, 0),
+    QcTFloat => AccPush(acc, 1),
+    QcTBool => AccPush(acc, 2),
+    QcTUnit => AccPush(acc, 3),
+    QcTStr => AccPush(acc, 4),
+    QcTList(x) => qc_tform_type_acc(x, AccPush(acc, 5)),
+    QcTOption(x) => qc_tform_type_acc(x, AccPush(acc, 6)),
+    QcTResult(a, b) => qc_tform_type_acc(b, qc_tform_type_acc(a, AccPush(acc, 7))),
+    QcTNamed(n) => qc_str_acc(n, AccPush(acc, 8)),
+    QcTFn(ps, ret, effs) =>
+      let a1 = qc_varint_acc(len(ps), AccPush(acc, 9)) in
+      let a2 = fold(ps, a1, fn(st: Accum[Int], p: QcType) => qc_tform_type_acc(p, st)) in
+      let a3 = qc_tform_type_acc(ret, a2) in
+      let a4 = qc_varint_acc(len(effs), a3) in
+      fold(effs, a4, fn(st: Accum[Int], e: Str) => qc_str_acc(e, st)),
+    QcTApp(n, args) =>
+      let a1 = qc_varint_acc(len(args), qc_str_acc(n, AccPush(acc, 10))) in
+      fold(args, a1, fn(st: Accum[Int], arg: QcType) => qc_tform_type_acc(arg, st)),
+    QcTParam(n) => qc_str_acc(n, AccPush(acc, 11)),
+    QcTMap(k, v) => qc_tform_type_acc(v, qc_tform_type_acc(k, AccPush(acc, 12))),
+    QcTBytes => AccPush(acc, 13),
+    QcTVar(v) => qc_varint_acc(v, AccPush(acc, 14))
+  }
+
+fn qc_tform_opt_type_acc(ot: Option[QcType], acc: Accum[Int]) -> Accum[Int] =
+  match ot {
+    Some(t) => qc_tform_type_acc(t, AccPush(acc, 1)),
+    None => AccPush(acc, 0)
+  }
+
+fn qc_tform_pat_acc(p: QcPat, acc: Accum[Int]) -> Accum[Int] =
+  match p {
+    QcPWild => AccPush(acc, 0),
+    QcPBind(n) => qc_str_acc(n, AccPush(acc, 1)),
+    QcPInt(n) => qc_tform_put_int_loop(n, AccPush(acc, 2)),
+    QcPStr(s) => qc_str_acc(s, AccPush(acc, 3)),
+    QcPBool(b) => AccPush(AccPush(acc, 4), if b then 1 else 0),
+    QcPUnit => AccPush(acc, 5),
+    QcPVariant(n, ps) =>
+      let a1 = qc_varint_acc(len(ps), qc_str_acc(n, AccPush(acc, 6))) in
+      fold(ps, a1, fn(st: Accum[Int], subp: QcPat) => qc_tform_pat_acc(subp, st)),
+    QcPRecord(n, fs) =>
+      let a1 = qc_varint_acc(len(fs), qc_str_acc(n, AccPush(acc, 7))) in
+      fold(fs, a1, fn(st: Accum[Int], f: QcFieldPat) => qc_tform_pat_acc(f.pat, qc_str_acc(f.name, st)))
+  }
+
+fn qc_tform_expr_acc(e: QcExpr, acc: Accum[Int]) -> Accum[Int] =
+  match e {
+    QcEInt(n) => qc_tform_put_int_loop(n, AccPush(acc, 0)),
+    QcEFloat(x) => qc_float_acc(x, AccPush(acc, 1)),
+    QcEBool(b) => AccPush(AccPush(acc, 2), if b then 1 else 0),
+    QcEStr(s) => qc_str_acc(s, AccPush(acc, 3)),
+    QcEUnit => AccPush(acc, 4),
+    QcEVar(v) => qc_str_acc(v, AccPush(acc, 5)),
+    QcEBin(op, l, r) =>
+      let a1 = AccPush(AccPush(acc, 6), qc_binop_tag(op)) in
+      qc_tform_expr_acc(r, qc_tform_expr_acc(l, a1)),
+    QcEUn(op, x) =>
+      let tag = match op { QcUnNeg => 0, QcUnNot => 1 } in
+      qc_tform_expr_acc(x, AccPush(AccPush(acc, 7), tag)),
+    QcEIf(c, t, f) =>
+      qc_tform_expr_acc(f, qc_tform_expr_acc(t, qc_tform_expr_acc(c, AccPush(acc, 8)))),
+    QcELet(n, ann, val, body) =>
+      let a1 = qc_tform_opt_type_acc(ann, qc_str_acc(n, AccPush(acc, 9))) in
+      qc_tform_expr_acc(body, qc_tform_expr_acc(val, a1)),
+    QcECall(f, args) =>
+      let a1 = qc_varint_acc(len(args), qc_str_acc(f, AccPush(acc, 10))) in
+      fold(args, a1, fn(st: Accum[Int], a: QcExpr) => qc_tform_expr_acc(a, st)),
+    QcEList(items) =>
+      let a1 = qc_varint_acc(len(items), AccPush(acc, 11)) in
+      fold(items, a1, fn(st: Accum[Int], x: QcExpr) => qc_tform_expr_acc(x, st)),
+    QcERecord(n, fs) =>
+      let a1 = qc_varint_acc(len(fs), qc_str_acc(n, AccPush(acc, 12))) in
+      fold(fs, a1, fn(st: Accum[Int], f: QcFieldExpr) => qc_tform_expr_acc(f.expr, qc_str_acc(f.name, st))),
+    QcEField(target, field) =>
+      qc_str_acc(field, qc_tform_expr_acc(target, AccPush(acc, 13))),
+    QcEMatch(scrut, arms) =>
+      let a1 = qc_varint_acc(len(arms), qc_tform_expr_acc(scrut, AccPush(acc, 14))) in
+      fold(arms, a1, fn(st: Accum[Int], a: QcArm) =>
+        let a_pat = qc_tform_pat_acc(a.pat, st) in
+        let a_guard = match a.guard {
+          Some(g) => qc_tform_expr_acc(g, AccPush(a_pat, 1)),
+          None => AccPush(a_pat, 0)
+        } in
+        qc_tform_expr_acc(a.body, a_guard)
+      ),
+    QcESeq(items) =>
+      let a1 = qc_varint_acc(len(items), AccPush(acc, 15)) in
+      fold(items, a1, fn(st: Accum[Int], x: QcExpr) => qc_tform_expr_acc(x, st)),
+    QcELambda(params, body) =>
+      let a1 = qc_varint_acc(len(params), AccPush(acc, 16)) in
+      let a2 = fold(params, a1, fn(st: Accum[Int], p: QcLambdaParam) =>
+        qc_tform_opt_type_acc(p.ty, qc_str_acc(p.name, st))
+      ) in
+      qc_tform_expr_acc(body, a2)
+  }
+
+fn qc_tform_typedef_acc(t: QcTypeDef, acc: Accum[Int]) -> Accum[Int] =
+  let a1 = qc_varint_acc(len(t.params), qc_str_acc(t.name, acc)) in
+  let a2 = fold(t.params, a1, fn(st: Accum[Int], p: Str) => qc_str_acc(p, st)) in
+  match t.body {
+    QcBodyRecord(fields) =>
+      let a3 = qc_varint_acc(len(fields), AccPush(a2, 0)) in
+      fold(fields, a3, fn(st: Accum[Int], f: QcFieldType) => qc_tform_type_acc(f.ty, qc_str_acc(f.name, st))),
+    QcBodyEnum(variants) =>
+      let a3 = qc_varint_acc(len(variants), AccPush(a2, 1)) in
+      fold(variants, a3, fn(st: Accum[Int], v: QcVariant) =>
+        let av = qc_varint_acc(len(v.fields), qc_str_acc(v.name, st)) in
+        fold(v.fields, av, fn(st2: Accum[Int], ty: QcType) => qc_tform_type_acc(ty, st2))
+      )
+  }
+
+fn qc_tform_fndef_acc(f: QcFnDef, acc: Accum[Int]) -> Accum[Int] =
+  # Effect parameters travel in the type-parameter list as `!name` entries.
+  let heads = f.tparams ++ map(f.eparams, fn(e: Str) => "!" ++ e) in
+  let a1 = qc_varint_acc(len(heads), qc_str_acc(f.name, acc)) in
+  let a2 = fold(heads, a1, fn(st: Accum[Int], p: Str) => qc_str_acc(p, st)) in
+  let a3 = qc_varint_acc(len(f.params), a2) in
+  let a4 = fold(f.params, a3, fn(st: Accum[Int], p: QcFieldType) => qc_tform_type_acc(p.ty, qc_str_acc(p.name, st))) in
+  let a5 = qc_tform_type_acc(f.ret, a4) in
+  let a6 = qc_varint_acc(len(f.effects), a5) in
+  let a7 = fold(f.effects, a6, fn(st: Accum[Int], e: Str) => qc_str_acc(e, st)) in
+  let a8 = qc_varint_acc(len(f.reqs), a7) in
+  let a9 = fold(f.reqs, a8, fn(st: Accum[Int], c: QcExpr) => qc_tform_expr_acc(c, st)) in
+  let a10 = qc_varint_acc(len(f.enss), a9) in
+  let a11 = fold(f.enss, a10, fn(st: Accum[Int], c: QcExpr) => qc_tform_expr_acc(c, st)) in
+  qc_tform_expr_acc(f.body, a11)
+
+fn qc_tform_def_acc(d: QcDef, acc: Accum[Int]) -> Accum[Int] =
+  match d {
+    QcDefType(t) => qc_tform_typedef_acc(t, AccPush(acc, 0)),
+    QcDefFn(f) => qc_tform_fndef_acc(f, AccPush(acc, 1)),
+    QcDefTest(t) =>
+      let a1 = qc_str_acc(t.name, AccPush(acc, 2)) in
+      qc_tform_expr_acc(t.body, a1)
+  }
+
+fn qc_encode_program(p: QcProgram) -> Bytes =
+  let a0 = qc_varint_acc(len(p.defs), AccEnd) in
+  let a1 = fold(p.defs, a0, fn(st: Accum[Int], d: QcDef) => qc_tform_def_acc(d, st)) in
+  bytes_from(acc_list(a1))
+
+# TForm AST decoder
+fn qc_tform_dec_types_loop(r: QcReader, count: Int, acc: Accum[QcType]) -> QcReadRes[List[QcType]] =
+  if count <= 0 then QcReadRes { val: acc_list(acc), r: r }
+  else
+    let t_res = qc_tform_dec_type(r) in
+    qc_tform_dec_types_loop(t_res.r, count - 1, AccPush(acc, t_res.val))
+
+fn qc_tform_dec_types(r: QcReader) -> QcReadRes[List[QcType]] =
+  let c_res = qc_reader_varint(r) in
+  qc_tform_dec_types_loop(c_res.r, c_res.val, AccEnd)
+
+fn qc_tform_dec_type(r: QcReader) -> QcReadRes[QcType] =
+  let tag_res = qc_reader_byte(r) in
+  let tag = tag_res.val in
+  let r1 = tag_res.r in
+  if tag == 0 then QcReadRes { val: QcTInt, r: r1 }
+  else if tag == 1 then QcReadRes { val: QcTFloat, r: r1 }
+  else if tag == 2 then QcReadRes { val: QcTBool, r: r1 }
+  else if tag == 3 then QcReadRes { val: QcTUnit, r: r1 }
+  else if tag == 4 then QcReadRes { val: QcTStr, r: r1 }
+  else if tag == 5 then
+    let x_res = qc_tform_dec_type(r1) in
+    QcReadRes { val: QcTList(x_res.val), r: x_res.r }
+  else if tag == 6 then
+    let x_res = qc_tform_dec_type(r1) in
+    QcReadRes { val: QcTOption(x_res.val), r: x_res.r }
+  else if tag == 7 then
+    let a_res = qc_tform_dec_type(r1) in
+    let b_res = qc_tform_dec_type(a_res.r) in
+    QcReadRes { val: QcTResult(a_res.val, b_res.val), r: b_res.r }
+  else if tag == 8 then
+    let n_res = qc_reader_str(r1) in
+    QcReadRes { val: QcTNamed(n_res.val), r: n_res.r }
+  else if tag == 9 then
+    let ps_res = qc_tform_dec_types(r1) in
+    let ret_res = qc_tform_dec_type(ps_res.r) in
+    let effs_res = qc_reader_strs(ret_res.r) in
+    QcReadRes { val: QcTFn(ps_res.val, ret_res.val, effs_res.val), r: effs_res.r }
+  else if tag == 10 then
+    let n_res = qc_reader_str(r1) in
+    let args_res = qc_tform_dec_types(n_res.r) in
+    QcReadRes { val: QcTApp(n_res.val, args_res.val), r: args_res.r }
+  else if tag == 11 then
+    let n_res = qc_reader_str(r1) in
+    QcReadRes { val: QcTParam(n_res.val), r: n_res.r }
+  else if tag == 12 then
+    let k_res = qc_tform_dec_type(r1) in
+    let v_res = qc_tform_dec_type(k_res.r) in
+    QcReadRes { val: QcTMap(k_res.val, v_res.val), r: v_res.r }
+  else if tag == 13 then
+    QcReadRes { val: QcTBytes, r: r1 }
+  else
+    let v_res = qc_reader_varint(r1) in
+    QcReadRes { val: QcTVar(v_res.val), r: v_res.r }
+
+fn qc_tform_dec_opt_type(r: QcReader) -> QcReadRes[Option[QcType]] =
+  let b_res = qc_reader_byte(r) in
+  if b_res.val == 1 then
+    let t_res = qc_tform_dec_type(b_res.r) in
+    QcReadRes { val: Some(t_res.val), r: t_res.r }
+  else
+    QcReadRes { val: None, r: b_res.r }
+
+fn qc_tform_dec_pats_loop(r: QcReader, count: Int, acc: Accum[QcPat]) -> QcReadRes[List[QcPat]] =
+  if count <= 0 then QcReadRes { val: acc_list(acc), r: r }
+  else
+    let p_res = qc_tform_dec_pat(r) in
+    qc_tform_dec_pats_loop(p_res.r, count - 1, AccPush(acc, p_res.val))
+
+fn qc_tform_dec_field_pats_loop(r: QcReader, count: Int, acc: Accum[QcFieldPat]) -> QcReadRes[List[QcFieldPat]] =
+  if count <= 0 then QcReadRes { val: acc_list(acc), r: r }
+  else
+    let fn_res = qc_reader_str(r) in
+    let fp_res = qc_tform_dec_pat(fn_res.r) in
+    qc_tform_dec_field_pats_loop(fp_res.r, count - 1, AccPush(acc, QcFieldPat { name: fn_res.val, pat: fp_res.val }))
+
+fn qc_tform_dec_pat(r: QcReader) -> QcReadRes[QcPat] =
+  let tag_res = qc_reader_byte(r) in
+  let tag = tag_res.val in
+  let r1 = tag_res.r in
+  if tag == 0 then QcReadRes { val: QcPWild, r: r1 }
+  else if tag == 1 then
+    let n_res = qc_reader_str(r1) in
+    QcReadRes { val: QcPBind(n_res.val), r: n_res.r }
+  else if tag == 2 then
+    let n_res = qc_reader_int(r1) in
+    QcReadRes { val: QcPInt(n_res.val), r: n_res.r }
+  else if tag == 3 then
+    let s_res = qc_reader_str(r1) in
+    QcReadRes { val: QcPStr(s_res.val), r: s_res.r }
+  else if tag == 4 then
+    let b_res = qc_reader_byte(r1) in
+    QcReadRes { val: QcPBool(b_res.val == 1), r: b_res.r }
+  else if tag == 5 then
+    QcReadRes { val: QcPUnit, r: r1 }
+  else if tag == 6 then
+    let n_res = qc_reader_str(r1) in
+    let c_res = qc_reader_varint(n_res.r) in
+    let ps_res = qc_tform_dec_pats_loop(c_res.r, c_res.val, AccEnd) in
+    QcReadRes { val: QcPVariant(n_res.val, ps_res.val), r: ps_res.r }
+  else
+    let n_res = qc_reader_str(r1) in
+    let c_res = qc_reader_varint(n_res.r) in
+    let fs_res = qc_tform_dec_field_pats_loop(c_res.r, c_res.val, AccEnd) in
+    QcReadRes { val: QcPRecord(n_res.val, fs_res.val), r: fs_res.r }
+
+fn qc_tform_dec_exprs_loop(r: QcReader, count: Int, acc: Accum[QcExpr]) -> QcReadRes[List[QcExpr]] =
+  if count <= 0 then QcReadRes { val: acc_list(acc), r: r }
+  else
+    let e_res = qc_tform_dec_expr(r) in
+    qc_tform_dec_exprs_loop(e_res.r, count - 1, AccPush(acc, e_res.val))
+
+fn qc_tform_dec_exprs(r: QcReader) -> QcReadRes[List[QcExpr]] =
+  let c_res = qc_reader_varint(r) in
+  qc_tform_dec_exprs_loop(c_res.r, c_res.val, AccEnd)
+
+fn qc_tform_dec_field_exprs_loop(r: QcReader, count: Int, acc: Accum[QcFieldExpr]) -> QcReadRes[List[QcFieldExpr]] =
+  if count <= 0 then QcReadRes { val: acc_list(acc), r: r }
+  else
+    let fn_res = qc_reader_str(r) in
+    let fe_res = qc_tform_dec_expr(fn_res.r) in
+    qc_tform_dec_field_exprs_loop(fe_res.r, count - 1, AccPush(acc, QcFieldExpr { name: fn_res.val, expr: fe_res.val }))
+
+fn qc_tform_dec_arms_loop(r: QcReader, count: Int, acc: Accum[QcArm]) -> QcReadRes[List[QcArm]] =
+  if count <= 0 then QcReadRes { val: acc_list(acc), r: r }
+  else
+    let pat_res = qc_tform_dec_pat(r) in
+    let g_flag = qc_reader_byte(pat_res.r) in
+    let g_res = if g_flag.val == 1 then
+      let ge = qc_tform_dec_expr(g_flag.r) in
+      QcReadRes { val: Some(ge.val), r: ge.r }
+    else
+      QcReadRes { val: None, r: g_flag.r } in
+    let body_res = qc_tform_dec_expr(g_res.r) in
+    qc_tform_dec_arms_loop(body_res.r, count - 1, AccPush(acc, QcArm { pat: pat_res.val, guard: g_res.val, body: body_res.val }))
+
+fn qc_tform_dec_lambda_params_loop(r: QcReader, count: Int, acc: Accum[QcLambdaParam]) -> QcReadRes[List[QcLambdaParam]] =
+  if count <= 0 then QcReadRes { val: acc_list(acc), r: r }
+  else
+    let n_res = qc_reader_str(r) in
+    let ty_res = qc_tform_dec_opt_type(n_res.r) in
+    qc_tform_dec_lambda_params_loop(ty_res.r, count - 1, AccPush(acc, QcLambdaParam { name: n_res.val, ty: ty_res.val }))
+
+fn qc_tform_dec_expr(r: QcReader) -> QcReadRes[QcExpr] =
+  let tag_res = qc_reader_byte(r) in
+  let tag = tag_res.val in
+  let r1 = tag_res.r in
+  if tag == 0 then
+    let n_res = qc_reader_int(r1) in
+    QcReadRes { val: QcEInt(n_res.val), r: n_res.r }
+  else if tag == 1 then
+    let f_res = qc_reader_float(r1) in
+    QcReadRes { val: QcEFloat(f_res.val), r: f_res.r }
+  else if tag == 2 then
+    let b_res = qc_reader_byte(r1) in
+    QcReadRes { val: QcEBool(b_res.val == 1), r: b_res.r }
+  else if tag == 3 then
+    let s_res = qc_reader_str(r1) in
+    QcReadRes { val: QcEStr(s_res.val), r: s_res.r }
+  else if tag == 4 then
+    QcReadRes { val: QcEUnit, r: r1 }
+  else if tag == 5 then
+    let v_res = qc_reader_str(r1) in
+    QcReadRes { val: QcEVar(v_res.val), r: v_res.r }
+  else if tag == 6 then
+    let op_res = qc_reader_byte(r1) in
+    let l_res = qc_tform_dec_expr(op_res.r) in
+    let r_res = qc_tform_dec_expr(l_res.r) in
+    QcReadRes { val: QcEBin(qc_binop_from_tag(op_res.val), l_res.val, r_res.val), r: r_res.r }
+  else if tag == 7 then
+    let op_res = qc_reader_byte(r1) in
+    let x_res = qc_tform_dec_expr(op_res.r) in
+    let op = if op_res.val == 0 then QcUnNeg else QcUnNot in
+    QcReadRes { val: QcEUn(op, x_res.val), r: x_res.r }
+  else if tag == 8 then
+    let c_res = qc_tform_dec_expr(r1) in
+    let t_res = qc_tform_dec_expr(c_res.r) in
+    let f_res = qc_tform_dec_expr(t_res.r) in
+    QcReadRes { val: QcEIf(c_res.val, t_res.val, f_res.val), r: f_res.r }
+  else if tag == 9 then
+    let n_res = qc_reader_str(r1) in
+    let ann_res = qc_tform_dec_opt_type(n_res.r) in
+    let val_res = qc_tform_dec_expr(ann_res.r) in
+    let body_res = qc_tform_dec_expr(val_res.r) in
+    QcReadRes { val: QcELet(n_res.val, ann_res.val, val_res.val, body_res.val), r: body_res.r }
+  else if tag == 10 then
+    let f_res = qc_reader_str(r1) in
+    let args_res = qc_tform_dec_exprs(f_res.r) in
+    QcReadRes { val: QcECall(f_res.val, args_res.val), r: args_res.r }
+  else if tag == 11 then
+    let items_res = qc_tform_dec_exprs(r1) in
+    QcReadRes { val: QcEList(items_res.val), r: items_res.r }
+  else if tag == 12 then
+    let n_res = qc_reader_str(r1) in
+    let c_res = qc_reader_varint(n_res.r) in
+    let fs_res = qc_tform_dec_field_exprs_loop(c_res.r, c_res.val, AccEnd) in
+    QcReadRes { val: QcERecord(n_res.val, fs_res.val), r: fs_res.r }
+  else if tag == 13 then
+    let t_res = qc_tform_dec_expr(r1) in
+    let f_res = qc_reader_str(t_res.r) in
+    QcReadRes { val: QcEField(t_res.val, f_res.val), r: f_res.r }
+  else if tag == 14 then
+    let s_res = qc_tform_dec_expr(r1) in
+    let c_res = qc_reader_varint(s_res.r) in
+    let arms_res = qc_tform_dec_arms_loop(c_res.r, c_res.val, AccEnd) in
+    QcReadRes { val: QcEMatch(s_res.val, arms_res.val), r: arms_res.r }
+  else if tag == 15 then
+    let items_res = qc_tform_dec_exprs(r1) in
+    QcReadRes { val: QcESeq(items_res.val), r: items_res.r }
+  else
+    let c_res = qc_reader_varint(r1) in
+    let ps_res = qc_tform_dec_lambda_params_loop(c_res.r, c_res.val, AccEnd) in
+    let body_res = qc_tform_dec_expr(ps_res.r) in
+    QcReadRes { val: QcELambda(ps_res.val, body_res.val), r: body_res.r }
+
+fn qc_tform_dec_field_types_loop(r: QcReader, count: Int, acc: Accum[QcFieldType]) -> QcReadRes[List[QcFieldType]] =
+  if count <= 0 then QcReadRes { val: acc_list(acc), r: r }
+  else
+    let fn_res = qc_reader_str(r) in
+    let ft_res = qc_tform_dec_type(fn_res.r) in
+    qc_tform_dec_field_types_loop(ft_res.r, count - 1, AccPush(acc, QcFieldType { name: fn_res.val, ty: ft_res.val }))
+
+fn qc_tform_dec_variants_loop(r: QcReader, count: Int, acc: Accum[QcVariant]) -> QcReadRes[List[QcVariant]] =
+  if count <= 0 then QcReadRes { val: acc_list(acc), r: r }
+  else
+    let vn_res = qc_reader_str(r) in
+    let fs_res = qc_tform_dec_types(vn_res.r) in
+    qc_tform_dec_variants_loop(fs_res.r, count - 1, AccPush(acc, QcVariant { name: vn_res.val, fields: fs_res.val }))
+
+fn qc_tform_dec_params_loop(r: QcReader, count: Int, acc: Accum[QcFieldType]) -> QcReadRes[List[QcFieldType]] =
+  if count <= 0 then QcReadRes { val: acc_list(acc), r: r }
+  else
+    let pn_res = qc_reader_str(r) in
+    let pt_res = qc_tform_dec_type(pn_res.r) in
+    qc_tform_dec_params_loop(pt_res.r, count - 1, AccPush(acc, QcFieldType { name: pn_res.val, ty: pt_res.val }))
+
+fn qc_tform_dec_typedef(r: QcReader) -> QcReadRes[QcTypeDef] =
+  let n_res = qc_reader_str(r) in
+  let ps_res = qc_reader_strs(n_res.r) in
+  let btag_res = qc_reader_byte(ps_res.r) in
+  if btag_res.val == 0 then
+    let c_res = qc_reader_varint(btag_res.r) in
+    let fs_res = qc_tform_dec_field_types_loop(c_res.r, c_res.val, AccEnd) in
+    QcReadRes { val: QcTypeDef { name: n_res.val, params: ps_res.val, body: QcBodyRecord(fs_res.val) }, r: fs_res.r }
+  else
+    let c_res = qc_reader_varint(btag_res.r) in
+    let vs_res = qc_tform_dec_variants_loop(c_res.r, c_res.val, AccEnd) in
+    QcReadRes { val: QcTypeDef { name: n_res.val, params: ps_res.val, body: QcBodyEnum(vs_res.val) }, r: vs_res.r }
+
+fn qc_tform_dec_fndef(r: QcReader) -> QcReadRes[QcFnDef] =
+  let n_res = qc_reader_str(r) in
+  # Effect parameters are the `!name` entries of the type-parameter list.
+  let tps_res = qc_reader_strs(n_res.r) in
+  let pc_res = qc_reader_varint(tps_res.r) in
+  let ps_res = qc_tform_dec_params_loop(pc_res.r, pc_res.val, AccEnd) in
+  let ret_res = qc_tform_dec_type(ps_res.r) in
+  let effs_res = qc_reader_strs(ret_res.r) in
+  let reqs_res = qc_tform_dec_exprs(effs_res.r) in
+  let enss_res = qc_tform_dec_exprs(reqs_res.r) in
+  let body_res = qc_tform_dec_expr(enss_res.r) in
+  QcReadRes {
+    val: QcFnDef {
+      name: n_res.val,
+      tparams: filter(tps_res.val, fn(h: Str) => !starts_with(h, "!")),
+      eparams: map(filter(tps_res.val, fn(h: Str) => starts_with(h, "!")), fn(h: Str) => slice(h, 1, len(h))),
+      params: ps_res.val,
+      ret: ret_res.val,
+      effects: effs_res.val,
+      reqs: reqs_res.val,
+      enss: enss_res.val,
+      body: body_res.val
+    },
+    r: body_res.r
+  }
+
+fn qc_tform_dec_def(r: QcReader) -> QcReadRes[QcDef] =
+  let tag_res = qc_reader_byte(r) in
+  let tag = tag_res.val in
+  let r1 = tag_res.r in
+  if tag == 0 then
+    let td_res = qc_tform_dec_typedef(r1) in
+    QcReadRes { val: QcDefType(td_res.val), r: td_res.r }
+  else if tag == 1 then
+    let fd_res = qc_tform_dec_fndef(r1) in
+    QcReadRes { val: QcDefFn(fd_res.val), r: fd_res.r }
+  else
+    let n_res = qc_reader_str(r1) in
+    let body_res = qc_tform_dec_expr(n_res.r) in
+    QcReadRes { val: QcDefTest(QcTestDef { name: n_res.val, body: body_res.val }), r: body_res.r }
+
+fn qc_tform_dec_defs_loop(r: QcReader, count: Int, acc: Accum[QcDef]) -> QcReadRes[List[QcDef]] =
+  if count <= 0 then QcReadRes { val: acc_list(acc), r: r }
+  else
+    let d_res = qc_tform_dec_def(r) in
+    qc_tform_dec_defs_loop(d_res.r, count - 1, AccPush(acc, d_res.val))
+
+fn qc_tform_dec_program(b: Bytes) -> QcProgram =
+  let r0 = QcReader { bytes: b, pos: 0 } in
+  let c_res = qc_reader_varint(r0) in
+  let defs_res = qc_tform_dec_defs_loop(c_res.r, c_res.val, AccEnd) in
+  QcProgram { defs: defs_res.val }
+
+# Typed AST (TProgram, TFn, TTest, TExpr, TKind, TPat, Builtin)
+# Builtin indices match Builtin::ALL in qal-core/src/tast.rs (0..71).
+type QcBuiltin =
+  | QcBStrLen
+  | QcBListLen
+  | QcBSlice
+  | QcBSplit
+  | QcBJoin
+  | QcBTrim
+  | QcBContains
+  | QcBStartsWith
+  | QcBToInt
+  | QcBToFloat
+  | QcBFromInt
+  | QcBFromFloat
+  | QcBChars
+  | QcBGet
+  | QcBPush
+  | QcBConcat
+  | QcBMap
+  | QcBFilter
+  | QcBFold
+  | QcBRange
+  | QcBReverse
+  | QcBSortInt
+  | QcBIntToFloat
+  | QcBFloatToInt
+  | QcBPrint
+  | QcBReadLine
+  | QcBReadFile
+  | QcBWriteFile
+  | QcBNowMs
+  | QcBRandInt
+  | QcBReadAll
+  | QcBSortStr
+  | QcBCharCode
+  | QcBFromCharCode
+  | QcBToUpper
+  | QcBToLower
+  | QcBReplace
+  | QcBIndexOf
+  | QcBMapNew
+  | QcBMapGet
+  | QcBMapPut
+  | QcBMapDel
+  | QcBMapHas
+  | QcBMapSize
+  | QcBMapKeys
+  | QcBMapValues
+  | QcBToBytes
+  | QcBBytesLen
+  | QcBBytesGet
+  | QcBBytesSlice
+  | QcBBytesFrom
+  | QcBBytesToList
+  | QcBBytesToStr
+  | QcBCompare
+  | QcBHttp
+  | QcBDbExec
+  | QcBDbQuery
+  | QcBBitAnd
+  | QcBBitOr
+  | QcBBitXor
+  | QcBBitNot
+  | QcBShl
+  | QcBShr
+  | QcBUshr
+  | QcBFloatBits
+  | QcBFloatOfBits
+  | QcBListAt
+  | QcBBytesAt
+  | QcBAccList
+  | QcBBytesJoin
+  | QcBSha256
+  | QcBTodo
+  | QcBModelAsk
+  | QcBTensorMatmul
+
+fn qc_builtin_from_idx(i: Int) -> QcBuiltin =
+  if i == 0 then QcBStrLen
+  else if i == 1 then QcBListLen
+  else if i == 2 then QcBSlice
+  else if i == 3 then QcBSplit
+  else if i == 4 then QcBJoin
+  else if i == 5 then QcBTrim
+  else if i == 6 then QcBContains
+  else if i == 7 then QcBStartsWith
+  else if i == 8 then QcBToInt
+  else if i == 9 then QcBToFloat
+  else if i == 10 then QcBFromInt
+  else if i == 11 then QcBFromFloat
+  else if i == 12 then QcBChars
+  else if i == 13 then QcBGet
+  else if i == 14 then QcBPush
+  else if i == 15 then QcBConcat
+  else if i == 16 then QcBMap
+  else if i == 17 then QcBFilter
+  else if i == 18 then QcBFold
+  else if i == 19 then QcBRange
+  else if i == 20 then QcBReverse
+  else if i == 21 then QcBSortInt
+  else if i == 22 then QcBIntToFloat
+  else if i == 23 then QcBFloatToInt
+  else if i == 24 then QcBPrint
+  else if i == 25 then QcBReadLine
+  else if i == 26 then QcBReadFile
+  else if i == 27 then QcBWriteFile
+  else if i == 28 then QcBNowMs
+  else if i == 29 then QcBRandInt
+  else if i == 30 then QcBReadAll
+  else if i == 31 then QcBSortStr
+  else if i == 32 then QcBCharCode
+  else if i == 33 then QcBFromCharCode
+  else if i == 34 then QcBToUpper
+  else if i == 35 then QcBToLower
+  else if i == 36 then QcBReplace
+  else if i == 37 then QcBIndexOf
+  else if i == 38 then QcBMapNew
+  else if i == 39 then QcBMapGet
+  else if i == 40 then QcBMapPut
+  else if i == 41 then QcBMapDel
+  else if i == 42 then QcBMapHas
+  else if i == 43 then QcBMapSize
+  else if i == 44 then QcBMapKeys
+  else if i == 45 then QcBMapValues
+  else if i == 46 then QcBToBytes
+  else if i == 47 then QcBBytesLen
+  else if i == 48 then QcBBytesGet
+  else if i == 49 then QcBBytesSlice
+  else if i == 50 then QcBBytesFrom
+  else if i == 51 then QcBBytesToList
+  else if i == 52 then QcBBytesToStr
+  else if i == 53 then QcBCompare
+  else if i == 54 then QcBHttp
+  else if i == 55 then QcBDbExec
+  else if i == 56 then QcBDbQuery
+  else if i == 57 then QcBBitAnd
+  else if i == 58 then QcBBitOr
+  else if i == 59 then QcBBitXor
+  else if i == 60 then QcBBitNot
+  else if i == 61 then QcBShl
+  else if i == 62 then QcBShr
+  else if i == 63 then QcBUshr
+  else if i == 64 then QcBFloatBits
+  else if i == 65 then QcBFloatOfBits
+  else if i == 66 then QcBListAt
+  else if i == 67 then QcBBytesAt
+  else if i == 68 then QcBAccList
+  else if i == 69 then QcBBytesJoin
+  else if i == 70 then QcBSha256
+  else if i == 71 then QcBTodo
+  else if i == 73 then QcBTensorMatmul
+  else QcBModelAsk
+
+fn qc_builtin_to_idx(b: QcBuiltin) -> Int =
+  match b {
+    QcBStrLen => 0,
+    QcBListLen => 1,
+    QcBSlice => 2,
+    QcBSplit => 3,
+    QcBJoin => 4,
+    QcBTrim => 5,
+    QcBContains => 6,
+    QcBStartsWith => 7,
+    QcBToInt => 8,
+    QcBToFloat => 9,
+    QcBFromInt => 10,
+    QcBFromFloat => 11,
+    QcBChars => 12,
+    QcBGet => 13,
+    QcBPush => 14,
+    QcBConcat => 15,
+    QcBMap => 16,
+    QcBFilter => 17,
+    QcBFold => 18,
+    QcBRange => 19,
+    QcBReverse => 20,
+    QcBSortInt => 21,
+    QcBIntToFloat => 22,
+    QcBFloatToInt => 23,
+    QcBPrint => 24,
+    QcBReadLine => 25,
+    QcBReadFile => 26,
+    QcBWriteFile => 27,
+    QcBNowMs => 28,
+    QcBRandInt => 29,
+    QcBReadAll => 30,
+    QcBSortStr => 31,
+    QcBCharCode => 32,
+    QcBFromCharCode => 33,
+    QcBToUpper => 34,
+    QcBToLower => 35,
+    QcBReplace => 36,
+    QcBIndexOf => 37,
+    QcBMapNew => 38,
+    QcBMapGet => 39,
+    QcBMapPut => 40,
+    QcBMapDel => 41,
+    QcBMapHas => 42,
+    QcBMapSize => 43,
+    QcBMapKeys => 44,
+    QcBMapValues => 45,
+    QcBToBytes => 46,
+    QcBBytesLen => 47,
+    QcBBytesGet => 48,
+    QcBBytesSlice => 49,
+    QcBBytesFrom => 50,
+    QcBBytesToList => 51,
+    QcBBytesToStr => 52,
+    QcBCompare => 53,
+    QcBHttp => 54,
+    QcBDbExec => 55,
+    QcBDbQuery => 56,
+    QcBBitAnd => 57,
+    QcBBitOr => 58,
+    QcBBitXor => 59,
+    QcBBitNot => 60,
+    QcBShl => 61,
+    QcBShr => 62,
+    QcBUshr => 63,
+    QcBFloatBits => 64,
+    QcBFloatOfBits => 65,
+    QcBListAt => 66,
+    QcBBytesAt => 67,
+    QcBAccList => 68,
+    QcBBytesJoin => 69,
+    QcBSha256 => 70,
+    QcBTodo => 71,
+    QcBModelAsk => 72,
+    QcBTensorMatmul => 73
+  }
+
+type QcTPField = {
+  idx: Int,
+  pat: QcTPat
+}
+
+type QcTPat =
+  | QcTPWild
+  | QcTPBind(Int)
+  | QcTPInt(Int)
+  | QcTPStr(Str)
+  | QcTPBool(Bool)
+  | QcTPUnit
+  | QcTPVariant(Int, List[QcTPat])
+  | QcTPRecord(List[QcTPField])
+
+type QcTLambda = {
+  params: List[Int],
+  captures: List[Int],
+  body: QcTExpr
+}
+
+type QcTArm = {
+  pat: QcTPat,
+  guard: Option[QcTExpr],
+  body: QcTExpr
+}
+
+type QcTField = {
+  idx: Int,
+  expr: QcTExpr
+}
+
+type QcTKind =
+  | QcTKInt(Int)
+  | QcTKFloat(Float)
+  | QcTKBool(Bool)
+  | QcTKStr(Str)
+  | QcTKUnit
+  | QcTKLocal(Int)
+  | QcTKFnRef(Int)
+  | QcTKBin(QcBinOp, QcTExpr, QcTExpr, Str)
+  | QcTKUn(QcUnOp, QcTExpr, Str)
+  | QcTKIf(QcTExpr, QcTExpr, QcTExpr)
+  | QcTKLet(Int, QcTExpr, QcTExpr)
+  | QcTKCall(Int, List[QcTExpr])
+  | QcTKCallG(Int, List[QcType], List[QcTExpr])
+  | QcTKFnRefG(Int, List[QcType])
+  | QcTKLambda(QcTLambda)
+  | QcTKCallIndirect(QcTExpr, List[QcTExpr])
+  | QcTKBuiltin(QcBuiltin, List[QcTExpr], Str)
+  | QcTKList(List[QcTExpr])
+  | QcTKVariant(Int, List[QcTExpr])
+  | QcTKRecord(List[QcTField])
+  | QcTKField(QcTExpr, Int)
+  | QcTKMatch(QcTExpr, List[QcTArm])
+  | QcTKSeq(List[QcTExpr])
+
+type QcTExpr = {
+  ty: QcType,
+  kind: QcTKind
+}
+
+type QcTFnInstance = {
+  gen_idx: Int,
+  args: List[QcType]
+}
+
+type QcTFn = {
+  def: QcFnDef,
+  locals: List[QcType],
+  reqs: List[QcTExpr],
+  enss: List[QcTExpr],
+  result_local: Option[Int],
+  body: QcTExpr,
+  instance: Option[QcTFnInstance]
+}
+
+type QcTTest = {
+  name: Str,
+  locals: List[QcType],
+  body: QcTExpr
+}
+
+type QcTProgram = {
+  types: List[QcTypeDef],
+  fns: List[QcTFn],
+  tests: List[QcTTest],
+  generics: List[QcTFn]
+}
+
+# QALT encoder
+fn qc_tform_tpat_acc(p: QcTPat, acc: Accum[Int]) -> Accum[Int] =
+  match p {
+    QcTPWild => AccPush(acc, 0),
+    QcTPBind(id) => qc_varint_acc(id, AccPush(acc, 1)),
+    QcTPInt(n) => qc_tform_put_int_loop(n, AccPush(acc, 2)),
+    QcTPStr(s) => qc_str_acc(s, AccPush(acc, 3)),
+    QcTPBool(b) => AccPush(AccPush(acc, 4), if b then 1 else 0),
+    QcTPUnit => AccPush(acc, 5),
+    QcTPVariant(tag, ps) =>
+      let a1 = qc_varint_acc(len(ps), qc_varint_acc(tag, AccPush(acc, 6))) in
+      fold(ps, a1, fn(st: Accum[Int], subp: QcTPat) => qc_tform_tpat_acc(subp, st)),
+    QcTPRecord(fs) =>
+      let a1 = qc_varint_acc(len(fs), AccPush(acc, 7)) in
+      fold(fs, a1, fn(st: Accum[Int], f: QcTPField) => qc_tform_tpat_acc(f.pat, qc_varint_acc(f.idx, st)))
+  }
+
+fn qc_tform_texprs_acc(xs: List[QcTExpr], acc: Accum[Int]) -> Accum[Int] =
+  let a1 = qc_varint_acc(len(xs), acc) in
+  fold(xs, a1, fn(st: Accum[Int], x: QcTExpr) => qc_tform_texpr_acc(x, st))
+
+fn qc_tform_ids_acc(ids: List[Int], acc: Accum[Int]) -> Accum[Int] =
+  let a1 = qc_varint_acc(len(ids), acc) in
+  fold(ids, a1, fn(st: Accum[Int], i: Int) => qc_varint_acc(i, st))
+
+fn qc_tform_types_acc(tys: List[QcType], acc: Accum[Int]) -> Accum[Int] =
+  let a1 = qc_varint_acc(len(tys), acc) in
+  fold(tys, a1, fn(st: Accum[Int], t: QcType) => qc_tform_type_acc(t, st))
+
+fn qc_tform_texpr_acc(e: QcTExpr, acc: Accum[Int]) -> Accum[Int] =
+  let a0 = qc_tform_type_acc(e.ty, acc) in
+  match e.kind {
+    QcTKInt(n) => qc_tform_put_int_loop(n, AccPush(a0, 0)),
+    QcTKFloat(x) => qc_float_acc(x, AccPush(a0, 1)),
+    QcTKBool(b) => AccPush(AccPush(a0, 2), if b then 1 else 0),
+    QcTKStr(s) => qc_str_acc(s, AccPush(a0, 3)),
+    QcTKUnit => AccPush(a0, 4),
+    QcTKLocal(id) => qc_varint_acc(id, AccPush(a0, 5)),
+    QcTKFnRef(i) => qc_varint_acc(i, AccPush(a0, 6)),
+    QcTKBin(op, l, r, path) =>
+      let a1 = AccPush(AccPush(a0, 7), qc_binop_tag(op)) in
+      qc_str_acc(path, qc_tform_texpr_acc(r, qc_tform_texpr_acc(l, a1))),
+    QcTKUn(op, x, path) =>
+      let tag = match op { QcUnNeg => 0, QcUnNot => 1 } in
+      qc_str_acc(path, qc_tform_texpr_acc(x, AccPush(AccPush(a0, 8), tag))),
+    QcTKIf(c, t, f) =>
+      qc_tform_texpr_acc(f, qc_tform_texpr_acc(t, qc_tform_texpr_acc(c, AccPush(a0, 9)))),
+    QcTKLet(id, v, b) =>
+      qc_tform_texpr_acc(b, qc_tform_texpr_acc(v, qc_varint_acc(id, AccPush(a0, 10)))),
+    QcTKCall(i, args) =>
+      qc_tform_texprs_acc(args, qc_varint_acc(i, AccPush(a0, 11))),
+    QcTKCallG(i, tys, args) =>
+      qc_tform_texprs_acc(args, qc_tform_types_acc(tys, qc_varint_acc(i, AccPush(a0, 12)))),
+    QcTKFnRefG(i, tys) =>
+      qc_tform_types_acc(tys, qc_varint_acc(i, AccPush(a0, 13))),
+    QcTKLambda(l) =>
+      qc_tform_texpr_acc(l.body, qc_tform_ids_acc(l.captures, qc_tform_ids_acc(l.params, AccPush(a0, 14)))),
+    QcTKCallIndirect(f, args) =>
+      qc_tform_texprs_acc(args, qc_tform_texpr_acc(f, AccPush(a0, 15))),
+    QcTKBuiltin(b, args, path) =>
+      qc_str_acc(path, qc_tform_texprs_acc(args, qc_varint_acc(qc_builtin_to_idx(b), AccPush(a0, 16)))),
+    QcTKList(xs) =>
+      qc_tform_texprs_acc(xs, AccPush(a0, 17)),
+    QcTKVariant(tag, xs) =>
+      qc_tform_texprs_acc(xs, qc_varint_acc(tag, AccPush(a0, 18))),
+    QcTKRecord(fs) =>
+      let a1 = qc_varint_acc(len(fs), AccPush(a0, 19)) in
+      fold(fs, a1, fn(st: Accum[Int], f: QcTField) => qc_tform_texpr_acc(f.expr, qc_varint_acc(f.idx, st))),
+    QcTKField(x, i) =>
+      qc_varint_acc(i, qc_tform_texpr_acc(x, AccPush(a0, 20))),
+    QcTKMatch(s, arms) =>
+      let a1 = qc_varint_acc(len(arms), qc_tform_texpr_acc(s, AccPush(a0, 21))) in
+      fold(arms, a1, fn(st: Accum[Int], a: QcTArm) =>
+        let ap = qc_tform_tpat_acc(a.pat, st) in
+        let ag = match a.guard {
+          Some(g) => qc_tform_texpr_acc(g, AccPush(ap, 1)),
+          None => AccPush(ap, 0)
+        } in
+        qc_tform_texpr_acc(a.body, ag)
+      ),
+    QcTKSeq(xs) =>
+      qc_tform_texprs_acc(xs, AccPush(a0, 22))
+  }
+
+fn qc_tform_tfn_acc(f: QcTFn, acc: Accum[Int]) -> Accum[Int] =
+  let a1 = qc_tform_fndef_acc(f.def, acc) in
+  let a2 = qc_tform_types_acc(f.locals, a1) in
+  let a3 = qc_tform_texprs_acc(f.reqs, a2) in
+  let a4 = qc_tform_texprs_acc(f.enss, a3) in
+  let a5 = match f.result_local {
+    Some(r) => qc_varint_acc(r, AccPush(a4, 1)),
+    None => AccPush(a4, 0)
+  } in
+  let a6 = qc_tform_texpr_acc(f.body, a5) in
+  match f.instance {
+    Some(inst) => qc_tform_types_acc(inst.args, qc_varint_acc(inst.gen_idx, AccPush(a6, 1))),
+    None => AccPush(a6, 0)
+  }
+
+fn qc_tform_encode(p: QcTProgram) -> Bytes =
+  let a0 = AccPush(AccPush(AccPush(AccPush(AccPush(AccEnd, 81), 65), 76), 84), 1) in # "QALT", version 1
+  let a1 = fold(p.types, qc_varint_acc(len(p.types), a0), fn(st: Accum[Int], t: QcTypeDef) => qc_tform_typedef_acc(t, st)) in
+  let a2 = fold(p.fns, qc_varint_acc(len(p.fns), a1), fn(st: Accum[Int], f: QcTFn) => qc_tform_tfn_acc(f, st)) in
+  let a3 = fold(p.tests, qc_varint_acc(len(p.tests), a2), fn(st: Accum[Int], t: QcTTest) =>
+    qc_tform_texpr_acc(t.body, qc_tform_types_acc(t.locals, qc_str_acc(t.name, st)))
+  ) in
+  let a4 = fold(p.generics, qc_varint_acc(len(p.generics), a3), fn(st: Accum[Int], f: QcTFn) => qc_tform_tfn_acc(f, st)) in
+  bytes_from(acc_list(a4))
+
+# QALT decoder
+fn qc_tform_dec_tpats_loop(r: QcReader, count: Int, acc: Accum[QcTPat]) -> QcReadRes[List[QcTPat]] =
+  if count <= 0 then QcReadRes { val: acc_list(acc), r: r }
+  else
+    let p_res = qc_tform_dec_tpat(r) in
+    qc_tform_dec_tpats_loop(p_res.r, count - 1, AccPush(acc, p_res.val))
+
+fn qc_tform_dec_tpfields_loop(r: QcReader, count: Int, acc: Accum[QcTPField]) -> QcReadRes[List[QcTPField]] =
+  if count <= 0 then QcReadRes { val: acc_list(acc), r: r }
+  else
+    let idx_res = qc_reader_varint(r) in
+    let pat_res = qc_tform_dec_tpat(idx_res.r) in
+    qc_tform_dec_tpfields_loop(pat_res.r, count - 1, AccPush(acc, QcTPField { idx: idx_res.val, pat: pat_res.val }))
+
+fn qc_tform_dec_tpat(r: QcReader) -> QcReadRes[QcTPat] =
+  let tag_res = qc_reader_byte(r) in
+  let tag = tag_res.val in
+  let r1 = tag_res.r in
+  if tag == 0 then QcReadRes { val: QcTPWild, r: r1 }
+  else if tag == 1 then
+    let id_res = qc_reader_varint(r1) in
+    QcReadRes { val: QcTPBind(id_res.val), r: id_res.r }
+  else if tag == 2 then
+    let n_res = qc_reader_int(r1) in
+    QcReadRes { val: QcTPInt(n_res.val), r: n_res.r }
+  else if tag == 3 then
+    let s_res = qc_reader_str(r1) in
+    QcReadRes { val: QcTPStr(s_res.val), r: s_res.r }
+  else if tag == 4 then
+    let b_res = qc_reader_byte(r1) in
+    QcReadRes { val: QcTPBool(b_res.val == 1), r: b_res.r }
+  else if tag == 5 then
+    QcReadRes { val: QcTPUnit, r: r1 }
+  else if tag == 6 then
+    let vtag_res = qc_reader_varint(r1) in
+    let c_res = qc_reader_varint(vtag_res.r) in
+    let ps_res = qc_tform_dec_tpats_loop(c_res.r, c_res.val, AccEnd) in
+    QcReadRes { val: QcTPVariant(vtag_res.val, ps_res.val), r: ps_res.r }
+  else
+    let c_res = qc_reader_varint(r1) in
+    let fs_res = qc_tform_dec_tpfields_loop(c_res.r, c_res.val, AccEnd) in
+    QcReadRes { val: QcTPRecord(fs_res.val), r: fs_res.r }
+
+fn qc_tform_dec_texprs_loop(r: QcReader, count: Int, acc: Accum[QcTExpr]) -> QcReadRes[List[QcTExpr]] =
+  if count <= 0 then QcReadRes { val: acc_list(acc), r: r }
+  else
+    let e_res = qc_tform_dec_texpr(r) in
+    qc_tform_dec_texprs_loop(e_res.r, count - 1, AccPush(acc, e_res.val))
+
+fn qc_tform_dec_texprs(r: QcReader) -> QcReadRes[List[QcTExpr]] =
+  let c_res = qc_reader_varint(r) in
+  qc_tform_dec_texprs_loop(c_res.r, c_res.val, AccEnd)
+
+fn qc_tform_dec_tfields_loop(r: QcReader, count: Int, acc: Accum[QcTField]) -> QcReadRes[List[QcTField]] =
+  if count <= 0 then QcReadRes { val: acc_list(acc), r: r }
+  else
+    let idx_res = qc_reader_varint(r) in
+    let expr_res = qc_tform_dec_texpr(idx_res.r) in
+    qc_tform_dec_tfields_loop(expr_res.r, count - 1, AccPush(acc, QcTField { idx: idx_res.val, expr: expr_res.val }))
+
+fn qc_tform_dec_tarms_loop(r: QcReader, count: Int, acc: Accum[QcTArm]) -> QcReadRes[List[QcTArm]] =
+  if count <= 0 then QcReadRes { val: acc_list(acc), r: r }
+  else
+    let pat_res = qc_tform_dec_tpat(r) in
+    let g_flag = qc_reader_byte(pat_res.r) in
+    let g_res = if g_flag.val == 1 then
+      let ge = qc_tform_dec_texpr(g_flag.r) in
+      QcReadRes { val: Some(ge.val), r: ge.r }
+    else
+      QcReadRes { val: None, r: g_flag.r } in
+    let body_res = qc_tform_dec_texpr(g_res.r) in
+    qc_tform_dec_tarms_loop(body_res.r, count - 1, AccPush(acc, QcTArm { pat: pat_res.val, guard: g_res.val, body: body_res.val }))
+
+fn qc_tform_dec_texpr(r: QcReader) -> QcReadRes[QcTExpr] =
+  let ty_res = qc_tform_dec_type(r) in
+  let ty = ty_res.val in
+  let tag_res = qc_reader_byte(ty_res.r) in
+  let tag = tag_res.val in
+  let r1 = tag_res.r in
+  if tag == 0 then
+    let n_res = qc_reader_int(r1) in
+    QcReadRes { val: QcTExpr { ty: ty, kind: QcTKInt(n_res.val) }, r: n_res.r }
+  else if tag == 1 then
+    let f_res = qc_reader_float(r1) in
+    QcReadRes { val: QcTExpr { ty: ty, kind: QcTKFloat(f_res.val) }, r: f_res.r }
+  else if tag == 2 then
+    let b_res = qc_reader_byte(r1) in
+    QcReadRes { val: QcTExpr { ty: ty, kind: QcTKBool(b_res.val == 1) }, r: b_res.r }
+  else if tag == 3 then
+    let s_res = qc_reader_str(r1) in
+    QcReadRes { val: QcTExpr { ty: ty, kind: QcTKStr(s_res.val) }, r: s_res.r }
+  else if tag == 4 then
+    QcReadRes { val: QcTExpr { ty: ty, kind: QcTKUnit }, r: r1 }
+  else if tag == 5 then
+    let id_res = qc_reader_varint(r1) in
+    QcReadRes { val: QcTExpr { ty: ty, kind: QcTKLocal(id_res.val) }, r: id_res.r }
+  else if tag == 6 then
+    let i_res = qc_reader_varint(r1) in
+    QcReadRes { val: QcTExpr { ty: ty, kind: QcTKFnRef(i_res.val) }, r: i_res.r }
+  else if tag == 7 then
+    let op_res = qc_reader_byte(r1) in
+    let l_res = qc_tform_dec_texpr(op_res.r) in
+    let r_res = qc_tform_dec_texpr(l_res.r) in
+    let p_res = qc_reader_str(r_res.r) in
+    QcReadRes { val: QcTExpr { ty: ty, kind: QcTKBin(qc_binop_from_tag(op_res.val), l_res.val, r_res.val, p_res.val) }, r: p_res.r }
+  else if tag == 8 then
+    let op_res = qc_reader_byte(r1) in
+    let x_res = qc_tform_dec_texpr(op_res.r) in
+    let p_res = qc_reader_str(x_res.r) in
+    let op = if op_res.val == 0 then QcUnNeg else QcUnNot in
+    QcReadRes { val: QcTExpr { ty: ty, kind: QcTKUn(op, x_res.val, p_res.val) }, r: p_res.r }
+  else if tag == 9 then
+    let c_res = qc_tform_dec_texpr(r1) in
+    let t_res = qc_tform_dec_texpr(c_res.r) in
+    let f_res = qc_tform_dec_texpr(t_res.r) in
+    QcReadRes { val: QcTExpr { ty: ty, kind: QcTKIf(c_res.val, t_res.val, f_res.val) }, r: f_res.r }
+  else if tag == 10 then
+    let id_res = qc_reader_varint(r1) in
+    let v_res = qc_tform_dec_texpr(id_res.r) in
+    let b_res = qc_tform_dec_texpr(v_res.r) in
+    QcReadRes { val: QcTExpr { ty: ty, kind: QcTKLet(id_res.val, v_res.val, b_res.val) }, r: b_res.r }
+  else if tag == 11 then
+    let i_res = qc_reader_varint(r1) in
+    let args_res = qc_tform_dec_texprs(i_res.r) in
+    QcReadRes { val: QcTExpr { ty: ty, kind: QcTKCall(i_res.val, args_res.val) }, r: args_res.r }
+  else if tag == 12 then
+    let i_res = qc_reader_varint(r1) in
+    let tys_res = qc_tform_dec_types(i_res.r) in
+    let args_res = qc_tform_dec_texprs(tys_res.r) in
+    QcReadRes { val: QcTExpr { ty: ty, kind: QcTKCallG(i_res.val, tys_res.val, args_res.val) }, r: args_res.r }
+  else if tag == 13 then
+    let i_res = qc_reader_varint(r1) in
+    let tys_res = qc_tform_dec_types(i_res.r) in
+    QcReadRes { val: QcTExpr { ty: ty, kind: QcTKFnRefG(i_res.val, tys_res.val) }, r: tys_res.r }
+  else if tag == 14 then
+    let ps_res = qc_reader_ids(r1) in
+    let cs_res = qc_reader_ids(ps_res.r) in
+    let body_res = qc_tform_dec_texpr(cs_res.r) in
+    QcReadRes { val: QcTExpr { ty: ty, kind: QcTKLambda(QcTLambda { params: ps_res.val, captures: cs_res.val, body: body_res.val }) }, r: body_res.r }
+  else if tag == 15 then
+    let f_res = qc_tform_dec_texpr(r1) in
+    let args_res = qc_tform_dec_texprs(f_res.r) in
+    QcReadRes { val: QcTExpr { ty: ty, kind: QcTKCallIndirect(f_res.val, args_res.val) }, r: args_res.r }
+  else if tag == 16 then
+    let bi_res = qc_reader_varint(r1) in
+    let args_res = qc_tform_dec_texprs(bi_res.r) in
+    let p_res = qc_reader_str(args_res.r) in
+    QcReadRes { val: QcTExpr { ty: ty, kind: QcTKBuiltin(qc_builtin_from_idx(bi_res.val), args_res.val, p_res.val) }, r: p_res.r }
+  else if tag == 17 then
+    let xs_res = qc_tform_dec_texprs(r1) in
+    QcReadRes { val: QcTExpr { ty: ty, kind: QcTKList(xs_res.val) }, r: xs_res.r }
+  else if tag == 18 then
+    let vtag_res = qc_reader_varint(r1) in
+    let xs_res = qc_tform_dec_texprs(vtag_res.r) in
+    QcReadRes { val: QcTExpr { ty: ty, kind: QcTKVariant(vtag_res.val, xs_res.val) }, r: xs_res.r }
+  else if tag == 19 then
+    let c_res = qc_reader_varint(r1) in
+    let fs_res = qc_tform_dec_tfields_loop(c_res.r, c_res.val, AccEnd) in
+    QcReadRes { val: QcTExpr { ty: ty, kind: QcTKRecord(fs_res.val) }, r: fs_res.r }
+  else if tag == 20 then
+    let x_res = qc_tform_dec_texpr(r1) in
+    let i_res = qc_reader_varint(x_res.r) in
+    QcReadRes { val: QcTExpr { ty: ty, kind: QcTKField(x_res.val, i_res.val) }, r: i_res.r }
+  else if tag == 21 then
+    let s_res = qc_tform_dec_texpr(r1) in
+    let c_res = qc_reader_varint(s_res.r) in
+    let arms_res = qc_tform_dec_tarms_loop(c_res.r, c_res.val, AccEnd) in
+    QcReadRes { val: QcTExpr { ty: ty, kind: QcTKMatch(s_res.val, arms_res.val) }, r: arms_res.r }
+  else
+    let xs_res = qc_tform_dec_texprs(r1) in
+    QcReadRes { val: QcTExpr { ty: ty, kind: QcTKSeq(xs_res.val) }, r: xs_res.r }
+
+fn qc_tform_dec_typedefs_loop(r: QcReader, count: Int, acc: Accum[QcTypeDef]) -> QcReadRes[List[QcTypeDef]] =
+  if count <= 0 then QcReadRes { val: acc_list(acc), r: r }
+  else
+    let td_res = qc_tform_dec_typedef(r) in
+    qc_tform_dec_typedefs_loop(td_res.r, count - 1, AccPush(acc, td_res.val))
+
+fn qc_tform_dec_tfn(r: QcReader) -> QcReadRes[QcTFn] =
+  let def_res = qc_tform_dec_fndef(r) in
+  let locals_res = qc_tform_dec_types(def_res.r) in
+  let req_res = qc_tform_dec_texprs(locals_res.r) in
+  let ens_res = qc_tform_dec_texprs(req_res.r) in
+  let rl_flag = qc_reader_byte(ens_res.r) in
+  let rl_res = if rl_flag.val == 1 then
+    let r_id = qc_reader_varint(rl_flag.r) in
+    QcReadRes { val: Some(r_id.val), r: r_id.r }
+  else
+    QcReadRes { val: None, r: rl_flag.r } in
+  let body_res = qc_tform_dec_texpr(rl_res.r) in
+  let inst_flag = qc_reader_byte(body_res.r) in
+  let inst_res = if inst_flag.val == 1 then
+    let g_res = qc_reader_varint(inst_flag.r) in
+    let args_res = qc_tform_dec_types(g_res.r) in
+    QcReadRes { val: Some(QcTFnInstance { gen_idx: g_res.val, args: args_res.val }), r: args_res.r }
+  else
+    QcReadRes { val: None, r: inst_flag.r } in
+  QcReadRes {
+    val: QcTFn {
+      def: def_res.val,
+      locals: locals_res.val,
+      reqs: req_res.val,
+      enss: ens_res.val,
+      result_local: rl_res.val,
+      body: body_res.val,
+      instance: inst_res.val
+    },
+    r: inst_res.r
+  }
+
+fn qc_tform_dec_tfns_loop(r: QcReader, count: Int, acc: Accum[QcTFn]) -> QcReadRes[List[QcTFn]] =
+  if count <= 0 then QcReadRes { val: acc_list(acc), r: r }
+  else
+    let f_res = qc_tform_dec_tfn(r) in
+    qc_tform_dec_tfns_loop(f_res.r, count - 1, AccPush(acc, f_res.val))
+
+fn qc_tform_dec_ttests_loop(r: QcReader, count: Int, acc: Accum[QcTTest]) -> QcReadRes[List[QcTTest]] =
+  if count <= 0 then QcReadRes { val: acc_list(acc), r: r }
+  else
+    let n_res = qc_reader_str(r) in
+    let locals_res = qc_tform_dec_types(n_res.r) in
+    let body_res = qc_tform_dec_texpr(locals_res.r) in
+    qc_tform_dec_ttests_loop(body_res.r, count - 1, AccPush(acc, QcTTest { name: n_res.val, locals: locals_res.val, body: body_res.val }))
+
+fn qc_tform_decode(b: Bytes) -> Result[QcTProgram, Str] =
+  if bytes_len(b) < 5 then Err("truncated QALT header")
+  else if bytes_slice(b, 0, 4) != to_bytes("QALT") then Err("not a QALT typed form")
+  else if bytes_at(b, 4) != 1 then Err("unsupported QALT version")
+  else
+    let r0 = QcReader { bytes: b, pos: 5 } in
+    let tc_res = qc_reader_varint(r0) in
+    let types_res = qc_tform_dec_typedefs_loop(tc_res.r, tc_res.val, AccEnd) in
+    let fc_res = qc_reader_varint(types_res.r) in
+    let fns_res = qc_tform_dec_tfns_loop(fc_res.r, fc_res.val, AccEnd) in
+    let testc_res = qc_reader_varint(fns_res.r) in
+    let tests_res = qc_tform_dec_ttests_loop(testc_res.r, testc_res.val, AccEnd) in
+    let gc_res = qc_reader_varint(tests_res.r) in
+    let gens_res = qc_tform_dec_tfns_loop(gc_res.r, gc_res.val, AccEnd) in
+    Ok(QcTProgram {
+      types: types_res.val,
+      fns: fns_res.val,
+      tests: tests_res.val,
+      generics: gens_res.val
+    })
+
+# Type instantiation and TProgram lookup helpers (matching qal-core/src/tast.rs)
+fn qc_find_param_idx_loop(params: List[Str], target: Str, idx: Int) -> Option[Int] =
+  if idx >= len(params) then None
+  else if list_at(params, idx) == target then Some(idx)
+  else qc_find_param_idx_loop(params, target, idx + 1)
+
+fn qc_type_instantiate_list_loop(tys: List[QcType], params: List[Str], args: List[QcType], idx: Int, acc: Accum[QcType]) -> List[QcType] =
+  if idx >= len(tys) then acc_list(acc)
+  else
+    let sub = qc_type_instantiate(list_at(tys, idx), params, args) in
+    qc_type_instantiate_list_loop(tys, params, args, idx + 1, AccPush(acc, sub))
+
+fn qc_type_instantiate(ty: QcType, params: List[Str], args: List[QcType]) -> QcType =
+  match ty {
+    QcTParam(p) =>
+      match qc_find_param_idx_loop(params, p, 0) {
+        Some(i) => if i < len(args) then list_at(args, i) else ty,
+        None => ty
+      },
+    QcTList(x) => QcTList(qc_type_instantiate(x, params, args)),
+    QcTOption(x) => QcTOption(qc_type_instantiate(x, params, args)),
+    QcTResult(a, b) => QcTResult(qc_type_instantiate(a, params, args), qc_type_instantiate(b, params, args)),
+    QcTMap(a, b) => QcTMap(qc_type_instantiate(a, params, args), qc_type_instantiate(b, params, args)),
+    QcTApp(n, targs) => QcTApp(n, qc_type_instantiate_list_loop(targs, params, args, 0, AccEnd)),
+    QcTFn(ps, r, effs) => QcTFn(qc_type_instantiate_list_loop(ps, params, args, 0, AccEnd), qc_type_instantiate(r, params, args), effs),
+    _ => ty
+  }
+
+fn qc_tp_find_type_def_loop(types: List[QcTypeDef], name: Str, idx: Int) -> Option[QcTypeDef] =
+  if idx >= len(types) then None
+  else
+    let t = list_at(types, idx) in
+    if t.name == name then Some(t)
+    else qc_tp_find_type_def_loop(types, name, idx + 1)
+
+fn qc_tp_type_def(tp: QcTProgram, name: Str) -> Option[QcTypeDef] =
+  qc_tp_find_type_def_loop(tp.types, name, 0)
+
+fn qc_tp_find_fn_idx_loop(fns: List[QcTFn], name: Str, idx: Int) -> Option[Int] =
+  if idx >= len(fns) then None
+  else
+    let f = list_at(fns, idx) in
+    if f.def.name == name then Some(idx)
+    else qc_tp_find_fn_idx_loop(fns, name, idx + 1)
+
+fn qc_tp_sub_fields_loop(fs: List[QcFieldType], params: List[Str], args: List[QcType], idx: Int, acc: Accum[QcFieldType]) -> List[QcFieldType] =
+  if idx >= len(fs) then acc_list(acc)
+  else
+    let f = list_at(fs, idx) in
+    let sub_f = QcFieldType { name: f.name, ty: qc_type_instantiate(f.ty, params, args) } in
+    qc_tp_sub_fields_loop(fs, params, args, idx + 1, AccPush(acc, sub_f))
+
+fn qc_tp_sub_variants_loop(vs: List[QcVariant], params: List[Str], args: List[QcType], idx: Int, acc: Accum[QcVariant]) -> List[QcVariant] =
+  if idx >= len(vs) then acc_list(acc)
+  else
+    let v = list_at(vs, idx) in
+    let sub_v = QcVariant { name: v.name, fields: qc_type_instantiate_list_loop(v.fields, params, args, 0, AccEnd) } in
+    qc_tp_sub_variants_loop(vs, params, args, idx + 1, AccPush(acc, sub_v))
+
+fn qc_tp_decl_for(p: QcTProgram, name: Str, args: List[QcType]) -> Option[QcTypeBody] =
+  match qc_tp_find_type_def_loop(p.types, name, 0) {
+    None => None,
+    Some(d) =>
+      if len(d.params) != len(args) then None
+      else
+        match d.body {
+          QcBodyRecord(fs) => Some(QcBodyRecord(qc_tp_sub_fields_loop(fs, d.params, args, 0, AccEnd))),
+          QcBodyEnum(vs) => Some(QcBodyEnum(qc_tp_sub_variants_loop(vs, d.params, args, 0, AccEnd)))
+        }
+  }
+
+fn qc_tp_decl(p: QcTProgram, ty: QcType) -> Option[QcTypeBody] =
+  match ty {
+    QcTNamed(n) => qc_tp_decl_for(p, n, []),
+    QcTApp(n, args) => qc_tp_decl_for(p, n, args),
+    _ => None
+  }
+
+fn qc_tp_variant_names_loop(vs: List[QcVariant], idx: Int, acc: Accum[Str]) -> List[Str] =
+  if idx >= len(vs) then acc_list(acc)
+  else
+    let v = list_at(vs, idx) in
+    qc_tp_variant_names_loop(vs, idx + 1, AccPush(acc, v.name))
+
+fn qc_tp_variant_names(p: QcTProgram, ty: QcType) -> List[Str] =
+  match ty {
+    QcTOption(_) => ["None", "Some"],
+    QcTResult(_, _) => ["Ok", "Err"],
+    _ =>
+      match qc_tp_decl(p, ty) {
+        Some(QcBodyEnum(vs)) => qc_tp_variant_names_loop(vs, 0, AccEnd),
+        _ => []
+      }
+  }
+
+fn qc_tp_variant_fields(p: QcTProgram, ty: QcType, tag: Int) -> List[QcType] =
+  match ty {
+    QcTOption(t) => if tag == 0 then [] else [t],
+    QcTResult(t, e) => if tag == 0 then [t] else [e],
+    _ =>
+      match qc_tp_decl(p, ty) {
+        Some(QcBodyEnum(vs)) =>
+          if tag >= 0 && tag < len(vs) then
+            let v = list_at(vs, tag) in
+            v.fields
+          else [],
+        _ => []
+      }
+  }
+
+fn qc_tp_record_fields(p: QcTProgram, ty: QcType) -> List[QcFieldType] =
+  match qc_tp_decl(p, ty) {
+    Some(QcBodyRecord(fs)) => fs,
+    _ => []
+  }
+
+fn qc_tp_is_record(p: QcTProgram, ty: QcType) -> Bool =
+  match qc_tp_decl(p, ty) {
+    Some(QcBodyRecord(_)) => true,
+    _ => false
+  }

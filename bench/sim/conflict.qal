@@ -1,0 +1,36 @@
+# Merge journals and report conflicting payloads for the same transaction id.
+
+type Entry = { id: Int, kind: Str, amount: Int }
+type Conflict = { id: Int, a: Entry, b: Entry }
+type Merged = { log: List[Entry], conflicts: List[Conflict] }
+
+fn has(log: List[Entry], id: Int) -> Bool = len(filter(log, fn(e) => e.id == id)) > 0
+fn find(log: List[Entry], id: Int) -> Option[Entry] = get(filter(log, fn(e) => e.id == id), 0)
+fn apply(log: List[Entry], e: Entry) -> List[Entry] = if has(log, e.id) then log else push(log, e)
+fn merge(a: List[Entry], b: List[Entry]) -> List[Entry] = fold(b, a, fn(acc, e) => apply(acc, e))
+
+fn conflicts(a: List[Entry], b: List[Entry]) -> List[Conflict] =
+  let found = map(a, fn(x) => match find(b, x.id) {
+    None => None,
+    Some(y) => if x.kind == y.kind && x.amount == y.amount then None else Some(Conflict { id: x.id, a: x, b: y }),
+  }) in
+  map(filter(found, fn(c) => c != None), fn(c) => match c {
+    Some(x) => x,
+    None => Conflict { id: 0, a: Entry { id: 0, kind: "", amount: 0 }, b: Entry { id: 0, kind: "", amount: 0 } },
+  })
+
+fn merge_checked(a: List[Entry], b: List[Entry]) -> Merged =
+  Merged { log: merge(a, b), conflicts: conflicts(a, b) }
+
+test same_payload_no_conflict = len(merge_checked(
+  [Entry { id: 1, kind: "debit", amount: 5 }],
+  [Entry { id: 1, kind: "debit", amount: 5 }]).conflicts) == 0
+test different_amount_conflict = match get(merge_checked(
+  [Entry { id: 1, kind: "debit", amount: 5 }],
+  [Entry { id: 1, kind: "debit", amount: 6 }]).conflicts, 0) {
+    None => false,
+    Some(c) => c.id == 1 && c.a.amount == 5 && c.b.amount == 6,
+  }
+test disjoint_merges = len(merge_checked(
+  [Entry { id: 1, kind: "a", amount: 1 }],
+  [Entry { id: 2, kind: "b", amount: 2 }]).log) == 2

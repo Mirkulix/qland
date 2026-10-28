@@ -15,6 +15,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '..', 'ig
 from igqk import IGQKOptimizer, TernaryProjector, BinaryProjector, SparseProjector, LowRankProjector
 from .huggingface_service import HuggingFaceService
 from .validation_service import ValidationService
+from .packing import save_packed
 
 
 class CompressionService:
@@ -77,19 +78,14 @@ class CompressionService:
 
             if method == "ternary":
                 projector = TernaryProjector()
-                expected_ratio = 16
             elif method == "binary":
                 projector = BinaryProjector()
-                expected_ratio = 32
             elif method == "sparse":
                 projector = SparseProjector(sparsity=0.5)
-                expected_ratio = 2
             elif method == "lowrank":
                 projector = LowRankProjector(rank=10)
-                expected_ratio = 4
             else:
                 projector = TernaryProjector()  # Default
-                expected_ratio = 16
 
             # Step 3: Compress with IGQK
             print(f"🗜️  Step 3/4: Compressing with IGQK...")
@@ -105,17 +101,33 @@ class CompressionService:
 
             compression_time = time.time() - start_time
 
-            # Get compressed model stats
-            compressed_size = self.hf_service.get_model_size(model)
+            # Save the compressed model (ternary tensors 2-bit packed); its size is measured on the file
+            print(f"💾 Step 4/5: Saving compressed model...")
+            save_path = os.path.join(
+                self.models_dir,
+                f"{job_id}_{model_identifier.replace('/', '_')}_compressed.pt"
+            )
+            saved = save_packed(model.state_dict(), save_path, metadata={
+                "original_identifier": model_identifier,
+                "compression_method": method,
+                "original_size_mb": original_size["size_mb"]
+            })
+            compressed_size = {
+                "size_mb": round(saved["file_bytes"] / (1024 ** 2), 2),
+                "total_parameters": original_size["total_parameters"]
+            }
             results["compressed"] = {
                 "size_mb": compressed_size["size_mb"],
+                "file_bytes": saved["file_bytes"],
+                "packed_tensors": saved["packed_tensors"],
+                "dense_tensors": saved["dense_tensors"],
                 "parameters": compressed_size["total_parameters"],
                 "compression_time": compression_time
             }
 
-            # Calculate metrics
-            compression_ratio = original_size["size_mb"] / compressed_size["size_mb"]
-            memory_saved_percent = ((original_size["size_mb"] - compressed_size["size_mb"]) / original_size["size_mb"]) * 100
+            # Calculate metrics (original: FP32 parameter bytes; compressed: the written file)
+            compression_ratio = original_size["size_bytes"] / saved["file_bytes"]
+            memory_saved_percent = (1 - saved["file_bytes"] / original_size["size_bytes"]) * 100
 
             results["comparison"] = {
                 "compression_ratio": round(compression_ratio, 2),
@@ -138,34 +150,18 @@ class CompressionService:
                 )
 
                 results["validation"] = validation_results
-                print(f"✅ Validation: Original={validation_results['original_accuracy']:.1f}%, "
-                      f"Compressed={validation_results['compressed_accuracy']:.1f}%, "
-                      f"Loss={validation_results['accuracy_loss']:.1f}%")
+                if validation_results.get("original_accuracy") is not None:
+                    print(f"✅ Validation: Original={validation_results['original_accuracy']:.1f}%, "
+                          f"Compressed={validation_results['compressed_accuracy']:.1f}%, "
+                          f"Loss={validation_results['accuracy_loss']:.1f}%")
             else:
+                # Not validated: no accuracy is known.
                 results["validation"] = {
-                    "original_accuracy": 100.0,
-                    "compressed_accuracy": 99.0,
-                    "accuracy_loss": 1.0
+                    "original_accuracy": None,
+                    "compressed_accuracy": None,
+                    "accuracy_loss": None,
+                    "validation_error": "not validated"
                 }
-
-            # Step 4: Save compressed model
-            print(f"💾 Step 4/5: Saving compressed model...")
-            save_path = os.path.join(
-                self.models_dir,
-                f"{job_id}_{model_identifier.replace('/', '_')}_compressed.pt"
-            )
-
-            self.hf_service.save_model(
-                model,
-                save_path,
-                metadata={
-                    "original_identifier": model_identifier,
-                    "compression_method": method,
-                    "compression_ratio": compression_ratio,
-                    "original_size_mb": original_size["size_mb"],
-                    "compressed_size_mb": compressed_size["size_mb"]
-                }
-            )
 
             results["save_path"] = save_path
             results["status"] = "completed"
@@ -227,26 +223,18 @@ class CompressionService:
             optimizer = IGQKOptimizer(model.parameters(), projector=projector)
             optimizer.compress(model)
 
-            # Get compressed size
-            compressed_size = self.hf_service.get_model_size(model)
-            results["compressed"] = {
-                "size_mb": compressed_size["size_mb"],
-                "parameters": compressed_size["total_parameters"]
-            }
-
-            # Calculate metrics
-            compression_ratio = original_size["size_mb"] / compressed_size["size_mb"]
-            results["comparison"] = {
-                "compression_ratio": round(compression_ratio, 2),
-                "memory_saved_percent": round(
-                    ((original_size["size_mb"] - compressed_size["size_mb"]) / original_size["size_mb"]) * 100,
-                    2
-                )
-            }
-
-            # Save
+            # Save (ternary tensors 2-bit packed); the compressed size is measured on the file
             save_path = os.path.join(self.models_dir, f"{job_id}_compressed.pt")
-            self.hf_service.save_model(model, save_path)
+            saved = save_packed(model.state_dict(), save_path, metadata={"compression_method": method})
+            results["compressed"] = {
+                "size_mb": round(saved["file_bytes"] / (1024 ** 2), 2),
+                "file_bytes": saved["file_bytes"],
+                "parameters": original_size["total_parameters"]
+            }
+            results["comparison"] = {
+                "compression_ratio": round(original_size["size_bytes"] / saved["file_bytes"], 2),
+                "memory_saved_percent": round((1 - saved["file_bytes"] / original_size["size_bytes"]) * 100, 2)
+            }
 
             results["save_path"] = save_path
             results["status"] = "completed"

@@ -1,0 +1,1 @@
+fn rp(t: Str, a: Str) -> Int ens let x = replace(t, a, "b") in true = 0

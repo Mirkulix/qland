@@ -1,0 +1,1 @@
+fn f(x: Int, n: Int) -> Int req x > 0 = if n == 0 then 0 else f(x - 1, n - 1)

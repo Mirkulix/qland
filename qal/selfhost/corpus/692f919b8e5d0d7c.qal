@@ -1,0 +1,3 @@
+fn mk() -> Int = 1
+fn mk2() -> Int = 1
+fn uses_mk() -> Int = mk() + mk2()

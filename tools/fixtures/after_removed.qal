@@ -1,0 +1,3 @@
+fn add(a: Int, b: Int) -> Int
+  ens r >= a
+= a + b

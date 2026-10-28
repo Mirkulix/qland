@@ -1,0 +1,1004 @@
+{
+  "results": [
+    {
+      "id": "sum-0",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "sum-1",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "sum-2",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "sum-3",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "sum-4",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "sum-5",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "sum-6",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "sum-7",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "sum-8",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "sum-9",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "factorial-0",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "factorial-1",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "factorial-2",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "factorial-3",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "factorial-4",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "factorial-5",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "factorial-6",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "factorial-7",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "factorial-8",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "factorial-9",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "word_count-0",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "word_count-1",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "word_count-2",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "word_count-3",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "word_count-4",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "word_count-5",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "word_count-6",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "word_count-7",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "word_count-8",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "word_count-9",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "max-0",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "max-1",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "max-2",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "max-3",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "max-4",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "max-5",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "max-6",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "max-7",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "max-8",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "max-9",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "reverse-0",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "reverse-1",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "reverse-2",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "reverse-3",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "reverse-4",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "reverse-5",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "reverse-6",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "reverse-7",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "reverse-8",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "reverse-9",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "count_chars-0",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "count_chars-1",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "count_chars-2",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "count_chars-3",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "count_chars-4",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "count_chars-5",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "count_chars-6",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "count_chars-7",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "count_chars-8",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "count_chars-9",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "min-0",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "min-1",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "min-2",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "min-3",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "min-4",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "min-5",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "min-6",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "min-7",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "min-8",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "min-9",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "product-0",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "product-1",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "product-2",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "product-3",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "product-4",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "product-5",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "product-6",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "product-7",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "product-8",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "product-9",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "abs_diff-0",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "abs_diff-1",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "abs_diff-2",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "abs_diff-3",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "abs_diff-4",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "abs_diff-5",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "abs_diff-6",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "abs_diff-7",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "abs_diff-8",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "abs_diff-9",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "first_int-0",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "first_int-1",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "first_int-2",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "first_int-3",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "first_int-4",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "first_int-5",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "first_int-6",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "first_int-7",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "first_int-8",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    },
+    {
+      "id": "first_int-9",
+      "qal": {
+        "ok": true,
+        "detail": ""
+      },
+      "python": {
+        "ok": true
+      }
+    }
+  ]
+}

@@ -1,0 +1,2 @@
+type Never = |
+fn absurd(n: Never) -> Int = match n { }

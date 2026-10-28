@@ -1,0 +1,212 @@
+{
+ "name": "h27_percent_encoded_ids",
+ "description": "path segments are percent-decoded",
+ "steps": [
+  {
+   "name": "create",
+   "request": {
+    "method": "POST",
+    "path": "/todos",
+    "json": {
+     "title": "x"
+    }
+   },
+   "expect": {
+    "status": 201,
+    "json": {
+     "id": 1,
+     "title": "x",
+     "done": false,
+     "created_at": {
+      "$type": "int"
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "%31",
+   "request": {
+    "method": "GET",
+    "path": "/todos/%31"
+   },
+   "expect": {
+    "status": 200,
+    "json": {
+     "id": 1,
+     "title": "x",
+     "done": false,
+     "created_at": {
+      "$type": "int"
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "leading zeros",
+   "request": {
+    "method": "GET",
+    "path": "/todos/001"
+   },
+   "expect": {
+    "status": 200,
+    "json": {
+     "id": 1,
+     "title": "x",
+     "done": false,
+     "created_at": {
+      "$type": "int"
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "%30%31",
+   "request": {
+    "method": "GET",
+    "path": "/todos/%30%31"
+   },
+   "expect": {
+    "status": 200,
+    "json": {
+     "id": 1,
+     "title": "x",
+     "done": false,
+     "created_at": {
+      "$type": "int"
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "undecodable",
+   "request": {
+    "method": "GET",
+    "path": "/todos/%zz"
+   },
+   "expect": {
+    "status": 404,
+    "json": {
+     "error": {
+      "code": "not_found",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "undecodable 2",
+   "request": {
+    "method": "GET",
+    "path": "/todos/%E0%A4"
+   },
+   "expect": {
+    "status": 404,
+    "json": {
+     "error": {
+      "code": "not_found",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "double encoded",
+   "request": {
+    "method": "GET",
+    "path": "/todos/%2531"
+   },
+   "expect": {
+    "status": 400,
+    "json": {
+     "error": {
+      "code": "invalid_id",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "patch encoded",
+   "request": {
+    "method": "PATCH",
+    "path": "/todos/%31",
+    "json": {
+     "done": true
+    }
+   },
+   "expect": {
+    "status": 200,
+    "json": {
+     "id": 1,
+     "title": "x",
+     "done": true,
+     "created_at": {
+      "$type": "int"
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "delete encoded",
+   "request": {
+    "method": "DELETE",
+    "path": "/todos/%31"
+   },
+   "expect": {
+    "status": 204,
+    "body": ""
+   }
+  },
+  {
+   "name": "deleted",
+   "request": {
+    "method": "GET",
+    "path": "/todos/1"
+   },
+   "expect": {
+    "status": 404,
+    "json": {
+     "error": {
+      "code": "not_found",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  }
+ ]
+}

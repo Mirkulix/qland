@@ -1,0 +1,1 @@
+fn both(h: Header, p: std.url.Param) -> Str = h.name

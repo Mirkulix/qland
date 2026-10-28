@@ -1,0 +1,1 @@
+fn std.a.f(x: Int) -> Int = x

@@ -62,7 +62,10 @@ const KNOWN_OPS: &[(&str, &str)] = &[
     ("tanh", "Hyperbolic tangent activation"),
     ("softmax", "Softmax along last axis"),
     ("transpose", "Transpose (reverses dimensions)"),
-    ("to_ternary", "Quantize weights to ternary {-1, 0, +1} (IGQK)"),
+    (
+        "to_ternary",
+        "Quantize weights to ternary {-1, 0, +1} (IGQK)",
+    ),
     ("to_lowrank", "Low-rank approximation (default rank 16)"),
     ("superpose", "Create quantum superposition state"),
     ("measure", "Quantum measurement — collapse to classical"),
@@ -249,7 +252,9 @@ pub fn analyze_source(source: &str) -> Vec<Diagnostic> {
         {
             if !name.is_empty() {
                 // Mark uses inside the RHS.
-                if let Some(rhs) = line.strip_prefix("node ").and_then(|r| r.splitn(2, '=').nth(1))
+                if let Some(rhs) = line
+                    .strip_prefix("node ")
+                    .and_then(|r| r.split_once('=').map(|x| x.1))
                 {
                     for key in used.keys().cloned().collect::<Vec<_>>() {
                         if rhs.contains(&key) {
@@ -273,7 +278,7 @@ pub fn analyze_source(source: &str) -> Vec<Diagnostic> {
         // Output references.
         if let Some(rhs) = line
             .strip_prefix("output ")
-            .and_then(|r| r.splitn(2, '=').nth(1))
+            .and_then(|r| r.split_once('=').map(|x| x.1))
         {
             let ref_name = rhs.trim().to_string();
             if used.contains_key(&ref_name) {
@@ -324,7 +329,7 @@ pub fn completions_at(source: &str, line: usize, col: usize) -> Vec<CompletionIt
 
     // 1. After "node <name> = " → operations.
     if trimmed.starts_with("node ") {
-        if let Some(after_eq) = trimmed.splitn(2, '=').nth(1) {
+        if let Some(after_eq) = trimmed.split_once('=').map(|x| x.1) {
             let after_eq = after_eq.trim_start();
             // If we already have an op name and are inside parens → variable completions.
             if after_eq.contains('(') {
@@ -336,11 +341,13 @@ pub fn completions_at(source: &str, line: usize, col: usize) -> Vec<CompletionIt
     }
 
     // 2. After "input <name>: " → type completions.
-    if trimmed.starts_with("input ") {
-        if trimmed.contains(':') {
-            let after_colon = trimmed.splitn(2, ':').nth(1).unwrap_or("").trim_start();
-            return type_completions(after_colon);
-        }
+    if trimmed.starts_with("input ") && trimmed.contains(':') {
+        let after_colon = trimmed
+            .split_once(':')
+            .map(|x| x.1)
+            .unwrap_or("")
+            .trim_start();
+        return type_completions(after_colon);
     }
 
     // 3. After "output <name> = " → variable completions.
@@ -383,10 +390,7 @@ pub fn hover_info(source: &str, line: usize, col: usize) -> Option<String> {
         if word == *name {
             // Try to extract the full definition line for richer info.
             let lines_vec = source_lines(source);
-            let def_text = lines_vec
-                .get(*def_line)
-                .map(|l| l.trim())
-                .unwrap_or("");
+            let def_text = lines_vec.get(*def_line).map(|l| l.trim()).unwrap_or("");
             return Some(format!("**{name}** — {desc}\n\n```qlang\n{def_text}\n```"));
         }
     }
@@ -446,6 +450,27 @@ fn keyword_completions(prefix: &str) -> Vec<CompletionItem> {
         .collect()
 }
 
+/// Return the definition location (line, col) for the symbol at `(line, col)`.
+///
+/// Looks up user-defined names (inputs, nodes) and returns the line they were
+/// defined on.
+pub fn goto_definition(source: &str, line: usize, col: usize) -> Option<(usize, usize)> {
+    let word = word_at(source, line, col)?;
+
+    let names = defined_names(source);
+    for (name, def_line, _) in &names {
+        if word == *name {
+            // Return the column where the name starts on the definition line.
+            let lines = source_lines(source);
+            let def_text = lines.get(*def_line)?;
+            let col_offset = def_text.find(&word).unwrap_or(0);
+            return Some((*def_line, col_offset));
+        }
+    }
+
+    None
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -472,7 +497,10 @@ graph demo {
     #[test]
     fn analyze_valid_source_no_errors() {
         let diags = analyze_source(SAMPLE);
-        let errors: Vec<_> = diags.iter().filter(|d| d.severity == Severity::Error).collect();
+        let errors: Vec<_> = diags
+            .iter()
+            .filter(|d| d.severity == Severity::Error)
+            .collect();
         assert!(errors.is_empty(), "expected no errors, got: {errors:?}");
     }
 
@@ -491,8 +519,9 @@ graph demo {
         let bad = "input x: f32[4]\n";
         let diags = analyze_source(bad);
         assert!(
-            diags.iter().any(|d| d.severity == Severity::Warning
-                && d.message.contains("graph")),
+            diags
+                .iter()
+                .any(|d| d.severity == Severity::Warning && d.message.contains("graph")),
             "expected warning about missing graph: {diags:?}"
         );
     }
@@ -502,8 +531,9 @@ graph demo {
         let src = "graph g {\n  input x: f32[4]\n}\n";
         let diags = analyze_source(src);
         assert!(
-            diags.iter().any(|d| d.severity == Severity::Info
-                && d.message.contains("output")),
+            diags
+                .iter()
+                .any(|d| d.severity == Severity::Info && d.message.contains("output")),
             "expected info about missing output: {diags:?}"
         );
     }
@@ -513,8 +543,9 @@ graph demo {
         let src = "graph g {\n  input x: f32[4]\n  input x: f32[8]\n  output y = x\n}\n";
         let diags = analyze_source(src);
         assert!(
-            diags.iter().any(|d| d.severity == Severity::Warning
-                && d.message.contains("duplicate")),
+            diags
+                .iter()
+                .any(|d| d.severity == Severity::Warning && d.message.contains("duplicate")),
             "expected duplicate warning: {diags:?}"
         );
     }

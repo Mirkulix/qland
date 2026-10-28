@@ -1,0 +1,16 @@
+{
+  "name": "h01_health_head_405",
+  "description": "HEAD /health gives 200, POST /health gives 405",
+  "steps": [
+    {
+      "name": "head health",
+      "request": {"method": "HEAD", "path": "/health"},
+      "expect": {"status": 200, "body": ""}
+    },
+    {
+      "name": "post health",
+      "request": {"method": "POST", "path": "/health"},
+      "expect": {"status": 405}
+    }
+  ]
+}

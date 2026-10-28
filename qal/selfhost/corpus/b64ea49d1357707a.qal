@@ -1,0 +1,3 @@
+type Box[T] = { v: T }
+fn boxed[!e](op: fn() -> Unit !e) -> Box[fn() -> Unit !e] = Box { v: op }
+fn bad9() -> Unit = let b = boxed(fn() => print("x")) in let f = b.v in f()

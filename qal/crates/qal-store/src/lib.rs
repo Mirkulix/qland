@@ -1,0 +1,600 @@
+//! QAL codebase store (spec §5, §6): content-addressed, checked definitions in `.qal/store.db`.
+//!
+//! The store keeps definitions by hash (`defs`), what they refer to (`deps`), the readable names
+//! (`names`, name -> hash) and every change of a name (`history`). Invariants:
+//! 1. A definition is stored only if the whole codebase including it parses and checks.
+//! 2. Every dependency of a stored definition is stored; every dependency of a named definition is named.
+//! 3. `define` and `rename` are atomic: all their changes are written in one transaction, or none.
+//!
+//! Every operation reports problems as diagnostics (store failures are `store_error`).
+
+mod define;
+mod incremental;
+mod memory;
+mod ops;
+pub mod package;
+mod pattern;
+mod schema;
+mod snapshot;
+pub mod space;
+pub mod team;
+
+pub use define::{last_lock_held, Release, StdNames};
+pub use space::Space;
+pub use memory::{Attempt, Correction, CorrectionInput};
+pub use ops::{Deleted, DepView, Entry, HistoryEntry, Query, Recall, RecallQuery, Renamed, View};
+pub use package::{Exported, Imported};
+pub use pattern::matches as signature_matches;
+
+use qal_core::ast::Program;
+use qal_core::tast::TProgram;
+use qal_core::diag::Diagnostic;
+use rusqlite::Connection;
+use serde::Serialize;
+use snapshot::Snapshot;
+use std::path::{Path, PathBuf};
+
+/// The store directory and file inside a project.
+pub const STORE_DIR: &str = ".qal";
+pub const STORE_FILE: &str = "store.db";
+
+/// The result of `define` for one name.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Defined {
+    pub name: String,
+    /// `type`, `fn` or `test`.
+    pub kind: &'static str,
+    /// Empty (and left out of the JSON) in an MCP reply: agents address definitions by name.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub hash: String,
+    /// `added` (new name), `replaced` (new version), `unchanged` (same hash), or `relinked`
+    /// (a stored dependent that now refers to the new versions).
+    pub status: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub old_hash: Option<String>,
+    /// An unchanged input that cleared a conflict mark of its change set (the owner keeps its
+    /// own version: spec §7.3, "define n again"). Signed in the `define` record as `resolved`.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub resolved: bool,
+}
+
+/// The project directory around `start`: the nearest directory (`start` or an ancestor) that
+/// contains `.qal/store.db`.
+pub fn project_of(start: &Path) -> Option<PathBuf> {
+    start.ancestors().find(|d| d.join(STORE_DIR).join(STORE_FILE).is_file()).map(Path::to_path_buf)
+}
+
+/// Runs kept at most (`Store::observe`).
+pub const MAX_OBSERVED: usize = 200;
+
+/// A run of an entry point and what it printed.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct Observed {
+    pub entry: String,
+    pub args: Vec<String>,
+    pub stdin: String,
+    pub stdout: String,
+    pub exit_code: i64,
+}
+
+pub struct Store {
+    conn: Connection,
+    path: PathBuf,
+    /// The released standard library (see [`Store::set_release`]).
+    release: Option<define::Release>,
+    /// The std store only: changing or deleting released names is allowed.
+    breaking: bool,
+    /// Team mode: who signs the records of writes (see [`team`]).
+    signer: Option<std::sync::Arc<team::Signer>>,
+    /// The space every operation works in (`main` unless a change set is chosen).
+    space: Space,
+    /// What the last team write reported besides its result (leases taken, stubs).
+    last: team::WriteReport,
+    /// The codebase the last successful `define` wrote, checked (see `take_written`).
+    written: Option<define::Written>,
+}
+
+/// The checked codebase and the (name, hash) of the definitions to verify.
+pub type VerifyFn<'a> = dyn FnMut(&TProgram, &[(String, String)]) -> Result<Vec<(String, String)>, Vec<Diagnostic>> + 'a;
+
+/// A verification step of `define` (the contract prover): `run` gets the checked codebase including
+/// the new definitions and the functions and tests that are new, got a new hash (given or relinked),
+/// or have no result for `key` yet; it returns their results as (hash, JSON) for the `proofs` table,
+/// or diagnostics that reject the whole `define`. It runs on a snapshot of the store without holding
+/// the write lock, so it may be called again (rarely) when another writer changed what has to be
+/// verified in the meantime.
+pub struct Verify<'a> {
+    /// Identifies the verifier and its settings; results are stored per key.
+    pub key: String,
+    pub run: &'a mut VerifyFn<'a>,
+}
+
+pub(crate) fn sql(e: rusqlite::Error) -> Vec<Diagnostic> {
+    let busy = matches!(e.sqlite_error_code(), Some(rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked));
+    let mut d = Diagnostic::store_error(format!("store database error: {e}"));
+    if busy {
+        // Another writer held the lock past the busy timeout (team mode reports it as E0907).
+        d.detail = Some(serde_json::json!({"sqlite": "busy"}));
+    }
+    vec![d]
+}
+
+/// True for the store error of a write lock held past the busy timeout (see [`sql`]).
+pub fn is_busy(d: &Diagnostic) -> bool {
+    d.kind == "store_error" && d.detail.as_ref().and_then(|v| v.get("sqlite")).and_then(|v| v.as_str()) == Some("busy")
+}
+
+pub(crate) fn now_ms() -> i64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
+}
+
+impl Store {
+    /// Creates `<project>/.qal/store.db` if it does not exist yet, and opens it.
+    pub fn init(project: &Path) -> Result<Store, Vec<Diagnostic>> {
+        let dir = project.join(STORE_DIR);
+        std::fs::create_dir_all(&dir).map_err(|e| vec![Diagnostic::store_error(format!("cannot create {}: {e}", dir.display()))])?;
+        let path = dir.join(STORE_FILE);
+        let mut conn = Connection::open(&path).map_err(sql)?;
+        schema::configure(&conn).map_err(sql)?;
+        schema::create(&mut conn, &path)?;
+        Store::checked(conn, path)
+    }
+
+    /// Opens an existing store file.
+    pub fn open(path: &Path) -> Result<Store, Vec<Diagnostic>> {
+        if !path.is_file() {
+            return Err(vec![Diagnostic::store_error(format!("no QAL store at {}", path.display())).hint("create one with `qal init`")]);
+        }
+        let conn = Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE).map_err(sql)?;
+        schema::configure(&conn).map_err(sql)?;
+        Store::checked(conn, path.to_path_buf())
+    }
+
+    /// Opens the store of the project containing `start`: the nearest `.qal/store.db` in `start` or
+    /// one of its ancestors.
+    pub fn discover(start: &Path) -> Result<Store, Vec<Diagnostic>> {
+        for dir in start.ancestors() {
+            let candidate = dir.join(STORE_DIR).join(STORE_FILE);
+            if candidate.is_file() {
+                return Store::open(&candidate);
+            }
+        }
+        Err(vec![Diagnostic::store_error(format!("no QAL store in {} or its parents", start.display())).hint("create one with `qal init`")])
+    }
+
+    fn checked(mut conn: Connection, path: PathBuf) -> Result<Store, Vec<Diagnostic>> {
+        schema::migrate(&mut conn)?;
+        let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0)).map_err(sql)?;
+        if version != schema::SCHEMA_VERSION {
+            return Err(vec![Diagnostic::store_error(format!(
+                "{} is not a QAL store of version {} (found version {version})",
+                path.display(),
+                schema::SCHEMA_VERSION
+            ))]);
+        }
+        Ok(Store { conn, path, release: None, breaking: false, signer: None, space: Space::Main, last: team::WriteReport::default(), written: None })
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// Every following operation works in `space` (a change set must exist; checked by each operation).
+    pub fn set_space(&mut self, space: Space) {
+        self.space = space;
+    }
+
+    pub fn space(&self) -> &Space {
+        &self.space
+    }
+
+    /// The leases the last write took and the stubs it defined (team mode).
+    /// The codebase the last successful `define` wrote, as program and checked program: what the
+    /// define's tests and property tests run on without loading and checking it again.
+    pub fn take_written(&mut self) -> Option<(qal_core::ast::Program, qal_core::tast::TProgram)> {
+        self.written.take().map(|w| (w.program, w.typed))
+    }
+
+    /// Keeps a run of `entry` that needed no effect but `io` with its output (see
+    /// `schema::OBSERVED`); a later run with the same arguments and input replaces it. At most
+    /// `MAX_OBSERVED` runs are kept, the oldest go first.
+    pub fn observe(&mut self, run: &Observed) -> Result<(), Vec<Diagnostic>> {
+        let args = serde_json::to_string(&run.args).unwrap_or_default();
+        let at = now_ms();
+        self.conn
+            .execute(
+                "INSERT INTO observed (entry, args, stdin, stdout, exit_code, at) VALUES (?1, ?2, ?3, ?4, ?5, ?6) \
+                 ON CONFLICT(entry, args, stdin) DO UPDATE SET stdout = excluded.stdout, exit_code = excluded.exit_code, at = excluded.at",
+                rusqlite::params![run.entry, args, run.stdin, run.stdout, run.exit_code, at],
+            )
+            .map_err(sql)?;
+        self.conn
+            .execute("DELETE FROM observed WHERE id NOT IN (SELECT id FROM observed ORDER BY at DESC, id DESC LIMIT ?1)", [MAX_OBSERVED as i64])
+            .map_err(sql)?;
+        Ok(())
+    }
+
+    /// The kept runs, newest first, at most `limit`.
+    pub fn observed(&self, limit: usize) -> Result<Vec<Observed>, Vec<Diagnostic>> {
+        let mut st = self.conn.prepare("SELECT entry, args, stdin, stdout, exit_code FROM observed ORDER BY at DESC, id DESC LIMIT ?1").map_err(sql)?;
+        let rows = st
+            .query_map([limit as i64], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, String>(3)?, r.get::<_, i64>(4)?)))
+            .map_err(sql)?;
+        let mut out = Vec::new();
+        for row in rows {
+            let (entry, args, stdin, stdout, exit_code) = row.map_err(sql)?;
+            out.push(Observed { entry, args: serde_json::from_str(&args).unwrap_or_default(), stdin, stdout, exit_code });
+        }
+        Ok(out)
+    }
+
+    pub fn last_write(&self) -> &team::WriteReport {
+        &self.last
+    }
+
+    /// The whole named codebase as a program (checked when it was stored).
+    pub fn program(&mut self) -> Result<Program, Vec<Diagnostic>> {
+        let tx = self.conn.transaction().map_err(sql)?;
+        let snap = Snapshot::load(&tx, &self.space)?;
+        snap.program(&tx, &|_| false)
+    }
+
+    /// The whole named codebase and the hash of every name, read in one transaction: the hashes
+    /// are those of exactly these definitions, whatever another writer does meanwhile.
+    pub fn program_with_hashes(&mut self) -> Result<(Program, std::collections::HashMap<String, String>), Vec<Diagnostic>> {
+        let tx = self.conn.transaction().map_err(sql)?;
+        let snap = Snapshot::load(&tx, &self.space)?;
+        let hashes = snap.names.iter().map(|(n, e)| (n.clone(), e.hash.to_hex())).collect();
+        Ok((snap.program(&tx, &|_| false)?, hashes))
+    }
+
+    /// Adds or replaces the definitions in `src` (spec §6). Either everything is stored and the
+    /// result lists every name that changed or was given, or nothing is stored and the diagnostics
+    /// say why. `agent` is recorded in the history.
+    /// In a team store, `agent` is ignored: the history names the signer's member.
+    pub fn define(&mut self, src: &str, agent: &str) -> Result<Vec<Defined>, Vec<Diagnostic>> {
+        self.define_with(src, agent, None)
+    }
+
+    /// Like `define`, with a verification step before anything is committed (see [`Verify`]).
+    pub fn define_verified(&mut self, src: &str, agent: &str, verify: &mut Verify) -> Result<Vec<Defined>, Vec<Diagnostic>> {
+        self.define_with(src, agent, Some(verify))
+    }
+
+    fn define_with(&mut self, src: &str, agent: &str, verify: Option<&mut Verify>) -> Result<Vec<Defined>, Vec<Diagnostic>> {
+        let signer = self.signer.as_deref();
+        let team = team::require_signer(&self.conn, signer)?;
+        let agent = signer.map_or(agent, |s| s.member.as_str()).to_string();
+        let agent = agent.as_str();
+        // The checked program of the last define (main only: change sets are small and short-lived).
+        let cache = (self.space == Space::Main).then(|| incremental::cache_path(&self.path));
+        let prior = cache.as_deref().and_then(incremental::load);
+        let rules = define::Rules { std: StdNames::Refuse, release: self.release.as_ref(), breaking: self.breaking, prior: prior.as_ref() };
+        let space = self.space.clone();
+        let report = std::cell::RefCell::new(team::WriteReport::default());
+        // What the session viewed is in the team log (reads never write store.db).
+        let log = if team { self.team_log().ok() } else { None };
+        let guard = |tx: &rusqlite::Transaction, snap: &Snapshot, input: &Program, typed: &TProgram, dry: bool| -> Result<(), Vec<Diagnostic>> {
+            let names: std::collections::BTreeSet<&str> = input.defs.iter().map(|d| d.name()).collect();
+            let stubs: Vec<String> = typed.stubs().into_iter().filter(|n| names.contains(n.as_str())).collect();
+            let leases = if team { team::guard_define(tx, log.as_ref(), signer, &space, snap, input, dry)? } else { Vec::new() };
+            *report.borrow_mut() = team::WriteReport { leases, stubs };
+            Ok(())
+        };
+        let record = |out: &[Defined], tx: &rusqlite::Transaction, before: &team::Rows| {
+            // A define that cleared conflict marks without changing a hash signs which (§7.3).
+            let mut extra = serde_json::Map::new();
+            let resolved: Vec<&str> = out.iter().filter(|d| d.resolved).map(|d| d.name.as_str()).collect();
+            if !resolved.is_empty() {
+                extra.insert("resolved".into(), serde_json::Value::from(resolved));
+            }
+            team::record_write(tx, signer, "define", &space, before, &team::Entry::of_defined(out), extra)
+        };
+        let mut written = None;
+        let out = define::define_checked(&mut self.conn, src, agent, &rules, &self.space, verify, &guard, &record, &mut written);
+        if let (Ok(_), Some(path), Some(w)) = (&out, &cache, &written) {
+            // The key of what this define wrote (a snapshot taken now could hold another writer's
+            // define as well).
+            let written = snapshot::fingerprint(w.hashed.defs.iter().map(|c| (c.name.as_str(), &c.hash, c.local_names.as_slice())));
+            incremental::save(path, &incremental::key(&written), &w.typed, &w.hashed);
+        }
+        self.written = written;
+        self.last = report.into_inner();
+        match out {
+            Ok(defined) => {
+                self.remember_corrections(&defined, agent);
+                Ok(defined)
+            }
+            Err(diags) => Err(self.remember_attempts(diags, src, agent)),
+        }
+    }
+
+    /// A failed `define`: records an attempt per name with a diagnostic and adds the memory's hint
+    /// to the first diagnostic of each code and message shape. Never changes the diagnostics otherwise;
+    /// a failed memory read or write is ignored (like [`Store::try_save_proofs`]).
+    fn remember_attempts(&mut self, mut diags: Vec<Diagnostic>, src: &str, agent: &str) -> Vec<Diagnostic> {
+        if diags.iter().all(|d| d.def.is_empty()) {
+            return diags;
+        }
+        if let Ok(input) = qal_compiler::parse_program(src) {
+            let _ = self.side_write(|tx| memory::record_attempts(tx, &diags, &input, agent));
+        }
+        let mut seen: Vec<(&'static str, String)> = Vec::new();
+        for d in diags.iter_mut().filter(|d| !d.def.is_empty()) {
+            let key = (d.code, memory::shape(&d.message));
+            if seen.contains(&key) {
+                continue;
+            }
+            seen.push(key);
+            let hint = self.conn.transaction().ok().and_then(|tx| memory::hint_for(&tx, d.code, &d.message).ok().flatten());
+            if let Some(h) = hint {
+                d.hints.push(h);
+            }
+        }
+        diags
+    }
+
+    /// A successful `define`: turns the agent's earlier failed attempts of the defined names into
+    /// corrections. Ignored if it fails.
+    fn remember_corrections(&mut self, defined: &[Defined], agent: &str) {
+        let names: Vec<&str> = defined.iter().filter(|d| d.status == "added" || d.status == "replaced").map(|d| d.name.as_str()).collect();
+        // One cheap read first: most defines have no earlier attempt and open no write transaction.
+        if !matches!(memory::has_attempts_for(&self.conn, &names, agent), Ok(true)) {
+            return;
+        }
+        let space = self.space.clone();
+        let _ = self.side_write(|tx| {
+            let snap = Snapshot::load(tx, &space)?;
+            let after = |n: &str| snap.decode_name(tx, n).ok().map(|d| ops::text(&d));
+            memory::record_corrections(tx, defined, &after, agent).map(|_| ())
+        });
+    }
+
+    /// Runs `f` in its own short transaction without waiting for other writers: if one holds the
+    /// lock, nothing is written (the memory simply misses this event).
+    fn side_write(&mut self, f: impl FnOnce(&rusqlite::Transaction) -> Result<(), Vec<Diagnostic>>) -> Result<(), Vec<Diagnostic>> {
+        self.conn.busy_timeout(std::time::Duration::ZERO).map_err(sql)?;
+        let result = (|| {
+            let tx = self.conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate).map_err(sql)?;
+            f(&tx)?;
+            tx.commit().map_err(sql)
+        })();
+        let _ = schema::configure(&self.conn);
+        result
+    }
+
+    /// Imports corrections made elsewhere (the seed corpus) as `corpus` corrections, all or nothing;
+    /// returns how many were stored.
+    pub fn import_corrections(&mut self, records: &[CorrectionInput]) -> Result<usize, Vec<Diagnostic>> {
+        let tx = self.conn.transaction().map_err(sql)?;
+        let n = memory::import(&tx, records)?;
+        tx.commit().map_err(sql)?;
+        Ok(n)
+    }
+
+    /// Earlier corrections for `q.code` and/or `q.message` (at most 5) and the stored definitions
+    /// matching `q.name` and `q.type_pattern` (at most 20). Without any filter it is refused (E0701);
+    /// an unknown code gives empty lists.
+    pub fn recall(&mut self, q: &RecallQuery) -> Result<Recall, Vec<Diagnostic>> {
+        // A blank message is no filter: SQLite's instr(x, '') is 1 for every row.
+        let q = &RecallQuery { message: q.message.clone().filter(|m| !m.trim().is_empty()), ..q.clone() };
+        if q.code.is_none() && q.message.is_none() && q.name.is_none() && q.type_pattern.is_none() {
+            return Err(vec![Diagnostic::new("E0701", "bad_arguments", "", "", "`recall` needs at least one of `code`, `message`, `name`, `type`")
+                .hint("recall {\"code\": \"E0201\", \"message\": \"unknown name `x`\"} lists earlier fixes of a diagnostic; {\"name\": \"prefix\"} or {\"type\": \"fn(Str) -> _\"} lists definitions")]);
+        }
+        let corrections = {
+            let tx = self.conn.transaction().map_err(sql)?;
+            memory::recall(&tx, q)?
+        };
+        let mut definitions = Vec::new();
+        if q.name.is_some() || q.type_pattern.is_some() {
+            definitions = ops::query(&mut self.conn, &self.space, &Query { name: q.name.clone(), type_pattern: q.type_pattern.clone(), ..Query::default() })?;
+            definitions.truncate(20);
+        }
+        Ok(Recall { corrections, definitions })
+    }
+
+    /// Renames a definition. No hash changes; the history of `old` moves to `new`.
+    pub fn rename(&mut self, old: &str, new: &str, agent: &str) -> Result<Renamed, Vec<Diagnostic>> {
+        let signer = self.signer.as_deref();
+        team::require_signer(&self.conn, signer)?;
+        let agent = signer.map_or(agent, |s| s.member.as_str());
+        let rules = define::Rules { std: StdNames::Refuse, release: self.release.as_ref(), breaking: self.breaking, prior: None };
+        let space = self.space.clone();
+        let log = if team::is_team(&self.conn)? { self.team_log().ok() } else { None };
+        let record = |tx: &rusqlite::Transaction, labels: &[team::Entry], before: &team::Rows| {
+            team::guard_names(tx, log.as_ref(), signer, &space, "qal_rename", labels)?;
+            team::record_write(tx, signer, "rename", &space, before, labels, serde_json::Map::new())
+        };
+        ops::rename(&mut self.conn, &self.space, old, new, agent, &rules, &record)
+    }
+
+    /// Removes names nothing else refers to (see [`ops::delete`]); their history stays.
+    pub fn delete(&mut self, names: &[String], agent: &str) -> Result<Vec<Deleted>, Vec<Diagnostic>> {
+        let signer = self.signer.as_deref();
+        team::require_signer(&self.conn, signer)?;
+        let agent = signer.map_or(agent, |s| s.member.as_str());
+        let rules = define::Rules { std: StdNames::Refuse, release: self.release.as_ref(), breaking: self.breaking, prior: None };
+        let space = self.space.clone();
+        let log = if team::is_team(&self.conn)? { self.team_log().ok() } else { None };
+        let record = |tx: &rusqlite::Transaction, labels: &[team::Entry], before: &team::Rows| {
+            team::guard_names(tx, log.as_ref(), signer, &space, "qal_delete", labels)?;
+            team::record_write(tx, signer, "delete", &space, before, labels, serde_json::Map::new())
+        };
+        ops::delete(&mut self.conn, &self.space, names, agent, &rules, &record)
+    }
+
+    /// Text, signature and direct dependencies of each name (or `#<hash>`).
+    pub fn view(&mut self, names: &[String]) -> Result<Vec<View>, Vec<Diagnostic>> {
+        ops::view(&mut self.conn, &self.space, names)
+    }
+
+    /// Named definitions matching every given filter, sorted by name.
+    /// The tests that refer to one of `names`, directly or through other definitions (one
+    /// snapshot; a query per dependent took a quarter of a define at 1520 definitions).
+    pub fn tests_reaching(&mut self, names: &[String]) -> Result<Vec<String>, Vec<Diagnostic>> {
+        let snap = Snapshot::load(&self.conn, &self.space)?;
+        let start: std::collections::HashSet<&str> = names.iter().map(String::as_str).collect();
+        let mut out = Vec::new();
+        for n in snap.with_dependents(&start) {
+            let Some(e) = snap.names.get(&n) else { continue };
+            if snap.row(&self.conn, &e.hash)?.is_some_and(|r| r.kind == qal_core::canon::Kind::Test) {
+                out.push(n);
+            }
+        }
+        out.sort();
+        Ok(out)
+    }
+
+    pub fn query(&mut self, q: &Query) -> Result<Vec<Entry>, Vec<Diagnostic>> {
+        ops::query(&mut self.conn, &self.space, q)
+    }
+
+    /// The current name of a definition that was renamed from `old` (None if it was not, or if
+    /// the definition no longer has a name). Based on the history: it still answers when `old`
+    /// has since been reused for a different definition, so callers use it only for names that
+    /// do not exist.
+    pub fn renamed_to(&mut self, old: &str) -> Result<Option<String>, Vec<Diagnostic>> {
+        let conn = &self.conn;
+        let space = &self.space;
+        let current = |n: &str| space::hash_of(conn, space, n).ok().flatten().is_some();
+        ops::renamed_to(conn, space, &current, old)
+    }
+
+    /// Stored proof results (JSON) of definition `hash` for prover key `prover`.
+    pub fn proofs(&self, hash: &str, prover: &str) -> Result<Option<String>, Vec<Diagnostic>> {
+        use rusqlite::OptionalExtension;
+        self.conn
+            .query_row("SELECT results FROM proofs WHERE hash = ?1 AND prover = ?2", rusqlite::params![hash, prover], |r| r.get(0))
+            .optional()
+            .map_err(sql)
+    }
+
+    /// Records proof results (JSON) of the stored definition `hash`; replaces earlier ones for `prover`.
+    pub fn save_proofs(&mut self, hash: &str, prover: &str, results: &str) -> Result<(), Vec<Diagnostic>> {
+        self.conn
+            .execute(
+                "INSERT INTO proofs (hash, prover, results, at) VALUES (?1, ?2, ?3, ?4) \
+                 ON CONFLICT(hash, prover) DO UPDATE SET results = excluded.results, at = excluded.at",
+                rusqlite::params![hash, prover, results, now_ms()],
+            )
+            .map(|_| ())
+            .map_err(sql)
+    }
+
+    /// [`Store::save_proofs`] as a cache fill that never waits: if another writer holds the lock,
+    /// nothing is stored (the results are computed again next time). Returns whether it stored.
+    pub fn try_save_proofs(&mut self, hash: &str, prover: &str, results: &str) -> bool {
+        if self.conn.busy_timeout(std::time::Duration::ZERO).is_err() {
+            return false;
+        }
+        let saved = self.save_proofs(hash, prover, results).is_ok();
+        let _ = schema::configure(&self.conn);
+        saved
+    }
+
+    /// Exports the names starting with `prefix` and their dependencies as package `package`
+    /// (the file text is in [`Exported::file`]).
+    pub fn export(&mut self, prefix: &str, package: &str) -> Result<Exported, Vec<Diagnostic>> {
+        package::export(&mut self.conn, prefix, package)
+    }
+
+    /// Imports a package file atomically, verifying its checksum and every hash.
+    pub fn import(&mut self, file: &str) -> Result<Imported, Vec<Diagnostic>> {
+        self.import_with(file, None)
+    }
+
+    /// [`Store::import`] with the verification step of [`Store::define_verified`].
+    pub fn import_verified(&mut self, file: &str, verify: &mut Verify) -> Result<Imported, Vec<Diagnostic>> {
+        self.import_with(file, Some(verify))
+    }
+
+    fn import_with(&mut self, file: &str, verify: Option<&mut Verify>) -> Result<Imported, Vec<Diagnostic>> {
+        let signer = self.signer.as_deref();
+        let team = team::require_signer(&self.conn, signer)?;
+        let pkg = package::parse(file)?;
+        // A team store imports only the standard library (`qal team sync-std`), and its record
+        // says which package it was.
+        if team && pkg.name != package::STD_PACKAGE_NAME {
+            let mut d = Diagnostic::new("E0903", "role_forbidden", "", "", format!("a team store imports only the standard library, not package `{}`", pkg.name));
+            d.expected = Some("architect".into());
+            return Err(vec![d.hint("agents write the code over MCP; the owner imports std with `qal team sync-std`")]);
+        }
+        let mut extra = serde_json::Map::new();
+        extra.insert("package".into(), serde_json::Value::from(pkg.name.clone()));
+        extra.insert("hash".into(), serde_json::Value::from(pkg.hash.clone()));
+        let record = |out: &[Defined], tx: &rusqlite::Transaction, before: &team::Rows| team::record_write(tx, signer, "import", &Space::Main, before, &team::Entry::of_defined(out), extra.clone());
+        package::import(&mut self.conn, file, verify, self.release.as_ref(), &record)
+    }
+
+    /// Sets the released standard library: the std package embedded in the binary (`file`). Only
+    /// this package may be imported as `std` into a project; in the std store its names keep their
+    /// signatures and cannot be deleted (E0244) unless [`Store::set_breaking`] allows it, and a
+    /// rebuild from it keeps its recorded agents.
+    pub fn set_release(&mut self, file: &str) -> Result<(), Vec<Diagnostic>> {
+        self.release = Some(define::Release::of(file)?);
+        Ok(())
+    }
+
+    /// Allows changing the signature of, or deleting, released std names in the std store.
+    pub fn set_breaking(&mut self, breaking: bool) {
+        self.breaking = breaking;
+    }
+
+    /// Makes the store at `<project>/.qal/store.db` (created if missing) the std project's store
+    /// (`meta.role = 'std'`), where only `std.` names may be defined and no std package is imported
+    /// automatically. Refused for a store that already holds definitions or imported a std package
+    /// as an ordinary project.
+    pub fn init_std(project: &Path) -> Result<Store, Vec<Diagnostic>> {
+        let mut store = Store::init(project)?;
+        let tx = store.conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate).map_err(sql)?;
+        if !define::is_std_store(&tx)? {
+            let names: i64 = tx.query_row("SELECT count(*) FROM names", [], |r| r.get(0)).map_err(sql)?;
+            let imported = package::meta(&tx, package::META_STD_PACKAGE)?.is_some();
+            if names > 0 || imported {
+                return Err(vec![Diagnostic::store_error(format!("{} is the store of an ordinary project", store.path.display()))
+                    .hint("the std project needs its own store: run `qal init --std` in an empty directory (qal/std)")]);
+            }
+            package::set_meta(&tx, package::META_ROLE, define::ROLE_STD)?;
+        }
+        tx.commit().map_err(sql)?;
+        Ok(store)
+    }
+
+    /// True for the std project's store (`meta.role = 'std'`).
+    pub fn is_std(&self) -> Result<bool, Vec<Diagnostic>> {
+        define::is_std_store(&self.conn)
+    }
+
+    /// Imports the std package `file` (and makes it the release, see [`Store::set_release`]) unless the store already has it (`meta.std_package` is its
+    /// hash) or is the std project's store; returns the import, if one happened. Called before
+    /// every write of a project (Phase 3 §4.3), never by reads.
+    pub fn ensure_std(&mut self, file: &str, verify: Option<&mut Verify>) -> Result<Option<Imported>, Vec<Diagnostic>> {
+        // The package this is called with is the release (the one embedded in the binary).
+        let release = define::Release::of(file)?;
+        // A team store imports std only by a signed `qal team sync-std` (Phase 4 spec §4.1).
+        if self.is_std()? || team::is_team(&self.conn)? {
+            self.release = Some(release);
+            return Ok(None);
+        }
+        if self.meta(package::META_STD_PACKAGE)?.as_deref() == Some(release.hash.as_str()) {
+            self.release = Some(release);
+            return Ok(None);
+        }
+        self.release = Some(release);
+        package::import(&mut self.conn, file, verify, self.release.as_ref(), &|_, _, _| Ok(())).map(Some)
+    }
+
+    /// A value of the store's `meta` table.
+    pub fn meta(&self, key: &str) -> Result<Option<String>, Vec<Diagnostic>> {
+        package::meta(&self.conn, key)
+    }
+
+    /// Every recorded change of `name`, oldest first.
+    pub fn history(&mut self, name: &str) -> Result<Vec<HistoryEntry>, Vec<Diagnostic>> {
+        ops::history(&mut self.conn, &self.space, name)
+    }
+}
+
+#[cfg(test)]
+mod tests;

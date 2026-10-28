@@ -1,0 +1,149 @@
+# Prime factorization.
+#
+# Reads every input line, removes leading and trailing spaces, tabs and `\r`.
+# A line that is a decimal number N (digits only) with 2 <= N <= 10^12 prints
+# its prime factorization `N = f1 * f2 * ...` (ascending, `p` or `p^k`);
+# every other line prints `error`.
+
+type Fmt = { out: Str, prev: Int, count: Int }
+
+fn is_ws(c: Str) -> Bool = c == " " || c == "\t" || c == "\r"
+
+fn is_digit_char(c: Str) -> Bool = len(c) == 1 && c >= "0" && c <= "9"
+
+fn all_digits(cs: List[Str], i: Int) -> Bool
+= if i >= len(cs) then true
+  else match get(cs, i) {
+    Some(c) => is_digit_char(c) && all_digits(cs, i + 1),
+    None => true,
+  }
+
+fn is_number(s: Str) -> Bool = len(s) > 0 && all_digits(chars(s), 0)
+
+fn lead_ws(cs: List[Str], i: Int) -> Int
+= if i >= len(cs) then i
+  else match get(cs, i) {
+    Some(c) => if is_ws(c) then lead_ws(cs, i + 1) else i,
+    None => i,
+  }
+
+fn end_ws(cs: List[Str], j: Int) -> Int
+= if j <= 0 then 0
+  else match get(cs, j - 1) {
+    Some(c) => if is_ws(c) then end_ws(cs, j - 1) else j,
+    None => j,
+  }
+
+fn trimmed(line: Str) -> Str
+= {
+    let cs = chars(line) in
+    let i = lead_ws(cs, 0) in
+    let j = end_ws(cs, len(cs)) in
+    if i >= j then "" else slice(line, i, j)
+  }
+
+fn in_range(n: Int) -> Bool = n >= 2 && n <= 1000000000000
+
+fn next_trial(d: Int) -> Int = if d == 2 then 3 else d + 2
+
+# Trial division: collects the prime factors in non-decreasing order.  Written
+# without a product so no input can overflow, and with a guarded divisor so no
+# input can divide by zero; `d > n / d` is `d * d > n` without the overflow.
+fn factor_loop(n: Int, d: Int, acc: Accum[Int]) -> List[Int]
+= if n < 2 then acc_list(acc)
+  else if d < 2 then factor_loop(n, 2, acc)
+  else if d > n / d then acc_list(AccPush(acc, n))
+  else if n % d == 0 then factor_loop(n / d, d, AccPush(acc, d))
+  else factor_loop(n, next_trial(d), acc)
+
+fn factors(n: Int) -> List[Int] = if n < 2 then [] else factor_loop(n, 2, AccEnd)
+
+fn piece(p: Int, k: Int) -> Str
+= if k == 1 then from_int(p) else from_int(p) ++ "^" ++ from_int(k)
+
+fn fmt_init() -> Fmt = Fmt { out: "", prev: 0, count: 0 }
+
+fn fmt_step(a: Fmt, p: Int) -> Fmt
+= if a.count == 0 then Fmt { out: a.out, prev: p, count: 1 }
+  else if p == a.prev then Fmt { out: a.out, prev: p, count: a.count + 1 }
+  else Fmt { out: a.out ++ piece(a.prev, a.count) ++ " * ", prev: p, count: 1 }
+
+fn fmt_finish(a: Fmt) -> Str
+= if a.count == 0 then "" else a.out ++ piece(a.prev, a.count)
+
+fn factorization(shown: Str, n: Int) -> Str
+= shown ++ " = " ++ fmt_finish(fold(factors(n), fmt_init(), fmt_step))
+
+fn process_line(line: Str) -> Str
+= {
+    let s = trimmed(line) in
+    if is_number(s) then
+      match to_int(s) {
+        Some(n) => if in_range(n) then factorization(s, n) else "error",
+        None => "error",
+      }
+    else "error"
+  }
+
+fn take_loop(xs: List[Str], i: Int, k: Int, acc: Accum[Str]) -> List[Str]
+= if i >= k then acc_list(acc)
+  else match get(xs, i) {
+    Some(x) => take_loop(xs, i + 1, k, AccPush(acc, x)),
+    None => acc_list(acc),
+  }
+
+# Splits the input into lines; a single trailing newline does not open an
+# extra empty line.
+fn ends_nl(s: Str) -> Bool = len(s) > 0 && slice(s, len(s) - 1, len(s)) == "\n"
+
+fn lines_of(text: Str) -> List[Str]
+= if text == "" then []
+  else {
+    let ls = split(text, "\n") in
+    if ends_nl(text) then take_loop(ls, 0, len(ls) - 1, AccEnd) else ls
+  }
+
+fn emit(acc: Int, line: Str) -> Int !io = { print(process_line(line)); acc }
+
+fn main(args: List[Str]) -> Int !io
+= {
+    let text = read_all() in
+    fold(lines_of(text), 0, emit);
+    0
+  }
+
+test example_360 = process_line("360") == "360 = 2^3 * 3^2 * 5"
+test example_13 = process_line("13") == "13 = 13"
+test example_1 = process_line("1") == "error"
+test example_0 = process_line("0") == "error"
+test example_empty = process_line("") == "error"
+test trim_spaces = process_line("  360 ") == "360 = 2^3 * 3^2 * 5"
+test trim_tabs_cr = process_line("\t13\r") == "13 = 13"
+test not_digits = process_line("12a") == "error"
+test negative_like = process_line("-13") == "error"
+test big_power_of_ten = process_line("1000000000000") == "1000000000000 = 2^12 * 5^12"
+test above_limit = process_line("1000000000001") == "error"
+test prime_square = process_line("49") == "49 = 7^2"
+test two = process_line("2") == "2 = 2"
+test eight = process_line("8") == "8 = 2^3"
+test composite_six = process_line("6") == "6 = 2 * 3"
+test dist_factors = process_line("1000003") == "1000003 = 1000003"
+test two_primes = process_line("999983") == "999983 = 999983"
+test factors_1 = factors(1) == []
+test factors_12 = factors(12) == [2, 2, 3]
+test factors_97 = factors(97) == [97]
+test lines_trailing_nl = lines_of("a\nb\n") == ["a", "b"]
+test lines_no_trailing_nl = lines_of("a\nb") == ["a", "b"]
+test lines_empty = lines_of("") == []
+test lines_blank_mid = lines_of("a\n\nb\n") == ["a", "", "b"]
+test lines_one_blank = lines_of("\n") == [""]
+test trimmed_tabs = trimmed(" \t x \r ") == "x"
+test trimmed_all_ws = trimmed(" \t\r ") == ""
+test trimmed_keeps_inner = trimmed(" 1 2 ") == "1 2"
+test limit_ok = in_range(1000000000000) && !in_range(1000000000001)
+test piece_once = piece(7, 1) == "7"
+test piece_power = piece(2, 3) == "2^3"
+test fmt_runs = fmt_finish(fold([2, 2, 2, 3, 3, 5], fmt_init(), fmt_step)) == "2^3 * 3^2 * 5"
+test factor_loop_base = factor_loop(360, 2, AccEnd) == [2, 2, 2, 3, 3, 5]
+test factor_loop_guard_zero = factor_loop(0, 0, AccEnd) == []
+test factor_loop_guard_neg = factor_loop(-7, 0, AccEnd) == []

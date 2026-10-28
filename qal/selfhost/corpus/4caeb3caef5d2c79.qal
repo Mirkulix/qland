@@ -1,0 +1,2 @@
+fn head(xs: List[Int]) -> Int ens r >= 0 = match get(sort_int(xs), 0) { Some(x) => x, None => 0 }
+test t = head([1]) == 1

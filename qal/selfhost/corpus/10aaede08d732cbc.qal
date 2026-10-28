@@ -1,0 +1,2 @@
+fn twice() -> Int = base() * 2
+fn tmp() -> Int = 0

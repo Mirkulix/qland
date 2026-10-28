@@ -1,0 +1,1 @@
+fn inc(x: Int) -> Int ens r > x = x + 1

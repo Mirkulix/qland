@@ -1,0 +1,642 @@
+diff --git a/qal/crates/qal-cli/src/ops.rs b/qal/crates/qal-cli/src/ops.rs
+index 0ba46189..ac891beb 100644
+--- a/qal/crates/qal-cli/src/ops.rs
++++ b/qal/crates/qal-cli/src/ops.rs
+@@ -555,6 +555,7 @@ pub fn define(ctx: &Ctx, src: &str, agent: &str, breaking: bool) -> Reply {
+             let reports = current_reports(&d, reports);
+             let tests = tests_of(&mut store, &d);
+             let fns: Vec<String> = d.iter().filter(|x| x.kind == "fn" && x.status != "relinked" && x.status != "unchanged").map(|x| x.name.clone()).collect();
++            let callers = callers_of(&mut store, &fns);
+             let untested = untested_changes(&d);
+             let mut out = Output { defined: Some(d), ..Output::default() };
+             out.set_proofs(reports);
+@@ -566,7 +567,7 @@ pub fn define(ctx: &Ctx, src: &str, agent: &str, breaking: bool) -> Reply {
+             team_report(store.last_write(), &mut out);
+             drop(store);
+             run_tests_of_define(ctx, &tests, &mut out);
+-            run_properties_of_define(ctx, &fns, &mut out);
++            run_properties_of_define(ctx, &fns, &callers, &mut out);
+             Reply::new(out, 0)
+         }
+         Err(d) => std.failed(d),
+@@ -640,19 +641,41 @@ fn run_tests_of_define(ctx: &Ctx, tests: &[String], out: &mut Output) {
+     out.tests_informative = true;
+ }
+ 
++/// Most callers whose property tests a `define` runs besides those of the functions it wrote.
++const MAX_CALLERS: usize = 24;
++
++/// The functions that call one of `fns`, directly or through others, nearest first, at most
++/// `MAX_CALLERS`. A bug in `put_back` shows in the property test of `cancel`, which runs on states
++/// the program reaches (qal-prove's reach.rs), not in that of `put_back` on unrelated records.
++fn callers_of(store: &mut Store, fns: &[String]) -> Vec<String> {
++    let mut seen: Vec<String> = fns.to_vec();
++    let mut i = 0;
++    while i < seen.len() && seen.len() < fns.len() + MAX_CALLERS {
++        if let Ok(users) = store.query(&Query { uses: Some(seen[i].clone()), ..Query::default() }) {
++            for u in users.into_iter().filter(|u| u.kind == "fn") {
++                if !seen.contains(&u.name) && seen.len() < fns.len() + MAX_CALLERS {
++                    seen.push(u.name);
++                }
++            }
++        }
++        i += 1;
++    }
++    seen.split_off(fns.len())
++}
++
+ /// Runs the generated property tests of the functions a `define` wrote (those that have one: pure,
+-/// with an `ens` or calling a function with `req`), as `test` does with their names. A failed
++/// with an `ens` or calling a function with `req`) and of their callers, as `test` does with their names. A failed
+ /// property is the warning E0803, runs that trapped (overflow, division by zero, ...) on inputs that
+ /// satisfy `req` are the warning E0804: the definitions stay stored and the reply is no error. Without
+ /// this, a contract proven under trapping arithmetic and a property nobody runs let an overflow
+ /// through (living program, pressure run of 2026-10-24).
+-fn run_properties_of_define(ctx: &Ctx, fns: &[String], out: &mut Output) {
++fn run_properties_of_define(ctx: &Ctx, fns: &[String], callers: &[String], out: &mut Output) {
+     if fns.is_empty() {
+         return;
+     }
+     let Ok(loaded) = ctx.load(&Source::Store) else { return };
+     unbounded_products(&loaded.typed, fns, out);
+-    let names: Vec<String> = qal_prove::props::candidates(&loaded.typed).into_iter().map(|i| loaded.typed.fns[i].def.name.clone()).filter(|n| fns.contains(n)).collect();
++    let names: Vec<String> = qal_prove::props::candidates(&loaded.typed).into_iter().map(|i| loaded.typed.fns[i].def.name.clone()).filter(|n| fns.contains(n) || callers.contains(n)).collect();
+     if names.is_empty() {
+         return;
+     }
+diff --git a/qal/crates/qal-prove/src/lib.rs b/qal/crates/qal-prove/src/lib.rs
+index 955fcba3..3b42ee0e 100644
+--- a/qal/crates/qal-prove/src/lib.rs
++++ b/qal/crates/qal-prove/src/lib.rs
+@@ -26,6 +26,7 @@
+ 
+ mod gen;
+ mod inv;
++mod reach;
+ pub mod props;
+ mod repair;
+ mod vc;
+diff --git a/qal/crates/qal-prove/src/props.rs b/qal/crates/qal-prove/src/props.rs
+index 17c1c83e..0f13f473 100644
+--- a/qal/crates/qal-prove/src/props.rs
++++ b/qal/crates/qal-prove/src/props.rs
+@@ -13,6 +13,7 @@
+ 
+ use crate::gen::{fnv, generatable, random_with, shrink, Rng};
+ use crate::inv::Invariants;
++use crate::reach::{checks_invariants, share_keys, Gen, Reach};
+ use qal_core::ast::{BinOp, FnDef, Type};
+ use qal_core::tast::{TExpr, TFn, TKind, TProgram};
+ use qal_run::{RunError, Runner, Value, Values};
+@@ -99,11 +100,13 @@ fn has_obligations(tp: &TProgram, f: &TFn) -> bool {
+ /// The functions with properties, by index into `tp.fns`: pure, generatable parameters, obligations.
+ pub fn candidates(tp: &TProgram) -> Vec<usize> {
+     let invs = Invariants::of(tp);
++    let reach = Reach::of(tp, &invs);
+     (0..tp.fns.len())
+         .filter(|&i| {
+             let f = &tp.fns[i];
+-            // A function that takes or returns a type with an invariant must keep it (inv.rs).
+-            let keeps = !invs.is_invariant(&f.def.name) && (invs.reach(tp, &f.def.ret) || f.def.params.iter().any(|p| invs.reach(tp, &p.ty)));
++            // A function that takes or returns a type with an invariant must keep it (inv.rs), on
++            // inputs it can be given consistently (reach.rs).
++            let keeps = checks_invariants(tp, &invs, &reach, f);
+             // A stub (`todo()`) has no behaviour to test yet.
+             f.def.effects.is_empty() && f.def.params.iter().all(|p| generatable(tp, &p.ty)) && (has_obligations(tp, f) || keeps) && !f.is_stub()
+         })
+@@ -135,17 +138,18 @@ enum Run {
+     Fail(RunError),
+ }
+ 
+-fn run_one(runner: &Runner, invs: &Invariants, f: &str, args: &[Value]) -> Run {
++/// `invs`: the invariants the run checks (None: the function's own contracts only).
++fn run_one(runner: &Runner, invs: Option<&Invariants>, f: &str, args: &[Value]) -> Run {
+     match runner.call(&req_name(f), args) {
+         Ok(Value::Bool(true)) => {}
+         _ => return Run::Discard,
+     }
+     // Inputs keep the invariants of their types, as they keep `req`.
+-    if args.iter().any(|a| invs.broken(runner, a).is_some()) {
++    if invs.is_some_and(|invs| args.iter().any(|a| invs.broken(runner, a).is_some())) {
+         return Run::Discard;
+     }
+     match runner.call(f, args) {
+-        Ok(v) => match invs.broken(runner, &v) {
++        Ok(v) => match invs.and_then(|invs| invs.broken(runner, &v)) {
+             Some(b) => Run::Fail(Invariants::failure(f, b)),
+             None => Run::Pass,
+         },
+@@ -183,6 +187,9 @@ fn same_failure(a: &RunError, b: &RunError) -> bool {
+ fn run_properties(tp: &TProgram, runner: &Runner, fns: &[usize], opts: &PropOptions) -> Vec<PropReport> {
+     let start = Instant::now();
+     let mut out = Vec::new();
++    // Built once per run: the pool of reachable values is shared by all functions.
++    let invs = Invariants::of(tp);
++    let reach = Reach::of(tp, &invs).with_seed(opts.seed);
+     for &i in fns {
+         let f = &tp.fns[i];
+         let name = &f.def.name;
+@@ -197,7 +204,7 @@ fn run_properties(tp: &TProgram, runner: &Runner, fns: &[usize], opts: &PropOpti
+         let types: Vec<Type> = f.def.params.iter().map(|p| p.ty.clone()).collect();
+         let edges = req_bounds(f);
+         let plan = crate::repair::plan(tp, f);
+-        let invs = Invariants::of(tp);
++        let checked = checks_invariants(tp, &invs, &reach, f).then_some(&invs);
+         let max_tries = opts.runs.saturating_mul(10).max(1);
+         let mut tries = 0;
+         let mut out_of_time = false;
+@@ -211,15 +218,40 @@ fn run_properties(tp: &TProgram, runner: &Runner, fns: &[usize], opts: &PropOpti
+             let size = (opts.max_size * tries as u64 / opts.runs.max(1) as u64).min(opts.max_size);
+             tries += 1;
+             let Some(mut args) = types.iter().map(|t| random_with(tp, t, size, &mut rng, &edges)).collect::<Option<Vec<Value>>>() else { break };
+-            // Every other input is repaired towards `req` (it still has to pass it); the others
+-            // stay as drawn, so inputs the atoms do not describe keep their chance.
+-            if tries % 2 == 0 {
++            // A third of the inputs are reached by the program's own functions where a parameter's
++            // type allows it (reach.rs), with the other arguments' strings mostly its keys; a third
++            // are repaired towards `req` and the invariants (it still has to pass them); a third
++            // stay as drawn, so inputs neither describes keep their chance.
++            if tries % 3 == 0 {
++                let mut broke = false;
++                for (k, t) in types.iter().enumerate() {
++                    if reach.has(t) && !broke {
++                        match reach.generate(tp, runner, &invs, t, size, &mut rng, Some(i)) {
++                            Some(Gen::Value(v)) => args[k] = v,
++                            // `f` itself broke an invariant on the walk: run it on those arguments.
++                            Some(Gen::Broke(a)) => {
++                                args = a;
++                                broke = true;
++                            }
++                            None => {}
++                        }
++                    }
++                }
++                if let (false, Some(k)) = (broke, types.iter().position(|t| reach.has(t))) {
++                    let state = args[k].clone();
++                    let others: Vec<bool> = types.iter().map(|t| !reach.has(t)).collect();
++                    share_keys(&state, &mut args, &others, &mut rng);
++                }
++                if !broke && !plan.is_empty() {
++                    crate::repair::repair(&plan, &mut args, &mut rng);
++                }
++            } else if tries % 3 == 1 {
+                 invs.repair(&mut args, &mut rng);
+                 if !plan.is_empty() {
+                     crate::repair::repair(&plan, &mut args, &mut rng);
+                 }
+             }
+-            match run_one(runner, &invs, name, &args) {
++            match run_one(runner, checked, name, &args) {
+                 Run::Discard => report.discarded += 1,
+                 Run::Pass => report.runs += 1,
+                 Run::Trap(e) => {
+@@ -229,7 +261,7 @@ fn run_properties(tp: &TProgram, runner: &Runner, fns: &[usize], opts: &PropOpti
+                 }
+                 Run::Fail(e) => {
+                     report.runs += 1;
+-                    let (args, e) = shrink_failure(tp, runner, &invs, name, &types, args, e, opts, start);
++                    let (args, e) = shrink_failure(tp, runner, checked, name, &types, args, e, opts, start);
+                     report.status = PropStatus::Failed;
+                     report.counterexample = Some(Values(f.def.params.iter().map(|p| p.name.clone()).zip(args).collect()));
+                     report.error = Some(e);
+@@ -251,7 +283,7 @@ fn run_properties(tp: &TProgram, runner: &Runner, fns: &[usize], opts: &PropOpti
+ /// Greedily replaces one argument at a time by a simpler one that still fails the same way, until
+ /// `opts.shrink_steps` candidates were tried or the time budget (counted from `start`) is used up.
+ #[allow(clippy::too_many_arguments)]
+-fn shrink_failure(tp: &TProgram, runner: &Runner, invs: &Invariants, f: &str, types: &[Type], mut args: Vec<Value>, mut err: RunError, opts: &PropOptions, start: Instant) -> (Vec<Value>, RunError) {
++fn shrink_failure(tp: &TProgram, runner: &Runner, invs: Option<&Invariants>, f: &str, types: &[Type], mut args: Vec<Value>, mut err: RunError, opts: &PropOptions, start: Instant) -> (Vec<Value>, RunError) {
+     let mut steps = 0;
+     'outer: loop {
+         for k in 0..args.len() {
+diff --git a/qal/crates/qal-prove/src/reach.rs b/qal/crates/qal-prove/src/reach.rs
+new file mode 100644
+index 00000000..06dda417
+--- /dev/null
++++ b/qal/crates/qal-prove/src/reach.rs
+@@ -0,0 +1,426 @@
++//! Reachable inputs: values of a record type built by the program's own functions instead of
++//! drawn at random.
++//!
++//! A random `St` of the order system has customers whose `spent` does not contain their orders,
++//! orders of unknown customers, and so on: no real run reaches such a state, and a function that is
++//! correct on every real state fails on it. Writing down every relation between the records as a
++//! `req` is long and easy to get wrong (the mutation study of 2026-10-25, A4: two of six such
++//! `req`s were wrong at first). Here a value of `T` is built like a run builds it: a *seed* (a
++//! pure function that returns a `T`, or a record with a `T` field, and takes no `T`, e.g.
++//! `initial()`) followed by a few random *steps* (pure functions that take a `T` and return one,
++//! e.g. `add_customer(st, n, cid, name, tier)`), whose other arguments are drawn at random, their
++//! strings mostly from the keys already in the value (`cancel(st, n, oid)` names an order that
++//! exists). Every value is one the program can reach from its seeds, so the relations hold.
++//!
++//! A step whose other arguments hold a type with an invariant (`put_back(st, o, c)`) is no step:
++//! decomposed records next to the state are again unrelated to it.
++
++use crate::gen::{random_with, Rng};
++use crate::inv::Invariants;
++use qal_core::ast::Type;
++use qal_core::tast::{TFn, TProgram};
++use qal_run::{Runner, Value};
++use std::cell::RefCell;
++use std::collections::BTreeMap;
++
++/// Steps at most per generated value.
++const MAX_STEPS: u64 = 24;
++/// Steps tried per position of a walk until one changes the value.
++const TRIES_PER_STEP: usize = 4;
++/// Successful calls remembered per step.
++const MEMORY_PER_STEP: usize = 8;
++/// Reachable values kept per type.
++const POOL: usize = 64;
++/// Walks at most to fill a pool.
++const WARM_WALKS: usize = 16;
++
++/// A function that yields a `T`: its index, and the field of its result that holds the `T` (None:
++/// the result is the `T`).
++#[derive(Debug, Clone, Copy, PartialEq)]
++struct Producer {
++    f: usize,
++    field: Option<usize>,
++}
++
++#[derive(Debug, Clone, Default)]
++struct Producers {
++    seeds: Vec<Producer>,
++    steps: Vec<Producer>,
++}
++
++/// What a walk produced.
++#[derive(Debug, Clone, PartialEq)]
++pub enum Gen {
++    /// A reachable value.
++    Value(Value),
++    /// The function under test, as a step of the walk, led from a reachable value out of an
++    /// invariant: these are its arguments, a failing input of its property.
++    Broke(Vec<Value>),
++}
++
++/// The reachable record types of a program and how to build their values.
++#[derive(Debug, Clone, Default)]
++pub struct Reach {
++    by_type: BTreeMap<String, Producers>,
++    /// Step calls that changed a value: (type, step, its arguments). Half of the steps of a walk
++    /// vary one of them instead of drawing new arguments, as a fuzzer keeps the inputs that got
++    /// somewhere: an order that was placed once is placed again with fresh ids.
++    memory: RefCell<Vec<(String, Producer, Vec<Value>)>>,
++    /// Reachable values per type, filled by walks and shared by all properties of a run.
++    pool: RefCell<BTreeMap<String, Vec<Value>>>,
++    /// The run's seed (`qal_test`'s `seed`).
++    seed: u64,
++}
++
++impl Reach {
++    /// The record types that have a seed, with their seeds and steps. Only types that reach an
++    /// invariant matter (other types keep being drawn at random).
++    pub fn of(tp: &TProgram, invs: &Invariants) -> Reach {
++        let mut by_type: BTreeMap<String, Producers> = BTreeMap::new();
++        for (i, f) in tp.fns.iter().enumerate() {
++            if !f.def.effects.is_empty() || !f.def.tparams.is_empty() || invs.is_invariant(&f.def.name) || f.is_stub() {
++                continue;
++            }
++            for (ty, field) in yields(tp, &f.def.ret) {
++                if !tp.is_record(&ty) || !invs.reach(tp, &ty) {
++                    continue;
++                }
++                let takes = f.def.params.iter().filter(|p| p.ty == ty).count();
++                // Other arguments must not hold decomposed records with invariants.
++                let others_free = f.def.params.iter().filter(|p| p.ty != ty).all(|p| !invs.reach(tp, &p.ty));
++                let e = by_type.entry(ty.to_string()).or_default();
++                if takes == 0 && others_free {
++                    e.seeds.push(Producer { f: i, field });
++                } else if takes > 0 && others_free {
++                    e.steps.push(Producer { f: i, field });
++                }
++            }
++        }
++        by_type.retain(|_, p| !p.seeds.is_empty());
++        Reach { by_type, memory: RefCell::new(Vec::new()), pool: RefCell::new(BTreeMap::new()), seed: 0 }
++    }
++
++    /// The same, with the run's seed for the pool.
++    pub fn with_seed(mut self, seed: u64) -> Reach {
++        self.seed = seed;
++        self
++    }
++
++    pub fn has(&self, ty: &Type) -> bool {
++        self.by_type.contains_key(&ty.to_string())
++    }
++
++    /// A reachable value of `ty`, from a pool the walks fill (every state of a walk goes in, so
++    /// short and long histories are there): a walk per call would cost a property test's budget
++    /// many times over (the order system: 26 of 52 properties ran out of time). `focus`: the
++    /// function under test; when it is a step, it is tried once on the drawn value, and if that
++    /// breaks an invariant its arguments come back as `Gen::Broke`.
++    #[allow(clippy::too_many_arguments)]
++    pub fn generate(&self, tp: &TProgram, runner: &Runner, invs: &Invariants, ty: &Type, _size: u64, rng: &mut Rng, focus: Option<usize>) -> Option<Gen> {
++        let key = ty.to_string();
++        let ps = self.by_type.get(&key)?;
++        self.warm(tp, runner, invs, ty);
++        let v = {
++            let pool = self.pool.borrow();
++            let e = pool.get(&key)?;
++            if e.is_empty() {
++                return None;
++            }
++            e[rng.below(e.len() as u64) as usize].clone()
++        };
++        if let Some(p) = focus.and_then(|i| ps.steps.iter().find(|p| p.f == i).copied()) {
++            if let Some((probe, args)) = self.step(tp, runner, p, ty, &v, None, 8, rng) {
++                // From a reachable value into a broken one: a bug of that step.
++                if invs.broken(runner, &probe).is_some() {
++                    return Some(Gen::Broke(args));
++                }
++            }
++        }
++        Some(Gen::Value(v))
++    }
++
++    /// Fills the pool of `ty` once, by walks of their own generator (the run's seed and the type):
++    /// the pool, and with it every property's inputs, does not depend on which functions are tested
++    /// or in which order (a define tests fewer than `qal_test`; a pool they filled differently made
++    /// the define report a failure the full run never had).
++    fn warm(&self, tp: &TProgram, runner: &Runner, invs: &Invariants, ty: &Type) {
++        let key = ty.to_string();
++        if self.pool.borrow().contains_key(&key) {
++            return;
++        }
++        let mut rng = Rng::new(self.seed ^ crate::gen::fnv(&key));
++        let mut states: Vec<Value> = Vec::new();
++        for _ in 0..WARM_WALKS {
++            if states.len() >= POOL {
++                break;
++            }
++            if let Some(walk) = self.walk(tp, runner, invs, ty, &mut rng) {
++                states.extend(walk.into_iter().take(POOL - states.len()));
++            }
++        }
++        self.pool.borrow_mut().insert(key, states);
++    }
++
++    /// The states of one walk: a seed, then up to `MAX_STEPS` steps.
++    fn walk(&self, tp: &TProgram, runner: &Runner, invs: &Invariants, ty: &Type, rng: &mut Rng) -> Option<Vec<Value>> {
++        let key = ty.to_string();
++        let ps = self.by_type.get(&key)?;
++        let seed = ps.seeds[rng.below(ps.seeds.len() as u64) as usize];
++        let mut v = self.call(tp, runner, seed, ty, None, 8, rng)?;
++        if invs.broken(runner, &v).is_some() {
++            return None;
++        }
++        let mut states = vec![v.clone()];
++        if ps.steps.is_empty() {
++            return Some(states);
++        }
++        for _ in 0..MAX_STEPS / 2 + rng.below(MAX_STEPS / 2 + 1) {
++            // Most random steps change nothing (an error reply, a rejected order): a few are tried
++            // until one moves the value. A step that fails (a `req`, a trap) or leads out of the
++            // invariants is not taken: the property of that function reports it when it is tested.
++            for _ in 0..TRIES_PER_STEP {
++                let remembered: Vec<(Producer, Vec<Value>)> = self.memory.borrow().iter().filter(|(t, _, _)| *t == key).map(|(_, p, a)| (*p, a.clone())).collect();
++                let (step, base) = if !remembered.is_empty() && rng.below(2) == 0 {
++                    // A remembered step first, then one of its calls: a setter that succeeds every
++                    // time must not crowd out the order that succeeded once.
++                    let mut steps: Vec<Producer> = Vec::new();
++                    for (p, _) in &remembered {
++                        if !steps.contains(p) {
++                            steps.push(*p);
++                        }
++                    }
++                    let p = steps[rng.below(steps.len() as u64) as usize];
++                    let calls: Vec<&Vec<Value>> = remembered.iter().filter(|(q, _)| *q == p).map(|(_, a)| a).collect();
++                    (p, Some(calls[rng.below(calls.len() as u64) as usize].clone()))
++                } else {
++                    (ps.steps[rng.below(ps.steps.len() as u64) as usize], None)
++                };
++                if let Some((next, args)) = self.step(tp, runner, step, ty, &v, base, 8, rng) {
++                    if progress(&v, &next) && invs.broken(runner, &next).is_none() {
++                        let mut m = self.memory.borrow_mut();
++                        let same: Vec<usize> = (0..m.len()).filter(|&i| m[i].0 == key && m[i].1 == step).collect();
++                        if same.len() >= MEMORY_PER_STEP {
++                            m.swap_remove(same[rng.below(same.len() as u64) as usize]);
++                        }
++                        m.push((key.clone(), step, args));
++                        v = next;
++                        states.push(v.clone());
++                        break;
++                    }
++                }
++            }
++        }
++        Some(states)
++    }
++
++    /// Runs step `p` on `current`: with the other arguments of a remembered call `base`, varied (each
++    /// string kept, made a key of `current` or drawn fresh; each Int kept or drawn small), or else
++    /// drawn as `call` draws them. Returns the new value and the arguments used.
++    #[allow(clippy::too_many_arguments)]
++    fn step(&self, tp: &TProgram, runner: &Runner, p: Producer, ty: &Type, current: &Value, base: Option<Vec<Value>>, size: u64, rng: &mut Rng) -> Option<(Value, Vec<Value>)> {
++        let Some(mut args) = base else {
++            let f = &tp.fns[p.f];
++            let mut args = Vec::new();
++            for param in &f.def.params {
++                args.push(if param.ty == *ty { current.clone() } else { ordinary(tp, &param.ty, size, rng)? });
++            }
++            let others: Vec<bool> = f.def.params.iter().map(|q| q.ty != *ty).collect();
++            share_keys(current, &mut args, &others, rng);
++            for (a, &o) in args.iter_mut().zip(&others) {
++                if o {
++                    small_ints(a, rng);
++                }
++            }
++            return self.run(tp, runner, p, args);
++        };
++        let f = &tp.fns[p.f];
++        let mut ks = Vec::new();
++        keys(current, &mut ks);
++        let strs: Vec<Value> = ks.into_iter().filter(|k| matches!(k, Value::Str(_))).collect();
++        for (a, param) in args.iter_mut().zip(&f.def.params) {
++            if param.ty == *ty {
++                *a = current.clone();
++            } else {
++                vary(a, &strs, rng);
++            }
++        }
++        self.run(tp, runner, p, args)
++    }
++
++    fn run(&self, tp: &TProgram, runner: &Runner, p: Producer, args: Vec<Value>) -> Option<(Value, Vec<Value>)> {
++        let out = runner.call(&tp.fns[p.f].def.name, &args).ok()?;
++        let v = match p.field {
++            None => out,
++            Some(i) => match out {
++                Value::Record(_, mut fs) if i < fs.len() => fs.swap_remove(i).1,
++                _ => return None,
++            },
++        };
++        Some((v, args))
++    }
++
++    /// Runs producer `p` with `current` as its `T` arguments and the others drawn (strings mostly
++    /// keys of `current`), and takes the `T` out of the result.
++    #[allow(clippy::too_many_arguments)]
++    fn call(&self, tp: &TProgram, runner: &Runner, p: Producer, ty: &Type, current: Option<&Value>, size: u64, rng: &mut Rng) -> Option<Value> {
++        let f: &TFn = &tp.fns[p.f];
++        let mut args = Vec::new();
++        for param in &f.def.params {
++            match current {
++                Some(c) if param.ty == *ty => args.push(c.clone()),
++                _ => args.push(random_with(tp, &param.ty, size.min(8), rng, &[])?),
++            }
++        }
++        if let Some(c) = current {
++            let others: Vec<bool> = f.def.params.iter().map(|p| p.ty != *ty).collect();
++            share_keys(c, &mut args, &others, rng);
++            for (a, &o) in args.iter_mut().zip(&others) {
++                if o {
++                    small_ints(a, rng);
++                }
++            }
++        }
++        let out = runner.call(&f.def.name, &args).ok()?;
++        match p.field {
++            None => Some(out),
++            Some(i) => match out {
++                Value::Record(_, mut fs) if i < fs.len() => Some(fs.swap_remove(i).1),
++                _ => None,
++            },
++        }
++    }
++}
++
++/// A drawn argument of a step: a list has one or two elements (three tries for a non-empty one): an order without lines succeeds
++/// every time and teaches the walk nothing (a parser never lets it through).
++fn ordinary(tp: &TProgram, ty: &Type, size: u64, rng: &mut Rng) -> Option<Value> {
++    let mut v = random_with(tp, ty, size.clamp(1, 8), rng, &[])?;
++    for _ in 0..3 {
++        if !matches!(&v, Value::List(xs) if xs.is_empty()) {
++            break;
++        }
++        v = random_with(tp, ty, size.clamp(1, 8), rng, &[])?;
++    }
++    // Short: every element must make sense for the step to succeed (each line of an order).
++    if let Value::List(xs) = &mut v {
++        xs.truncate(1 + rng.below(2) as usize);
++    }
++    Some(v)
++}
++
++/// True if `b` differs from `a` in more than Bool values: an error reply that only sets a flag
++/// (`bad: true`) is no progress, a new order or a changed amount is.
++fn progress(a: &Value, b: &Value) -> bool {
++    match (a, b) {
++        (Value::Bool(_), Value::Bool(_)) => false,
++        (Value::Record(_, xs), Value::Record(_, ys)) => xs.len() != ys.len() || xs.iter().zip(ys).any(|((_, x), (_, y))| progress(x, y)),
++        (Value::List(xs), Value::List(ys)) | (Value::Variant(_, xs), Value::Variant(_, ys)) => xs.len() != ys.len() || xs.iter().zip(ys).any(|(x, y)| progress(x, y)),
++        (Value::Map(xs), Value::Map(ys)) => xs.len() != ys.len() || xs.iter().zip(ys).any(|((k, x), (l, y))| k != l || progress(x, y)),
++        _ => a != b,
++    }
++}
++
++/// The types a function's result yields: the result itself, and the types of its record fields.
++fn yields(tp: &TProgram, ret: &Type) -> Vec<(Type, Option<usize>)> {
++    let mut out = vec![(ret.clone(), None)];
++    for (i, (_, t)) in tp.record_fields(ret).into_iter().enumerate() {
++        out.push((t, Some(i)));
++    }
++    out
++}
++
++/// The map keys inside `v`, by kind (Str and Int keys).
++fn keys(v: &Value, out: &mut Vec<Value>) {
++    match v {
++        Value::Map(es) => {
++            for (k, x) in es {
++                if matches!(k, Value::Str(_) | Value::Int(_)) && !out.contains(k) {
++                    out.push(k.clone());
++                }
++                keys(x, out);
++            }
++        }
++        Value::Record(_, fs) => fs.iter().for_each(|(_, x)| keys(x, out)),
++        Value::List(xs) | Value::Variant(_, xs) => xs.iter().for_each(|x| keys(x, out)),
++        _ => {}
++    }
++}
++
++/// Replaces, with probability 2/3 each, the strings inside the arguments marked in `which` (also in
++/// records and lists) by a key of a map inside `state`: arguments then mostly name things that exist.
++pub fn share_keys(state: &Value, args: &mut [Value], which: &[bool], rng: &mut Rng) {
++    let mut ks = Vec::new();
++    keys(state, &mut ks);
++    let strs: Vec<Value> = ks.into_iter().filter(|k| matches!(k, Value::Str(_))).collect();
++    if strs.is_empty() {
++        return;
++    }
++    for (a, &w) in args.iter_mut().zip(which) {
++        if w {
++            replace_strs(a, &strs, rng);
++        }
++    }
++}
++
++/// True if the property of `f` checks the invariants of its result: `f` takes or returns a type
++/// with an invariant, and its inputs can be given consistently. They cannot when `f` takes a
++/// reachable value and, beside it, records with invariants that belong to it (`put_back(st, o, c)`:
++/// a random order and customer next to a reached state are unrelated to it and to each other), unless
++/// a `req` says how they relate (`req o.total <= c.spent ...`). A function of such records alone
++/// (`refund(c, x)`) gets them repaired towards their invariants.
++pub fn checks_invariants(tp: &TProgram, invs: &Invariants, reach: &Reach, f: &TFn) -> bool {
++    let decomposed = f.def.params.iter().any(|p| reach.has(&p.ty)) && f.def.params.iter().any(|p| !reach.has(&p.ty) && invs.reach(tp, &p.ty));
++    !invs.is_invariant(&f.def.name)
++        && (invs.reach(tp, &f.def.ret) || f.def.params.iter().any(|p| invs.reach(tp, &p.ty)))
++        && (!decomposed || !f.req.is_empty())
++}
++
++/// Varies a remembered argument: each string is kept (1/2), made a key of the current value (1/4)
++/// or drawn fresh (1/4); each Int is kept (1/2) or drawn in 0..=12.
++fn vary(v: &mut Value, strs: &[Value], rng: &mut Rng) {
++    match v {
++        Value::Str(s) => match rng.below(4) {
++            0 | 1 => {}
++            2 if !strs.is_empty() => *v = strs[rng.below(strs.len() as u64) as usize].clone(),
++            _ => *s = format!("k{}", rng.below(1_000_000)),
++        },
++        Value::Int(n) => {
++            if rng.below(2) == 0 {
++                *n = rng.range(0, 12);
++            }
++        }
++        Value::Record(_, fs) => fs.iter_mut().for_each(|(_, x)| vary(x, strs, rng)),
++        Value::List(xs) | Value::Variant(_, xs) => xs.iter_mut().for_each(|x| vary(x, strs, rng)),
++        _ => {}
++    }
++}
++
++/// Replaces, with probability 3/4 each, the Ints inside `v` (also in records and lists) by one in
++/// 0..=12: the amounts of a step are mostly ordinary ones (an order of 3 items, not of -4 billion).
++fn small_ints(v: &mut Value, rng: &mut Rng) {
++    match v {
++        Value::Int(n) => {
++            if rng.below(4) != 0 {
++                *n = rng.range(0, 12);
++            }
++        }
++        Value::Record(_, fs) => fs.iter_mut().for_each(|(_, x)| small_ints(x, rng)),
++        Value::List(xs) | Value::Variant(_, xs) => xs.iter_mut().for_each(|x| small_ints(x, rng)),
++        _ => {}
++    }
++}
++
++fn replace_strs(v: &mut Value, strs: &[Value], rng: &mut Rng) {
++    match v {
++        Value::Str(_) => {
++            if rng.below(3) != 0 {
++                *v = strs[rng.below(strs.len() as u64) as usize].clone();
++            }
++        }
++        Value::Record(_, fs) => fs.iter_mut().for_each(|(_, x)| replace_strs(x, strs, rng)),
++        Value::List(xs) | Value::Variant(_, xs) => xs.iter_mut().for_each(|x| replace_strs(x, strs, rng)),
++        // A state inside the arguments keeps its own strings.
++        _ => {}
++    }
++}
++

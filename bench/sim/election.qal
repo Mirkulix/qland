@@ -1,0 +1,17 @@
+# Raft-style election counting: a candidate needs a strict majority of the cluster.
+
+type Ballot = { term: Int, candidate: Int, votes: List[Int], cluster: Int }
+
+fn has_vote(votes: List[Int], node: Int) -> Bool = len(filter(votes, fn(v) => v == node)) > 0
+
+fn vote(b: Ballot, node: Int) -> Ballot
+  req b.cluster >= 1
+= if has_vote(b.votes, node) then b else Ballot { term: b.term, candidate: b.candidate, votes: push(b.votes, node), cluster: b.cluster }
+
+fn won(b: Ballot) -> Bool = len(b.votes) * 2 > b.cluster
+
+fn leader(b: Ballot) -> Option[Int] = if won(b) then Some(b.candidate) else None
+
+test majority_elects = leader(vote(vote(Ballot { term: 1, candidate: 3, votes: [], cluster: 3 }, 1), 2)) == Some(3)
+test duplicate_vote_counts_once = len(vote(vote(Ballot { term: 1, candidate: 2, votes: [], cluster: 3 }, 1), 1).votes) == 1
+test minority_does_not_elect = leader(Ballot { term: 1, candidate: 2, votes: [1], cluster: 3 }) == None

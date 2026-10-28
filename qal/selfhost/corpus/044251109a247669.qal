@@ -1,0 +1,2 @@
+fn main(args: List[Str]) -> Int !db !io = match db_exec("CREATE TABLE IF NOT EXISTS hits (n INTEGER)", []) { Err(_) => 9, Ok(_) => match db_exec("INSERT INTO hits VALUES (1)", []) { Err(_) => 8, Ok(_) => match db_query("SELECT count(*) FROM hits", []) { Ok(r) => { print(join(map(r.columns, same), ",")); match get(r.rows, 0) { Some(row) => match get(row, 0) { Some(SqlInt(n)) => if n == 2 then 3 else 0, _ => 7 }, None => 6 } }, Err(_) => 5 } } }
+fn same(s: Str) -> Str = s

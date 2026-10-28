@@ -1,0 +1,281 @@
+# Canonical printer for QAL self-hosting compiler (spec §7: qc_print, port of qal-text/src/printer.rs)
+
+fn qc_hex_digit(d: Int) -> Str =
+  if d < 10 then from_char_code(48 + d)
+  else from_char_code(97 + (d - 10))
+
+fn qc_to_hex_loop(n: Int, acc: Str) -> Str =
+  if n == 0 then (if acc == "" then "0" else acc)
+  else
+    let d = bit_and(n, 15) in
+    qc_to_hex_loop(shr(n, 4), qc_hex_digit(d) ++ acc)
+
+fn qc_to_hex(n: Int) -> Str =
+  if n == 0 then "0" else qc_to_hex_loop(n, "")
+
+fn qc_escape_char(ch: Str) -> Str =
+  if ch == "\"" then "\\\""
+  else if ch == "\\" then "\\\\"
+  else if ch == "\n" then "\\n"
+  else if ch == "\t" then "\\t"
+  else if ch == "\r" then "\\r"
+  else if ch == "\0" then "\\0"
+  else
+    let c = char_code(ch) in
+    if c <= 31 || (c >= 127 && c <= 159) then
+      "\\u{" ++ qc_to_hex(c) ++ "}"
+    else ch
+
+fn qc_print_str(s: Str) -> Str =
+  "\"" ++ join(map(chars(s), qc_escape_char), "") ++ "\""
+
+fn qc_print_int(n: Int) -> Str =
+  if n < -9223372036854775807 then "(-9223372036854775807 - 1)"
+  else if n < 0 then "(-" ++ from_int(-n) ++ ")"
+  else from_int(n)
+
+fn qc_print_float(x: Float) -> Str =
+  let bits = float_bits(x) in
+  let is_neg = bit_and(ushr(bits, 63), 1) == 1 in
+  let exp = bit_and(ushr(bits, 52), 2047) in
+  let mant = bit_and(bits, 4503599627370495) in
+  if exp == 2047 then
+    if mant != 0 then "(0.0 / 0.0)"
+    else if is_neg then "(-1.0 / 0.0)"
+    else "(1.0 / 0.0)"
+  else if is_neg then "(-" ++ from_float(-x) ++ ")"
+  else from_float(x)
+
+fn qc_print_type(t: QcType) -> Str =
+  match t {
+    QcTInt => "Int",
+    QcTFloat => "Float",
+    QcTBool => "Bool",
+    QcTUnit => "Unit",
+    QcTStr => "Str",
+    QcTBytes => "Bytes",
+    QcTNamed(n) => n,
+    QcTParam(n) => n,
+    QcTList(elem) => "List[" ++ qc_print_type(elem) ++ "]",
+    QcTOption(elem) => "Option[" ++ qc_print_type(elem) ++ "]",
+    QcTResult(ok, err) => "Result[" ++ qc_print_type(ok) ++ ", " ++ qc_print_type(err) ++ "]",
+    QcTMap(k, v) => "Map[" ++ qc_print_type(k) ++ ", " ++ qc_print_type(v) ++ "]",
+    QcTApp(n, args) => n ++ "[" ++ join(map(args, qc_print_type), ", ") ++ "]",
+    QcTVar(_) => "_",
+    QcTFn(ps, ret, effs) =>
+      let ps_s = join(map(ps, qc_print_type), ", ") in
+      let ret_s = qc_print_type(ret) in
+      let base = match ret {
+        QcTFn(_, _, _) => "fn(" ++ ps_s ++ ") -> (" ++ ret_s ++ ")",
+        _ => "fn(" ++ ps_s ++ ") -> " ++ ret_s
+      } in
+      if len(effs) == 0 then base
+      else base ++ " !" ++ join(effs, " !")
+  }
+
+fn qc_braces(items: List[Str]) -> Str =
+  if len(items) == 0 then "{}"
+  else "{ " ++ join(items, ", ") ++ " }"
+
+fn qc_tparams(ps: List[Str]) -> Str =
+  if len(ps) == 0 then ""
+  else "[" ++ join(ps, ", ") ++ "]"
+
+fn qc_print_pat(p: QcPat) -> Str =
+  match p {
+    QcPWild => "_",
+    QcPBind(n) => n,
+    QcPInt(n) => from_int(n),
+    QcPStr(s) => qc_print_str(s),
+    QcPBool(b) => if b then "true" else "false",
+    QcPUnit => "()",
+    QcPVariant(n, ps) =>
+      if len(ps) == 0 then n
+      else n ++ "(" ++ join(map(ps, qc_print_pat), ", ") ++ ")",
+    QcPRecord(n, fs) =>
+      let fs_s = map(fs, fn(f: QcFieldPat) =>
+        match f.pat {
+          QcPBind(b) if b == f.name => f.name,
+          _ => f.name ++ ": " ++ qc_print_pat(f.pat)
+        }
+      ) in
+      n ++ " " ++ qc_braces(fs_s)
+  }
+
+fn qc_binop_sym(op: QcBinOp) -> Str =
+  match op {
+    QcOpAdd => "+",
+    QcOpSub => "-",
+    QcOpMul => "*",
+    QcOpDiv => "/",
+    QcOpRem => "%",
+    QcOpConcat => "++",
+    QcOpEq => "==",
+    QcOpNe => "!=",
+    QcOpLt => "<",
+    QcOpLe => "<=",
+    QcOpGt => ">",
+    QcOpGe => ">=",
+    QcOpAnd => "&&",
+    QcOpOr => "||"
+  }
+
+fn qc_prec(e: QcExpr) -> Int =
+  match e {
+    QcELet(_, _, _, _) => 0,
+    QcEIf(_, _, _) => 0,
+    QcEMatch(_, _) => 0,
+    QcELambda(_, _) => 0,
+    QcEBin(op, _, _) => qc_binop_prec(op),
+    QcEUn(_, _) => 6,
+    QcEField(_, _) => 8,
+    _ => 9
+  }
+
+fn qc_wrap(e: QcExpr, needs_parens: Bool) -> Str =
+  let s = qc_print_expr(e) in
+  if needs_parens then "(" ++ s ++ ")" else s
+
+fn qc_has_bare_record_arms_loop(arms: List[QcArm], idx: Int) -> Bool =
+  if idx >= len(arms) then false
+  else
+    let a = list_at(arms, idx) in
+    let g_has = match a.guard {
+      Some(g) => qc_has_bare_record(g),
+      None => false
+    } in
+    if g_has || qc_has_bare_record(a.body) then true
+    else qc_has_bare_record_arms_loop(arms, idx + 1)
+
+fn qc_has_bare_record_arms(arms: List[QcArm]) -> Bool =
+  qc_has_bare_record_arms_loop(arms, 0)
+
+fn qc_has_bare_record(e: QcExpr) -> Bool =
+  match e {
+    QcERecord(_, _) => true,
+    QcEBin(_, l, r) => qc_has_bare_record(l) || qc_has_bare_record(r),
+    QcEUn(_, x) => qc_has_bare_record(x),
+    QcEField(x, _) => qc_has_bare_record(x),
+    QcEIf(c, t, f) => qc_has_bare_record(c) || qc_has_bare_record(t) || qc_has_bare_record(f),
+    QcELet(_, _, v, b) => qc_has_bare_record(v) || qc_has_bare_record(b),
+    QcELambda(_, b) => qc_has_bare_record(b),
+    QcEMatch(s, arms) => qc_has_bare_record(s) || qc_has_bare_record_arms(arms),
+    _ => false
+  }
+
+fn qc_print_expr(e: QcExpr) -> Str =
+  match e {
+    QcEInt(n) => qc_print_int(n),
+    QcEFloat(x) => qc_print_float(x),
+    QcEBool(b) => if b then "true" else "false",
+    QcEStr(s) => qc_print_str(s),
+    QcEUnit => "()",
+    QcEVar(v) => v,
+    QcECall(f, args) => f ++ "(" ++ join(map(args, qc_print_expr), ", ") ++ ")",
+    QcEList(items) => "[" ++ join(map(items, qc_print_expr), ", ") ++ "]",
+    QcESeq(items) =>
+      if len(items) == 0 then "()"
+      else "{ " ++ join(map(items, qc_print_expr), "; ") ++ " }",
+    QcERecord(n, fs) =>
+      let fs_s = map(fs, fn(f: QcFieldExpr) => f.name ++ ": " ++ qc_print_expr(f.expr)) in
+      n ++ " " ++ qc_braces(fs_s),
+    QcEField(t, f) =>
+      qc_wrap(t, qc_prec(t) < 8) ++ "." ++ f,
+    QcEUn(op, x) =>
+      let sym = match op {
+        QcUnNeg => "-",
+        QcUnNot => "!"
+      } in
+      sym ++ qc_wrap(x, qc_prec(x) < 6),
+    QcEBin(op, l, r) =>
+      let p = qc_binop_prec(op) in
+      let lp = qc_prec(l) in
+      let rp = qc_prec(r) in
+      let left_parens = lp < p || (qc_binop_is_comparison(op) && lp == p) in
+      let right_parens = rp <= p in
+      qc_wrap(l, left_parens) ++ " " ++ qc_binop_sym(op) ++ " " ++ qc_wrap(r, right_parens),
+    QcEIf(c, t, f) =>
+      "if " ++ qc_print_expr(c) ++ " then " ++ qc_print_expr(t) ++ " else " ++ qc_print_expr(f),
+    QcELet(n, ann, v, b) =>
+      let val_s = qc_print_expr(v) in
+      let body_s = qc_print_expr(b) in
+      match ann {
+        Some(t) => "let " ++ n ++ ": " ++ qc_print_type(t) ++ " = " ++ val_s ++ " in " ++ body_s,
+        None => "let " ++ n ++ " = " ++ val_s ++ " in " ++ body_s
+      },
+    QcEMatch(s, arms) =>
+      let arms_s = map(arms, fn(a: QcArm) =>
+        let pat_s = qc_print_pat(a.pat) in
+        let body_s = qc_print_expr(a.body) in
+        match a.guard {
+          Some(g) => pat_s ++ " if " ++ qc_print_expr(g) ++ " => " ++ body_s,
+          None => pat_s ++ " => " ++ body_s
+        }
+      ) in
+      "match " ++ qc_wrap(s, qc_has_bare_record(s)) ++ " " ++ qc_braces(arms_s),
+    QcELambda(params, body) =>
+      let ps_s = map(params, fn(p: QcLambdaParam) =>
+        match p.ty {
+          Some(t) => p.name ++ ": " ++ qc_print_type(t),
+          None => p.name
+        }
+      ) in
+      "fn(" ++ join(ps_s, ", ") ++ ") => " ++ qc_print_expr(body)
+  }
+
+fn qc_print_type_def(t: QcTypeDef) -> Str =
+  let head = "type " ++ t.name ++ qc_tparams(t.params) in
+  match t.body {
+    QcBodyRecord(fields) =>
+      let fs = map(fields, fn(f: QcFieldType) => f.name ++ ": " ++ qc_print_type(f.ty)) in
+      head ++ " = " ++ qc_braces(fs),
+    QcBodyEnum(variants) =>
+      if len(variants) == 0 then head ++ " = |"
+      else
+        let vs = map(variants, fn(v: QcVariant) =>
+          if len(v.fields) == 0 then v.name
+          else v.name ++ "(" ++ join(map(v.fields, qc_print_type), ", ") ++ ")"
+        ) in
+        head ++ " = " ++ join(vs, " | ")
+  }
+
+fn qc_join_clauses(prefix: Str, exprs: List[QcExpr]) -> Str =
+  let lines = map(exprs, fn(c: QcExpr) => "\n  " ++ prefix ++ " " ++ qc_print_expr(c)) in
+  join(lines, "")
+
+fn qc_print_fn_def(f: QcFnDef) -> Str =
+  let params_s = join(map(f.params, fn(p: QcFieldType) => p.name ++ ": " ++ qc_print_type(p.ty)), ", ") in
+  let name_s = f.name ++ qc_tparams(f.tparams ++ map(f.eparams, fn(e: Str) => "!" ++ e)) in
+  let ret_s = qc_print_type(f.ret) in
+  let mut_s = match f.ret {
+    QcTFn(_, _, _) => "fn " ++ name_s ++ "(" ++ params_s ++ ") -> (" ++ ret_s ++ ")",
+    _ => "fn " ++ name_s ++ "(" ++ params_s ++ ") -> " ++ ret_s
+  } in
+  let with_effs =
+    if len(f.effects) == 0 then mut_s
+    else mut_s ++ " !" ++ join(f.effects, " !") in
+  let with_reqs = with_effs ++ qc_join_clauses("req", f.reqs) in
+  let with_enss = with_reqs ++ qc_join_clauses("ens", f.enss) in
+  with_enss ++ "\n= " ++ qc_print_expr(f.body)
+
+fn qc_print_test_def(t: QcTestDef) -> Str =
+  "test " ++ t.name ++ " = " ++ qc_print_expr(t.body)
+
+fn qc_print_def(d: QcDef) -> Str =
+  match d {
+    QcDefFn(f) => qc_print_fn_def(f),
+    QcDefType(t) => qc_print_type_def(t),
+    QcDefTest(t) => qc_print_test_def(t)
+  }
+
+fn qc_print_program(p: QcProgram) -> Str =
+  let parts = map(p.defs, qc_print_def) in
+  let out = join(parts, "\n\n") in
+  if out != "" then out ++ "\n" else ""
+
+test qc_print_test =
+  let src = "fn add(a: Int, b: Int) -> Int !io\n  req a >= 0\n= a + b * 2\n" in
+  match qc_parse(src) {
+    Ok(p) => qc_print_program(p) == src,
+    Err(_) => false
+  }

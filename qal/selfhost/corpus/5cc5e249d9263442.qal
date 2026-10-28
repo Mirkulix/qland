@@ -1,0 +1,1 @@
+fn total(price: Int, qty: Int) -> Int req price >= 0 && price <= 1000000 && qty >= 0 && qty <= 1000000 ens r == price * qty * 95 / 100 = price * qty * 95 / 100

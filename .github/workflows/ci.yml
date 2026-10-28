@@ -1,0 +1,354 @@
+name: Production CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, Mac ]
+  pull_request:
+    branches: [ main, Mac ]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # 1. cargo test --workspace (default = kein Reference)
+  qal-workspace-default:
+    name: QAL Workspace Default (Autonomous, No Reference)
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install System Dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake clang libsqlite3-dev
+
+      - name: Cache Cargo Dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            qal/target
+          key: ${{ runner.os }}-cargo-default-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-default-
+
+      - name: Run Workspace Default Unit & Property Tests
+        run: cargo test --manifest-path qal/Cargo.toml --workspace --no-fail-fast
+
+  # 2. cargo test --workspace --features qal-compiler/reference
+  qal-workspace-reference:
+    name: QAL Workspace Reference (Rust Compiler Parity)
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install System Dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake clang libsqlite3-dev
+
+      - name: Cache Cargo Dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            qal/target
+          key: ${{ runner.os }}-cargo-ref-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-ref-
+
+      - name: Run Workspace With Reference Compiler Feature
+        run: cargo test --manifest-path qal/Cargo.toml --workspace --features qal-compiler/reference --no-fail-fast
+
+  # 3. cargo test -p qal-cli --release --test mcp (autonom)
+  qal-autonomous-mcp:
+    name: QAL Autonomous CLI & MCP (Release Binary)
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install System Dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake clang libsqlite3-dev
+
+      - name: Cache Cargo Dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            qal/target
+          key: ${{ runner.os }}-cargo-auto-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-auto-
+
+      - name: Build Autonomous Release CLI (Zero Reference Dependencies)
+        run: cargo build --manifest-path qal/Cargo.toml -p qal-cli --release
+
+      - name: Verify Seed Integrity & Architectural Isolation
+        run: |
+          cargo test --manifest-path qal/Cargo.toml -p qal-run seed_module
+          # Ensure no reference compiler symbols leaked into autonomous binary
+          if nm qal/target/release/qal | grep -E "qal_text|qal_check|qal_wasm"; then
+            echo "ERROR: Reference compiler symbols found in autonomous binary"
+            exit 1
+          fi
+
+      - name: Autonomous CLI & MCP Integration Tests
+        run: |
+          cargo test --manifest-path qal/Cargo.toml -p qal-cli --release --test mcp
+          cargo test --manifest-path qal/Cargo.toml -p qal-cli --release --test cli
+          cargo test --manifest-path qal/Cargo.toml -p qal-cli --release --test todo_scenarios
+          cargo test --manifest-path qal/Cargo.toml -p qal-cli --release --test shop_scenarios
+          cargo test --manifest-path qal/Cargo.toml -p qal-cli --release --test team
+          cargo test --manifest-path qal/Cargo.toml -p qal-cli --release --test concurrency
+          cargo test --manifest-path qal/Cargo.toml -p qal-cli --release --test production
+
+  # 4. QAL_COMPILER=qal cargo test … für Store/Run/Prove/Serve
+  qal-selfhost-compiler:
+    name: QAL Selfhost Compiler (QAL_COMPILER=qal Engine Matrix)
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install System Dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake clang libsqlite3-dev
+
+      - name: Cache Cargo Dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            qal/target
+          key: ${{ runner.os }}-cargo-selfhost-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-selfhost-
+
+      - name: Run Self-Hosted Wasm Engine Matrix
+        run: QAL_COMPILER=qal cargo test --manifest-path qal/Cargo.toml -p qal-store -p qal-run -p qal-prove -p qal-serve --no-fail-fast
+
+  # 5. Clippy-Restriktion
+  qal-clippy-gate:
+    name: QAL Clippy Restriction Gate
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Install System Dependencies (Linux)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake clang libsqlite3-dev
+
+      - name: Cache Cargo Dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            qal/target
+          key: ubuntu-cargo-clippy-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ubuntu-cargo-clippy-
+
+      - name: Run Clippy Workspace Check
+        run: cargo clippy --manifest-path qal/Cargo.toml --workspace --all-targets --features qal-compiler/reference -- -D warnings -A clippy::result_large_err -A clippy::type_complexity -A clippy::needless_range_loop -A clippy::doc_lazy_continuation -A clippy::manual_is_multiple_of -A clippy::cmp_owned -A clippy::identity_op -A clippy::cloned_ref_to_slice_refs
+
+  # 6. Doku-Schema-/Link-Check
+  docs-and-schema-check:
+    name: Documentation & Schema Parity Gate
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Verify Documentation Links and MCP Schemas
+        run: python3 tools/verify_docs_and_schema.py
+
+  # 7. qalc.qalpkg-Korpus & full_fixpoint
+  qal-corpus-fixpoint:
+    name: QAL Corpus & Self-Hosted Bootstrap Fixpoint
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install System Dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake clang libsqlite3-dev
+
+      - name: Cache Cargo Dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            qal/target
+          key: ${{ runner.os }}-cargo-corpus-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-corpus-
+
+      - name: Verify Extracted Corpus Parity
+        run: cargo test --manifest-path qal/Cargo.toml -p qal-gen --test corpus
+
+      - name: Self-Hosted Bootstrap Fixpoint Verification (Stage 1 == Stage 2 == Stage 3)
+        run: cargo test --manifest-path qal/Cargo.toml --features qal-compiler/reference --test full_fixpoint
+
+  # 8. Escrow Operational Readiness, Truncation & Independent Replication Gate
+  qal-replication-and-ops:
+    name: QAL Replication & Operational Escrow Gate
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install System Dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake clang libsqlite3-dev
+
+      - name: Install Python Dependencies
+        run: pip install requests
+
+      - name: Build QAL Release Binary
+        run: cargo build --manifest-path qal/Cargo.toml -p qal-cli --release
+
+      - name: Verify Truncation Attack Rejection
+        run: python3 tools/test_truncation_detection.py
+
+      - name: Execute Operational Escrow Verification (20/20, Concurrency, Backup/Restore)
+        run: python3 pilot/escrow/ops/verify_ops.py
+
+      - name: Execute Autonomous Independent Replication Suite (5/5 Claims)
+        run: python3 replication/replicate.py
+
+  gen3-substrate-suite:
+    name: Gen-3 AI-Native Substrate (TGS Engine)
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest]
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run Substrate Tests & JIT Verification
+        run: |
+          cd gen3
+          cargo test --verbose
+
+      - name: Execute TGS Benchmark
+        run: |
+          cd gen3
+          cargo run --release -- bench
+
+  igqk-python-suite:
+    name: IGQK Quantum Compression & Multimodal Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Python Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install torch torchvision numpy scipy pytest PyWavelets matplotlib
+
+      - name: Run IGQK Multimodal & Training Tests
+        run: |
+          python -m pytest IGQK_Complete_Package/igqk_v4/tests/test_multimodal.py
+          python -m pytest IGQK_Complete_Package/igqk_v4/tests/test_training.py

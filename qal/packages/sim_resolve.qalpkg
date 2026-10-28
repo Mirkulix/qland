@@ -1,0 +1,48 @@
+# qal-pkg 1
+# package qal_sim_resolve 053190e9ab50e0392507a3b8c86fccb4cbe3c45a7857426543a2d18d1b989195
+# def Conflict 896fe81b5e457420913f4aa5f12695d1e7168ae421ee80c35fec923369f4afba cli
+# def Entry 827e76bad5d1df1cf84661d9534456d00c5ae3a403becb8d836cec28daafff31 cli
+# def Merged a52f4f266ac236cab0a282b45309683a20f56cc975bb4b05295b70739ffd006e cli
+# def apply 272b9afb4d777c12d437e3ca6cda2a6728f770d37a4c80da63acb766c9507956 cli
+# def conflicts 9575fa4ee362738cf200549afaafb01d6c6b95e76d5bc7d0d75fc5a46bf185d3 cli
+# def find 03b0b346668a51f9ce059cd762bc7c9c24010c886702c26c92520f8df2f5b138 cli
+# def has 59f3910b5e57cd8bcb48fff02416a9da6fb16a2cb99039446479ef7f11bbb0e5 cli
+# def max_resolves_to_higher 610e7add9a037e18d0147a4e542825c828e532364e426cecfe3e95b282fbf8ab cli
+# def merge_policy 28520612160e05ea5ea82a8d81b15f93bf909d7f9dbb34a07142c6d3421aff48 cli
+# def min_resolves_to_lower 64a773d74cd202982bc5db7ffb6a98a23f6b448f9531ccb109926ba543c00d7e cli
+# def put_entry 6f9b54999402101887feb5ffeedf9991a1bc2d6b5bdf9dd53292bb77866c54e2 cli
+# def reject_keeps_conflict de50d19f21a94e7f8006ae0507b7e7877b05672f22b5834d6bc1de0551b6ca9b cli
+# def resolve eccd6eb7ead87aff2725d1c11497862981a6ad6acd8e7cb60abc161d209cbea3 cli
+
+type Entry = { id: Int, kind: Str, amount: Int }
+
+type Conflict = { id: Int, a: Entry, b: Entry }
+
+fn find(log: List[Entry], id: Int) -> Option[Entry]
+= get(filter(log, fn(e) => e.id == id), 0)
+
+fn has(log: List[Entry], id: Int) -> Bool
+= len(filter(log, fn(e) => e.id == id)) > 0
+
+fn put_entry(log: List[Entry], e: Entry) -> List[Entry]
+= concat(filter(log, fn(x) => x.id != e.id), [e])
+
+fn resolve(a: Entry, b: Entry, policy: Str) -> Option[Entry]
+= if policy == "min" then Some(if a.amount <= b.amount then a else b) else if policy == "max" then Some(if a.amount >= b.amount then a else b) else None
+
+type Merged = { log: List[Entry], conflicts: List[Conflict] }
+
+fn apply(log: List[Entry], e: Entry) -> List[Entry]
+= if has(log, e.id) then log else push(log, e)
+
+fn conflicts(a: List[Entry], b: List[Entry]) -> List[Conflict]
+= let found = map(a, fn(x) => match find(b, x.id) { None => None, Some(y) => if x.kind == y.kind && x.amount == y.amount then None else Some(Conflict { id: x.id, a: x, b: y }) }) in map(filter(found, fn(c) => c != None), fn(c) => match c { Some(x) => x, None => Conflict { id: 0, a: Entry { id: 0, kind: "", amount: 0 }, b: Entry { id: 0, kind: "", amount: 0 } } })
+
+fn merge_policy(a: List[Entry], b: List[Entry], policy: Str) -> Merged
+= let cs = conflicts(a, b) in let log = fold(cs, a, fn(acc, c) => match resolve(c.a, c.b, policy) { None => acc, Some(e) => put_entry(acc, e) }) in let log2 = fold(b, log, fn(acc, e) => apply(acc, e)) in Merged { log: log2, conflicts: if policy == "min" || policy == "max" then [] else cs }
+
+test max_resolves_to_higher = match get(merge_policy([Entry { id: 1, kind: "debit", amount: 5 }], [Entry { id: 1, kind: "debit", amount: 6 }], "max").log, 0) { None => false, Some(e) => e.amount == 6 }
+
+test min_resolves_to_lower = match get(merge_policy([Entry { id: 1, kind: "debit", amount: 5 }], [Entry { id: 1, kind: "debit", amount: 6 }], "min").log, 0) { None => false, Some(e) => e.amount == 5 }
+
+test reject_keeps_conflict = len(merge_policy([Entry { id: 1, kind: "debit", amount: 5 }], [Entry { id: 1, kind: "debit", amount: 6 }], "reject").conflicts) == 1

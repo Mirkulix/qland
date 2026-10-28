@@ -1,0 +1,2 @@
+fn g(x: Int) -> Str = { # (
+  let y = "(" in y

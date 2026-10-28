@@ -1,0 +1,70 @@
+# Binary search over an ascending integer list.
+# Input: line 1 holds ascending integers separated by single spaces (may be
+# empty); every further line holds one integer query (maybe padded by spaces).
+# Output: for each query the 0-based index of its first occurrence, else -1.
+
+# First index i in [lo, hi) with xs[i] >= target (hi for none).
+fn lower_bound(xs: List[Int], lo: Int, hi: Int, target: Int) -> Int =
+  if lo >= hi then lo
+  else
+    let mid = lo + (hi - lo) / 2 in
+    match get(xs, mid) {
+      Some(v) => if v < target then lower_bound(xs, mid + 1, hi, target)
+                 else lower_bound(xs, lo, mid, target),
+      None => lo
+    }
+
+# Index of the first occurrence of target in the ascending list, or -1.
+fn find_first(xs: List[Int], target: Int) -> Int =
+  let i = lower_bound(xs, 0, len(xs), target) in
+  match get(xs, i) {
+    Some(v) => if v == target then i else -1,
+    None => -1
+  }
+
+# Parse one input line of space separated integers into an ascending list.
+fn parse_nums(line: Str) -> List[Int] =
+  let toks = filter(split(trim(line), " "), fn(t: Str) => len(t) > 0) in
+  let start: Accum[Int] = AccEnd in
+  let built = fold(toks, start, fn(a: Accum[Int], t: Str) =>
+    match to_int(t) { Some(n) => AccPush(a, n), None => a }) in
+  acc_list(built)
+
+# One query: its integer value, ignoring blank or malformed lines.
+fn parse_query(line: Str) -> Option[Int] =
+  to_int(trim(line))
+
+fn answer_queries(nums: List[Int]) -> Unit !io =
+  match read_line() {
+    None => (),
+    Some(line) =>
+      match parse_query(line) {
+        None => answer_queries(nums),
+        Some(q) => { print(from_int(find_first(nums, q))); answer_queries(nums) }
+      }
+  }
+
+fn main(args: List[Str]) -> Int !io =
+  match read_line() {
+    None => 0,
+    Some(first) => { answer_queries(parse_nums(first)); 0 }
+  }
+
+# --- tests: the examples and edge cases ---
+
+test find_example = find_first([1, 3, 3, 5, 8], 3) == 1
+test find_example_absent = find_first([1, 3, 3, 5, 8], 4) == -1
+test find_example_last = find_first([1, 3, 3, 5, 8], 8) == 4
+test find_example_first = find_first([1, 3, 3, 5, 8], 1) == 0
+test find_empty = find_first([], 5) == -1
+test find_single = find_first([7], 7) == 0
+test find_single_absent = find_first([7], 6) == -1
+test find_negatives = find_first([-9, -4, -4, 0, 2], -4) == 1
+test find_negatives_first = find_first([-9, -4, -4, 0, 2], -9) == 0
+test find_duplicates = find_first([1, 1, 1, 3, 3, 7], 7) == 5
+test parse_example = parse_nums("1 3 3 5 8") == [1, 3, 3, 5, 8]
+test parse_empty = parse_nums("") == []
+test parse_padded = parse_nums("  -9  -4 0 ") == [-9, -4, 0]
+test parse_one = parse_nums("42") == [42]
+test parse_query_padded = parse_query("  12  ") == Some(12)
+test parse_query_blank = parse_query("   ") == None

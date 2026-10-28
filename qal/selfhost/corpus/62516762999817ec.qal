@@ -1,0 +1,1 @@
+fn g() -> Int !io = { let x = 1 in print(from_int(x)); x + 1 }

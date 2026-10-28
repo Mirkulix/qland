@@ -1,0 +1,56 @@
+{
+  "format": "qal-trust-v1",
+  "members": [
+    {
+      "id": "arch-1",
+      "key": "9a6b6c62c1f5e151bc0b89d5ae6b52ece37a4d99aa8fe18be1bf5a12b8cee665",
+      "key_id": "49c6abbd11bdefbc",
+      "revoked": false,
+      "role": "architect"
+    },
+    {
+      "id": "impl-1",
+      "key": "1550325a4d66c5fe6b3fe1f9631551710f832f132461b03a11fc817d2aa55710",
+      "key_id": "85f1bbb45d8cbca0",
+      "revoked": false,
+      "role": "implementer"
+    },
+    {
+      "id": "impl-2",
+      "key": "727cf857569ea8f4e9c5d33055cc2e81be8c5fdb2284261b5f3c8e6b30ad6dde",
+      "key_id": "d73176679299f08f",
+      "revoked": false,
+      "role": "implementer"
+    },
+    {
+      "id": "impl-3",
+      "key": "d2e173807d4595e2307b804465e56b494384e302c926b7aa21f047d47123f600",
+      "key_id": "39adb73c96e1fba1",
+      "revoked": false,
+      "role": "implementer"
+    },
+    {
+      "id": "owner-1",
+      "key": "b08bc8be7ab380da6bc6fd49950e562a0c101ff20df1da5020ae541266a16701",
+      "key_id": "9058c9feedf3c97f",
+      "revoked": false,
+      "role": "owner"
+    },
+    {
+      "id": "rev-1",
+      "key": "168fa08874b687f866201d5ccc81dc21f6c9eb2291ee8c32a20a6601691beb85",
+      "key_id": "e050a7a23c95bc1b",
+      "revoked": false,
+      "role": "reviewer"
+    },
+    {
+      "id": "ver-1",
+      "key": "b54cbc869201495c532b866247afd5e796ba5feeb7d09ca39644ff132ed73ef5",
+      "key_id": "54f850991a6221ec",
+      "revoked": false,
+      "role": "verifier"
+    }
+  ],
+  "owner": "owner-1",
+  "owner_key": "b08bc8be7ab380da6bc6fd49950e562a0c101ff20df1da5020ae541266a16701"
+}

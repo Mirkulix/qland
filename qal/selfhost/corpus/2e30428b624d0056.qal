@@ -1,0 +1,1 @@
+fn f(b: Bytes, i: Int) -> Int ens let y = bytes_at(b, i) in true = 0

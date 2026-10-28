@@ -1,0 +1,1 @@
+type Nest[T] = Nil | Cons(T, Nest[List[T]])

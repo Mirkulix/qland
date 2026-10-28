@@ -47,6 +47,7 @@ fn mat_anticommutator(a: &[f64], b: &[f64], n: usize) -> Vec<f64> {
 }
 
 /// Trace of an n×n matrix.
+#[allow(dead_code)]
 fn mat_trace(m: &[f64], n: usize) -> f64 {
     (0..n).map(|i| m[i * n + i]).sum()
 }
@@ -335,6 +336,153 @@ pub fn collapse_to_weights(rho: &DensityMatrix) -> Vec<f64> {
 }
 
 // ===========================================================================
+// Quantum Scheduler — anneals hbar (exploration) and gamma (exploitation)
+// ===========================================================================
+
+/// Annealing schedule type for quantum parameters.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ScheduleType {
+    /// Cosine annealing (smooth, widely used).
+    Cosine,
+    /// Linear interpolation.
+    Linear,
+    /// Exponential decay.
+    Exponential,
+}
+
+/// Scheduler that anneals quantum parameters during training.
+///
+/// During IGQK training, the balance between *exploration* (quantum
+/// uncertainty, controlled by hbar) and *exploitation* (gradient descent,
+/// controlled by gamma) should shift over time:
+///
+/// - **Early training**: high hbar (explore the loss landscape broadly),
+///   low gamma (weak gradient pull).
+/// - **Late training**: low hbar (collapse toward a solution),
+///   high gamma (strong gradient descent).
+///
+/// The scheduler interpolates both parameters from start to end values
+/// according to a chosen schedule (cosine, linear, or exponential).
+#[derive(Debug, Clone)]
+pub struct QuantumScheduler {
+    /// Initial hbar (high = more exploration).
+    pub hbar_start: f64,
+    /// Final hbar (low = less exploration).
+    pub hbar_end: f64,
+    /// Initial gamma (low = weak gradient).
+    pub gamma_start: f64,
+    /// Final gamma (high = strong gradient).
+    pub gamma_end: f64,
+    /// Total number of steps.
+    pub total_steps: usize,
+    /// Current step (0-indexed).
+    current_step: usize,
+    /// Annealing schedule type.
+    pub schedule: ScheduleType,
+}
+
+impl QuantumScheduler {
+    /// Create a new scheduler with sensible IGQK defaults.
+    ///
+    /// - hbar: 0.1 -> 0.001  (exploration -> exploitation)
+    /// - gamma: 0.01 -> 0.1  (weak -> strong gradient)
+    /// - Schedule: Cosine
+    pub fn new(total_steps: usize) -> Self {
+        QuantumScheduler {
+            hbar_start: 0.1,
+            hbar_end: 0.001,
+            gamma_start: 0.01,
+            gamma_end: 0.1,
+            total_steps,
+            current_step: 0,
+            schedule: ScheduleType::Cosine,
+        }
+    }
+
+    /// Create a scheduler with custom parameters.
+    pub fn with_params(
+        total_steps: usize,
+        hbar_start: f64,
+        hbar_end: f64,
+        gamma_start: f64,
+        gamma_end: f64,
+        schedule: ScheduleType,
+    ) -> Self {
+        QuantumScheduler {
+            hbar_start,
+            hbar_end,
+            gamma_start,
+            gamma_end,
+            total_steps,
+            current_step: 0,
+            schedule,
+        }
+    }
+
+    /// Get the current (hbar, gamma) values based on the schedule.
+    pub fn get_params(&self) -> (f64, f64) {
+        let progress = if self.total_steps == 0 {
+            1.0
+        } else {
+            self.current_step as f64 / self.total_steps as f64
+        };
+
+        let factor = match self.schedule {
+            ScheduleType::Cosine => 0.5 * (1.0 + (std::f64::consts::PI * progress).cos()),
+            ScheduleType::Linear => 1.0 - progress,
+            ScheduleType::Exponential => (-5.0 * progress).exp(),
+        };
+
+        let hbar = self.hbar_end + (self.hbar_start - self.hbar_end) * factor;
+        let gamma = self.gamma_end - (self.gamma_end - self.gamma_start) * factor;
+        (hbar, gamma)
+    }
+
+    /// Advance the scheduler by one step.
+    pub fn step(&mut self) {
+        if self.current_step < self.total_steps {
+            self.current_step += 1;
+        }
+    }
+
+    /// Current training progress in [0.0, 1.0].
+    pub fn progress(&self) -> f64 {
+        if self.total_steps == 0 {
+            1.0
+        } else {
+            self.current_step as f64 / self.total_steps as f64
+        }
+    }
+
+    /// Current step index.
+    pub fn current_step(&self) -> usize {
+        self.current_step
+    }
+
+    /// Reset the scheduler to step 0.
+    pub fn reset(&mut self) {
+        self.current_step = 0;
+    }
+
+    /// Perform one step of quantum gradient flow using the scheduler's
+    /// current (hbar, gamma) values, then advance the step counter.
+    ///
+    /// This is a convenience method that wraps `evolve_step`.
+    pub fn evolve_scheduled(
+        &mut self,
+        rho: &DensityMatrix,
+        hamiltonian: &[f64],
+        natural_gradient: &[f64],
+        dt: f64,
+    ) -> DensityMatrix {
+        let (_hbar, gamma) = self.get_params();
+        let result = evolve_step(rho, hamiltonian, natural_gradient, gamma, dt);
+        self.step();
+        result
+    }
+}
+
+// ===========================================================================
 // Tests
 // ===========================================================================
 
@@ -370,16 +518,8 @@ mod tests {
     #[test]
     fn commutator_is_traceless() {
         let n = 3;
-        let a = vec![
-            1.0, 2.0, 0.0,
-            2.0, 3.0, 1.0,
-            0.0, 1.0, 4.0,
-        ];
-        let b = vec![
-            0.0, 1.0, 2.0,
-            1.0, 0.0, 3.0,
-            2.0, 3.0, 0.0,
-        ];
+        let a = vec![1.0, 2.0, 0.0, 2.0, 3.0, 1.0, 0.0, 1.0, 4.0];
+        let b = vec![0.0, 1.0, 2.0, 1.0, 0.0, 3.0, 2.0, 3.0, 0.0];
         let comm = mat_commutator(&a, &b, n);
         let tr = mat_trace(&comm, n);
         assert!(tr.abs() < 1e-12, "Tr([A,B]) = {tr}, expected 0");
@@ -389,16 +529,8 @@ mod tests {
     #[test]
     fn anticommutator_is_symmetric() {
         let n = 3;
-        let a = vec![
-            1.0, 2.0, 3.0,
-            4.0, 5.0, 6.0,
-            7.0, 8.0, 9.0,
-        ];
-        let b = vec![
-            9.0, 8.0, 7.0,
-            6.0, 5.0, 4.0,
-            3.0, 2.0, 1.0,
-        ];
+        let a = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0];
+        let b = vec![9.0, 8.0, 7.0, 6.0, 5.0, 4.0, 3.0, 2.0, 1.0];
         let ac = mat_anticommutator(&a, &b, n);
         for i in 0..n {
             for j in 0..n {
@@ -447,7 +579,9 @@ mod tests {
             eigenvalues: vec![0.7, 0.2, 0.08, 0.02],
             eigenvectors: {
                 let mut v = vec![0.0; 16];
-                for i in 0..4 { v[i * 4 + i] = 1.0; }
+                for i in 0..4 {
+                    v[i * 4 + i] = 1.0;
+                }
                 v
             },
         };
@@ -601,5 +735,173 @@ mod tests {
         for i in 0..9 {
             assert!((result[i] - a[i]).abs() < 1e-15);
         }
+    }
+
+    // ===================================================================
+    // QuantumScheduler tests
+    // ===================================================================
+
+    // 13. Scheduler starts at step 0
+    #[test]
+    fn scheduler_initial_state() {
+        let s = QuantumScheduler::new(100);
+        assert_eq!(s.current_step(), 0);
+        assert!((s.progress() - 0.0).abs() < 1e-15);
+    }
+
+    // 14. Scheduler hbar starts high, gamma starts low
+    #[test]
+    fn scheduler_initial_params() {
+        let s = QuantumScheduler::new(100);
+        let (hbar, gamma) = s.get_params();
+        // At step 0 (progress = 0), cosine factor = 1.0
+        // hbar = hbar_end + (hbar_start - hbar_end) * 1.0 = hbar_start
+        assert!(
+            (hbar - 0.1).abs() < 1e-10,
+            "Initial hbar should be ~0.1, got {hbar}"
+        );
+        assert!(
+            (gamma - 0.01).abs() < 1e-10,
+            "Initial gamma should be ~0.01, got {gamma}"
+        );
+    }
+
+    // 15. Scheduler hbar ends low, gamma ends high
+    #[test]
+    fn scheduler_final_params() {
+        let mut s = QuantumScheduler::new(100);
+        for _ in 0..100 {
+            s.step();
+        }
+        assert_eq!(s.current_step(), 100);
+        let (hbar, gamma) = s.get_params();
+        // At step 100 (progress = 1.0), cosine factor ≈ 0
+        assert!(
+            (hbar - 0.001).abs() < 0.01,
+            "Final hbar should be near 0.001, got {hbar}"
+        );
+        assert!(
+            (gamma - 0.1).abs() < 0.01,
+            "Final gamma should be near 0.1, got {gamma}"
+        );
+    }
+
+    // 16. Scheduler hbar monotonically decreases (cosine)
+    #[test]
+    fn scheduler_hbar_decreases_cosine() {
+        let mut s = QuantumScheduler::new(50);
+        let mut prev_hbar = f64::MAX;
+        for _ in 0..=50 {
+            let (hbar, _) = s.get_params();
+            assert!(
+                hbar <= prev_hbar + 1e-12,
+                "hbar should not increase: {prev_hbar} -> {hbar}"
+            );
+            prev_hbar = hbar;
+            s.step();
+        }
+    }
+
+    // 17. Scheduler gamma monotonically increases (cosine)
+    #[test]
+    fn scheduler_gamma_increases_cosine() {
+        let mut s = QuantumScheduler::new(50);
+        let mut prev_gamma = -f64::MAX;
+        for _ in 0..=50 {
+            let (_, gamma) = s.get_params();
+            assert!(
+                gamma >= prev_gamma - 1e-12,
+                "gamma should not decrease: {prev_gamma} -> {gamma}"
+            );
+            prev_gamma = gamma;
+            s.step();
+        }
+    }
+
+    // 18. Linear schedule
+    #[test]
+    fn scheduler_linear() {
+        let s = QuantumScheduler::with_params(100, 1.0, 0.0, 0.0, 1.0, ScheduleType::Linear);
+        let (hbar, gamma) = s.get_params();
+        // At step 0, linear factor = 1.0
+        assert!((hbar - 1.0).abs() < 1e-10);
+        assert!((gamma - 0.0).abs() < 1e-10);
+    }
+
+    // 19. Exponential schedule
+    #[test]
+    fn scheduler_exponential() {
+        let mut s =
+            QuantumScheduler::with_params(100, 1.0, 0.0, 0.0, 1.0, ScheduleType::Exponential);
+        let (hbar0, _) = s.get_params();
+        assert!((hbar0 - 1.0).abs() < 1e-10);
+        for _ in 0..100 {
+            s.step();
+        }
+        let (hbar_final, _) = s.get_params();
+        assert!(
+            hbar_final < 0.01,
+            "Exponential decay should drive hbar near 0, got {hbar_final}"
+        );
+    }
+
+    // 20. Step does not exceed total_steps
+    #[test]
+    fn scheduler_step_clamps() {
+        let mut s = QuantumScheduler::new(10);
+        for _ in 0..20 {
+            s.step();
+        }
+        assert_eq!(s.current_step(), 10);
+        assert!((s.progress() - 1.0).abs() < 1e-15);
+    }
+
+    // 21. Reset brings scheduler back to step 0
+    #[test]
+    fn scheduler_reset() {
+        let mut s = QuantumScheduler::new(100);
+        for _ in 0..50 {
+            s.step();
+        }
+        assert_eq!(s.current_step(), 50);
+        s.reset();
+        assert_eq!(s.current_step(), 0);
+        assert!((s.progress() - 0.0).abs() < 1e-15);
+    }
+
+    // 22. Zero total_steps edge case
+    #[test]
+    fn scheduler_zero_steps() {
+        let s = QuantumScheduler::new(0);
+        assert!((s.progress() - 1.0).abs() < 1e-15);
+        let (hbar, gamma) = s.get_params();
+        assert!(hbar.is_finite());
+        assert!(gamma.is_finite());
+    }
+
+    // 23. evolve_scheduled advances the step counter
+    #[test]
+    fn scheduler_evolve_scheduled_advances() {
+        let mut s = QuantumScheduler::new(10);
+        let rho = DensityMatrix::maximally_mixed(3);
+        let h = construct_hamiltonian(3, &[1.0, 2.0, 3.0]);
+        let grad = simple_gradient(3);
+        let _ = s.evolve_scheduled(&rho, &h, &grad, 0.001);
+        assert_eq!(s.current_step(), 1);
+    }
+
+    // 24. evolve_scheduled preserves trace
+    #[test]
+    fn scheduler_evolve_preserves_trace() {
+        let mut s = QuantumScheduler::new(10);
+        let rho = DensityMatrix::maximally_mixed(4);
+        let h = construct_hamiltonian(4, &[1.0, 2.0, 3.0, 4.0]);
+        let grad = simple_gradient(4);
+        let rho2 = s.evolve_scheduled(&rho, &h, &grad, 0.001);
+        assert!(
+            (rho2.trace() - 1.0).abs() < 1e-10,
+            "Trace = {}, expected 1.0",
+            rho2.trace()
+        );
     }
 }

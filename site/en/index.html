@@ -1,0 +1,957 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#060f0d">
+<meta name="description" content="QAL (Query &amp; Agent Language) is a programming language for AI agents: an agent writes code and knows in the same round whether it is right.">
+<link rel="alternate" hreflang="de" href="https://qalang.de/">
+<link rel="alternate" hreflang="en" href="https://qalang.de/en/">
+<title>QAL Language</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCIgZmlsbD0ibm9uZSI+CiAgPGNpcmNsZSBjeD0iMzAiIGN5PSIzMCIgcj0iMTkiIHN0cm9rZT0iIzYyZDZjNCIgc3Ryb2tlLXdpZHRoPSI1IiBzdHJva2UtZGFzaGFycmF5PSIxMDkuNDUgOS45NSIgc3Ryb2tlLWRhc2hvZmZzZXQ9Ijk5LjUiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPgogIDxwYXRoIGQ9Ik00My40IDQzLjQgTDU1IDU1IiBzdHJva2U9IiM2MmQ2YzQiIHN0cm9rZS13aWR0aD0iNS41IiBzdHJva2UtbGluZWNhcD0icm91bmQiLz4KICA8Y2lyY2xlIGN4PSIzMCIgY3k9IjExIiByPSI1IiBmaWxsPSIjMDYwZjBkIiBzdHJva2U9IiNlNGYwZWIiIHN0cm9rZS13aWR0aD0iMyIvPgogIDxjaXJjbGUgY3g9IjEzLjUiIGN5PSIzOS41IiByPSI1IiBmaWxsPSIjMDYwZjBkIiBzdHJva2U9IiNlNGYwZWIiIHN0cm9rZS13aWR0aD0iMyIvPgogIDxjaXJjbGUgY3g9IjQ2LjQ1IiBjeT0iMzkuNSIgcj0iNSIgZmlsbD0iI2YwYTM1YSIvPgo8L3N2Zz4=">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: ein Prüfprotokoll. Oben die eine Runde (Agent schreibt, Speicher antwortet), darunter ein Atlas aller Fähigkeiten als Register mit Begriff, Erklärung und Beleg, dann Codes, Zahlen und Grenzen. */
+:root {
+  /* One dark world, by choice: the page is the machine's view of a codebase. */
+  --bg: #060f0d;
+  --surface: #0c1916;
+  --sunk: #10211d;
+  --ink: #e4f0eb;
+  --muted: #8ea69d;
+  --line: #1b2d28;
+  --proof: #62d6c4;
+  --proof-soft: #12332d;
+  --warn: #f0a35a;
+  --warn-soft: #2d2014;
+  --glow: rgba(98, 214, 196, 0.16);
+  --code-bg: #040b09;
+  --code-fg: #d9ece4;
+  --code-dim: #7d9b8f;
+  --code-key: #7fe0cf;
+  --code-str: #f2c58f;
+  --display: "Bricolage Grotesque", "Avenir Next", "Segoe UI", sans-serif;
+  --body: "IBM Plex Sans", "Helvetica Neue", Arial, sans-serif;
+  --mono: "JetBrains Mono", "SFMono-Regular", Menlo, Consolas, monospace;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { margin: 0; }
+img { max-width: 100%; }
+[hidden] { display: none !important; }
+:root { padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px); }
+html { scroll-behavior: smooth; scroll-padding-top: 72px; }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+body { background: var(--bg); color: var(--ink); font-family: var(--body); font-size: 17px; line-height: 1.6; }
+.wrap { max-width: 1160px; margin: 0 auto; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+h1, h2, h3 { font-family: var(--display); line-height: 1.08; text-wrap: balance; margin: 0; }
+h1 { font-size: clamp(2.4rem, 5.6vw, 4.4rem); font-weight: 800; letter-spacing: -0.025em; }
+h2 { font-size: clamp(1.75rem, 3.4vw, 2.6rem); font-weight: 700; letter-spacing: -0.015em; }
+h3 { font-size: 1.18rem; font-weight: 700; letter-spacing: -0.005em; }
+p { margin: 0; max-width: 66ch; }
+a { color: var(--proof); }
+:focus-visible { outline: 2px solid var(--proof); outline-offset: 2px; border-radius: 3px; }
+code { font-family: var(--mono); font-size: 0.86em; background: var(--sunk); padding: 0.08em 0.36em; border-radius: 4px; overflow-wrap: anywhere; }
+.eyebrow { font-family: var(--mono); font-size: 0.76rem; letter-spacing: 0.13em; text-transform: uppercase; color: var(--proof); }
+
+/* Kopfleiste */
+body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 10; background: var(--bg); }
+.top { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5; background: color-mix(in srgb, var(--bg) 80%, transparent); backdrop-filter: blur(8px); border-bottom: 1px solid var(--line); }
+.top .wrap { display: flex; align-items: center; gap: 22px; padding-block: 12px; }
+.mark { font-family: var(--display); font-weight: 800; font-size: 1.3rem; letter-spacing: -0.02em; white-space: nowrap; text-decoration: none; color: var(--ink); }
+.mark span { color: var(--proof); }
+.mark { display: inline-flex; align-items: center; gap: 9px; }
+.mark .logo { width: 30px; height: 30px; flex: none; }
+.top nav { display: flex; gap: 4px; overflow-x: auto; scrollbar-width: none; min-width: 0; flex: 1; }
+.top nav::-webkit-scrollbar { display: none; }
+.top nav a { white-space: nowrap; color: var(--muted); text-decoration: none; font-size: 0.9rem; padding: 6px 10px; border-radius: 6px; }
+.top nav a:hover { color: var(--ink); background: var(--sunk); }
+
+/* Hero */
+.hero-band { position: relative; overflow: hidden; }
+#graph { position: absolute; inset: 0; width: 100%; height: 100%; display: block; opacity: 0.9;
+  -webkit-mask-image: radial-gradient(ellipse 85% 75% at 70% 40%, #000 30%, transparent 78%);
+          mask-image: radial-gradient(ellipse 85% 75% at 70% 40%, #000 30%, transparent 78%); }
+.hero { padding-block: 72px 52px; position: relative; }
+.status { display: inline-flex; align-items: center; gap: 10px; width: fit-content; font-family: var(--mono); font-size: 0.78rem; color: var(--proof); border: 1px solid var(--proof-soft); background: rgba(98, 214, 196, 0.06); padding: 6px 12px; border-radius: 999px; }
+.status i { width: 7px; height: 7px; border-radius: 50%; background: var(--proof); box-shadow: 0 0 0 0 var(--glow); }
+@media (prefers-reduced-motion: no-preference) { .status i { animation: pulse 2.4s ease-out infinite; } }
+@keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(98,214,196,0.55); } 70% { box-shadow: 0 0 0 9px rgba(98,214,196,0); } 100% { box-shadow: 0 0 0 0 rgba(98,214,196,0); } }
+h1 .hl { color: var(--proof); }
+.hero-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr); gap: 48px; align-items: start; }
+.hero-text { display: flex; flex-direction: column; gap: 22px; min-width: 0; }
+.lede { font-size: 1.16rem; color: var(--muted); }
+.lede strong { color: var(--ink); font-weight: 600; }
+.acro { font-family: var(--mono); font-size: 0.92rem; color: var(--muted); display: flex; gap: 14px; flex-wrap: wrap; }
+.acro b { color: var(--proof); font-weight: 600; }
+.strip { background: color-mix(in srgb, var(--bg) 70%, transparent); backdrop-filter: blur(4px); display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); margin-top: 48px; }
+.strip div { padding: 16px 18px; border-right: 1px solid var(--line); display: grid; gap: 2px; min-width: 0; }
+.strip div:last-child { border-right: 0; }
+.strip b { font-family: var(--display); font-size: 1.7rem; font-weight: 800; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+.strip span { font-size: 0.86rem; color: var(--muted); }
+
+.exchange { display: grid; gap: 12px; min-width: 0; }
+.panel { background: color-mix(in srgb, var(--code-bg) 88%, transparent); color: var(--code-fg); border-radius: 12px; overflow: hidden; min-width: 0; border: 1px solid var(--line); box-shadow: 0 18px 50px -24px rgba(0,0,0,0.8), 0 0 0 1px rgba(98,214,196,0.04); backdrop-filter: blur(6px); }
+.panel.reply { border-color: var(--proof-soft); box-shadow: 0 18px 60px -28px var(--glow), 0 0 0 1px rgba(98,214,196,0.08); }
+.panel-head { display: flex; justify-content: space-between; gap: 12px; padding: 9px 14px; font-family: var(--mono); font-size: 0.72rem; color: var(--code-dim); border-bottom: 1px solid rgba(255,255,255,0.08); }
+.panel pre { margin: 0; padding: 14px 16px; overflow-x: auto; font-family: var(--mono); font-size: 0.8rem; line-height: 1.55; }
+.k { color: var(--code-key); } .s { color: var(--code-str); } .d { color: var(--code-dim); } .w { color: var(--warn); font-weight: 600; }
+.caption { font-size: 0.8rem; color: var(--muted); }
+
+/* Abschnitte */
+section { padding-block: 72px; border-top: 1px solid var(--line); }
+.sec-head { display: grid; gap: 12px; margin-bottom: 36px; }
+.sec-head p { color: var(--muted); }
+.two { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 40px; }
+
+/* Name */
+.name-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: var(--surface); }
+.name-cell { padding: 28px; display: grid; gap: 10px; align-content: start; min-width: 0; }
+.name-cell + .name-cell { border-left: 1px solid var(--line); }
+.letter { font-family: var(--display); font-size: 4.2rem; font-weight: 800; line-height: 0.9; color: var(--proof); }
+.word { font-family: var(--mono); font-size: 0.8rem; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
+
+/* Warum jetzt */
+.shift { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0; margin-bottom: 28px; }
+.shift-step { padding: 4px 26px 4px 0; display: grid; gap: 8px; align-content: start; min-width: 0; position: relative; }
+.shift-step + .shift-step { padding-left: 26px; border-left: 1px solid var(--line); }
+.shift-step .n { font-family: var(--mono); font-size: 0.74rem; color: var(--proof); }
+.shift-step p { color: var(--muted); font-size: 0.95rem; }
+.compare td:last-child { color: var(--ink); font-weight: 500; }
+.compare td:nth-child(2) { color: var(--muted); }
+.thesis { margin-top: 24px; padding: 20px 22px; border-radius: 10px; background: var(--proof-soft); }
+.thesis p { max-width: 80ch; }
+.thesis b { color: var(--proof); }
+@media (max-width: 960px) {
+  .shift { grid-template-columns: 1fr; gap: 20px; }
+  .shift-step, .shift-step + .shift-step { padding: 0; border-left: 0; }
+  .shift-step + .shift-step { padding-top: 20px; border-top: 1px solid var(--line); }
+}
+
+
+/* Spielplatz */
+.play { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr); gap: 18px; align-items: stretch; }
+.editor { display: grid; grid-template-rows: auto 1fr auto; background: var(--code-bg); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; min-width: 0; }
+.ex-bar { display: flex; gap: 6px; flex-wrap: wrap; padding: 10px 12px; border-bottom: 1px solid rgba(255,255,255,0.07); }
+.ex-bar button { font: 500 0.8rem var(--body); color: var(--code-fg); background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.09); border-radius: 999px; padding: 5px 11px; cursor: pointer; }
+.ex-bar button:hover, .ex-bar button[aria-pressed="true"] { border-color: var(--proof); color: var(--proof); }
+#code { width: 100%; min-height: 300px; resize: vertical; border: 0; outline: 0; background: transparent; color: var(--code-fg); font-family: var(--mono); font-size: 0.84rem; line-height: 1.6; padding: 14px 16px; tab-size: 2; white-space: pre; overflow: auto; }
+#code:focus-visible { box-shadow: inset 0 0 0 2px var(--proof-soft); }
+.ed-foot { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 12px; border-top: 1px solid rgba(255,255,255,0.07); font-family: var(--mono); font-size: 0.74rem; color: var(--code-dim); flex-wrap: wrap; }
+.ed-foot button { font: 600 0.84rem var(--body); color: var(--bg); background: var(--proof); border: 0; border-radius: 8px; padding: 8px 16px; cursor: pointer; }
+.ed-foot button:disabled { opacity: 0.5; cursor: default; }
+.result { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 18px; display: grid; gap: 12px; align-content: start; min-width: 0; }
+.verdict { display: flex; align-items: center; gap: 10px; font-family: var(--display); font-weight: 700; font-size: 1.25rem; }
+.verdict .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); flex: none; }
+.verdict.ok .dot { background: var(--proof); box-shadow: 0 0 12px var(--proof); }
+.verdict.bad .dot { background: var(--warn); box-shadow: 0 0 12px var(--warn); }
+.meta { font-family: var(--mono); font-size: 0.76rem; color: var(--muted); }
+.diag { border: 1px solid var(--line); border-left: 3px solid var(--warn); border-radius: 0 8px 8px 0; padding: 12px 14px; display: grid; gap: 6px; background: var(--sunk); min-width: 0; }
+.diag .head { display: flex; gap: 10px; flex-wrap: wrap; align-items: baseline; font-family: var(--mono); font-size: 0.8rem; }
+.diag .head b { color: var(--warn); }
+.diag .where { color: var(--muted); }
+.diag .msg { font-size: 0.95rem; overflow-wrap: anywhere; }
+.diag ul { margin: 0; padding-left: 1.1em; color: var(--proof); font-size: 0.88rem; }
+.raw summary { cursor: pointer; font-size: 0.85rem; color: var(--muted); }
+.raw pre { margin: 8px 0 0; padding: 12px; background: var(--code-bg); border-radius: 8px; overflow-x: auto; font-family: var(--mono); font-size: 0.74rem; color: var(--code-fg); max-height: 260px; }
+.play-note { margin-top: 14px; font-size: 0.88rem; color: var(--muted); }
+@media (max-width: 960px) { .play { grid-template-columns: 1fr; } }
+
+/* Die eine Runde */
+.loop { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); border: 1px solid var(--line); border-radius: 12px; background: var(--surface); overflow: hidden; counter-reset: step; }
+.step { padding: 22px 18px; border-right: 1px solid var(--line); display: grid; gap: 8px; align-content: start; min-width: 0; }
+.step:last-child { border-right: 0; }
+.step .n { font-family: var(--mono); font-size: 0.74rem; color: var(--proof); }
+.step p { font-size: 0.92rem; color: var(--muted); }
+.plus { margin-top: 14px; display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 14px; align-items: start; padding: 16px 18px; background: var(--warn-soft); border-radius: 10px; }
+.plus .badge { font-family: var(--mono); font-size: 0.78rem; font-weight: 600; color: var(--warn); white-space: nowrap; }
+
+/* Atlas */
+.atlas-index { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 40px; }
+.atlas-index a { font-size: 0.88rem; text-decoration: none; color: var(--ink); border: 1px solid var(--line); background: var(--surface); padding: 6px 12px; border-radius: 999px; }
+.atlas-index a:hover { border-color: var(--proof); color: var(--proof); }
+.domain { display: grid; grid-template-columns: minmax(0, 0.34fr) minmax(0, 1fr); gap: 36px; padding-block: 36px; border-top: 1px solid var(--line); }
+.domain:first-of-type { border-top: 0; padding-top: 0; }
+.domain-head { display: grid; gap: 10px; align-content: start; position: sticky; top: 84px; align-self: start; min-width: 0; }
+.domain-head .count { font-family: var(--mono); font-size: 0.78rem; color: var(--muted); }
+.domain-head p { color: var(--muted); font-size: 0.95rem; }
+.feats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 22px 30px; min-width: 0; }
+.feat { display: grid; gap: 5px; align-content: start; min-width: 0; padding-top: 14px; border-top: 2px solid var(--proof-soft); transition: border-color 0.25s ease; }
+.feat:hover { border-top-color: var(--proof); }
+.feat b { font-weight: 600; font-size: 1rem; }
+.feat span { font-size: 0.94rem; color: var(--muted); }
+.feat .ex { font-family: var(--mono); font-size: 0.78rem; color: var(--ink); background: var(--sunk); border-radius: 6px; padding: 6px 9px; overflow-x: auto; white-space: pre; margin-top: 4px; }
+
+/* Tabellen */
+.table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; min-width: 560px; font-variant-numeric: tabular-nums; }
+th, td { text-align: left; padding: 10px 16px; border-bottom: 1px solid var(--line); font-size: 0.93rem; vertical-align: top; }
+th { font-family: var(--mono); font-size: 0.72rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); font-weight: 400; background: var(--sunk); }
+tr:last-child td { border-bottom: 0; }
+td.c { font-family: var(--mono); font-size: 0.84rem; white-space: nowrap; color: var(--proof); font-weight: 600; }
+td.c.w { color: var(--warn); }
+td.now { color: var(--proof); font-weight: 600; }
+.codes { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 20px; }
+.codes h3 { margin-bottom: 12px; }
+
+/* Zahlen */
+.figures { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; margin-bottom: 22px; }
+.fig { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 18px 20px; display: grid; gap: 6px; align-content: start; min-width: 0; }
+.fig .val { font-family: var(--display); font-weight: 800; font-size: 1.9rem; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+.fig .val small { font-size: 0.95rem; font-weight: 500; color: var(--muted); }
+.fig .lbl { font-size: 0.9rem; }
+.fig .src { font-family: var(--mono); font-size: 0.72rem; color: var(--muted); }
+
+/* Fang */
+.catch { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 36px; align-items: start; }
+.warnbox { background: var(--warn-soft); border-left: 3px solid var(--warn); border-radius: 0 10px 10px 0; padding: 18px 20px; display: grid; gap: 10px; min-width: 0; }
+.warnbox .code { font-family: var(--mono); color: var(--warn); font-weight: 600; font-size: 0.84rem; }
+.warnbox blockquote { margin: 0; font-family: var(--mono); font-size: 0.85rem; overflow-wrap: anywhere; }
+.story { display: grid; gap: 14px; min-width: 0; }
+.story ol { margin: 0; padding-left: 1.2em; display: grid; gap: 8px; }
+
+/* Listen */
+.list { list-style: none; padding: 0; margin: 0; display: grid; gap: 16px; }
+.list li { display: grid; gap: 4px; }
+.list b { font-weight: 600; }
+.list span { color: var(--muted); font-size: 0.96rem; }
+.limits li b { color: var(--warn); }
+
+/* Loslegen */
+.cmds { display: grid; gap: 10px; }
+.cmd-label { font-size: 0.88rem; color: var(--muted); margin-top: 6px; }
+.cmd { display: grid; grid-template-columns: minmax(0, 1fr) auto; background: var(--code-bg); border-radius: 10px; overflow: hidden; }
+.cmd pre { margin: 0; padding: 12px 16px; overflow-x: auto; color: var(--code-fg); font-family: var(--mono); font-size: 0.82rem; }
+.cmd button { font: 500 0.8rem var(--body); border: 0; border-left: 1px solid rgba(255,255,255,0.1); background: transparent; color: var(--code-key); padding: 0 16px; cursor: pointer; }
+.cmd button:hover { background: rgba(255,255,255,0.06); }
+
+footer { padding-block: 36px; border-top: 1px solid var(--line); color: var(--muted); font-size: 0.86rem; }
+footer .wrap { display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+
+@media (max-width: 960px) {
+  .hero-grid, .catch, .two, .codes { grid-template-columns: 1fr; }
+  .domain { grid-template-columns: 1fr; gap: 20px; }
+  .domain-head { position: static; }
+  .loop { grid-template-columns: 1fr; }
+  .step { border-right: 0; border-bottom: 1px solid var(--line); }
+  .step:last-child { border-bottom: 0; }
+  .figures { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .strip div:nth-child(2) { border-right: 0; }
+  .strip div:nth-child(-n+2) { border-bottom: 1px solid var(--line); }
+}
+@media (max-width: 600px) {
+  body { font-size: 16px; }
+  .feats, .figures, .name-grid { grid-template-columns: 1fr; }
+  .name-cell + .name-cell { border-left: 0; border-top: 1px solid var(--line); }
+  .hero { padding-block: 40px 32px; }
+  section { padding-block: 52px; }
+  .letter { font-size: 3.2rem; }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .reply .line { animation: appear 0.45s ease both; }
+  .reply .line:nth-child(2) { animation-delay: 0.15s; } .reply .line:nth-child(3) { animation-delay: 0.3s; }
+  .reply .line:nth-child(4) { animation-delay: 0.45s; } .reply .line:nth-child(5) { animation-delay: 0.6s; }
+  .reply .line:nth-child(6) { animation-delay: 0.75s; }
+  @keyframes appear { from { opacity: 0.25; transform: translateY(2px); } to { opacity: 1; transform: none; } }
+}
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="wrap">
+    <a class="mark" href="#start-top"><svg class="logo" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" aria-hidden="true">
+  <circle cx="30" cy="30" r="19" stroke="#62d6c4" stroke-width="5" stroke-dasharray="109.45 9.95" stroke-dashoffset="99.5" stroke-linecap="round"/>
+  <path d="M43.4 43.4 L55 55" stroke="#62d6c4" stroke-width="5.5" stroke-linecap="round"/>
+  <circle cx="30" cy="11" r="5" fill="#060f0d" stroke="#e4f0eb" stroke-width="3"/>
+  <circle cx="13.5" cy="39.5" r="5" fill="#060f0d" stroke="#e4f0eb" stroke-width="3"/>
+  <circle cx="46.45" cy="39.5" r="5" fill="#f0a35a"/>
+</svg>QAL<span>.</span></a>
+    <nav aria-label="Sections">
+      <a href="#name">The name</a>
+      <a href="#why-now">Why now</a>
+      <a href="#round">One round</a>
+      <a href="#try">Try it</a>
+      <a href="#atlas">Everything QAL does</a>
+      <a href="#codes">Diagnostics</a>
+      <a href="#numbers">Numbers</a>
+      <a href="#catch">A real catch</a>
+      <a href="#why">Why QAL</a>
+      <a href="#start">Get started</a>
+      <a href="/" hreflang="de" lang="de">Deutsch</a>
+    </nav>
+  </div>
+</header>
+
+<main id="start-top">
+  <div class="hero-band">
+  <canvas id="graph" aria-hidden="true"></canvas>
+  <div class="wrap hero">
+    <div class="hero-grid">
+      <div class="hero-text">
+        <span class="status"><i></i>one round · every check · 0.28 s</span>
+        <h1>An agent writes code and knows <span class="hl">in the same round</span> whether it is right.</h1>
+        <p class="lede">In QAL, code does not live in files but as checked function nodes in a store. Every write is immediately <strong>typed, proven, tested and relinked with the whole program</strong>. The answer arrives in under half a second, as JSON.</p>
+        <div class="acro"><span><b>Q</b>uery</span><span>&amp;</span><span><b>A</b>gent</span><span><b>L</b>anguage</span></div>
+      </div>
+
+      <div class="exchange" aria-label="Example: one write and its answer">
+        <div class="panel">
+          <div class="panel-head"><span>agent → qal_define</span><span>QAL</span></div>
+<pre><span class="k">type</span> Acct = { id: Int, balance: Int }
+
+<span class="k">fn</span> deposit(a: Acct, n: Int) -&gt; Acct
+  <span class="k">req</span> n &gt;= 1
+  <span class="k">ens</span> r.balance &gt; a.balance
+= Acct { id: a.id, balance: a.balance + n }
+
+<span class="k">test</span> deposit_adds =
+  deposit(Acct { id: 1, balance: 5 }, 3).balance == 8</pre>
+        </div>
+        <div class="panel reply">
+          <div class="panel-head"><span>store → agent, same round</span><span>JSON</span></div>
+<pre><span class="line d">{</span>
+<span class="line">  <span class="k">"defined"</span>: [<span class="s">"Acct"</span>, <span class="s">"deposit"</span>, <span class="s">"deposit_adds"</span>: <span class="s">"added"</span>],</span>
+<span class="line">  <span class="k">"proofs"</span>:  [<span class="s">"ens r.balance &gt; a.balance"</span>: <span class="s">"proven"</span>,
+             <span class="s">"req n &gt;= 1"</span> at the call in deposit_adds: <span class="s">"proven"</span>],</span>
+<span class="line">  <span class="k">"tests"</span>:   [<span class="s">"deposit_adds"</span>: passed],</span>
+<span class="line">  <span class="k">"warnings"</span>: [{ <span class="k">"code"</span>: <span class="w">"E0804"</span>, <span class="k">"kind"</span>: <span class="s">"property_traps"</span>,
+    <span class="k">"message"</span>: <span class="s">"`deposit` trapped in 3 of 103 generated runs:
+      Int overflow in `+` (64-bit) {left: 1, right: 9223372036854775807}"</span>,
+    <span class="k">"hints"</span>: [<span class="s">"... say so with a `req` on `deposit` that bounds them"</span>] }]</span>
+<span class="line d">}</span></pre>
+        </div>
+        <p class="caption">The real reply of <code>qal_define</code> to exactly this code, shortened, in 0.38 s. Both contracts are proven. No test checked the overflow at a balance near the Int maximum; the property tests found it in the same round.</p>
+      </div>
+    </div>
+    <div class="strip">
+      <div><b>0.28 s</b><span>one define with every check, 66 functions</span></div>
+      <div><b>0.43 s</b><span>the same at 1520 definitions</span></div>
+      <div><b>95 / 96</b><span>stages with every hidden test green</span></div>
+      <div><b>11 / 13</b><span>planted bugs E0807 reports without any test</span></div>
+    </div>
+  </div>
+  </div>
+
+  <section id="name">
+    <div class="wrap">
+      <div class="sec-head">
+        <div class="eyebrow">The name</div>
+        <h2>QAL stands for Query &amp; Agent Language</h2>
+        <p>Both halves of the name describe how the language works.</p>
+      </div>
+      <div class="name-grid">
+        <div class="name-cell">
+          <div class="letter">Q</div><div class="word">Query</div>
+          <h3>Code is queried, not searched</h3>
+          <p>Code lives in a store instead of files. An agent queries it: who uses a function (<code>qal_query</code>), what a definition looks like (<code>qal_view</code>), how it changed (<code>qal_history</code>). Every answer is structured JSON, not text to be parsed first.</p>
+        </div>
+        <div class="name-cell">
+          <div class="letter">A</div><div class="word">Agent</div>
+          <h3>Built for whoever writes the code</h3>
+          <p>The language is designed for AI agents, not for people at an editor. So every write checks everything at once, every error has a code, a path and a hint for the fix, and every effect on the outside world has to be granted explicitly.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="why-now">
+    <div class="wrap">
+      <div class="sec-head">
+        <div class="eyebrow">Why now</div>
+        <h2>The next step: languages for the time when agents write the code</h2>
+        <p>Every widely used programming language was designed for people at an editor. Today AI agents write a growing share of code. QAL starts where that has moved the bottleneck.</p>
+      </div>
+      <div class="shift">
+        <div class="shift-step"><span class="n">What changed</span><h3>Producing code has become cheap</h3><p>An agent writes in seconds what takes a person hours. The amount of code grows faster than people can read and check it.</p></div>
+        <div class="shift-step"><span class="n">Where the bottleneck is now</span><h3>Checking is expensive</h3><p>In today's languages you find out later whether code is right: in a test run, a review, in production. An agent often does not find out at all, or too late.</p></div>
+        <div class="shift-step"><span class="n">What QAL makes of it</span><h3>Checking is part of writing</h3><p>Every write is typed, proven, tested and linked with the program at once. Trust comes from machine-checked guarantees, not from hope.</p></div>
+      </div>
+      <div class="table-wrap compare">
+        <table>
+          <thead><tr><th>Concern</th><th>Languages for people</th><th>QAL, a language for agents</th></tr></thead>
+          <tbody>
+            <tr><td>Where code lives</td><td>text files you search</td><td>checked nodes in a store you query</td></tr>
+            <tr><td>Error messages</td><td>text for people</td><td>JSON with code, path and a hint for the fix</td></tr>
+            <tr><td>Tests</td><td>a separate, later step</td><td>run with every write, as far as the change reaches</td></tr>
+            <tr><td>Contracts</td><td>comments or runtime asserts</td><td>proven by the Z3 prover when written</td></tr>
+            <tr><td>Side effects</td><td>invisible in the code</td><td>declared in the type and granted one by one</td></tr>
+            <tr><td>Silent regressions</td><td>found by a person, with luck</td><td>reported by the behaviour memory in the same round</td></tr>
+            <tr><td>AI calls in a program</td><td>an unchecked API call</td><td>an effect with a budget, recording and deterministic tests</td></tr>
+            <tr><td>Several agents</td><td>conflicts in version history</td><td>roles, leases, a merge gate and a signed history</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="thesis">
+        <p><b>Our thesis:</b> the more code agents write, the less trust can come from a person reading every line. It has to come from the language itself. QAL is built around that idea. What of it is measured today, and what is not better yet, is below under numbers and limits.</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="round">
+    <div class="wrap">
+      <div class="sec-head">
+        <div class="eyebrow">One round</div>
+        <h2>Five checks, one call</h2>
+        <p>Other languages spread these steps over compiler, test run, linter and review. In QAL they are the answer to every write. The agent does not have to trigger any of them; a separate <code>qal_test</code> or <code>qal_prove</code> afterwards is not needed.</p>
+      </div>
+      <div class="loop">
+        <div class="step"><span class="n">Types and effects</span><h3>Does it fit?</h3><p>Type checking, exhaustiveness of every <code>match</code>, and every function states what it may do: <code>!io</code>, <code>!fs</code>, <code>!net</code>, <code>!db</code>, <code>!model</code>.</p></div>
+        <div class="step"><span class="n">Z3 proof</span><h3>Does the contract hold?</h3><p>Every <code>ens</code>, and every function's <code>req</code> at each call. A refuted contract is not stored; the diagnostic carries a counterexample.</p></div>
+        <div class="step"><span class="n">Tests</span><h3>Does anything break?</h3><p>Every stored test the change reaches, also through other functions.</p></div>
+        <div class="step"><span class="n">Property tests</span><h3>And at the edges?</h3><p>Every defined pure function at 0, ±1, empty values and the bounds of its <code>req</code>; plus the type invariants.</p></div>
+        <div class="step"><span class="n">Relink</span><h3>Does the rest still hold?</h3><p>Every dependent definition gets a new hash and is checked along.</p></div>
+      </div>
+      <div class="plus"><span class="badge">+ E0807</span><p>The behaviour memory: earlier real program runs are replayed. If a define changes their output, the reply names exactly those runs, once, with old and new output.</p></div>
+    </div>
+  </section>
+
+  <section id="try">
+    <div class="wrap">
+      <div class="sec-head">
+        <div class="eyebrow">Try it yourself</div>
+        <h2>The real compiler, here in your browser</h2>
+        <p>The QAL compiler is written in QAL and compiled to WebAssembly. That very module, 444 KB, now runs on your machine. Write code or pick an example: the answer is the same one an agent gets.</p>
+      </div>
+      <div class="play">
+        <div class="editor">
+          <div class="ex-bar" role="group" aria-label="Examples">
+            <button type="button" data-ex="ok" aria-pressed="true">Valid</button>
+            <button type="button" data-ex="type">Type error</button>
+            <button type="button" data-ex="match">Missing case</button>
+            <button type="button" data-ex="effect">Missing effect</button>
+            <button type="button" data-ex="parse">Syntax error</button>
+          </div>
+          <label for="code" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)">QAL code</label>
+          <textarea id="code" spellcheck="false" autocomplete="off" autocapitalize="off"></textarea>
+          <div class="ed-foot"><span id="cstate">Loading the compiler …</span><button type="button" id="run" disabled>Check</button></div>
+        </div>
+        <div class="result" id="result" aria-live="polite">
+          <div class="verdict"><span class="dot"></span><span>Not checked yet</span></div>
+          <p class="meta">Once the compiler is loaded, it checks as you type.</p>
+        </div>
+      </div>
+      <p class="play-note">In the browser run the parser, type checking, effect checking and exhaustiveness of <code>match</code>. Z3 proofs, tests and the store run in the full <code>qal</code> tool.</p>
+    </div>
+  </section>
+
+  <section id="atlas">
+    <div class="wrap">
+      <div class="sec-head">
+        <div class="eyebrow">Everything QAL does</div>
+        <h2>The complete atlas</h2>
+        <p>Every capability of the language, the store and the tools, with what it means for an agent. Compiled from the language reference and <code>qal --help</code>, as of 26 October 2026.</p>
+      </div>
+      <div class="atlas-index">
+        <a href="#a-language">Language</a><a href="#a-verification">Verification</a><a href="#a-store">Store</a>
+        <a href="#a-execution">Execution</a><a href="#a-services">Services</a><a href="#a-ai">AI calls</a>
+        <a href="#a-std">Standard library</a><a href="#a-tools">Tools</a><a href="#a-team">Team</a><a href="#a-compiler">Compiler</a>
+      </div>
+
+      <div class="domain" id="a-language">
+        <div class="domain-head"><span class="count">01 · Language</span><h3>Small, strict, no surprises</h3><p>Everything is an expression. There is no <code>null</code>, no exceptions, no implicit conversions and no loops.</p></div>
+        <div class="feats">
+          <div class="feat"><b>Types</b><span>Int (64-bit), Float, Bool, Unit, Str, Bytes, List[T], Map[K, V] (ordered by key), Option[T], Result[T, E] and function types.</span></div>
+          <div class="feat"><b>Records and variants</b><span>Your own types as a record or as an enumeration with data.</span><span class="ex">type Shape = Circle(Int) | Rect(Int, Int) | Dot</span></div>
+          <div class="feat"><b>Generics</b><span>Generic types and functions; type arguments are inferred at the call.</span><span class="ex">fn swap[A, B](p: Pair[A, B]) -&gt; Pair[B, A]</span></div>
+          <div class="feat"><b>Exhaustive pattern matching</b><span>Patterns with constants, variants, records and guards. Every <code>match</code> has to cover every case.</span></div>
+          <div class="feat"><b>Closures</b><span>Anonymous functions that capture their surroundings. Values are immutable; functions are values.</span><span class="ex">map(xs, fn(x) =&gt; x * k)</span></div>
+          <div class="feat"><b>Effects in the type</b><span>Whoever reads, writes or goes to the network says so: <code>!io !fs !time !rand !net !db !model</code>. Callers carry the union.</span></div>
+          <div class="feat"><b>Effect polymorphism</b><span>A function takes on its callback's effects; with a pure callback it stays pure.</span><span class="ex">fn each[T, !e](xs: List[T], f: fn(T) -&gt; Unit !e) -&gt; Unit !e</span></div>
+          <div class="feat"><b>Recursion instead of loops</b><span>A call in tail position is a loop. Lists are processed with <code>map</code>, <code>filter</code>, <code>fold</code> and <code>range</code>.</span></div>
+          <div class="feat"><b>Exact integers</b><span><code>a * b / c</code> is computed exactly with a 128-bit intermediate. A real overflow and division by zero stop the program instead of computing on wrongly.</span></div>
+          <div class="feat"><b>Placeholders</b><span><code>todo()</code> stands for a missing body of any type; executed, it stops with E0540.</span></div>
+        </div>
+      </div>
+
+      <div class="domain" id="a-verification">
+        <div class="domain-head"><span class="count">02 · Verification</span><h3>Prove, test, remember</h3><p>Four nets that run with every write: proofs, tests, property tests and the behaviour memory.</p></div>
+        <div class="feats">
+          <div class="feat"><b>Contracts</b><span><code>req</code> is the precondition, <code>ens</code> the postcondition, <code>r</code> the result. They always hold at run time too.</span><span class="ex">fn sqrt_floor(n: Int) -&gt; Int req n &gt;= 0 ens r * r &lt;= n</span></div>
+          <div class="feat"><b>Z3 proofs</b><span>Exact for Int, Bool and record fields, using the contracts of the functions called. Refuted: not stored, with a counterexample. Not provable: <code>unknown</code> with a reason, checked at run time.</span></div>
+          <div class="feat"><b>Affected tests</b><span>A <code>define</code> runs every stored test that reaches a changed function, also indirectly.</span></div>
+          <div class="feat"><b>Edge property tests</b><span>Every defined pure function at 0, ±1, empty values and the bounds of its <code>req</code>. Inputs are built so that they satisfy the precondition.</span></div>
+          <div class="feat"><b>Generated property tests</b><span><code>qal_test</code> checks every pure function with an <code>ens</code> on 100 inputs; a failure comes with a shrunk counterexample.</span></div>
+          <div class="feat"><b>Type invariants</b><span>A pure function <code>inv_T</code> is the rule for type T. Every function that takes or returns a T is checked against it, also deep inside lists and records.</span></div>
+          <div class="feat"><b>Behaviour memory (E0807)</b><span>Earlier program runs are replayed with every <code>define</code>, up to 64 in 2 s. Changed outputs are reported once and then become the new baseline.</span></div>
+          <div class="feat"><b>Warning on an untested change</b><span>If a <code>define</code> replaces a function without a test, E0806 warns: every new rule should get a test in the same step.</span></div>
+          <div class="feat"><b>Memory for corrections</b><span>If an error was fixed before, the new diagnostic names that fix; <code>qal_recall</code> lists earlier corrections.</span></div>
+          <div class="feat"><b>Proofs by hash</b><span>Results are stored per definition and hash. What has not changed is not proven again.</span></div>
+        </div>
+      </div>
+
+      <div class="domain" id="a-store">
+        <div class="domain-head"><span class="count">03 · Store</span><h3>Code as addressed nodes</h3><p>An SQLite store in <code>.qal/store.db</code>. Every definition is kept under the SHA-256 of its canonical form.</p></div>
+        <div class="feats">
+          <div class="feat"><b>Only checked code is stored</b><span>What does not parse or type-check never reaches the store. Every error is a JSON diagnostic with a path and hints.</span></div>
+          <div class="feat"><b>Replace with relinking</b><span>An existing name is replaced. With the same signature, every user is relinked and re-checked automatically.</span></div>
+          <div class="feat"><b>Signature changes</b><span>Dependents that still fit come along; the others are rejected with their errors, unless the same call redefines them.</span></div>
+          <div class="feat"><b>Rename without rewriting</b><span><code>qal_rename</code> changes no hash; every user follows the new name.</span></div>
+          <div class="feat"><b>Safe deletion</b><span><code>qal_delete</code> removes only what nothing uses any more.</span></div>
+          <div class="feat"><b>Queries</b><span>By name, type pattern or users; an outline with contracts, users and tests (<code>--outline</code>).</span></div>
+          <div class="feat"><b>History</b><span>Every change of every name with old and new hash, time and agent.</span></div>
+          <div class="feat"><b>Incremental checking</b><span>Only what changes is checked and hashed, and the result is byte-identical to the full check. At 1520 definitions that is 0.43 instead of 1.7 s.</span></div>
+          <div class="feat"><b>Packages</b><span>Parts of the store can be exported as <code>.qalpkg</code>, imported and installed, from a file or a URL.</span></div>
+          <div class="feat"><b>Several writers</b><span>Concurrent writes are queued behind a lock; a proof runs outside the lock meanwhile.</span></div>
+        </div>
+      </div>
+
+      <div class="domain" id="a-execution">
+        <div class="domain-head"><span class="count">04 · Execution</span><h3>WebAssembly with fixed limits</h3><p>Every program is compiled to WebAssembly and runs in Wasmtime, isolated from the system.</p></div>
+        <div class="feats">
+          <div class="feat"><b>Sandbox</b><span>Limits for compute, memory (256 MiB for programs), output and run time. An effect without a grant is not available in the program at all.</span></div>
+          <div class="feat"><b>Fine-grained grants</b><span><code>fs:&lt;dir&gt;</code> for one directory only, <code>net:&lt;host&gt;[:port]</code> for one host only, <code>db:mem</code> for a fresh in-memory database.</span><span class="ex">qal run main --allow io,fs:data,net:api.example.org</span></div>
+          <div class="feat"><b>Running programs</b><span><code>qal_run</code> starts <code>main(args)</code> with arguments and input; the return value is the exit code.</span></div>
+          <div class="feat"><b>Calling functions directly</b><span><code>qal_call</code> calls any function with JSON arguments, without writing a <code>main</code>.</span></div>
+          <div class="feat"><b>Many cases in one call</b><span><code>cases</code> runs several inputs in turn, in <code>qal_run</code> and right after a <code>define</code>.</span></div>
+          <div class="feat"><b>Building a standalone module</b><span><code>qal build</code> produces the WebAssembly module of a function.</span></div>
+        </div>
+      </div>
+
+      <div class="domain" id="a-services">
+        <div class="domain-head"><span class="count">05 · Services</span><h3>HTTP, database, network</h3><p>QAL programs can be web services, use SQLite and call other services, with built-in types for all of it.</p></div>
+        <div class="feats">
+          <div class="feat"><b>HTTP handlers</b><span>A service is a function from request to response; any effects are allowed.</span><span class="ex">fn handle(rq: HttpRequest) -&gt; HttpResponse</span></div>
+          <div class="feat"><b>HTTP server</b><span><code>qal serve</code> with workers, a queue, timeouts, size limits for request and response, and compute and memory limits per request.</span></div>
+          <div class="feat"><b>Testing requests</b><span><code>qal_request</code> replays requests against a handler, without a server and without a network.</span></div>
+          <div class="feat"><b>SQLite with checked SQL</b><span><code>db_exec</code> and <code>db_query</code> take only an SQL literal with <code>?</code> placeholders, one statement, no PRAGMA or transaction commands. That is enforced when the code is checked.</span></div>
+          <div class="feat"><b>Transactions</b><span>One transaction per execution; committed only on success, such as status 200 to 399 or exit code 0.</span></div>
+          <div class="feat"><b>Outgoing calls</b><span><code>http(call)</code> with typed errors (denied, invalid, connection, timeout, too large). Redirects are not followed.</span></div>
+        </div>
+      </div>
+
+      <div class="domain" id="a-ai">
+        <div class="domain-head"><span class="count">06 · AI calls</span><h3>Models as a budgeted effect</h3><p>Programs can ask a language model themselves. It is an effect like any other: declared, granted and limited.</p></div>
+        <div class="feats">
+          <div class="feat"><b>std.model</b><span><code>ask</code> returns text, <code>ask_full</code> also the model, tokens and cost, <code>ask_json</code> parsed JSON following a schema.</span></div>
+          <div class="feat"><b>Budget</b><span>Every call is charged against a fixed budget in euros, rounded up. Once it is used up, <code>ModelBudgetExceeded</code> comes back instead of another call.</span></div>
+          <div class="feat"><b>Recording</b><span>Every answer is stored by prompt, schema and model. The same question costs nothing the second time.</span></div>
+          <div class="feat"><b>Deterministic replay</b><span><code>--replay</code> plays back only what was recorded, without network and without a key. Tests may ask a model and always see recorded answers only.</span></div>
+        </div>
+      </div>
+
+      <div class="domain" id="a-std">
+        <div class="domain-head"><span class="count">07 · Standard library</span><h3>231 definitions in 7 modules</h3><p>Present in every project automatically and read-only. Every name is fully qualified, such as <code>std.json.parse</code>.</p></div>
+        <div class="feats">
+          <div class="feat"><b>std.json</b><span>Reading, writing and searching JSON; with 77 definitions the largest module.</span></div>
+          <div class="feat"><b>std.route</b><span>Routes for HTTP services, generic over the result type (38 definitions).</span></div>
+          <div class="feat"><b>std.str</b><span>More string functions beyond the built-in ones (35).</span></div>
+          <div class="feat"><b>std.http and std.url</b><span>Helpers for requests, responses and headers (28), and for splitting and encoding URLs (27).</span></div>
+          <div class="feat"><b>std.db</b><span>Convenient access to rows and columns of database results (22).</span></div>
+          <div class="feat"><b>std.model</b><span>The model calls from section 06 (4).</span></div>
+          <div class="feat"><b>Built-in functions</b><span>For strings, lists, maps, bytes, numbers and the system: <code>split</code>, <code>fold</code>, <code>map_put</code>, <code>sort_str</code>, <code>compare</code>, <code>read_line</code>, <code>now_ms</code>, <code>rand_int</code> and more.</span></div>
+        </div>
+      </div>
+
+      <div class="domain" id="a-tools">
+        <div class="domain-head"><span class="count">08 · Tools</span><h3>For agents and for people</h3><p>Agents talk to the store through an MCP server, people through the command line. Both use the same operations.</p></div>
+        <div class="feats">
+          <div class="feat"><b>MCP server with 20 tools</b><span><code>qal_define</code>, <code>qal_test</code>, <code>qal_prove</code>, <code>qal_run</code>, <code>qal_call</code>, <code>qal_view</code>, <code>qal_query</code>, <code>qal_history</code>, <code>qal_rename</code>, <code>qal_delete</code>, <code>qal_build</code>, <code>qal_request</code>, <code>qal_recall</code> and the team tools.</span></div>
+          <div class="feat"><b>Command line</b><span><code>init</code>, <code>define</code>, <code>view</code>, <code>query</code>, <code>history</code>, <code>rename</code>, <code>delete</code>, <code>test</code>, <code>prove</code>, <code>run</code>, <code>call</code>, <code>build</code>, <code>serve</code>, <code>request</code>, <code>export</code>, <code>import</code>, <code>install</code>, <code>recall</code>, <code>team</code>, <code>verify</code>.</span></div>
+          <div class="feat"><b>Checking and formatting files</b><span><code>qal check</code> and <code>qal fmt</code> also work on QAL files outside a store.</span></div>
+          <div class="feat"><b>Editor support</b><span><code>qal lsp</code> is a language server for editors.</span></div>
+          <div class="feat"><b>A compact reference</b><span>The language reference comes with the description of <code>qal_define</code>: at most 68 lines, so an agent can read it at every start.</span></div>
+          <div class="feat"><b>Importing corrections</b><span><code>qal corrections import</code> adds collected corrections to a project's memory.</span></div>
+        </div>
+      </div>
+
+      <div class="domain" id="a-team">
+        <div class="domain-head"><span class="count">09 · Team</span><h3>Several agents, clear roles</h3><p>A team store lets several agents work together, with roles, change sets and a fully signed history.</p></div>
+        <div class="feats">
+          <div class="feat"><b>Four roles</b><span>Architecture sets interfaces and contracts, implementation fills in bodies, verification writes tests and checks, review reads and approves.</span></div>
+          <div class="feat"><b>Change sets</b><span>Code is written only in your own change set; the main line changes only by a merge.</span></div>
+          <div class="feat"><b>Leases</b><span>Whoever writes a name holds it. Another change set gets E0901 with the holder's name.</span></div>
+          <div class="feat"><b>Merge gate</b><span>A merge needs "verified" and "approve" from someone other than the owner. It replays the changes, proves afresh and runs every test.</span></div>
+          <div class="feat"><b>Rebase with conflict marks</b><span>On conflicts the main line becomes the new base; conflicting names keep your version with a mark until they are defined again.</span></div>
+          <div class="feat"><b>Signed history</b><span>Every write is an Ed25519-signed record; <code>qal verify</code> checks the whole chain. Sessions are bound to members.</span></div>
+        </div>
+      </div>
+
+      <div class="domain" id="a-compiler">
+        <div class="domain-head"><span class="count">10 · Compiler</span><h3>Written in itself</h3><p>The QAL compiler is written in QAL and compiles itself. A Rust core surrounds it.</p></div>
+        <div class="feats">
+          <div class="feat"><b>Self-hosted</b><span>17 modules with about 15,000 lines of QAL: lexer, parser, type checker, monomorphisation, SQL checking, encoding and WebAssembly generation.</span></div>
+          <div class="feat"><b>Bootstrap fixpoint</b><span>Stages 1, 2 and 3 of the compiler are byte-identical. That is shown again after every change to the compiler.</span></div>
+          <div class="feat"><b>Rust reference</b><span>An independent reference compiler in Rust computes in parallel; test suites compare both over a corpus of more than 900 programs.</span></div>
+          <div class="feat"><b>Parallel checking</b><span>Large programs are split into work items and checked on several cores. <code>CHECK_DELTA</code> checks only the changed bodies against stored signatures.</span></div>
+          <div class="feat"><b>Rust core</b><span>About 52,000 lines of Rust for the store, runtime, prover, server and tools, without a single compiler warning.</span></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="codes">
+    <div class="wrap">
+      <div class="sec-head">
+        <div class="eyebrow">Diagnostics</div>
+        <h2>Every error has a name</h2>
+        <p>A diagnostic consists of code, kind, definition, path, message and hints. A selection of the codes an agent sees most often:</p>
+      </div>
+      <div class="codes">
+        <div>
+          <h3>When writing</h3>
+          <div class="table-wrap"><table>
+            <thead><tr><th>Code</th><th>Meaning</th></tr></thead>
+            <tbody>
+              <tr><td class="c">E0201</td><td>unknown name</td></tr>
+              <tr><td class="c">E0202</td><td>name used twice</td></tr>
+              <tr><td class="c">E0240</td><td>reserved name, e.g. from the prelude or <code>std.</code></td></tr>
+              <tr><td class="c">E0241 · E0242</td><td>SQL not a literal, or a statement that is not allowed</td></tr>
+              <tr><td class="c">E0301</td><td>effect used but not declared</td></tr>
+              <tr><td class="c">E0404</td><td>one definition refers to two names of the same definition</td></tr>
+              <tr><td class="c">E0508</td><td>effect not granted when running</td></tr>
+              <tr><td class="c">E0540</td><td><code>todo()</code> was executed</td></tr>
+              <tr><td class="c">E0801</td><td>contract refuted; not stored, with a counterexample</td></tr>
+            </tbody>
+          </table></div>
+        </div>
+        <div>
+          <h3>Warnings after a define</h3>
+          <div class="table-wrap"><table>
+            <thead><tr><th>Code</th><th>Meaning</th></tr></thead>
+            <tbody>
+              <tr><td class="c w">E0803</td><td>property test failed</td></tr>
+              <tr><td class="c w">E0804</td><td>property test traps, e.g. overflow or index</td></tr>
+              <tr><td class="c w">E0805</td><td>an unbounded product can overflow</td></tr>
+              <tr><td class="c w">E0806</td><td>function changed, but no test in the same step</td></tr>
+              <tr><td class="c w">E0807</td><td>the output of earlier real runs changed</td></tr>
+            </tbody>
+          </table></div>
+          <h3 style="margin-top:22px">In a team</h3>
+          <div class="table-wrap"><table>
+            <thead><tr><th>Code</th><th>Meaning</th></tr></thead>
+            <tbody>
+              <tr><td class="c">E0901</td><td>name is held by another change set</td></tr>
+              <tr><td class="c">E0905 · E0906</td><td>outside the work package, or interface changed</td></tr>
+              <tr><td class="c">E0910 – E0913</td><td>merge: conflict, does not check, proof or test fails, approval missing</td></tr>
+            </tbody>
+          </table></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="numbers">
+    <div class="wrap">
+      <div class="sec-head">
+        <div class="eyebrow">Measured, not claimed</div>
+        <h2>The numbers behind the one round</h2>
+        <p>Every value comes from measurements on 25 and 26 October 2026. The reports are in the repository under <code>bench/</code>.</p>
+      </div>
+      <div class="figures">
+        <div class="fig"><span class="val">0.28 <small>s</small></span><span class="lbl">median of a complete <code>define</code>, 66 functions</span><span class="src">bench/loop/report.md</span></div>
+        <div class="fig"><span class="val">0.41–0.46 <small>s</small></span><span class="lbl">the same at 1520 definitions, formerly 4.5–5.0 s</span><span class="src">bench/loop/report.md</span></div>
+        <div class="fig"><span class="val">0 <small>/ 2424</small></span><span class="lbl">differences between incremental and full checking</span><span class="src">differential test, 318 stores</span></div>
+        <div class="fig"><span class="val">95 <small>/ 96</small></span><span class="lbl">stages with every hidden test green, runs 7–14</span><span class="src">bench/living</span></div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>One define, all five checks</th><th>Before</th><th>Now</th></tr></thead>
+          <tbody>
+            <tr><td>66 functions (median)</td><td>1.24 s</td><td class="now">0.28 s</td></tr>
+            <tr><td>1520 definitions</td><td>4.5–5.0 s</td><td class="now">0.41–0.46 s</td></tr>
+            <tr><td>An agent's tokens compared with Rust</td><td>2.06×</td><td class="now">1.29–1.32×</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <section id="catch">
+    <div class="wrap">
+      <div class="sec-head">
+        <div class="eyebrow">A real catch</div>
+        <h2>Every test green, and still a bug</h2>
+      </div>
+      <div class="catch">
+        <div class="story">
+          <p>A Haiku agent was asked to add orders with several lines. After its first <code>define</code>, all of its own tests passed. Only the behaviour memory reported that an old one-line order now cost a different amount.</p>
+          <ol>
+            <li>The agent read the warning and concluded: one-line orders must stay the same.</li>
+            <li>It fixed the discount formula in the next round.</li>
+            <li>Counter-check: the state before the fix would have failed 5 of 50 hidden tests.</li>
+          </ol>
+          <p>On deliberately planted bugs, E0807 alone, without a single test, reports 11 of 13. In 30 live trials there was no false alarm.</p>
+        </div>
+        <div class="warnbox" role="note">
+          <span class="code">E0807 behaviour_changed</span>
+          <blockquote>this define changed what `main` prints on 3 of 25 earlier runs: `OK o1 8800` is now `OK o1 8835`</blockquote>
+          <span class="caption">Verbatim from trial 12, commit 9ab47ae8</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="why">
+    <div class="wrap two">
+      <div>
+        <div class="sec-head">
+          <div class="eyebrow">Why QAL</div>
+          <h2>When an agent writes the code</h2>
+        </div>
+        <ul class="list">
+          <li><b>Feedback in one round</b><span>An agent learns at once whether types, contracts, tests and dependents hold. It does not have to plan a build or read logs.</span></li>
+          <li><b>Bugs that tests do not see</b><span>Proofs and the behaviour memory catch what an agent's own tests miss.</span></li>
+          <li><b>Controlled effects</b><span>Every effect is in the type and has to be granted. Without <code>--allow model</code> a program cannot call a model or spend money.</span></li>
+          <li><b>Answers as data</b><span>Every result is JSON, every error has a code, a path and a hint for the fix.</span></li>
+          <li><b>Collaboration without chaos</b><span>Roles, leases, a merge gate and a signed history make clear which agent changed what.</span></li>
+        </ul>
+      </div>
+      <div>
+        <div class="sec-head">
+          <div class="eyebrow">What is not better yet</div>
+          <h2>Honestly measured</h2>
+        </div>
+        <ul class="list limits">
+          <li><b>Cost</b><span>Agents use about 1.3 times as many tokens in QAL as in Rust. The biggest item is the language reference every agent reads.</span></li>
+          <li><b>No time saved per task</b><span>On small programs the faster checking changes rounds and run time measurably not at all. Its value shows on large programs and as a safety net.</span></li>
+          <li><b>Proofs with limits</b><span>They are exact for integers, booleans and record fields; list contents, maps and floats are only approximated. What Z3 cannot prove is checked at run time.</span></li>
+          <li><b>A young language</b><span>QAL is measured on an order system with twelve change stages. Broader experience in use is still missing.</span></li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section id="start">
+    <div class="wrap">
+      <div class="sec-head">
+        <div class="eyebrow">Get started</div>
+        <h2>One project, one store, the first round</h2>
+        <p>QAL is built with Cargo. Agents connect through the MCP server; people use the same commands on the command line.</p>
+      </div>
+      <div class="cmds">
+        <span class="cmd-label">Build</span>
+        <div class="cmd"><pre id="c1">cargo build --release --manifest-path qal/Cargo.toml -p qal-cli</pre><button type="button" data-copy="c1">Copy</button></div>
+        <span class="cmd-label">Create a store and write code</span>
+        <div class="cmd"><pre id="c2">qal init &amp;&amp; qal define account.qal</pre><button type="button" data-copy="c2">Copy</button></div>
+        <span class="cmd-label">Run every test and prove a contract</span>
+        <div class="cmd"><pre id="c3">qal test &amp;&amp; qal prove deposit</pre><button type="button" data-copy="c3">Copy</button></div>
+        <span class="cmd-label">For agents: start the MCP server in the project</span>
+        <div class="cmd"><pre id="c4">qal mcp --root .</pre><button type="button" data-copy="c4">Copy</button></div>
+        <span class="cmd-label">Run a program as a web service</span>
+        <div class="cmd"><pre id="c5">qal serve handle --listen 127.0.0.1:8080 --allow db</pre><button type="button" data-copy="c5">Copy</button></div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span>QAL, Query &amp; Agent Language. Rust core, self-hosted compiler, Z3, Wasmtime.</span>
+    <span>State and numbers as of 25 and 26 October 2026 · <a href="/" hreflang="de">Deutsch</a></span>
+  </div>
+</footer>
+
+<script>
+// QAL in the browser: runs the real self-hosted compiler (qalc.wasm) on a program and returns its
+// diagnostics. The compiler is a pure function qc_main(Bytes) -> Bytes speaking QALQ/QALR; the host
+// supplies five functions. Bytes live in guest memory as [len: u32 LE][bytes].
+(function (global) {
+  "use strict";
+  var enc = new TextEncoder(), dec = new TextDecoder("utf-8", { fatal: false });
+  function varint(n, out) { do { var b = n & 127; n = Math.floor(n / 128); out.push(n ? b | 128 : b); } while (n); }
+  function strBytes(s, out) { var b = enc.encode(s); varint(b.length, out); for (var i = 0; i < b.length; i++) out.push(b[i]); }
+  // CHECK_FILE (op 6): text, no entry, default options, no new_names list (every name is new).
+  function checkRequest(text) { var out = [81, 65, 76, 81, 1, 6]; strBytes(text, out); out.push(0); varint(0, out); out.push(0); return new Uint8Array(out); }
+  function rustFloat(x) {
+    if (Number.isNaN(x)) return "NaN";
+    if (!Number.isFinite(x)) return x > 0 ? "inf" : "-inf";
+    var s = String(x);
+    if (/e/.test(s)) { var m = s.split("e"); return m[0] + "e" + (m[1][0] === "+" ? m[1].slice(1) : m[1]); }
+    return /\./.test(s) ? s : s + ".0";
+  }
+  function Reader(b, pos) { this.b = b; this.p = pos; }
+  Reader.prototype.byte = function () { if (this.p >= this.b.length) throw new Error("truncated response"); return this.b[this.p++]; };
+  Reader.prototype.varint = function () { var r = 0, m = 1, x; do { x = this.byte(); r += (x & 127) * m; m *= 128; } while (x & 128); return r; };
+  Reader.prototype.str = function () { var n = this.varint(); var s = dec.decode(this.b.subarray(this.p, this.p + n)); this.p += n; return s; };
+  function decodeResponse(b) {
+    if (b.length < 6 || String.fromCharCode(b[0], b[1], b[2], b[3]) !== "QALR") throw new Error("bad response");
+    var status = b[5], r = new Reader(b, 6);
+    if (status === 0) return { ok: true };
+    if (status === 1) {
+      var n = r.varint(), ds = [];
+      for (var i = 0; i < n; i++) {
+        var d = { code: r.str(), kind: r.str(), def: r.str(), path: r.str(), message: r.str() };
+        if (r.byte()) r.str(); if (r.byte()) r.str();
+        var h = r.varint(); d.hints = []; for (var j = 0; j < h; j++) d.hints.push(r.str());
+        var deps = r.varint(); for (var k = 0; k < deps; k++) r.str();
+        if (r.byte()) r.str();
+        ds.push(d);
+      }
+      return { ok: false, diagnostics: ds };
+    }
+    if (status === 2) return { ok: false, internal: "the program is too large for the browser demo (the compiler splits it into work items)" };
+    return { ok: false, internal: r.str() };
+  }
+  function QalCompiler(module) { this.module = module; }
+  QalCompiler.prototype.call = function (req) {
+    var inst, mem;
+    function bytesAt(p) { var v = new DataView(mem.buffer); var n = v.getUint32(p, true); return new Uint8Array(mem.buffer, p + 4, n); }
+    function newBytes(b) { var p = Number(inst.exports.qal_alloc(BigInt(4 + b.length))); new DataView(mem.buffer).setUint32(p, b.length, true); new Uint8Array(mem.buffer).set(b, p + 4); return p; }
+    var imports = { qal_host: {
+      fail: function () { throw new Error("the compiler stopped (a contract or bound inside it)"); },
+      str_to_float: function (p) { var s = dec.decode(bytesAt(p)); var x = /^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$|^[+-]?(inf|infinity|nan)$/i.test(s) ? Number(s.replace(/inf(inity)?/i, "Infinity")) : NaN; return Number.isNaN(x) && !/nan/i.test(s) ? [0, 0] : [1, x]; },
+      float_to_str: function (x) { return newBytes(enc.encode(rustFloat(x))); },
+      utf8_valid: function (p) { try { new TextDecoder("utf-8", { fatal: true }).decode(bytesAt(p)); return 1; } catch (e) { return 0; } },
+      sha256: function () { throw new Error("hashing is not part of the browser demo"); }
+    } };
+    inst = new WebAssembly.Instance(this.module, imports);
+    mem = inst.exports.memory;
+    var out = inst.exports.qc_main(newBytes(req));
+    return bytesAt(out).slice();
+  };
+  QalCompiler.prototype.check = function (text) {
+    var t0 = (global.performance || Date).now();
+    var res = decodeResponse(this.call(checkRequest(text)));
+    res.ms = (global.performance || Date).now() - t0;
+    return res;
+  };
+  QalCompiler.load = function (bytes) { return WebAssembly.compile(bytes).then(function (m) { return new QalCompiler(m); }); };
+  global.QalCompiler = QalCompiler;
+})(typeof window !== "undefined" ? window : globalThis);
+
+</script>
+<script>
+// The store as a graph: definitions are nodes, references are edges; a define sends pulses along
+// the edges it relinks. Drawn once at rest; animated only when motion is allowed and in view.
+(function () {
+  var c = document.getElementById("graph");
+  if (!c || !c.getContext) return;
+  var ctx = c.getContext("2d"), nodes = [], edges = [], pulses = [], w = 0, h = 0, dpr = 1, running = false, visible = true;
+  var still = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  var rnd = (function (seed) { return function () { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; }; })(42);
+  var hex = "0123456789abcdef";
+  function hash() { var s = "#"; for (var i = 0; i < 4; i++) s += hex[Math.floor(rnd() * 16)]; return s; }
+  function build() {
+    var r = c.getBoundingClientRect(); w = r.width; h = r.height; dpr = Math.min(window.devicePixelRatio || 1, 2);
+    c.width = Math.round(w * dpr); c.height = Math.round(h * dpr); ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    nodes = []; edges = []; pulses = [];
+    var n = Math.max(18, Math.min(46, Math.round(w * h / 22000)));
+    for (var i = 0; i < n; i++) nodes.push({ x: w * (0.08 + rnd() * 0.9), y: h * (0.06 + rnd() * 0.9), r: 1.6 + rnd() * 2.2, label: rnd() < 0.3 ? hash() : null, vx: (rnd() - 0.5) * 0.08, vy: (rnd() - 0.5) * 0.08 });
+    for (var a = 0; a < n; a++) {
+      var best = [];
+      for (var b = 0; b < n; b++) if (a !== b) best.push([Math.hypot(nodes[a].x - nodes[b].x, nodes[a].y - nodes[b].y), b]);
+      best.sort(function (p, q) { return p[0] - q[0]; });
+      for (var k = 0; k < 2; k++) if (a < best[k][1]) edges.push([a, best[k][1]]);
+    }
+  }
+  function draw(t) {
+    ctx.clearRect(0, 0, w, h);
+    ctx.lineWidth = 1;
+    for (var i = 0; i < edges.length; i++) {
+      var p = nodes[edges[i][0]], q = nodes[edges[i][1]];
+      ctx.strokeStyle = "rgba(98,214,196,0.13)"; ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(q.x, q.y); ctx.stroke();
+    }
+    for (var j = 0; j < pulses.length; j++) {
+      var e = edges[pulses[j].e], a = nodes[e[0]], b = nodes[e[1]], f = pulses[j].f;
+      var x = a.x + (b.x - a.x) * f, y = a.y + (b.y - a.y) * f;
+      var g = ctx.createRadialGradient(x, y, 0, x, y, 10);
+      g.addColorStop(0, pulses[j].warn ? "rgba(240,163,90,0.9)" : "rgba(127,224,207,0.95)"); g.addColorStop(1, "rgba(127,224,207,0)");
+      ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, 10, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.font = "10px JetBrains Mono, monospace";
+    for (var k = 0; k < nodes.length; k++) {
+      var o = nodes[k];
+      ctx.fillStyle = "rgba(98,214,196,0.85)"; ctx.beginPath(); ctx.arc(o.x, o.y, o.r, 0, Math.PI * 2); ctx.fill();
+      if (o.label) { ctx.fillStyle = "rgba(142,166,157,0.55)"; ctx.fillText(o.label, o.x + 6, o.y - 5); }
+    }
+  }
+  function step(t) {
+    if (!running) return;
+    for (var k = 0; k < nodes.length; k++) {
+      var o = nodes[k]; o.x += o.vx; o.y += o.vy;
+      if (o.x < w * 0.04 || o.x > w * 0.99) o.vx *= -1;
+      if (o.y < h * 0.03 || o.y > h * 0.98) o.vy *= -1;
+    }
+    if (pulses.length < 7 && Math.random() < 0.05) pulses.push({ e: Math.floor(Math.random() * edges.length), f: 0, s: 0.006 + Math.random() * 0.01, warn: Math.random() < 0.12 });
+    for (var j = pulses.length - 1; j >= 0; j--) { pulses[j].f += pulses[j].s; if (pulses[j].f >= 1) pulses.splice(j, 1); }
+    draw(t);
+    requestAnimationFrame(step);
+  }
+  function setRunning(on) { var next = on && !still && visible && !document.hidden; if (next && !running) { running = true; requestAnimationFrame(step); } else if (!next) running = false; }
+  build(); draw(0);
+  var rt; window.addEventListener("resize", function () { clearTimeout(rt); rt = setTimeout(function () { build(); draw(0); }, 150); });
+  if ("IntersectionObserver" in window) new IntersectionObserver(function (es) { visible = es[0].isIntersecting; setRunning(true); }).observe(c);
+  document.addEventListener("visibilitychange", function () { setRunning(true); });
+  setRunning(true);
+})();
+
+// The playground: loads qalc.wasm (published next to the page) and checks the editor's text.
+(function () {
+  var EX = {
+    ok: "type Acct = { id: Int, balance: Int }\n\nfn deposit(a: Acct, n: Int) -> Acct\n  req n >= 1\n  ens r.balance > a.balance\n= Acct { id: a.id, balance: a.balance + n }\n\ntest deposit_adds =\n  deposit(Acct { id: 1, balance: 5 }, 3).balance == 8\n",
+    type: "type Acct = { id: Int, balance: Int }\n\nfn deposit(a: Acct, n: Int) -> Acct\n= Acct { id: a.id, balance: a.balance + \"n\" }\n",
+    match: "type Shape = Circle(Int) | Rect(Int, Int) | Dot\n\nfn area(s: Shape) -> Int = match s {\n  Circle(r) => 3 * r * r,\n  Rect(w, h) => w * h\n}\n",
+    effect: "fn greet(name: Str) -> Str = {\n  print(\"hello \" ++ name);\n  name\n}\n",
+    parse: "fn total(xs: List[Int]) -> Int =\n  fold(xs, 0, fn(acc, x) => acc + x\n"
+  };
+  var code = document.getElementById("code"), out = document.getElementById("result"), run = document.getElementById("run"), state = document.getElementById("cstate");
+  if (!code) return;
+  code.value = EX.ok;
+  var compiler = null, timer = null;
+  function esc(t) { return String(t).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; }); }
+  function count(text) {
+    var n = { type: 0, fn: 0, test: 0 };
+    text.split("\n").forEach(function (l) { var m = /^(type|fn|test)\s/.exec(l); if (m) n[m[1]]++; });
+    var parts = [];
+    if (n.type) parts.push(n.type + (n.type === 1 ? " type" : " types"));
+    if (n.fn) parts.push(n.fn + (n.fn === 1 ? " function" : " functions"));
+    if (n.test) parts.push(n.test + (n.test === 1 ? " test" : " tests"));
+    return parts.join(", ") || "no definitions";
+  }
+  function show(res, text) {
+    var ms = res.ms < 1 ? "under 1 ms" : Math.round(res.ms) + " ms";
+    if (res.ok) {
+      out.innerHTML = '<div class="verdict ok"><span class="dot"></span><span>Checked, no errors</span></div>' +
+        '<p class="meta">' + esc(count(text)) + ' · types, effects and match complete · ' + ms + '</p>' +
+        '<p>An agent could store this now. In the full tool the same round continues with the Z3 proof of <code>req</code> and <code>ens</code>, the tests and the property tests.</p>' +
+        '<details class="raw"><summary>Reply as JSON</summary><pre>' + esc(JSON.stringify({ ok: true }, null, 2)) + '</pre></details>';
+      return;
+    }
+    if (res.internal) { out.innerHTML = '<div class="verdict bad"><span class="dot"></span><span>Not checked</span></div><p class="meta">' + esc(res.internal) + '</p>'; return; }
+    var ds = res.diagnostics, html = '<div class="verdict bad"><span class="dot"></span><span>' + ds.length + (ds.length === 1 ? ' diagnostic' : ' diagnostics') + '</span></div><p class="meta">The code would not be stored · ' + ms + '</p>';
+    ds.forEach(function (d) {
+      html += '<div class="diag"><div class="head"><b>' + esc(d.code) + '</b><span>' + esc(d.kind) + '</span><span class="where">' + (d.def ? 'in <code>' + esc(d.def) + '</code> · ' : '') + esc(d.path) + '</span></div><div class="msg">' + esc(d.message) + '</div>' +
+        (d.hints.length ? '<ul>' + d.hints.map(function (h) { return '<li>' + esc(h) + '</li>'; }).join("") + '</ul>' : '') + '</div>';
+    });
+    html += '<details class="raw"><summary>Reply as JSON, the way an agent gets it</summary><pre>' + esc(JSON.stringify({ diagnostics: ds }, null, 2)) + '</pre></details>';
+    out.innerHTML = html;
+  }
+  function check() {
+    if (!compiler) return;
+    try { show(compiler.check(code.value), code.value); }
+    catch (e) { out.innerHTML = '<div class="verdict bad"><span class="dot"></span><span>The compiler stopped</span></div><p class="meta">' + esc(e.message) + '</p>'; }
+  }
+  code.addEventListener("input", function () { clearTimeout(timer); timer = setTimeout(check, 250); });
+  code.addEventListener("keydown", function (e) {
+    if (e.key === "Tab" && !e.shiftKey) { e.preventDefault(); var a = code.selectionStart, b = code.selectionEnd; code.value = code.value.slice(0, a) + "  " + code.value.slice(b); code.selectionStart = code.selectionEnd = a + 2; clearTimeout(timer); timer = setTimeout(check, 250); }
+    if ((e.metaKey || e.ctrlKey) && e.key === "Enter") { e.preventDefault(); check(); }
+  });
+  run.addEventListener("click", check);
+  document.querySelectorAll(".ex-bar button").forEach(function (b) {
+    b.addEventListener("click", function () {
+      document.querySelectorAll(".ex-bar button").forEach(function (x) { x.setAttribute("aria-pressed", x === b ? "true" : "false"); });
+      code.value = EX[b.getAttribute("data-ex")]; check();
+    });
+  });
+  if (!window.WebAssembly || !window.fetch) { state.textContent = "This browser cannot run WebAssembly."; return; }
+  fetch("/qalc.wasm").then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.arrayBuffer(); })
+    .then(function (buf) { return QalCompiler.load(buf); })
+    .then(function (c) { compiler = c; state.textContent = "QAL compiler loaded · 444 KB WebAssembly · Ctrl/⌘ + Enter checks"; run.disabled = false; check(); })
+    .catch(function (e) { state.textContent = "The compiler could not be loaded (" + e.message + ")."; });
+})();
+
+document.querySelectorAll("button[data-copy]").forEach(function (b) {
+  b.addEventListener("click", function () {
+    var el = document.getElementById(b.getAttribute("data-copy"));
+    var done = function () { b.textContent = "Copied"; setTimeout(function () { b.textContent = "Copy"; }, 1600); };
+    var select = function () { var r = document.createRange(); r.selectNodeContents(el); var s = window.getSelection(); s.removeAllRanges(); s.addRange(r); b.textContent = "Selected"; };
+    try { navigator.clipboard.writeText(el.textContent).then(done, select); } catch (e) { select(); }
+  });
+});
+</script>
+
+</body>
+</html>

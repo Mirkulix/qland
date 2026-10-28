@@ -1,0 +1,15 @@
+type Pair[A, B] = { fst: A, snd: B }
+type Tree[T] = Leaf | Node(Tree[T], T, Tree[T])
+fn swap[A, B](p: Pair[A, B]) -> Pair[B, A] = Pair { fst: p.snd, snd: p.fst }
+fn insert[T](t: Tree[T], x: T, less: fn(T, T) -> Bool) -> Tree[T] = match t { Leaf => Node(Leaf, x, Leaf), Node(l, v, r) => if less(x, v) then Node(insert(l, x, less), v, r) else Node(l, v, insert(r, x, less)) }
+fn to_list[T](t: Tree[T]) -> List[T] = match t { Leaf => [], Node(l, v, r) => to_list(l) ++ [v] ++ to_list(r) }
+fn sort[T](xs: List[T], less: fn(T, T) -> Bool) -> List[T] = to_list(fold(xs, Leaf, fn(t, x) => insert(t, x, less)))
+fn my_map[A, B](xs: List[A], f: fn(A) -> B) -> List[B] = fold(xs, [], fn(acc, x) => push(acc, f(x)))
+fn position[T](xs: List[T], x: T) -> Option[Int] = fold(range(0, len(xs)), None, fn(found, i) => match found { Some(_) => found, None => if get(xs, i) == Some(x) then Some(i) else None })
+test swaps = swap(Pair { fst: 1, snd: "a" }) == Pair { fst: "a", snd: 1 }
+test sorts_ints = sort([3, 1, 2], fn(a, b) => a < b) == [1, 2, 3]
+test sorts_strs = sort(["b", "c", "a"], fn(a, b) => len(a) < len(b) || starts_with(a, "a")) == ["a", "b", "c"]
+test maps = my_map([1, 2], fn(x) => from_int(x)) == ["1", "2"] && my_map(["a"], fn(s) => Pair { fst: s, snd: 0.5 }) == [Pair { fst: "a", snd: 0.5 }]
+test finds = position(["x", "y"], "y") == Some(1) && position([1.5], 2.5) == None
+fn id[T](x: T) -> T = x
+test generic_values = map([1, 2], id) == [1, 2] && map(["a"], id) == ["a"] && my_map([Some(1)], id) == [Some(1)]

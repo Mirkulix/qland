@@ -1,0 +1,30 @@
+services:
+  qal-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: qal-production-server
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - qal_data:/home/qaluser/app/.qal
+    environment:
+      - RUST_LOG=info
+      - QAL_ENV=production
+    command: ["serve", "--listen", "0.0.0.0:8080"]
+
+  tgs-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: tgs-production-engine
+    restart: unless-stopped
+    entrypoint: ["/usr/local/bin/tgs"]
+    command: ["bench"]
+    environment:
+      - RUST_LOG=info
+
+volumes:
+  qal_data:
+    driver: local

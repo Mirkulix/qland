@@ -1,0 +1,2 @@
+fn wrap[!e](op: fn() -> Unit !e) -> List[fn() -> Unit !e] = [op]
+fn bad8() -> Unit = match get(wrap(fn() => print("x")), 0) { Some(f) => f(), None => () }

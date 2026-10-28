@@ -1,0 +1,261 @@
+[
+ {
+  "id": "cancel_pending_deletes",
+  "what": "cancelling a pending order deletes it, so its id is free again and a second cancel says unknown_order (the bug of pressure run 5)",
+  "qal": [
+   {
+    "def": "cancel",
+    "old": "Step { st: St { products: st.products, customers: st.customers, used: st.used, orders: st.orders, bad: st.bad, tax: st.tax, pending: drop_pending(st.pending, oid), promo: st.promo }, out: [\"CANCELLED \" ++ oid ++ \" 0\"] }",
+    "new": "Step { st: St { products: st.products, customers: st.customers, used: map_del(st.used, oid), orders: map_del(st.orders, oid), bad: st.bad, tax: st.tax, pending: drop_pending(st.pending, oid), promo: st.promo }, out: [\"CANCELLED \" ++ oid ++ \" 0\"] }"
+   }
+  ],
+  "rust": [
+   {
+    "old": "        if order.status == Status::Pending {\n            order.status = Status::Cancelled;\n            self.pending.retain",
+    "new": "        if order.status == Status::Pending {\n            self.orders.remove(oid);\n            self.pending.retain"
+   }
+  ]
+ },
+ {
+  "id": "cancel_after_return",
+  "what": "an order with a return can still be cancelled",
+  "qal": [
+   {
+    "def": "cancel",
+    "old": "if !o.open || o.returned > 0 then",
+    "new": "if !o.open then"
+   }
+  ],
+  "rust": [
+   {
+    "old": "if order.status != Status::Open || order.returned > 0 {",
+    "new": "if order.status != Status::Open {"
+   }
+  ]
+ },
+ {
+  "id": "cancel_outstanding_negative",
+  "what": "cancelling lets outstanding fall below 0",
+  "qal": [
+   {
+    "def": "put_back",
+    "old": "outstanding: owed_after(c.outstanding, o.total)",
+    "new": "outstanding: c.outstanding - o.total"
+   }
+  ],
+  "rust": [
+   {
+    "old": "customer.outstanding = customer.outstanding.saturating_sub(total);",
+    "new": "customer.outstanding -= total;"
+   }
+  ]
+ },
+ {
+  "id": "no_discount_cap",
+  "what": "the sum of the discounts is not capped at 50",
+  "qal": [
+   {
+    "def": "discount",
+    "old": "in if d > 50 then 50 else d",
+    "new": "in d"
+   }
+  ],
+  "rust": [
+   {
+    "old": "let percent = (quantity_percent + tier.percent() + product.promo).min(50);",
+    "new": "let percent = quantity_percent + tier.percent() + product.promo;"
+   }
+  ]
+ },
+ {
+  "id": "fits_per_line",
+  "what": "the stock check looks at each line alone, not at the sum of the lines of one product",
+  "qal": [
+   {
+    "def": "fits",
+    "old": "acc && demand(lines, l.pid) <= stock_of(st, l.pid)",
+    "new": "acc && l.qty <= stock_of(st, l.pid)"
+   }
+  ],
+  "rust": [
+   {
+    "old": "        let mut need: BTreeMap<&str, u64> = BTreeMap::new();\n        for line in lines {\n            *need.entry(line.pid.as_str()).or_insert(0) += line.qty;\n        }\n        need.iter()\n            .all(|(pid, &qty)| self.products.get(*pid).is_some_and(|p| qty <= p.stock))",
+    "new": "        lines.iter().all(|l| self.products.get(&l.pid).is_some_and(|p| l.qty <= p.stock))"
+   }
+  ]
+ },
+ {
+  "id": "qty_discount_per_line",
+  "what": "the quantity discount looks at each line's quantity instead of the order's total quantity",
+  "qal": [
+   {
+    "def": "fill",
+    "old": "line_total(line_price(st, l.pid), l.qty, u, c.tier, promo_of(st, l.pid))",
+    "new": "line_total(line_price(st, l.pid), l.qty, l.qty, c.tier, promo_of(st, l.pid))"
+   }
+  ],
+  "rust": [
+   {
+    "old": "        let percent = (quantity_percent + tier.percent() + product.promo).min(50);",
+    "new": "        let quantity_percent = if line.qty >= 10 { 5 } else { 0 };\n        let percent = (quantity_percent + tier.percent() + product.promo).min(50);"
+   }
+  ]
+ },
+ {
+  "id": "cancel_keeps_tax",
+  "what": "cancelling does not take the order's tax out of the customer's tax total",
+  "qal": [
+   {
+    "def": "put_back",
+    "old": "taxes: c.taxes - o.tax",
+    "new": "taxes: c.taxes"
+   }
+  ],
+  "rust": [
+   {
+    "old": "        customer.spent -= total;\n        customer.tax -= tax;\n",
+    "new": "        customer.spent -= total;\n"
+   }
+  ]
+ },
+ {
+  "id": "top_ties_reversed",
+  "what": "ties in `top` go by id in reverse byte order",
+  "qal": [
+   {
+    "def": "better_prod",
+    "old": "a.sold == b.sold && a.id < b.id",
+    "new": "a.sold == b.sold && a.id > b.id"
+   }
+  ],
+  "rust": [
+   {
+    "old": "ranked.sort_by(|a, b| b.1.cmp(&a.1));",
+    "new": "ranked.sort_by(|a, b| b.1.cmp(&a.1).then(b.0.cmp(a.0)));"
+   }
+  ]
+ },
+ {
+  "id": "return_one_too_many",
+  "what": "a return may take one item more than is left in the order",
+  "qal": [
+   {
+    "def": "give_back",
+    "old": "if qty > o.qty - o.returned then",
+    "new": "if qty > o.qty - o.returned + 1 then"
+   }
+  ],
+  "rust": [
+   {
+    "old": "        if qty > left {\n            return Err(\"bad_qty\");",
+    "new": "        if qty > left + 1 {\n            return Err(\"bad_qty\");"
+   }
+  ]
+ },
+ {
+  "id": "pay_exact_is_overpay",
+  "what": "paying exactly what is owed is an overpay",
+  "qal": [
+   {
+    "def": "pay",
+    "old": "if cents > c.outstanding then",
+    "new": "if cents >= c.outstanding then"
+   }
+  ],
+  "rust": [
+   {
+    "old": "if cents > customer.outstanding {",
+    "new": "if cents >= customer.outstanding {"
+   }
+  ]
+ },
+ {
+  "id": "refund_without_tax",
+  "what": "the refund is computed from the net total (gross minus tax)",
+  "qal": [
+   {
+    "def": "take_back",
+    "old": "let refund = o.total * qty / o.qty in",
+    "new": "let refund = (o.total - o.tax) * qty / o.qty in"
+   }
+  ],
+  "rust": [
+   {
+    "old": "let refund = order.total * u128::from(qty) / order_qty;",
+    "new": "let refund = (order.total - order.tax) * u128::from(qty) / order_qty;"
+   }
+  ]
+ },
+ {
+  "id": "restock_newest_first",
+  "what": "after a restock the pending orders are filled newest first",
+  "qal": [
+   {
+    "def": "fill_pending",
+    "old": "fold(st.pending, Step",
+    "new": "fold(reverse(st.pending), Step"
+   }
+  ],
+  "rust": [
+   {
+    "old": "        for oid in queue {\n",
+    "new": "        for oid in queue.into_iter().rev() {\n"
+   },
+   {
+    "old": "        self.pending = waiting;\n",
+    "new": "        waiting.reverse();\n        self.pending = waiting;\n"
+   }
+  ]
+ },
+ {
+  "id": "return_keeps_tax",
+  "what": "a return does not lower the customer's tax total",
+  "qal": [
+   {
+    "def": "take_back",
+    "old": "taxes: c.taxes - tax_back",
+    "new": "taxes: c.taxes"
+   }
+  ],
+  "rust": [
+   {
+    "old": "        customer.spent -= refund;\n        customer.tax -= tax;\n",
+    "new": "        customer.spent -= refund;\n"
+   }
+  ]
+ },
+ {
+  "id": "promo_up_to_100",
+  "what": "`promo` accepts percentages up to 100 instead of 50",
+  "qal": [
+   {
+    "def": "parse_line",
+    "old": "amount(field(f, 2)) >= 0 && amount(field(f, 2)) <= 50 then CmdPromo",
+    "new": "amount(field(f, 2)) >= 0 && amount(field(f, 2)) <= 100 then CmdPromo"
+   }
+  ],
+  "rust": [
+   {
+    "old": "            if percent > 50 {\n                return None;\n            }\n            Some(Cmd::Promo",
+    "new": "            if percent > 100 {\n                return None;\n            }\n            Some(Cmd::Promo"
+   }
+  ]
+ },
+ {
+  "id": "limit_reached_rejects",
+  "what": "an order that brings outstanding exactly to the limit is rejected",
+  "qal": [
+   {
+    "def": "over_limit",
+    "old": "c.outstanding + amt > l",
+    "new": "c.outstanding + amt >= l"
+   }
+  ],
+  "rust": [
+   {
+    "old": "Some(limit) => customer.outstanding + total <= limit,",
+    "new": "Some(limit) => customer.outstanding + total < limit,"
+   }
+  ]
+ }
+]

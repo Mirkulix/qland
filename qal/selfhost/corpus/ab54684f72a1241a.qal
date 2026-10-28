@@ -1,0 +1,6 @@
+type P = { x: Int }
+type Box = { p: P }
+fn get_x(p: P) -> Int = p.x
+type C = A | B
+fn f(c: C) -> Int = match c { A => 1, _ => 2 }
+test t = f(B) == 2

@@ -1,0 +1,117 @@
+{
+ "name": "p02_crud_flow",
+ "description": "create, read, update, delete one todo",
+ "steps": [
+  {
+   "name": "create a",
+   "request": {
+    "method": "POST",
+    "path": "/todos",
+    "json": {
+     "title": "Buy milk"
+    }
+   },
+   "expect": {
+    "status": 201,
+    "json": {
+     "id": {
+      "$var": "a"
+     },
+     "title": "Buy milk",
+     "done": false,
+     "created_at": {
+      "$type": "int"
+     }
+    },
+    "headers": {
+     "location": "/todos/{{a}}",
+     "content-type": "application/json"
+    }
+   },
+   "capture": {
+    "a": "/id"
+   }
+  },
+  {
+   "name": "get a",
+   "request": {
+    "method": "GET",
+    "path": "/todos/{{a}}"
+   },
+   "expect": {
+    "status": 200,
+    "json": {
+     "id": {
+      "$var": "a"
+     },
+     "title": "Buy milk",
+     "done": false,
+     "created_at": {
+      "$type": "int"
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "mark done",
+   "request": {
+    "method": "PATCH",
+    "path": "/todos/{{a}}",
+    "json": {
+     "done": true
+    }
+   },
+   "expect": {
+    "status": 200,
+    "json": {
+     "id": {
+      "$var": "a"
+     },
+     "title": "Buy milk",
+     "done": true,
+     "created_at": {
+      "$type": "int"
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "delete",
+   "request": {
+    "method": "DELETE",
+    "path": "/todos/{{a}}"
+   },
+   "expect": {
+    "status": 204,
+    "body": ""
+   }
+  },
+  {
+   "name": "gone",
+   "request": {
+    "method": "GET",
+    "path": "/todos/{{a}}"
+   },
+   "expect": {
+    "status": 404,
+    "json": {
+     "error": {
+      "code": "not_found",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  }
+ ]
+}

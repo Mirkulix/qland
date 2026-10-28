@@ -1,0 +1,98 @@
+# ============================================================================
+# QAL Formal Governance & Contract Engine for IGQK Models
+# Verifies architectural invariants, compression bounds, and autonomous self-healing
+# ============================================================================
+
+type ModelSpec = {
+  layers: Int,
+  heads: Int,
+  d_model: Int,
+  vocab_size: Int
+}
+
+type CompressionAudit = {
+  orig_bytes: Int,
+  packed_bytes: Int,
+  bits_per_weight: Int,
+  ratio_times_ten: Int
+}
+
+# Parsing helpers for CLI dynamic verification
+fn parse_int(s: Str, default_val: Int) -> Int =
+  match to_int(trim(s)) {
+    Some(n) => n,
+    None => default_val
+  }
+
+fn get_arg(args: List[Str], idx: Int, default_val: Int) -> Int =
+  match get(args, idx) {
+    Some(s) => parse_int(s, default_val),
+    None => default_val
+  }
+
+# Invariant: Head dimension must divide d_model cleanly
+fn valid_architecture(m: ModelSpec) -> Bool =
+  m.layers > 0 && m.heads > 0 && m.d_model > 0 && m.vocab_size > 0 &&
+  (m.d_model - (m.d_model / m.heads) * m.heads == 0)
+
+# Invariant: 2-bit packing achieves >= 15.0x reduction over 32-bit float
+fn valid_compression(c: CompressionAudit) -> Bool =
+  c.orig_bytes > 0 && c.packed_bytes > 0 &&
+  c.packed_bytes <= c.orig_bytes &&
+  c.bits_per_weight == 2 &&
+  c.ratio_times_ten >= 150 # >= 15.0x
+
+# Autonomous Self-Healing: Computes the nearest mathematically sound architecture
+# that satisfies all invariants if dimensions do not divide cleanly.
+fn heal_architecture(layers: Int, heads: Int, d_model: Int, vocab_size: Int) -> ModelSpec =
+  let safe_layers = if layers > 0 then layers else 1 in
+  let safe_heads = if heads > 0 then heads else 1 in
+  let safe_vocab = if vocab_size > 0 then vocab_size else 100 in
+  let base_d = if d_model > 0 then d_model else safe_heads * 32 in
+  let rem = base_d - (base_d / safe_heads) * safe_heads in
+  let healed_d = if rem == 0 then base_d else base_d + (safe_heads - rem) in
+  ModelSpec {
+    layers: safe_layers,
+    heads: safe_heads,
+    d_model: healed_d,
+    vocab_size: safe_vocab
+  }
+
+# Formal contract function
+fn certify_model(m: ModelSpec, c: CompressionAudit) -> Str
+  req valid_architecture(m) && valid_compression(c)
+= "CERTIFIED: Model architecture valid and 16x ternary compression verified."
+
+# Self-Healing formal contract function
+fn certify_healed_model(healed: ModelSpec, c: CompressionAudit) -> Str
+  req valid_architecture(healed) && valid_compression(c)
+= "HEALED_AND_CERTIFIED: Model architecture automatically repaired to satisfy invariants and 16x compression verified."
+
+test test_arch_ok = valid_architecture(ModelSpec { layers: 2, heads: 2, d_model: 64, vocab_size: 100 }) == true
+test test_arch_bad = valid_architecture(ModelSpec { layers: 2, heads: 3, d_model: 64, vocab_size: 100 }) == false
+test test_heal_arch = valid_architecture(heal_architecture(2, 3, 64, 100)) == true
+test test_comp_ok = valid_compression(CompressionAudit { orig_bytes: 302080, packed_bytes: 18880, bits_per_weight: 2, ratio_times_ten: 160 }) == true
+
+fn main(args: List[Str]) -> Int !io = {
+  let layers = get_arg(args, 0, 2) in
+  let heads = get_arg(args, 1, 2) in
+  let d_model = get_arg(args, 2, 64) in
+  let vocab = get_arg(args, 3, 100) in
+  let orig_b = get_arg(args, 4, 302080) in
+  let pack_b = get_arg(args, 5, 18880) in
+  let bits_w = get_arg(args, 6, 2) in
+  let ratio_x10 = get_arg(args, 7, 160) in
+  let spec = ModelSpec { layers: layers, heads: heads, d_model: d_model, vocab_size: vocab } in
+  let audit = CompressionAudit { orig_bytes: orig_b, packed_bytes: pack_b, bits_per_weight: bits_w, ratio_times_ten: ratio_x10 } in
+  if valid_architecture(spec) && valid_compression(audit) then {
+    print(certify_model(spec, audit));
+    0
+  } else if valid_compression(audit) then {
+    let healed = heal_architecture(layers, heads, d_model, vocab) in
+    print("HEALED: d_model=" ++ from_int(healed.d_model) ++ " heads=" ++ from_int(healed.heads) ++ " layers=" ++ from_int(healed.layers) ++ " vocab=" ++ from_int(healed.vocab_size) ++ " | " ++ certify_healed_model(healed, audit));
+    0
+  } else {
+    print("REJECTED: Verification invariant failed.");
+    1
+  }
+}

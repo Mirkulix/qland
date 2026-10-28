@@ -1,0 +1,47 @@
+# A4 of the mutation study: the invariants of A3 as type invariants (inv.rs) instead of contracts
+# on five functions; no other contract is added. The stage-12 examples are the only tests.
+# The reqs below are the ones the property tests asked for on the unmutated code (6 warnings).
+
+fn inv_CustRec(c: CustRec) -> Bool = c.orders >= 0 && c.spent >= 0 && c.taxes >= 0 && c.taxes <= c.spent && c.outstanding >= 0
+
+fn inv_OrderRec(o: OrderRec) -> Bool = o.qty >= 0 && o.returned >= 0 && o.returned <= o.qty && o.total >= 0 && o.tax >= 0 && o.tax <= o.total
+
+fn inv_ProdRec(p: ProdRec) -> Bool = p.stock >= 0 && p.sold >= 0
+
+fn sold_at_least(m: Map[Str, ProdRec], pid: Str, k: Int) -> Bool = match map_get(m, pid) { Some(p) => p.sold >= k, None => true }
+
+type Cover = { at: Int, ok: Bool }
+
+fn sold_covers_part(m: Map[Str, ProdRec], lines: List[OrderLine], skip: Int, count: Int) -> Bool = let w = fold(lines, Cover { at: 0, ok: true }, fn(acc: Cover, l: OrderLine) => Cover { at: acc.at + l.qty, ok: acc.ok && sold_at_least(m, l.pid, overlap(acc.at, acc.at + l.qty, skip, skip + count)) }) in w.ok
+
+fn sold_covers(m: Map[Str, ProdRec], lines: List[OrderLine]) -> Bool = fold(lines, true, fn(a: Bool, l: OrderLine) => a && sold_at_least(m, l.pid, demand(lines, l.pid)))
+
+fn add_product(st: St, n: Int, pid: Str, name: Str, price: Int, stock: Int) -> Step
+  req stock >= 0
+= if map_has(st.products, pid) then err_step(st, n, "duplicate") else Step { st: St { products: map_put(st.products, pid, ProdRec { id: pid, name: name, price: price, stock: stock, sold: 0 }), customers: st.customers, used: st.used, orders: st.orders, bad: st.bad, tax: st.tax, pending: st.pending, promo: st.promo }, out: [] }
+
+fn restore(products: Map[Str, ProdRec], pid: Str, k: Int) -> Map[Str, ProdRec]
+  req k >= 0 && sold_at_least(products, pid, k)
+= if k == 0 then products else match map_get(products, pid) { None => products, Some(p) => map_put(products, p.id, ProdRec { id: p.id, name: p.name, price: p.price, stock: p.stock + k, sold: p.sold - k }) }
+
+fn back_units(products: Map[Str, ProdRec], lines: List[OrderLine], skip: Int, count: Int) -> Map[Str, ProdRec]
+  req skip >= 0 && count >= 0 && sold_covers_part(products, lines, skip, count)
+= let w = fold(lines, Walk { at: 0, products: products }, fn(acc: Walk, l: OrderLine) => Walk { at: acc.at + l.qty, products: restore(acc.products, l.pid, overlap(acc.at, acc.at + l.qty, skip, skip + count)) }) in w.products
+
+fn put_back(st: St, o: OrderRec, c: CustRec) -> Step
+  req c.orders >= 1 && o.returned == 0 && o.total <= c.spent && o.tax <= c.taxes && c.spent - c.taxes >= o.total - o.tax && sold_covers(st.products, o.lines)
+= Step { st: St { products: back_units(st.products, o.lines, 0, o.qty), customers: map_put(st.customers, c.id, CustRec { id: c.id, orders: c.orders - 1, spent: c.spent - o.total, taxes: c.taxes - o.tax, tier: c.tier, limit: c.limit, outstanding: owed_after(c.outstanding, o.total) }), used: st.used, orders: map_put(st.orders, o.id, OrderRec { id: o.id, cid: o.cid, lines: o.lines, qty: o.qty, total: o.total, tax: o.tax, open: false, returned: o.returned }), bad: st.bad, tax: st.tax, pending: st.pending, promo: st.promo }, out: ["CANCELLED " ++ o.id ++ " " ++ from_int(o.total)] }
+
+fn settle(st: St, oid: Str, c: CustRec, lines: List[OrderLine]) -> Step
+  req fold(lines, true, fn(a: Bool, l: OrderLine) => a && l.qty >= 0)
+= if !fits(st, lines) then Step { st: St { products: st.products, customers: st.customers, used: map_put(st.used, oid, true), orders: map_put(st.orders, oid, OrderRec { id: oid, cid: c.id, lines: lines, qty: order_units(lines), total: 0, tax: 0, open: false, returned: 0 }), bad: st.bad, tax: st.tax, pending: st.pending ++ [oid], promo: st.promo }, out: ["BACKORDER " ++ oid] } else fill(st, oid, c, lines, "OK")
+
+fn take_back(st: St, o: OrderRec, c: CustRec, qty: Int) -> Step
+  req qty > 0 && qty <= o.qty - o.returned && c.spent >= o.total * qty / o.qty && c.taxes >= o.tax * qty / o.qty && c.spent - c.taxes >= o.total * qty / o.qty - o.tax * qty / o.qty && sold_covers_part(st.products, o.lines, o.returned, qty)
+= let refund = o.total * qty / o.qty in let tax_back = o.tax * qty / o.qty in Step { st: St { products: back_units(st.products, o.lines, o.returned, qty), customers: map_put(st.customers, c.id, CustRec { id: c.id, orders: c.orders, spent: c.spent - refund, taxes: c.taxes - tax_back, tier: c.tier, limit: c.limit, outstanding: owed_after(c.outstanding, refund) }), used: st.used, orders: map_put(st.orders, o.id, OrderRec { id: o.id, cid: o.cid, lines: o.lines, qty: o.qty, total: o.total, tax: o.tax, open: true, returned: o.returned + qty }), bad: st.bad, tax: st.tax, pending: st.pending, promo: st.promo }, out: ["RETURNED " ++ o.id ++ " " ++ from_int(refund)] }
+
+fn play(st: St, lines: List[Str], n: Int, acc: List[Str]) -> List[Str] = if n > len(lines) then acc else let r = step(st, n, list_at(lines, n - 1)) in play(r.st, lines, n + 1, acc ++ r.out)
+
+test example_one = play(initial(), ["product p1 widget 1000 5", "product p2 gadget 250 20", "customer c1 ann", "customer c2 bob", "order o1 c1 p1:2,p2:8", "order o2 c2 p1:3,p9:1", "order o3 c2 p1:4,p2:1", "restock p1 10", "return o1 3", "report", "top"], 1, []) == ["OK o1 3800", "ERR 6 unknown_product", "BACKORDER o3", "FILLED o3 4250", "RETURNED o1 1140", "--- customers", "c1 1 2660 0 2660", "c2 1 4250 0 4250", "--- products", "p1 11 4", "p2 12 8", "--- top", "p2 8", "p1 4"]
+
+test example_two = play(initial(), ["product p1 a 100 10", "product p2 b 10 10", "customer c1 x silver", "promo p2 40", "tax 10", "order o1 c1 p1:5,p2:5", "order o2 c1 p1 5", "order o3 c1 p1:0", "order o4 c1 p1:1,", "order o5 c1 p1:1,p1:1", "report"], 1, []) == ["OK o1 534", "OK o2 533", "ERR 8 invalid", "ERR 9 invalid", "BACKORDER o5", "--- customers", "c1 2 1067 96 1067", "--- products", "p1 0 10", "p2 5 5"]

@@ -1,0 +1,1 @@
+type T = Leaf | Node(T, Int, T)

@@ -1,0 +1,56 @@
+== qal/haiku: 13/13 stages solved (13 at the first attempt), 161 rounds, 14,618,226 processed tokens
+   stage  0 a1 ok    16/16  rounds  6  processed   450,904   144s  caught: -
+   stage  1 a1 ok    20/20  rounds 13  processed   897,612    86s  caught: property_failed settle
+   stage  2 a1 ok    23/23  rounds 12  processed   994,299   204s  caught: signature_change_refused
+   stage  3 a1 ok    26/26  rounds 17  processed 1,537,716   261s  caught: signature_change_refused
+   stage  4 a1 ok    29/29  rounds 12  processed 1,157,809   139s  caught: signature_change_refused
+   stage  5 a1 ok    33/33  rounds 11  processed 1,004,852   147s  caught: signature_change_refused
+   stage  6 a1 ok    35/35  rounds 12  processed   923,096    77s  caught: signature_change_refused
+   stage  7 a1 ok    39/39  rounds 12  processed 1,345,473   196s  caught: signature_change_refused; tests_failed existing=cancel_rejected_order,credit_after_stock,reject_sets_bad,reject_stock,restock_adds_stock_reject
+   stage  8 a1 ok    41/41  rounds 12  processed   941,379   105s  caught: signature_change_refused
+   stage  9 a1 ok    43/43  rounds 10  processed   843,853   100s  caught: signature_change_refused
+   stage 10 a1 ok    46/46  rounds 13  processed 1,293,090   191s  caught: signature_change_refused
+   stage 11 a1 ok    48/48  rounds 12  processed 1,106,430   163s  caught: signature_change_refused
+   stage 12 a1 ok    50/50  rounds 19  processed 2,121,713   267s  caught: signature_change_refused
+== qal/sonnet: 13/13 stages solved (13 at the first attempt), 114 rounds, 8,327,668 processed tokens
+   stage  0 a1 ok    16/16  rounds  4  processed   234,290    61s  caught: -
+   stage  1 a1 ok    20/20  rounds  8  processed   489,495    60s  caught: tests_failed new=t_disc_big existing=t_total
+   stage  2 a1 ok    23/23  rounds  8  processed   555,474    77s  caught: signature_change_refused
+   stage  3 a1 ok    26/26  rounds  8  processed   525,566   236s  caught: tests_failed new=t_cancel_restores
+   stage  4 a1 ok    29/29  rounds  9  processed   615,689   107s  caught: signature_change_refused
+   stage  5 a1 ok    33/33  rounds 12  processed   935,519   168s  caught: signature_change_refused
+   stage  6 a1 ok    35/35  rounds  7  processed   446,452    47s  caught: -
+   stage  7 a1 ok    39/39  rounds 15  processed 1,251,097   169s  caught: -
+   stage  8 a1 ok    41/41  rounds  6  processed   389,085    65s  caught: -
+   stage  9 a1 ok    43/43  rounds  7  processed   451,194    73s  caught: tests_failed new=t_top_empty,t_top_example,t_top_four_ties,t_top_second
+   stage 10 a1 ok    46/46  rounds 10  processed   783,041   134s  caught: tests_failed new=t_ret_restock_top; tests_failed existing=t_ret_tax_split
+   stage 11 a1 ok    48/48  rounds  8  processed   654,182   149s  caught: signature_change_refused; tests_failed new=t_promo_cap; tests_failed existing=t_promo_cap
+   stage 12 a1 ok    50/50  rounds 12  processed   996,584   170s  caught: -
+== rust/haiku: 13/13 stages solved (13 at the first attempt), 96 rounds, 6,711,691 processed tokens
+   stage  0 a1 ok    16/16  rounds  5  processed   285,561   106s  caught: cargo_test_failed new=report_uses_byte_order_for_ids
+   stage  1 a1 ok    20/20  rounds  6  processed   308,457    38s  caught: -
+   stage  2 a1 ok    23/23  rounds  7  processed   406,541    69s  caught: -
+   stage  3 a1 ok    26/26  rounds  7  processed   399,876   219s  caught: -
+   stage  4 a1 ok    29/29  rounds  5  processed   319,647   108s  caught: cargo_test_failed new=cancel_reverses_the_tax_as_it_was_at_order_time,tax_accepts_zero_and_one_hundred_and_rejects_the_rest
+   stage  5 a1 ok    33/33  rounds  6  processed   408,563   170s  caught: cargo_test_failed new=credit_is_freed_by_payment_and_by_cancellation
+   stage  6 a1 ok    35/35  rounds  7  processed   428,164    62s  caught: cargo_test_failed new=restock_does_not_revive_a_rejected_order_id
+   stage  7 a1 ok    39/39  rounds  7  processed   609,086   185s  caught: -
+   stage  8 a1 ok    41/41  rounds  6  processed   382,080    52s  caught: -
+   stage  9 a1 ok    43/43  rounds  9  processed   519,432    57s  caught: -
+   stage 10 a1 ok    46/46  rounds  8  processed   641,009   115s  caught: cargo_test_failed new=return_qty_above_what_is_left_is_bad_qty
+   stage 11 a1 ok    48/48  rounds  8  processed   572,862    75s  caught: -
+   stage 12 a1 ok    50/50  rounds 15  processed 1,430,413   208s  caught: -
+== rust/sonnet: 13/13 stages solved (13 at the first attempt), 83 rounds, 4,480,148 processed tokens
+   stage  0 a1 ok    16/16  rounds  5  processed   239,177    46s  caught: -
+   stage  1 a1 ok    20/20  rounds  6  processed   289,152    43s  caught: cargo_test_failed existing=example_one
+   stage  2 a1 ok    23/23  rounds  6  processed   293,775    50s  caught: cargo_test_failed new=tier_large_no_overflow
+   stage  3 a1 ok    26/26  rounds  4  processed   192,929    35s  caught: -
+   stage  4 a1 ok    29/29  rounds  7  processed   371,225   251s  caught: cargo_test_failed; cargo_test_failed
+   stage  5 a1 ok    33/33  rounds  8  processed   447,474    89s  caught: cargo_test_failed; cargo_test_failed
+   stage  6 a1 ok    35/35  rounds  4  processed   200,981   173s  caught: -
+   stage  7 a1 ok    39/39  rounds 10  processed   599,179   344s  caught: cargo_test_failed; cargo_test_failed; cargo_test_failed
+   stage  8 a1 ok    41/41  rounds  6  processed   329,691    68s  caught: -
+   stage  9 a1 ok    43/43  rounds  5  processed   247,621    69s  caught: -
+   stage 10 a1 ok    46/46  rounds  4  processed   214,362    55s  caught: -
+   stage 11 a1 ok    48/48  rounds  6  processed   293,280    42s  caught: -
+   stage 12 a1 ok    50/50  rounds 12  processed   761,302   228s  caught: cargo_test_failed new=multi_line_invalid_and_all_or_nothing,multi_line_total_quantity_discount_and_returns_in_order

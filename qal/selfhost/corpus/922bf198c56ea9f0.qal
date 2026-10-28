@@ -1,0 +1,4 @@
+fn pos(x: Int) -> Int req x > 0 = x
+fn ok(xs: List[Int]) -> List[Int] = map(xs, fn(x) => pos(x * x + 1))
+fn maybe(xs: List[Int]) -> List[Int] = map(xs, fn(x) => pos(x))
+fn captured(k: Int, xs: List[Int]) -> List[Int] req k > 0 = map(xs, fn(x) => pos(k))

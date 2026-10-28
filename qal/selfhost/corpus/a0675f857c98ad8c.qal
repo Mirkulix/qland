@@ -1,0 +1,26 @@
+fn empty_len() -> Int ens r == 0 = len([])
+fn list_lit_len() -> Int ens r == 3 = len([10, 20, 30])
+fn push_len[T](xs: List[T], x: T) -> Int
+ens r == len(xs) + 1
+= len(push(xs, x))
+fn concat_len[T](xs: List[T], ys: List[T]) -> Int
+ens r == len(xs) + len(ys)
+= len(xs ++ ys)
+fn rev_len[T](xs: List[T]) -> Int
+ens r == len(xs)
+= len(reverse(xs))
+fn sort_len(xs: List[Int]) -> Int
+ens r == len(xs)
+= len(sort_int(xs))
+fn is_empty[T](xs: List[T]) -> Bool
+ens (r == true) == (xs == [])
+= len(xs) == 0
+fn non_empty[T](xs: List[T], x: T) -> Bool
+ens r == false
+= push(xs, x) == []
+fn safe_head(xs: List[Int]) -> Int
+req len(xs) > 0
+= list_at(xs, 0)
+fn safe_at(xs: List[Int], i: Int) -> Int
+req i >= 0 && i < len(xs)
+= list_at(xs, i)

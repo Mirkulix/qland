@@ -1,0 +1,34 @@
+# qal-pkg 1
+# package qal_sim_raft a277756a2fd858abb53d936ed33c2abce9e9f4f81dc00301caa0fa2433f019c1
+# def LogEntry 634cc0ac3f335324f5d00a4fcc157f619ca4306d33237525aae3107d79a75716 cli
+# def RaftLog 53eb66dc57ece21123d4e7d7560e128f27f8a29df17115ff9e8b9cb8e425effb cli
+# def advance 714af829e1e2d224aa5f7732cebc7cbd065824d09dc2d0d29bf5c13fe1c56864 cli
+# def advance_cannot_skip 3488f437e969595a97a2b7b441920cdf9008ddb74fc58f1a4c79f7e259236637 cli
+# def advance_commits ca2d4081aee917bdb139a3a07593615a9441b430fbea684cfc907547a3e0f481 cli
+# def append 3038fbb805a85959b2de128655a24ed8a52e63efa6ce486cf8052b2ca60539ca cli
+# def append_after_zero f6a969e09eff8ad5132cd563af3343d41ba70b6ac67af349954d76050984b1d4 cli
+# def at 0774ce2e1e82118f50d345b9a3fc109b623d95c173286d0602e2cabbddab057f cli
+# def reject_term_mismatch e13e744b46f488acd1f5972daf11f2383513512b0b4e433d54572b02c72f1915 cli
+
+type LogEntry = { index: Int, term: Int, cmd: Str }
+
+type RaftLog = { entries: List[LogEntry], commit: Int }
+
+fn advance(log: RaftLog, index: Int) -> RaftLog
+  req index >= 0
+= if index > log.commit && index <= len(log.entries) then RaftLog { entries: log.entries, commit: index } else log
+
+fn at(log: RaftLog, index: Int) -> Option[LogEntry]
+= if index <= 0 then None else get(log.entries, index - 1)
+
+fn append(log: RaftLog, prev_index: Int, prev_term: Int, e: LogEntry) -> RaftLog
+  req prev_index >= 0
+= if prev_index == 0 || (match at(log, prev_index) { Some(x) => x.term == prev_term, None => false }) then RaftLog { entries: push(log.entries, LogEntry { index: prev_index + 1, term: e.term, cmd: e.cmd }), commit: log.commit } else log
+
+test advance_cannot_skip = let l = append(RaftLog { entries: [], commit: 0 }, 0, 0, LogEntry { index: 0, term: 1, cmd: "x" }) in advance(l, 2).commit == 0
+
+test advance_commits = let l = append(RaftLog { entries: [], commit: 0 }, 0, 0, LogEntry { index: 0, term: 1, cmd: "x" }) in advance(l, 1).commit == 1
+
+test append_after_zero = len(append(RaftLog { entries: [], commit: 0 }, 0, 0, LogEntry { index: 0, term: 1, cmd: "x" }).entries) == 1
+
+test reject_term_mismatch = let l = append(RaftLog { entries: [], commit: 0 }, 0, 0, LogEntry { index: 0, term: 1, cmd: "x" }) in len(append(l, 1, 2, LogEntry { index: 0, term: 3, cmd: "y" }).entries) == 1

@@ -1,0 +1,1448 @@
+# Phase 5c: Runtime library helpers in WebAssembly (qc_rt.qal)
+
+fn qc_rt_slot_addr(a: QcAsm, xs: Int, k: Int) -> QcAsm =
+  qc_asm_all(a, [QcILocalGet(xs), QcILocalGet(k), QcII32Const(3), QcII32Shl, QcII32Add])
+
+fn qc_rt_loop_until(a: QcAsm, k: Int, n: Int) -> QcAsm =
+  qc_asm_all(a, [QcIBlock(QcBtEmpty), QcILoop(QcBtEmpty), QcILocalGet(k), QcILocalGet(n), QcII32GeU, QcIBrIf(1)])
+
+fn qc_rt_loop_next(a: QcAsm, k: Int) -> QcAsm =
+  qc_asm_all(a, [QcILocalGet(k), QcII32Const(1), QcII32Add, QcILocalSet(k), QcIBr(0), QcIEnd, QcIEnd])
+
+fn qc_rt_incr(a: QcAsm, l: Int) -> QcAsm =
+  qc_asm_all(a, [QcILocalGet(l), QcII32Const(1), QcII32Add, QcILocalSet(l)])
+
+fn qc_rt_node_field(a: QcAsm, x: Int, off: Int) -> QcAsm =
+  qc_asm_all(a, [QcILocalGet(x), QcIIf(QcBtResult(QcVI32)), QcILocalGet(x), QcII32Load(off), QcIElse, QcII32Const(0), QcIEnd])
+
+fn qc_rt_signature(rt: QcRt) -> QcFuncSig =
+  match rt {
+    QcRtAlloc => QcFuncSig { params: [QcVI64], results: [QcVI32] },
+    QcRtArith(_) => QcFuncSig { params: [QcVI64, QcVI64, QcVI32, QcVI32], results: [QcVI64] },
+    QcRtMulDiv(n) => QcFuncSig { params: qc_rt_i64s(n + 1) ++ [QcVI32, QcVI32], results: [QcVI64] },
+    QcRtVariant1 => QcFuncSig { params: [QcVI32, QcVI64], results: [QcVI32] },
+    QcRtOptFromPtr => QcFuncSig { params: [QcVI32], results: [QcVI32] },
+    QcRtStrNew => QcFuncSig { params: [QcVI32], results: [QcVI32] },
+    QcRtStrTrim => QcFuncSig { params: [QcVI32], results: [QcVI32] },
+    QcRtStrToInt => QcFuncSig { params: [QcVI32], results: [QcVI32] },
+    QcRtStrChars => QcFuncSig { params: [QcVI32], results: [QcVI32] },
+    QcRtStrCase(_) => QcFuncSig { params: [QcVI32], results: [QcVI32] },
+    QcRtListNew => QcFuncSig { params: [QcVI32], results: [QcVI32] },
+    QcRtListReverse => QcFuncSig { params: [QcVI32], results: [QcVI32] },
+    QcRtListSort(_) => QcFuncSig { params: [QcVI32], results: [QcVI32] },
+    QcRtResultFrom => QcFuncSig { params: [QcVI32, QcVI32], results: [QcVI32] },
+    QcRtResultUnitFrom => QcFuncSig { params: [QcVI32, QcVI32], results: [QcVI32] },
+    QcRtStrConcat => QcFuncSig { params: [QcVI32, QcVI32], results: [QcVI32] },
+    QcRtStrEq => QcFuncSig { params: [QcVI32, QcVI32], results: [QcVI32] },
+    QcRtStrContains => QcFuncSig { params: [QcVI32, QcVI32], results: [QcVI32] },
+    QcRtStrStartsWith => QcFuncSig { params: [QcVI32, QcVI32], results: [QcVI32] },
+    QcRtStrJoin => QcFuncSig { params: [QcVI32, QcVI32], results: [QcVI32] },
+    QcRtStrCmp => QcFuncSig { params: [QcVI32, QcVI32], results: [QcVI32] },
+    QcRtStrIndexOf => QcFuncSig { params: [QcVI32, QcVI32], results: [QcVI32] },
+    QcRtListConcat => QcFuncSig { params: [QcVI32, QcVI32], results: [QcVI32] },
+    QcRtStrReplace => QcFuncSig { params: [QcVI32, QcVI32, QcVI32, QcVI32, QcVI32], results: [QcVI32] },
+    QcRtCharCode => QcFuncSig { params: [QcVI32, QcVI32, QcVI32], results: [QcVI64] },
+    QcRtFromCharCode => QcFuncSig { params: [QcVI64, QcVI32, QcVI32], results: [QcVI32] },
+    QcRtStrLen => QcFuncSig { params: [QcVI32], results: [QcVI64] },
+    QcRtBytesEq => QcFuncSig { params: [QcVI32, QcVI32, QcVI32], results: [QcVI32] },
+    QcRtStrSub => QcFuncSig { params: [QcVI32, QcVI32, QcVI32], results: [QcVI32] },
+    QcRtStrFind => QcFuncSig { params: [QcVI32, QcVI32, QcVI32], results: [QcVI32] },
+    QcRtCharToByte => QcFuncSig { params: [QcVI32, QcVI64], results: [QcVI32] },
+    QcRtStrSlice => QcFuncSig { params: [QcVI32, QcVI64, QcVI64, QcVI32, QcVI32], results: [QcVI32] },
+    QcRtStrSplit => QcFuncSig { params: [QcVI32, QcVI32, QcVI32, QcVI32], results: [QcVI32] },
+    QcRtIntToStr => QcFuncSig { params: [QcVI64], results: [QcVI32] },
+    QcRtListGet => QcFuncSig { params: [QcVI32, QcVI64], results: [QcVI32] },
+    QcRtListPush => QcFuncSig { params: [QcVI32, QcVI64], results: [QcVI32] },
+    QcRtListRange => QcFuncSig { params: [QcVI64, QcVI64], results: [QcVI32] },
+    QcRtSift(_) => QcFuncSig { params: [QcVI32, QcVI32, QcVI32], results: [] },
+    QcRtFloatToInt => QcFuncSig { params: [QcVF64], results: [QcVI32] },
+    QcRtRandChecked => QcFuncSig { params: [QcVI64, QcVI64, QcVI32, QcVI32], results: [QcVI64] },
+    QcRtMap(_, _) => QcFuncSig { params: [QcVI32, QcVI32], results: [QcVI32] },
+    QcRtFilter(_) => QcFuncSig { params: [QcVI32, QcVI32], results: [QcVI32] },
+    QcRtFold(acc, _) => QcFuncSig { params: [QcVI32, qc_repr_val(acc), QcVI32], results: [qc_repr_val(acc)] },
+    QcRtMapFind(_) => QcFuncSig { params: [QcVI32, QcVI64], results: [QcVI32] },
+    QcRtMapGet(_) => QcFuncSig { params: [QcVI32, QcVI64], results: [QcVI32] },
+    QcRtMapDel(_) => QcFuncSig { params: [QcVI32, QcVI64], results: [QcVI32] },
+    QcRtBytesGet => QcFuncSig { params: [QcVI32, QcVI64], results: [QcVI32] },
+    QcRtMapPut(_) => QcFuncSig { params: [QcVI32, QcVI64, QcVI64], results: [QcVI32] },
+    QcRtMapNode => QcFuncSig { params: [QcVI32, QcVI64, QcVI64, QcVI32], results: [QcVI32] },
+    QcRtMapBal => QcFuncSig { params: [QcVI32, QcVI64, QcVI64, QcVI32], results: [QcVI32] },
+    QcRtMapDelMin => QcFuncSig { params: [QcVI32], results: [QcVI32] },
+    QcRtMapEntries => QcFuncSig { params: [QcVI32], results: [QcVI32] },
+    QcRtMapKeys => QcFuncSig { params: [QcVI32], results: [QcVI32] },
+    QcRtMapValues => QcFuncSig { params: [QcVI32], results: [QcVI32] },
+    QcRtBytesToList => QcFuncSig { params: [QcVI32], results: [QcVI32] },
+    QcRtMapSize => QcFuncSig { params: [QcVI32], results: [QcVI64] },
+    QcRtMapFill => QcFuncSig { params: [QcVI32, QcVI32, QcVI32], results: [QcVI32] },
+    QcRtBytesSlice => QcFuncSig { params: [QcVI32, QcVI64, QcVI64, QcVI32, QcVI32], results: [QcVI32] },
+    QcRtBytesFrom => QcFuncSig { params: [QcVI32, QcVI32, QcVI32], results: [QcVI32] },
+    QcRtShift(_) => QcFuncSig { params: [QcVI64, QcVI64, QcVI32, QcVI32], results: [QcVI64] },
+    QcRtListAt => QcFuncSig { params: [QcVI32, QcVI64, QcVI32, QcVI32], results: [QcVI64] },
+    QcRtBytesAt => QcFuncSig { params: [QcVI32, QcVI64, QcVI32, QcVI32], results: [QcVI64] },
+    QcRtAccList => QcFuncSig { params: [QcVI32], results: [QcVI32] },
+    QcRtBytesJoin => QcFuncSig { params: [QcVI32], results: [QcVI32] }
+  }
+
+fn qc_rt_alloc(m: QcMb, a0: QcAsm) -> QcMbAsm =
+  let l_p = qc_asm_local(a0, QcVI32) in
+  let l_end = qc_asm_local(l_p.a, QcVI64) in
+  let l_have = qc_asm_local(l_end.a, QcVI64) in
+  let p = l_p.l in
+  let end = l_end.l in
+  let have = l_have.l in
+  let fr = qc_mb_import(m, "fail") in
+  let a1 = qc_asm_all(l_have.a, [
+    QcIGlobalGet(0), QcILocalTee(p), QcII64ExtendI32U, QcILocalGet(0), QcII64Add, QcII64Const(7), QcII64Add, QcII64Const(-8), QcII64And, QcILocalSet(end),
+    QcIMemorySize, QcII64ExtendI32U, QcII64Const(16), QcII64Shl, QcILocalSet(have),
+    QcILocalGet(end), QcILocalGet(have), QcII64GtU, QcIIf(QcBtEmpty),
+    QcILocalGet(end), QcII64Const(4294967295), QcII64GtU, QcIIf(QcBtResult(QcVI32)), QcII32Const(-1), QcIElse,
+    QcILocalGet(end), QcILocalGet(have), QcII64Sub, QcII64Const(65535), QcII64Add, QcII64Const(16), QcII64ShrU, QcII32WrapI64, QcIMemoryGrow, QcIEnd,
+    QcII32Const(-1), QcII32Eq, QcIIf(QcBtEmpty),
+    QcII32Const(0), QcILocalGet(0), QcII64Store(0),
+    QcII32Const(7), QcII32Const(-1), QcII32Const(-1), QcII32Const(0), QcICall(fr.idx), QcIUnreachable,
+    QcIEnd, QcIEnd,
+    QcILocalGet(end), QcII32WrapI64, QcIGlobalSet(0), QcILocalGet(p)
+  ]) in
+  QcMbAsm { m: fr.m, a: a1 }
+
+fn qc_rt_fail_if(m: QcMb, a: QcAsm, kind: Int, vals: List[QcFailVal]) -> QcMbAsm =
+  let a1 = qc_asm_i(a, QcIIf(QcBtEmpty)) in
+  let ma = qc_mb_emit_fail(m, a1, kind, QcArgLocal(2), QcArgLocal(3), vals) in
+  QcMbAsm { m: ma.m, a: qc_asm_i(ma.a, QcIEnd) }
+
+fn qc_rt_arith(m: QcMb, a0: QcAsm, op: QcBinOp) -> QcMbAsm =
+  let lr = qc_asm_local(a0, QcVI64) in
+  let r = lr.l in
+  let a = lr.a in
+  let vals = [QcFailVal { local: 0, repr: QcRI64 }, QcFailVal { local: 1, repr: QcRI64 }] in
+  let i64_min = shl(1, 63) in
+  match op {
+    QcOpAdd =>
+      let a1 = qc_asm_all(a, [
+        QcILocalGet(0), QcILocalGet(1), QcII64Add, QcILocalSet(r),
+        QcILocalGet(0), QcILocalGet(r), QcII64Xor, QcILocalGet(1), QcILocalGet(r), QcII64Xor,
+        QcII64And, QcII64Const(0), QcII64LtS
+      ]) in
+      let ma = qc_rt_fail_if(m, a1, 3, vals) in
+      QcMbAsm { m: ma.m, a: qc_asm_i(ma.a, QcILocalGet(r)) },
+    QcOpSub =>
+      let a1 = qc_asm_all(a, [
+        QcILocalGet(0), QcILocalGet(1), QcII64Sub, QcILocalSet(r),
+        QcILocalGet(0), QcILocalGet(1), QcII64Xor, QcILocalGet(0), QcILocalGet(r), QcII64Xor,
+        QcII64And, QcII64Const(0), QcII64LtS
+      ]) in
+      let ma = qc_rt_fail_if(m, a1, 3, vals) in
+      QcMbAsm { m: ma.m, a: qc_asm_i(ma.a, QcILocalGet(r)) },
+    QcOpMul =>
+      let a1 = qc_asm_all(a, [QcILocalGet(0), QcII64Const(-1), QcII64Eq, QcILocalGet(1), QcII64Const(i64_min), QcII64Eq, QcII32And]) in
+      let ma1 = qc_rt_fail_if(m, a1, 3, vals) in
+      let a2 = qc_asm_all(ma1.a, [
+        QcILocalGet(0), QcILocalGet(1), QcII64Mul, QcILocalSet(r),
+        QcILocalGet(0), QcII64Const(0), QcII64Ne, QcIIf(QcBtEmpty),
+        QcILocalGet(r), QcILocalGet(0), QcII64DivS, QcILocalGet(1), QcII64Ne
+      ]) in
+      let ma2 = qc_rt_fail_if(ma1.m, a2, 3, vals) in
+      QcMbAsm { m: ma2.m, a: qc_asm_all(ma2.a, [QcIEnd, QcILocalGet(r)]) },
+    QcOpDiv =>
+      let a1 = qc_asm_all(a, [QcILocalGet(1), QcII64Eqz]) in
+      let ma1 = qc_rt_fail_if(m, a1, 4, vals) in
+      let a2 = qc_asm_all(ma1.a, [QcILocalGet(0), QcII64Const(i64_min), QcII64Eq, QcILocalGet(1), QcII64Const(-1), QcII64Eq, QcII32And]) in
+      let ma2 = qc_rt_fail_if(ma1.m, a2, 3, vals) in
+      QcMbAsm { m: ma2.m, a: qc_asm_all(ma2.a, [QcILocalGet(0), QcILocalGet(1), QcII64DivS]) },
+    QcOpRem =>
+      let a1 = qc_asm_all(a, [QcILocalGet(1), QcII64Eqz]) in
+      let ma1 = qc_rt_fail_if(m, a1, 4, vals) in
+      QcMbAsm { m: ma1.m, a: qc_asm_all(ma1.a, [QcILocalGet(0), QcILocalGet(1), QcII64RemS]) },
+    _ => QcMbAsm { m: qc_mb_bug(m, "not an arithmetic operator"), a: a }
+  }
+
+type QcMulDivL = {
+  hi: Int,
+  lo: Int,
+  mg: Int,
+  dv: Int,
+  q: Int,
+  neg: Int,
+  ov: Int,
+  z: Int,
+  k: Int,
+  h1: Int,
+  l1: Int,
+  h2: Int,
+  l2: Int,
+  s0: Int,
+  s1: Int,
+  s2: Int,
+  mid: Int
+}
+
+fn qc_rt_i64s(n: Int) -> List[QcValType] =
+  if n <= 0 then [] else [QcVI64] ++ qc_rt_i64s(n - 1)
+
+fn qc_rt_abs_u64(a: QcAsm, x: Int) -> QcAsm =
+  qc_asm_all(a, [QcII64Const(0), QcILocalGet(x), QcII64Sub, QcILocalGet(x), QcILocalGet(x), QcII64Const(0), QcII64LtS, QcISelect])
+
+fn qc_rt_mul_wide(a: QcAsm, x: Int, y: Int, h: Int, l: Int, t: QcMulDivL) -> QcAsm =
+  let mk = 4294967295 in
+  qc_asm_all(a, [
+    QcILocalGet(x), QcII64Const(mk), QcII64And, QcILocalGet(y), QcII64Const(mk), QcII64And, QcII64Mul, QcILocalSet(t.s0),
+    QcILocalGet(x), QcII64Const(mk), QcII64And, QcILocalGet(y), QcII64Const(32), QcII64ShrU, QcII64Mul, QcILocalSet(t.s1),
+    QcILocalGet(x), QcII64Const(32), QcII64ShrU, QcILocalGet(y), QcII64Const(mk), QcII64And, QcII64Mul, QcILocalSet(t.s2),
+    QcILocalGet(t.s0), QcII64Const(32), QcII64ShrU, QcILocalGet(t.s1), QcII64Const(mk), QcII64And, QcII64Add, QcILocalGet(t.s2), QcII64Const(mk), QcII64And, QcII64Add, QcILocalSet(t.mid),
+    QcILocalGet(t.s0), QcII64Const(mk), QcII64And, QcILocalGet(t.mid), QcII64Const(32), QcII64Shl, QcII64Or, QcILocalSet(l),
+    QcILocalGet(x), QcII64Const(32), QcII64ShrU, QcILocalGet(y), QcII64Const(32), QcII64ShrU, QcII64Mul,
+    QcILocalGet(t.s1), QcII64Const(32), QcII64ShrU, QcII64Add, QcILocalGet(t.s2), QcII64Const(32), QcII64ShrU, QcII64Add,
+    QcILocalGet(t.mid), QcII64Const(32), QcII64ShrU, QcII64Add, QcILocalSet(h)
+  ])
+
+# One factor f of the product: (hi, lo) * |f| (see qc_rt_muldiv).
+fn qc_rt_muldiv_factors(a: QcAsm, t: QcMulDivL, f: Int, n: Int) -> QcAsm =
+  if f >= n then a
+  else
+    let a1 = qc_asm_i(qc_rt_abs_u64(a, f), QcILocalSet(t.mg)) in
+    let a2 = qc_asm_all(a1, [
+      QcILocalGet(t.neg), QcILocalGet(f), QcII64Const(0), QcII64LtS, QcII32Xor, QcILocalSet(t.neg),
+      QcILocalGet(t.z), QcILocalGet(f), QcII64Eqz, QcII32Or, QcILocalSet(t.z)
+    ]) in
+    let a3 = qc_rt_mul_wide(qc_rt_mul_wide(a2, t.lo, t.mg, t.h1, t.l1, t), t.hi, t.mg, t.h2, t.l2, t) in
+    let a4 = qc_asm_all(a3, [
+      QcILocalGet(t.ov), QcILocalGet(t.h2), QcII64Const(0), QcII64Ne, QcII32Or, QcILocalSet(t.ov),
+      QcILocalGet(t.l2), QcILocalGet(t.h1), QcII64Add, QcILocalSet(t.hi),
+      QcILocalGet(t.ov), QcILocalGet(t.hi), QcILocalGet(t.l2), QcII64LtU, QcII32Or, QcILocalGet(t.hi), QcII64Const(0), QcII64LtS, QcII32Or, QcILocalSet(t.ov),
+      QcILocalGet(t.l1), QcILocalSet(t.lo)
+    ]) in
+    qc_rt_muldiv_factors(a4, t, f + 1, n)
+
+fn qc_rt_muldiv_fail_if(m: QcMb, a: QcAsm, kind: Int, d: Int) -> QcMbAsm =
+  let a1 = qc_asm_i(a, QcIIf(QcBtEmpty)) in
+  let vals = [QcFailVal { local: 0, repr: QcRI64 }, QcFailVal { local: d, repr: QcRI64 }] in
+  let ma = qc_mb_emit_fail(m, a1, kind, QcArgLocal(d + 1), QcArgLocal(d + 2), vals) in
+  QcMbAsm { m: ma.m, a: qc_asm_i(ma.a, QcIEnd) }
+
+# Fused (f1 * ... * fn) / d, mirroring rt.rs `muldiv`. Params: f1..fn = 0..n, d = n, func = n + 1,
+# site = n + 2. The product's magnitude is an unsigned 128-bit (hi, lo), its sign separate.
+fn qc_rt_muldiv(m: QcMb, a0: QcAsm, n: Int) -> QcMbAsm =
+  let d = n in
+  let r_hi = qc_asm_local(a0, QcVI64) in
+  let r_lo = qc_asm_local(r_hi.a, QcVI64) in
+  let r_mg = qc_asm_local(r_lo.a, QcVI64) in
+  let r_dv = qc_asm_local(r_mg.a, QcVI64) in
+  let r_q = qc_asm_local(r_dv.a, QcVI64) in
+  let r_neg = qc_asm_local(r_q.a, QcVI32) in
+  let r_ov = qc_asm_local(r_neg.a, QcVI32) in
+  let r_z = qc_asm_local(r_ov.a, QcVI32) in
+  let r_k = qc_asm_local(r_z.a, QcVI32) in
+  let r_h1 = qc_asm_local(r_k.a, QcVI64) in
+  let r_l1 = qc_asm_local(r_h1.a, QcVI64) in
+  let r_h2 = qc_asm_local(r_l1.a, QcVI64) in
+  let r_l2 = qc_asm_local(r_h2.a, QcVI64) in
+  let r_s0 = qc_asm_local(r_l2.a, QcVI64) in
+  let r_s1 = qc_asm_local(r_s0.a, QcVI64) in
+  let r_s2 = qc_asm_local(r_s1.a, QcVI64) in
+  let r_mid = qc_asm_local(r_s2.a, QcVI64) in
+  let t = QcMulDivL {
+    hi: r_hi.l, lo: r_lo.l, mg: r_mg.l, dv: r_dv.l, q: r_q.l, neg: r_neg.l, ov: r_ov.l, z: r_z.l, k: r_k.l,
+    h1: r_h1.l, l1: r_l1.l, h2: r_h2.l, l2: r_l2.l, s0: r_s0.l, s1: r_s1.l, s2: r_s2.l, mid: r_mid.l
+  } in
+  let a1 = qc_asm_i(qc_rt_abs_u64(r_mid.a, 0), QcILocalSet(t.lo)) in
+  let a2 = qc_asm_all(a1, [QcILocalGet(0), QcII64Const(0), QcII64LtS, QcILocalSet(t.neg), QcILocalGet(0), QcII64Eqz, QcILocalSet(t.z)]) in
+  let a3 = qc_rt_muldiv_factors(a2, t, 1, n) in
+  let a4 = qc_asm_all(a3, [
+    QcILocalGet(t.neg), QcILocalGet(d), QcII64Const(0), QcII64LtS, QcII32Xor, QcILocalSet(t.neg),
+    QcILocalGet(t.ov), QcILocalGet(t.z), QcII32Eqz, QcII32And
+  ]) in
+  let ma1 = qc_rt_muldiv_fail_if(m, a4, 3, d) in
+  let ma2 = qc_rt_muldiv_fail_if(ma1.m, qc_asm_all(ma1.a, [QcILocalGet(d), QcII64Eqz]), 4, d) in
+  let a5 = qc_asm_i(qc_rt_abs_u64(ma2.a, d), QcILocalSet(t.dv)) in
+  let ma3 = qc_rt_muldiv_fail_if(ma2.m, qc_asm_all(a5, [QcILocalGet(t.hi), QcILocalGet(t.dv), QcII64GeU]), 3, d) in
+  let a6 = qc_asm_all(ma3.a, [
+    QcILocalGet(t.hi), QcII64Eqz, QcIIf(QcBtEmpty), QcILocalGet(t.lo), QcILocalGet(t.dv), QcII64DivU, QcILocalSet(t.q), QcIElse,
+    QcIBlock(QcBtEmpty), QcILoop(QcBtEmpty), QcILocalGet(t.k), QcII32Const(64), QcII32GeU, QcIBrIf(1),
+    QcILocalGet(t.hi), QcII64Const(1), QcII64Shl, QcILocalGet(t.lo), QcII64Const(63), QcII64ShrU, QcII64Or, QcILocalSet(t.hi),
+    QcILocalGet(t.lo), QcII64Const(1), QcII64Shl, QcILocalSet(t.lo), QcILocalGet(t.q), QcII64Const(1), QcII64Shl, QcILocalSet(t.q),
+    QcILocalGet(t.hi), QcILocalGet(t.dv), QcII64GeU, QcIIf(QcBtEmpty),
+    QcILocalGet(t.hi), QcILocalGet(t.dv), QcII64Sub, QcILocalSet(t.hi), QcILocalGet(t.q), QcII64Const(1), QcII64Or, QcILocalSet(t.q), QcIEnd
+  ]) in
+  let a7 = qc_asm_i(qc_rt_loop_next(a6, t.k), QcIEnd) in
+  let a8 = qc_asm_all(a7, [QcILocalGet(t.q), QcII64Const(9223372036854775807), QcILocalGet(t.neg), QcII64ExtendI32U, QcII64Add, QcII64GtU]) in
+  let ma4 = qc_rt_muldiv_fail_if(ma3.m, a8, 3, d) in
+  QcMbAsm { m: ma4.m, a: qc_asm_all(ma4.a, [QcII64Const(0), QcILocalGet(t.q), QcII64Sub, QcILocalGet(t.q), QcILocalGet(t.neg), QcISelect]) }
+
+fn qc_rt_split(m: QcMb, a0: QcAsm) -> QcMbAsm =
+  let l1 = qc_asm_local(a0, QcVI32) in
+  let l2 = qc_asm_local(l1.a, QcVI32) in
+  let l3 = qc_asm_local(l2.a, QcVI32) in
+  let l4 = qc_asm_local(l3.a, QcVI32) in
+  let l5 = qc_asm_local(l4.a, QcVI32) in
+  let l6 = qc_asm_local(l5.a, QcVI32) in
+  let lsep = l1.l in
+  let count = l2.l in
+  let pos = l3.l in
+  let f = l4.l in
+  let xs = l5.l in
+  let k = l6.l in
+  let r_find = qc_mb_rt(m, QcRtStrFind) in
+  let r_sub = qc_mb_rt(r_find.m, QcRtStrSub) in
+  let find = r_find.idx in
+  let sub = r_sub.idx in
+  let a1 = qc_asm_all(l6.a, [QcILocalGet(1), QcII32Load(0), QcILocalTee(lsep), QcII32Eqz, QcIIf(QcBtEmpty)]) in
+  let ma1 = qc_mb_emit_fail(r_sub.m, a1, 6, QcArgLocal(2), QcArgLocal(3), [QcFailVal { local: 1, repr: QcRI32 }]) in
+  let a2 = qc_asm_all(ma1.a, [
+    QcIEnd,
+    QcII32Const(1), QcILocalSet(count),
+    QcIBlock(QcBtEmpty), QcILoop(QcBtEmpty),
+    QcILocalGet(0), QcILocalGet(1), QcILocalGet(pos), QcICall(find), QcILocalTee(f), QcII32Const(0), QcII32LtS, QcIBrIf(1)
+  ]) in
+  let a3 = qc_rt_incr(a2, count) in
+  let a4 = qc_asm_all(a3, [QcILocalGet(f), QcILocalGet(lsep), QcII32Add, QcILocalSet(pos), QcIBr(0), QcIEnd, QcIEnd]) in
+  let r_ln = qc_mb_rt(ma1.m, QcRtListNew) in
+  let a5 = qc_asm_all(a4, [
+    QcILocalGet(count), QcICall(r_ln.idx), QcILocalSet(xs), QcII32Const(0), QcILocalSet(pos),
+    QcIBlock(QcBtEmpty), QcILoop(QcBtEmpty),
+    QcILocalGet(0), QcILocalGet(1), QcILocalGet(pos), QcICall(find), QcILocalTee(f), QcII32Const(0), QcII32LtS, QcIBrIf(1)
+  ]) in
+  let a6 = qc_rt_slot_addr(a5, xs, k) in
+  let a7 = qc_asm_all(a6, [QcILocalGet(0), QcILocalGet(pos), QcILocalGet(f), QcICall(sub), QcII64ExtendI32U, QcII64Store(8)]) in
+  let a8 = qc_rt_incr(a7, k) in
+  let a9 = qc_asm_all(a8, [QcILocalGet(f), QcILocalGet(lsep), QcII32Add, QcILocalSet(pos), QcIBr(0), QcIEnd, QcIEnd]) in
+  let a10 = qc_rt_slot_addr(a9, xs, k) in
+  let a11 = qc_asm_all(a10, [QcILocalGet(0), QcILocalGet(pos), QcILocalGet(0), QcII32Load(0), QcICall(sub), QcII64ExtendI32U, QcII64Store(8), QcILocalGet(xs)]) in
+  QcMbAsm { m: r_ln.m, a: a11 }
+
+fn qc_rt_join(m: QcMb, a0: QcAsm) -> QcMbAsm =
+  let l1 = qc_asm_local(a0, QcVI32) in
+  let l2 = qc_asm_local(l1.a, QcVI64) in
+  let l3 = qc_asm_local(l2.a, QcVI32) in
+  let l4 = qc_asm_local(l3.a, QcVI32) in
+  let l5 = qc_asm_local(l4.a, QcVI32) in
+  let l6 = qc_asm_local(l5.a, QcVI32) in
+  let l7 = qc_asm_local(l6.a, QcVI32) in
+  let n = l1.l in
+  let total = l2.l in
+  let k = l3.l in
+  let p = l4.l in
+  let at = l5.l in
+  let e = l6.l in
+  let lsep = l7.l in
+  let r_sn = qc_mb_rt(m, QcRtStrNew) in
+  let a1 = qc_asm_all(l7.a, [
+    QcILocalGet(1), QcII32Load(0), QcILocalSet(lsep),
+    QcILocalGet(0), QcII32Load(0), QcILocalTee(n), QcII32Eqz, QcIIf(QcBtEmpty), QcII32Const(0), QcICall(r_sn.idx), QcIReturn, QcIEnd,
+    QcILocalGet(lsep), QcII64ExtendI32U, QcILocalGet(n), QcII32Const(1), QcII32Sub, QcII64ExtendI32U, QcII64Mul, QcILocalSet(total)
+  ]) in
+  let a2 = qc_rt_loop_until(a1, k, n) in
+  let a3 = qc_rt_slot_addr(a2, 0, k) in
+  let a4 = qc_asm_all(a3, [QcII64Load(8), QcII32WrapI64, QcII32Load(0), QcII64ExtendI32U, QcILocalGet(total), QcII64Add, QcILocalSet(total)]) in
+  let a5 = qc_rt_loop_next(a4, k) in
+  let r_al = qc_mb_rt(r_sn.m, QcRtAlloc) in
+  let r_sn2 = qc_mb_rt(r_al.m, QcRtStrNew) in
+  let a6 = qc_asm_all(a5, [
+    QcILocalGet(total), QcII64Const(2147418112), QcII64GtU, QcIIf(QcBtEmpty), QcILocalGet(total), QcICall(r_al.idx), QcIDrop, QcIEnd,
+    QcILocalGet(total), QcII32WrapI64, QcICall(r_sn2.idx), QcILocalTee(p), QcII32Const(4), QcII32Add, QcILocalSet(at), QcII32Const(0), QcILocalSet(k)
+  ]) in
+  let a7 = qc_rt_loop_until(a6, k, n) in
+  let a8 = qc_asm_all(a7, [
+    QcILocalGet(k), QcIIf(QcBtEmpty),
+    QcILocalGet(at), QcILocalGet(1), QcII32Const(4), QcII32Add, QcILocalGet(lsep), QcIMemoryCopy, QcILocalGet(at), QcILocalGet(lsep), QcII32Add, QcILocalSet(at), QcIEnd
+  ]) in
+  let a9 = qc_rt_slot_addr(a8, 0, k) in
+  let a10 = qc_asm_all(a9, [
+    QcII64Load(8), QcII32WrapI64, QcILocalSet(e),
+    QcILocalGet(at), QcILocalGet(e), QcII32Const(4), QcII32Add, QcILocalGet(e), QcII32Load(0), QcIMemoryCopy,
+    QcILocalGet(at), QcILocalGet(e), QcII32Load(0), QcII32Add, QcILocalSet(at)
+  ]) in
+  let a11 = qc_rt_loop_next(a10, k) in
+  QcMbAsm { m: r_sn2.m, a: qc_asm_i(a11, QcILocalGet(p)) }
+
+fn qc_rt_str_to_int(m: QcMb, a0: QcAsm) -> QcMbAsm =
+  let l1 = qc_asm_local(a0, QcVI32) in
+  let l2 = qc_asm_local(l1.a, QcVI32) in
+  let l3 = qc_asm_local(l2.a, QcVI32) in
+  let l4 = qc_asm_local(l3.a, QcVI64) in
+  let l5 = qc_asm_local(l4.a, QcVI64) in
+  let n = l1.l in
+  let i = l2.l in
+  let neg = l3.l in
+  let acc = l4.l in
+  let d = l5.l in
+  let none = qc_tag_addr(0) in
+  let ret_none = [QcII32Const(none), QcIReturn] in
+  let first = [QcILocalGet(0), QcII32Load8U(4)] in
+  let i64_min = shl(1, 63) in
+  let i64_min_div_10 = -922337203685477580 in
+  let a1 = qc_asm_all(l5.a, [QcILocalGet(0), QcII32Load(0), QcILocalTee(n), QcII32Eqz, QcIIf(QcBtEmpty)] ++ ret_none ++ [QcIEnd]) in
+  let a2 = qc_asm_all(a1, first ++ [QcII32Const(45), QcII32Eq, QcIIf(QcBtEmpty), QcII32Const(1), QcILocalSet(neg), QcII32Const(1), QcILocalSet(i), QcIEnd]) in
+  let a3 = qc_asm_all(a2, first ++ [QcII32Const(43), QcII32Eq, QcIIf(QcBtEmpty), QcII32Const(1), QcILocalSet(i), QcIEnd]) in
+  let a4 = qc_asm_all(a3, [QcILocalGet(i), QcILocalGet(n), QcII32Eq, QcIIf(QcBtEmpty)] ++ ret_none ++ [QcIEnd]) in
+  let a5 = qc_rt_loop_until(a4, i, n) in
+  let a6 = qc_asm_all(a5, [
+    QcILocalGet(0), QcILocalGet(i), QcII32Add, QcII32Load8U(4), QcII32Const(48), QcII32Sub, QcII64ExtendI32U, QcILocalTee(d), QcII64Const(9), QcII64GtU,
+    QcILocalGet(acc), QcII64Const(i64_min_div_10), QcII64LtS, QcII32Or, QcIIf(QcBtEmpty)
+  ] ++ ret_none ++ [
+    QcIEnd,
+    QcILocalGet(acc), QcII64Const(10), QcII64Mul, QcILocalTee(acc), QcII64Const(i64_min), QcILocalGet(d), QcII64Add, QcII64LtS, QcIIf(QcBtEmpty)
+  ] ++ ret_none ++ [
+    QcIEnd,
+    QcILocalGet(acc), QcILocalGet(d), QcII64Sub, QcILocalSet(acc)
+  ]) in
+  let a7 = qc_rt_loop_next(a6, i) in
+  let r_v1 = qc_mb_rt(m, QcRtVariant1) in
+  let a8 = qc_asm_all(a7, [
+    QcILocalGet(neg), QcII32Eqz, QcIIf(QcBtEmpty),
+    QcILocalGet(acc), QcII64Const(i64_min), QcII64Eq, QcIIf(QcBtEmpty)
+  ] ++ ret_none ++ [
+    QcIEnd, QcII64Const(0), QcILocalGet(acc), QcII64Sub, QcILocalSet(acc), QcIEnd,
+    QcII32Const(1), QcILocalGet(acc), QcICall(r_v1.idx)
+  ]) in
+  QcMbAsm { m: r_v1.m, a: a8 }
+
+fn qc_rt_int_to_str(m: QcMb, a0: QcAsm) -> QcMbAsm =
+  let l1 = qc_asm_local(a0, QcVI32) in
+  let l2 = qc_asm_local(l1.a, QcVI64) in
+  let l3 = qc_asm_local(l2.a, QcVI64) in
+  let l4 = qc_asm_local(l3.a, QcVI32) in
+  let l5 = qc_asm_local(l4.a, QcVI32) in
+  let l6 = qc_asm_local(l5.a, QcVI32) in
+  let l7 = qc_asm_local(l6.a, QcVI32) in
+  let neg = l1.l in
+  let v = l2.l in
+  let t = l3.l in
+  let digits = l4.l in
+  let len_l = l5.l in
+  let p = l6.l in
+  let pos = l7.l in
+  let a1 = qc_asm_all(l7.a, [
+    QcILocalGet(0), QcII64Const(0), QcII64LtS, QcILocalTee(neg),
+    QcIIf(QcBtResult(QcVI64)), QcILocalGet(0), QcIElse, QcII64Const(0), QcILocalGet(0), QcII64Sub, QcIEnd, QcILocalTee(v), QcILocalSet(t),
+    QcII32Const(1), QcILocalSet(digits),
+    QcIBlock(QcBtEmpty), QcILoop(QcBtEmpty),
+    QcILocalGet(t), QcII64Const(10), QcII64DivS, QcILocalTee(t), QcII64Eqz, QcIBrIf(1)
+  ]) in
+  let a2 = qc_rt_incr(a1, digits) in
+  let r_sn = qc_mb_rt(m, QcRtStrNew) in
+  let a3 = qc_asm_all(a2, [
+    QcIBr(0), QcIEnd, QcIEnd,
+    QcILocalGet(digits), QcILocalGet(neg), QcII32Add, QcILocalTee(len_l), QcICall(r_sn.idx), QcILocalSet(p),
+    QcILocalGet(len_l), QcII32Const(1), QcII32Sub, QcILocalSet(pos), QcILocalGet(v), QcILocalSet(t),
+    QcILoop(QcBtEmpty),
+    QcILocalGet(p), QcILocalGet(pos), QcII32Add, QcII32Const(48), QcII64Const(0), QcILocalGet(t), QcII64Const(10), QcII64RemS, QcII64Sub, QcII32WrapI64, QcII32Add, QcII32Store8(4),
+    QcILocalGet(pos), QcII32Const(1), QcII32Sub, QcILocalSet(pos),
+    QcILocalGet(t), QcII64Const(10), QcII64DivS, QcILocalTee(t), QcII64Const(0), QcII64Ne, QcIBrIf(0), QcIEnd,
+    QcILocalGet(neg), QcIIf(QcBtEmpty), QcILocalGet(p), QcII32Const(45), QcII32Store8(4), QcIEnd, QcILocalGet(p)
+  ]) in
+  QcMbAsm { m: r_sn.m, a: a3 }
+
+fn qc_rt_sort(m: QcMb, a0: QcAsm, strs: Bool) -> QcMbAsm =
+  let l1 = qc_asm_local(a0, QcVI32) in
+  let l2 = qc_asm_local(l1.a, QcVI32) in
+  let l3 = qc_asm_local(l2.a, QcVI32) in
+  let l4 = qc_asm_local(l3.a, QcVI32) in
+  let n = l1.l in
+  let p = l2.l in
+  let base = l3.l in
+  let i = l4.l in
+  let r_sift = qc_mb_rt(m, QcRtSift(strs)) in
+  let r_ln = qc_mb_rt(r_sift.m, QcRtListNew) in
+  let sift = r_sift.idx in
+  let a1 = qc_asm_all(l4.a, [
+    QcILocalGet(0), QcII32Load(0), QcILocalTee(n), QcICall(r_ln.idx), QcILocalTee(p), QcII32Const(8), QcII32Add, QcILocalTee(base),
+    QcILocalGet(0), QcII32Const(8), QcII32Add, QcILocalGet(n), QcII32Const(3), QcII32Shl, QcIMemoryCopy,
+    QcILocalGet(n), QcII32Const(1), QcII32ShrU, QcII32Const(1), QcII32Sub, QcILocalSet(i),
+    QcIBlock(QcBtEmpty), QcILoop(QcBtEmpty), QcILocalGet(i), QcII32Const(0), QcII32LtS, QcIBrIf(1),
+    QcILocalGet(base), QcILocalGet(i), QcILocalGet(n), QcICall(sift), QcILocalGet(i), QcII32Const(1), QcII32Sub, QcILocalSet(i), QcIBr(0), QcIEnd, QcIEnd
+  ]) in
+  let lt = qc_asm_local(a1, QcVI64) in
+  let t = lt.l in
+  let a2 = qc_asm_all(lt.a, [
+    QcILocalGet(n), QcII32Const(1), QcII32Sub, QcILocalSet(i),
+    QcIBlock(QcBtEmpty), QcILoop(QcBtEmpty), QcILocalGet(i), QcII32Const(0), QcII32LeS, QcIBrIf(1),
+    QcILocalGet(base), QcII64Load(0), QcILocalSet(t),
+    QcILocalGet(base), QcILocalGet(base), QcILocalGet(i), QcII32Const(3), QcII32Shl, QcII32Add, QcII64Load(0), QcII64Store(0),
+    QcILocalGet(base), QcILocalGet(i), QcII32Const(3), QcII32Shl, QcII32Add, QcILocalGet(t), QcII64Store(0),
+    QcILocalGet(base), QcII32Const(0), QcILocalGet(i), QcICall(sift), QcILocalGet(i), QcII32Const(1), QcII32Sub, QcILocalSet(i), QcIBr(0), QcIEnd, QcIEnd,
+    QcILocalGet(p)
+  ]) in
+  QcMbAsm { m: r_ln.m, a: a2 }
+
+fn qc_rt_sift_at(a: QcAsm, idx: Int) -> QcAsm =
+  qc_asm_all(a, [QcILocalGet(0), QcILocalGet(idx), QcII32Const(3), QcII32Shl, QcII32Add])
+
+fn qc_rt_sift_cmp(m: QcMb, a: QcAsm, strs: Bool, op: QcIns) -> QcMbAsm =
+  if strs then
+    let lx = qc_asm_local(a, QcVI64) in
+    let ly = qc_asm_local(lx.a, QcVI64) in
+    let x = lx.l in
+    let y = ly.l in
+    let r_sc = qc_mb_rt(m, QcRtStrCmp) in
+    let a1 = qc_asm_all(ly.a, [
+      QcILocalSet(y), QcILocalSet(x), QcILocalGet(x), QcII32WrapI64, QcILocalGet(y), QcII32WrapI64,
+      QcICall(r_sc.idx), QcII64ExtendI32S, QcII64Const(0), op
+    ]) in
+    QcMbAsm { m: r_sc.m, a: a1 }
+  else
+    QcMbAsm { m: m, a: qc_asm_i(a, op) }
+
+fn qc_rt_sift(m: QcMb, a0: QcAsm, strs: Bool) -> QcMbAsm =
+  let l1 = qc_asm_local(a0, QcVI32) in
+  let l2 = qc_asm_local(l1.a, QcVI64) in
+  let child = l1.l in
+  let t = l2.l in
+  let a1 = qc_asm_all(l2.a, [
+    QcILoop(QcBtEmpty),
+    QcILocalGet(1), QcII32Const(1), QcII32Shl, QcII32Const(1), QcII32Add, QcILocalTee(child), QcILocalGet(2), QcII32GeS, QcIIf(QcBtEmpty), QcIReturn, QcIEnd,
+    QcILocalGet(child), QcII32Const(1), QcII32Add, QcILocalGet(2), QcII32LtS, QcIIf(QcBtEmpty)
+  ]) in
+  let a2 = qc_asm_i(qc_rt_sift_at(a1, child), QcII64Load(0)) in
+  let a3 = qc_asm_i(qc_rt_sift_at(a2, child), QcII64Load(8)) in
+  let ma1 = qc_rt_sift_cmp(m, a3, strs, QcII64LtS) in
+  let a4 = qc_asm_all(ma1.a, [QcIIf(QcBtEmpty), QcILocalGet(child), QcII32Const(1), QcII32Add, QcILocalSet(child), QcIEnd, QcIEnd]) in
+  let a5 = qc_asm_i(qc_rt_sift_at(a4, 1), QcII64Load(0)) in
+  let a6 = qc_asm_i(qc_rt_sift_at(a5, child), QcII64Load(0)) in
+  let ma2 = qc_rt_sift_cmp(ma1.m, a6, strs, QcII64GeS) in
+  let a7 = qc_asm_all(ma2.a, [QcIIf(QcBtEmpty), QcIReturn, QcIEnd]) in
+  let a8 = qc_asm_all(qc_rt_sift_at(a7, 1), [QcII64Load(0), QcILocalSet(t)]) in
+  let a9 = qc_rt_sift_at(qc_rt_sift_at(a8, 1), child) in
+  let a10 = qc_asm_all(a9, [QcII64Load(0), QcII64Store(0)]) in
+  let a11 = qc_rt_sift_at(a10, child) in
+  let a12 = qc_asm_all(a11, [QcILocalGet(t), QcII64Store(0), QcILocalGet(child), QcILocalSet(1), QcIBr(0), QcIEnd]) in
+  QcMbAsm { m: ma2.m, a: a12 }
+
+fn qc_rt_str_cmp(m: QcMb, a0: QcAsm) -> QcMbAsm =
+  let l1 = qc_asm_local(a0, QcVI32) in
+  let l2 = qc_asm_local(l1.a, QcVI32) in
+  let l3 = qc_asm_local(l2.a, QcVI32) in
+  let l4 = qc_asm_local(l3.a, QcVI32) in
+  let l5 = qc_asm_local(l4.a, QcVI32) in
+  let l6 = qc_asm_local(l5.a, QcVI32) in
+  let la = l1.l in
+  let lb = l2.l in
+  let n = l3.l in
+  let i = l4.l in
+  let x = l5.l in
+  let y = l6.l in
+  let a1 = qc_asm_all(l6.a, [
+    QcILocalGet(0), QcII32Load(0), QcILocalSet(la), QcILocalGet(1), QcII32Load(0), QcILocalSet(lb),
+    QcILocalGet(la), QcILocalGet(lb), QcILocalGet(la), QcILocalGet(lb), QcII32LtU, QcISelect, QcILocalSet(n)
+  ]) in
+  let a2 = qc_rt_loop_until(a1, i, n) in
+  let a3 = qc_asm_all(a2, [
+    QcILocalGet(0), QcILocalGet(i), QcII32Add, QcII32Load8U(4), QcILocalTee(x), QcILocalGet(1), QcILocalGet(i), QcII32Add, QcII32Load8U(4), QcILocalTee(y), QcII32Ne,
+    QcIIf(QcBtEmpty), QcII32Const(-1), QcII32Const(1), QcILocalGet(x), QcILocalGet(y), QcII32LtU, QcISelect, QcIReturn, QcIEnd
+  ]) in
+  let a4 = qc_rt_loop_next(a3, i) in
+  let a5 = qc_asm_all(a4, [QcILocalGet(la), QcILocalGet(lb), QcII32GtU, QcILocalGet(la), QcILocalGet(lb), QcII32LtU, QcII32Sub]) in
+  QcMbAsm { m: m, a: a5 }
+
+fn qc_rt_replace(m: QcMb, a0: QcAsm) -> QcMbAsm =
+  let l1 = qc_asm_local(a0, QcVI32) in
+  let l2 = qc_asm_local(l1.a, QcVI32) in
+  let l3 = qc_asm_local(l2.a, QcVI32) in
+  let l4 = qc_asm_local(l3.a, QcVI32) in
+  let l5 = qc_asm_local(l4.a, QcVI32) in
+  let l6 = qc_asm_local(l5.a, QcVI64) in
+  let l7 = qc_asm_local(l6.a, QcVI32) in
+  let l8 = qc_asm_local(l7.a, QcVI32) in
+  let lfrom = l1.l in
+  let lto = l2.l in
+  let count = l3.l in
+  let pos = l4.l in
+  let f = l5.l in
+  let total = l6.l in
+  let p = l7.l in
+  let at = l8.l in
+  let r_find = qc_mb_rt(m, QcRtStrFind) in
+  let find = r_find.idx in
+  let a1 = qc_asm_all(l8.a, [QcILocalGet(1), QcII32Load(0), QcILocalTee(lfrom), QcII32Eqz, QcIIf(QcBtEmpty)]) in
+  let ma1 = qc_mb_emit_fail(r_find.m, a1, 6, QcArgLocal(3), QcArgLocal(4), [QcFailVal { local: 1, repr: QcRI32 }]) in
+  let a2 = qc_asm_all(ma1.a, [
+    QcIEnd,
+    QcILocalGet(2), QcII32Load(0), QcILocalSet(lto),
+    QcIBlock(QcBtEmpty), QcILoop(QcBtEmpty),
+    QcILocalGet(0), QcILocalGet(1), QcILocalGet(pos), QcICall(find), QcILocalTee(f), QcII32Const(0), QcII32LtS, QcIBrIf(1)
+  ]) in
+  let a3 = qc_rt_incr(a2, count) in
+  let r_al = qc_mb_rt(ma1.m, QcRtAlloc) in
+  let r_sn = qc_mb_rt(r_al.m, QcRtStrNew) in
+  let a4 = qc_asm_all(a3, [
+    QcILocalGet(f), QcILocalGet(lfrom), QcII32Add, QcILocalSet(pos), QcIBr(0), QcIEnd, QcIEnd,
+    QcILocalGet(0), QcII32Load(0), QcII64ExtendI32U, QcILocalGet(count), QcII64ExtendI32U, QcILocalGet(lto), QcII64ExtendI32U, QcILocalGet(lfrom), QcII64ExtendI32U, QcII64Sub, QcII64Mul, QcII64Add, QcILocalSet(total),
+    QcILocalGet(total), QcII64Const(2147418112), QcII64GtU, QcIIf(QcBtEmpty), QcILocalGet(total), QcICall(r_al.idx), QcIDrop, QcIEnd,
+    QcILocalGet(total), QcII32WrapI64, QcICall(r_sn.idx), QcILocalTee(p), QcII32Const(4), QcII32Add, QcILocalSet(at), QcII32Const(0), QcILocalSet(pos),
+    QcIBlock(QcBtEmpty), QcILoop(QcBtEmpty),
+    QcILocalGet(0), QcILocalGet(1), QcILocalGet(pos), QcICall(find), QcILocalTee(f), QcII32Const(0), QcII32LtS, QcIBrIf(1),
+    QcILocalGet(at), QcILocalGet(0), QcII32Const(4), QcII32Add, QcILocalGet(pos), QcII32Add, QcILocalGet(f), QcILocalGet(pos), QcII32Sub, QcIMemoryCopy,
+    QcILocalGet(at), QcILocalGet(f), QcILocalGet(pos), QcII32Sub, QcII32Add, QcILocalSet(at),
+    QcILocalGet(at), QcILocalGet(2), QcII32Const(4), QcII32Add, QcILocalGet(lto), QcIMemoryCopy, QcILocalGet(at), QcILocalGet(lto), QcII32Add, QcILocalSet(at),
+    QcILocalGet(f), QcILocalGet(lfrom), QcII32Add, QcILocalSet(pos), QcIBr(0), QcIEnd, QcIEnd,
+    QcILocalGet(at), QcILocalGet(0), QcII32Const(4), QcII32Add, QcILocalGet(pos), QcII32Add, QcILocalGet(0), QcII32Load(0), QcILocalGet(pos), QcII32Sub, QcIMemoryCopy, QcILocalGet(p)
+  ]) in
+  QcMbAsm { m: r_sn.m, a: a4 }
+
+fn qc_rt_char_code_cont(a: QcAsm, k: Int, shift: Int) -> QcAsm =
+  qc_asm_all(a, [QcILocalGet(0), QcII32Load8U(4 + k), QcII32Const(63), QcII32And, QcII32Const(shift), QcII32Shl, QcII32Or])
+
+fn qc_rt_char_code(m: QcMb, a0: QcAsm) -> QcMbAsm =
+  let lb0 = qc_asm_local(a0, QcVI32) in
+  let b0 = lb0.l in
+  let a1 = qc_asm_all(lb0.a, [QcILocalGet(0), QcII32Load(0), QcII32Eqz, QcIIf(QcBtEmpty)]) in
+  let ma1 = qc_mb_emit_fail(m, a1, 6, QcArgLocal(1), QcArgLocal(2), [QcFailVal { local: 0, repr: QcRI32 }]) in
+  let a2 = qc_asm_all(ma1.a, [
+    QcIEnd,
+    QcILocalGet(0), QcII32Load8U(4), QcILocalTee(b0), QcII32Const(128), QcII32LtU, QcIIf(QcBtEmpty), QcILocalGet(b0), QcII64ExtendI32U, QcIReturn, QcIEnd,
+    QcILocalGet(b0), QcII32Const(224), QcII32LtU, QcIIf(QcBtEmpty), QcILocalGet(b0), QcII32Const(31), QcII32And, QcII32Const(6), QcII32Shl
+  ]) in
+  let a3 = qc_rt_char_code_cont(a2, 1, 0) in
+  let a4 = qc_asm_all(a3, [
+    QcII64ExtendI32U, QcIReturn, QcIEnd,
+    QcILocalGet(b0), QcII32Const(240), QcII32LtU, QcIIf(QcBtEmpty), QcILocalGet(b0), QcII32Const(15), QcII32And, QcII32Const(12), QcII32Shl
+  ]) in
+  let a5 = qc_rt_char_code_cont(qc_rt_char_code_cont(a4, 1, 6), 2, 0) in
+  let a6 = qc_asm_all(a5, [
+    QcII64ExtendI32U, QcIReturn, QcIEnd,
+    QcILocalGet(b0), QcII32Const(7), QcII32And, QcII32Const(18), QcII32Shl
+  ]) in
+  let a7 = qc_rt_char_code_cont(qc_rt_char_code_cont(qc_rt_char_code_cont(a6, 1, 12), 2, 6), 3, 0) in
+  QcMbAsm { m: ma1.m, a: qc_asm_i(a7, QcII64ExtendI32U) }
+
+fn qc_rt_fcc_byte(a: QcAsm, p: Int, c: Int, k: Int, lead: Int, shift: Int, mask: Int) -> QcAsm =
+  qc_asm_all(a, [QcILocalGet(p), QcILocalGet(c), QcII32Const(shift), QcII32ShrU, QcII32Const(mask), QcII32And, QcII32Const(lead), QcII32Or, QcII32Store8(4 + k)])
+
+fn qc_rt_from_char_code(m: QcMb, a0: QcAsm) -> QcMbAsm =
+  let lc = qc_asm_local(a0, QcVI32) in
+  let lp = qc_asm_local(lc.a, QcVI32) in
+  let c = lc.l in
+  let p = lp.l in
+  let a1 = qc_asm_all(lp.a, [
+    QcILocalGet(0), QcII64Const(1114111), QcII64GtU, QcILocalGet(0), QcII64Const(55296), QcII64Sub, QcII64Const(2048), QcII64LtU, QcII32Or, QcIIf(QcBtEmpty)
+  ]) in
+  let ma1 = qc_mb_emit_fail(m, a1, 6, QcArgLocal(1), QcArgLocal(2), [QcFailVal { local: 0, repr: QcRI64 }]) in
+  let r_sn = qc_mb_rt(ma1.m, QcRtStrNew) in
+  let sn = r_sn.idx in
+  let a2 = qc_asm_all(ma1.a, [
+    QcIEnd,
+    QcILocalGet(0), QcII32WrapI64, QcILocalSet(c),
+    QcILocalGet(c), QcII32Const(128), QcII32LtU, QcIIf(QcBtEmpty),
+    QcII32Const(1), QcICall(sn), QcILocalSet(p)
+  ]) in
+  let a3 = qc_rt_fcc_byte(a2, p, c, 0, 0, 0, 127) in
+  let a4 = qc_asm_all(a3, [
+    QcILocalGet(p), QcIReturn, QcIEnd,
+    QcILocalGet(c), QcII32Const(2048), QcII32LtU, QcIIf(QcBtEmpty),
+    QcII32Const(2), QcICall(sn), QcILocalSet(p)
+  ]) in
+  let a5 = qc_rt_fcc_byte(qc_rt_fcc_byte(a4, p, c, 0, 192, 6, 31), p, c, 1, 128, 0, 63) in
+  let a6 = qc_asm_all(a5, [
+    QcILocalGet(p), QcIReturn, QcIEnd,
+    QcILocalGet(c), QcII32Const(65536), QcII32LtU, QcIIf(QcBtEmpty),
+    QcII32Const(3), QcICall(sn), QcILocalSet(p)
+  ]) in
+  let a7 = qc_rt_fcc_byte(qc_rt_fcc_byte(qc_rt_fcc_byte(a6, p, c, 0, 224, 12, 15), p, c, 1, 128, 6, 63), p, c, 2, 128, 0, 63) in
+  let a8 = qc_asm_all(a7, [
+    QcILocalGet(p), QcIReturn, QcIEnd,
+    QcII32Const(4), QcICall(sn), QcILocalSet(p)
+  ]) in
+  let a9 = qc_rt_fcc_byte(qc_rt_fcc_byte(qc_rt_fcc_byte(qc_rt_fcc_byte(a8, p, c, 0, 240, 18, 7), p, c, 1, 128, 12, 63), p, c, 2, 128, 6, 63), p, c, 3, 128, 0, 63) in
+  QcMbAsm { m: r_sn.m, a: qc_asm_i(a9, QcILocalGet(p)) }
+
+fn qc_rt_is_ws(a: QcAsm, c: Int) -> QcAsm =
+  qc_asm_all(a, [
+    QcILocalTee(c), QcII32Const(32), QcII32Eq, QcILocalGet(c), QcII32Const(9), QcII32Eq, QcII32Or,
+    QcILocalGet(c), QcII32Const(10), QcII32Eq, QcII32Or, QcILocalGet(c), QcII32Const(13), QcII32Eq, QcII32Or
+  ])
+
+fn qc_rt_acc_walk(a: QcAsm, p: Int, body: List[QcIns]) -> QcAsm =
+  qc_asm_all(a, [
+    QcILocalGet(0), QcILocalSet(p), QcIBlock(QcBtEmpty), QcILoop(QcBtEmpty),
+    QcILocalGet(p), QcII32Load(0), QcII32Eqz, QcIBrIf(1)
+  ] ++ body ++ [
+    QcILocalGet(p), QcII64Load(8), QcII32WrapI64, QcILocalSet(p), QcIBr(0), QcIEnd, QcIEnd
+  ])
+
+fn qc_rt_body(rt: QcRt, m: QcMb, n_params: Int) -> QcMbAsm =
+  let a0 = qc_asm_new(n_params) in
+  match rt {
+    QcRtAlloc => qc_rt_alloc(m, a0),
+    QcRtArith(op) => qc_rt_arith(m, a0, op),
+    QcRtMulDiv(n) => qc_rt_muldiv(m, a0, n),
+    QcRtVariant1 =>
+      let lp = qc_asm_local(a0, QcVI32) in
+      let p = lp.l in
+      let ar = qc_mb_rt(m, QcRtAlloc) in
+      let a1 = qc_asm_all(lp.a, [
+        QcII64Const(16), QcICall(ar.idx), QcILocalTee(p), QcILocalGet(0), QcII32Store(0),
+        QcILocalGet(p), QcILocalGet(1), QcII64Store(8), QcILocalGet(p)
+      ]) in
+      QcMbAsm { m: ar.m, a: a1 },
+    QcRtOptFromPtr =>
+      let vr = qc_mb_rt(m, QcRtVariant1) in
+      let a1 = qc_asm_all(a0, [
+        QcILocalGet(0), QcII32Const(0), QcII32LtS, QcIIf(QcBtResult(QcVI32)), QcII32Const(qc_tag_addr(0)), QcIElse,
+        QcII32Const(1), QcILocalGet(0), QcII64ExtendI32U, QcICall(vr.idx), QcIEnd
+      ]) in
+      QcMbAsm { m: vr.m, a: a1 },
+    QcRtResultFrom =>
+      let vr = qc_mb_rt(m, QcRtVariant1) in
+      let a1 = qc_asm_all(a0, [
+        QcII32Const(0), QcII32Const(1), QcILocalGet(0), QcISelect,
+        QcILocalGet(1),
+        QcII64ExtendI32U, QcICall(vr.idx)
+      ]) in
+      QcMbAsm { m: vr.m, a: a1 },
+    QcRtResultUnitFrom =>
+      let vr = qc_mb_rt(m, QcRtVariant1) in
+      let a1 = qc_asm_all(a0, [
+        QcII32Const(0), QcII32Const(1), QcILocalGet(0), QcISelect,
+        QcII32Const(0), QcILocalGet(1), QcILocalGet(0), QcISelect,
+        QcII64ExtendI32U, QcICall(vr.idx)
+      ]) in
+      QcMbAsm { m: vr.m, a: a1 },
+    QcRtStrNew =>
+      let lp = qc_asm_local(a0, QcVI32) in
+      let p = lp.l in
+      let ar = qc_mb_rt(m, QcRtAlloc) in
+      let a1 = qc_asm_all(lp.a, [
+        QcILocalGet(0), QcII64ExtendI32U, QcII64Const(4), QcII64Add, QcICall(ar.idx), QcILocalTee(p),
+        QcILocalGet(0), QcII32Store(0), QcILocalGet(p)
+      ]) in
+      QcMbAsm { m: ar.m, a: a1 },
+    QcRtStrLen =>
+      let l1 = qc_asm_local(a0, QcVI32) in
+      let l2 = qc_asm_local(l1.a, QcVI32) in
+      let l3 = qc_asm_local(l2.a, QcVI64) in
+      let n = l1.l in
+      let i = l2.l in
+      let c = l3.l in
+      let a1 = qc_asm_all(l3.a, [QcILocalGet(0), QcII32Load(0), QcILocalSet(n)]) in
+      let a2 = qc_rt_loop_until(a1, i, n) in
+      let a3 = qc_asm_all(a2, [
+        QcILocalGet(0), QcILocalGet(i), QcII32Add, QcII32Load8U(4), QcII32Const(192), QcII32And, QcII32Const(128), QcII32Ne,
+        QcII64ExtendI32U, QcILocalGet(c), QcII64Add, QcILocalSet(c)
+      ]) in
+      let a4 = qc_rt_loop_next(a3, i) in
+      QcMbAsm { m: m, a: qc_asm_i(a4, QcILocalGet(c)) },
+    QcRtStrConcat =>
+      let l1 = qc_asm_local(a0, QcVI32) in
+      let l2 = qc_asm_local(l1.a, QcVI32) in
+      let l3 = qc_asm_local(l2.a, QcVI32) in
+      let la = l1.l in
+      let lb = l2.l in
+      let p = l3.l in
+      let r_sn = qc_mb_rt(m, QcRtStrNew) in
+      let a1 = qc_asm_all(l3.a, [
+        QcILocalGet(0), QcII32Load(0), QcILocalSet(la), QcILocalGet(1), QcII32Load(0), QcILocalSet(lb),
+        QcILocalGet(la), QcILocalGet(lb), QcII32Add, QcICall(r_sn.idx), QcILocalSet(p),
+        QcILocalGet(p), QcII32Const(4), QcII32Add, QcILocalGet(0), QcII32Const(4), QcII32Add, QcILocalGet(la), QcIMemoryCopy,
+        QcILocalGet(p), QcII32Const(4), QcII32Add, QcILocalGet(la), QcII32Add, QcILocalGet(1), QcII32Const(4), QcII32Add, QcILocalGet(lb), QcIMemoryCopy,
+        QcILocalGet(p)
+      ]) in
+      QcMbAsm { m: r_sn.m, a: a1 },
+    QcRtBytesEq =>
+      let li = qc_asm_local(a0, QcVI32) in
+      let i = li.l in
+      let a1 = qc_rt_loop_until(li.a, i, 2) in
+      let a2 = qc_asm_all(a1, [
+        QcILocalGet(0), QcILocalGet(i), QcII32Add, QcII32Load8U(0), QcILocalGet(1), QcILocalGet(i), QcII32Add, QcII32Load8U(0), QcII32Ne,
+        QcIIf(QcBtEmpty), QcII32Const(0), QcIReturn, QcIEnd
+      ]) in
+      let a3 = qc_rt_loop_next(a2, i) in
+      QcMbAsm { m: m, a: qc_asm_i(a3, QcII32Const(1)) },
+    QcRtStrEq =>
+      let r_be = qc_mb_rt(m, QcRtBytesEq) in
+      let a1 = qc_asm_all(a0, [
+        QcILocalGet(0), QcILocalGet(1), QcII32Eq, QcIIf(QcBtEmpty), QcII32Const(1), QcIReturn, QcIEnd,
+        QcILocalGet(0), QcII32Load(0), QcILocalGet(1), QcII32Load(0), QcII32Ne, QcIIf(QcBtEmpty), QcII32Const(0), QcIReturn, QcIEnd,
+        QcILocalGet(0), QcII32Const(4), QcII32Add, QcILocalGet(1), QcII32Const(4), QcII32Add, QcILocalGet(0), QcII32Load(0), QcICall(r_be.idx)
+      ]) in
+      QcMbAsm { m: r_be.m, a: a1 },
+    QcRtStrSub =>
+      let lp = qc_asm_local(a0, QcVI32) in
+      let p = lp.l in
+      let r_sn = qc_mb_rt(m, QcRtStrNew) in
+      let a1 = qc_asm_all(lp.a, [
+        QcILocalGet(2), QcILocalGet(1), QcII32Sub, QcICall(r_sn.idx), QcILocalSet(p),
+        QcILocalGet(p), QcII32Const(4), QcII32Add, QcILocalGet(0), QcII32Const(4), QcII32Add, QcILocalGet(1), QcII32Add, QcILocalGet(2), QcILocalGet(1), QcII32Sub, QcIMemoryCopy,
+        QcILocalGet(p)
+      ]) in
+      QcMbAsm { m: r_sn.m, a: a1 },
+    QcRtCharToByte =>
+      let l1 = qc_asm_local(a0, QcVI32) in
+      let l2 = qc_asm_local(l1.a, QcVI32) in
+      let l3 = qc_asm_local(l2.a, QcVI64) in
+      let n = l1.l in
+      let i = l2.l in
+      let c = l3.l in
+      let a1 = qc_asm_all(l3.a, [QcILocalGet(0), QcII32Load(0), QcILocalSet(n)]) in
+      let a2 = qc_rt_loop_until(a1, i, n) in
+      let a3 = qc_asm_all(a2, [
+        QcILocalGet(0), QcILocalGet(i), QcII32Add, QcII32Load8U(4), QcII32Const(192), QcII32And, QcII32Const(128), QcII32Ne, QcIIf(QcBtEmpty),
+        QcILocalGet(c), QcILocalGet(1), QcII64Eq, QcIIf(QcBtEmpty), QcILocalGet(i), QcIReturn, QcIEnd,
+        QcILocalGet(c), QcII64Const(1), QcII64Add, QcILocalSet(c), QcIEnd
+      ]) in
+      let a4 = qc_rt_loop_next(a3, i) in
+      QcMbAsm { m: m, a: qc_asm_i(a4, QcILocalGet(n)) },
+    QcRtStrSlice =>
+      let ln = qc_asm_local(a0, QcVI64) in
+      let n = ln.l in
+      let r_sl = qc_mb_rt(m, QcRtStrLen) in
+      let a1 = qc_asm_all(ln.a, [
+        QcILocalGet(0), QcICall(r_sl.idx), QcILocalSet(n),
+        QcILocalGet(1), QcII64Const(0), QcII64LtS, QcILocalGet(2), QcILocalGet(1), QcII64LtS, QcII32Or, QcILocalGet(2), QcILocalGet(n), QcII64GtS, QcII32Or,
+        QcIIf(QcBtEmpty)
+      ]) in
+      let ma1 = qc_mb_emit_fail(r_sl.m, a1, 5, QcArgLocal(3), QcArgLocal(4), [
+        QcFailVal { local: 1, repr: QcRI64 }, QcFailVal { local: 2, repr: QcRI64 }, QcFailVal { local: n, repr: QcRI64 }
+      ]) in
+      let a2 = qc_asm_i(ma1.a, QcIEnd) in
+      let r_c2b = qc_mb_rt(ma1.m, QcRtCharToByte) in
+      let r_sub = qc_mb_rt(r_c2b.m, QcRtStrSub) in
+      let c2b = r_c2b.idx in
+      let a3 = qc_asm_all(a2, [
+        QcILocalGet(0), QcILocalGet(0), QcILocalGet(1), QcICall(c2b), QcILocalGet(0), QcILocalGet(2), QcICall(c2b), QcICall(r_sub.idx)
+      ]) in
+      QcMbAsm { m: r_sub.m, a: a3 },
+    QcRtStrFind =>
+      let l1 = qc_asm_local(a0, QcVI32) in
+      let l2 = qc_asm_local(l1.a, QcVI32) in
+      let l3 = qc_asm_local(l2.a, QcVI32) in
+      let ls = l1.l in
+      let lsub = l2.l in
+      let i = l3.l in
+      let r_be = qc_mb_rt(m, QcRtBytesEq) in
+      let a1 = qc_asm_all(l3.a, [
+        QcILocalGet(0), QcII32Load(0), QcILocalSet(ls), QcILocalGet(1), QcII32Load(0), QcILocalSet(lsub), QcILocalGet(2), QcILocalSet(i),
+        QcIBlock(QcBtEmpty), QcILoop(QcBtEmpty),
+        QcILocalGet(i), QcILocalGet(lsub), QcII32Add, QcILocalGet(ls), QcII32GtU, QcIBrIf(1),
+        QcILocalGet(0), QcII32Const(4), QcII32Add, QcILocalGet(i), QcII32Add, QcILocalGet(1), QcII32Const(4), QcII32Add, QcILocalGet(lsub), QcICall(r_be.idx),
+        QcIIf(QcBtEmpty), QcILocalGet(i), QcIReturn, QcIEnd
+      ]) in
+      let a2 = qc_rt_incr(a1, i) in
+      let a3 = qc_asm_all(a2, [QcIBr(0), QcIEnd, QcIEnd, QcII32Const(-1)]) in
+      QcMbAsm { m: r_be.m, a: a3 },
+    QcRtStrContains =>
+      let r_sf = qc_mb_rt(m, QcRtStrFind) in
+      let a1 = qc_asm_all(a0, [QcILocalGet(0), QcILocalGet(1), QcII32Const(0), QcICall(r_sf.idx), QcII32Const(-1), QcII32Ne]) in
+      QcMbAsm { m: r_sf.m, a: a1 },
+    QcRtStrStartsWith =>
+      let r_be = qc_mb_rt(m, QcRtBytesEq) in
+      let a1 = qc_asm_all(a0, [
+        QcILocalGet(1), QcII32Load(0), QcILocalGet(0), QcII32Load(0), QcII32GtU, QcIIf(QcBtEmpty), QcII32Const(0), QcIReturn, QcIEnd,
+        QcILocalGet(0), QcII32Const(4), QcII32Add, QcILocalGet(1), QcII32Const(4), QcII32Add, QcILocalGet(1), QcII32Load(0), QcICall(r_be.idx)
+      ]) in
+      QcMbAsm { m: r_be.m, a: a1 },
+    QcRtStrSplit => qc_rt_split(m, a0),
+    QcRtStrJoin => qc_rt_join(m, a0),
+    QcRtStrTrim =>
+      let l1 = qc_asm_local(a0, QcVI32) in
+      let l2 = qc_asm_local(l1.a, QcVI32) in
+      let l3 = qc_asm_local(l2.a, QcVI32) in
+      let s = l1.l in
+      let e = l2.l in
+      let c = l3.l in
+      let a1 = qc_asm_all(l3.a, [
+        QcILocalGet(0), QcII32Load(0), QcILocalSet(e),
+        QcIBlock(QcBtEmpty), QcILoop(QcBtEmpty), QcILocalGet(s), QcILocalGet(e), QcII32GeU, QcIBrIf(1),
+        QcILocalGet(0), QcILocalGet(s), QcII32Add, QcII32Load8U(4)
+      ]) in
+      let a2 = qc_rt_is_ws(a1, c) in
+      let a3 = qc_rt_incr(qc_asm_all(a2, [QcII32Eqz, QcIBrIf(1)]), s) in
+      let a4 = qc_asm_all(a3, [
+        QcIBr(0), QcIEnd, QcIEnd,
+        QcIBlock(QcBtEmpty), QcILoop(QcBtEmpty), QcILocalGet(e), QcILocalGet(s), QcII32LeU, QcIBrIf(1),
+        QcILocalGet(0), QcILocalGet(e), QcII32Add, QcII32Load8U(3)
+      ]) in
+      let a5 = qc_rt_is_ws(a4, c) in
+      let r_sub = qc_mb_rt(m, QcRtStrSub) in
+      let a6 = qc_asm_all(a5, [
+        QcII32Eqz, QcIBrIf(1), QcILocalGet(e), QcII32Const(1), QcII32Sub, QcILocalSet(e), QcIBr(0), QcIEnd, QcIEnd,
+        QcILocalGet(0), QcILocalGet(s), QcILocalGet(e), QcICall(r_sub.idx)
+      ]) in
+      QcMbAsm { m: r_sub.m, a: a6 },
+    QcRtStrToInt => qc_rt_str_to_int(m, a0),
+    QcRtIntToStr => qc_rt_int_to_str(m, a0),
+    QcRtStrChars =>
+      let l1 = qc_asm_local(a0, QcVI32) in
+      let l2 = qc_asm_local(l1.a, QcVI32) in
+      let l3 = qc_asm_local(l2.a, QcVI32) in
+      let l4 = qc_asm_local(l3.a, QcVI32) in
+      let l5 = qc_asm_local(l4.a, QcVI32) in
+      let xs = l1.l in
+      let nb = l2.l in
+      let i = l3.l in
+      let k = l4.l in
+      let cl = l5.l in
+      let r_sl = qc_mb_rt(m, QcRtStrLen) in
+      let r_ln = qc_mb_rt(r_sl.m, QcRtListNew) in
+      let a1 = qc_asm_all(l5.a, [
+        QcILocalGet(0), QcICall(r_sl.idx), QcII32WrapI64, QcICall(r_ln.idx), QcILocalSet(xs),
+        QcILocalGet(0), QcII32Load(0), QcILocalSet(nb)
+      ]) in
+      let a2 = qc_rt_loop_until(a1, i, nb) in
+      let lead = [QcILocalGet(0), QcILocalGet(i), QcII32Add, QcII32Load8U(4)] in
+      let a3 = qc_asm_all(a2, [QcII32Const(1)]
+        ++ lead ++ [QcII32Const(192), QcII32GeU, QcII32Add]
+        ++ lead ++ [QcII32Const(224), QcII32GeU, QcII32Add]
+        ++ lead ++ [QcII32Const(240), QcII32GeU, QcII32Add, QcILocalSet(cl)]
+      ) in
+      let a4 = qc_rt_slot_addr(a3, xs, k) in
+      let r_sub = qc_mb_rt(r_ln.m, QcRtStrSub) in
+      let a5 = qc_asm_all(a4, [
+        QcILocalGet(0), QcILocalGet(i), QcILocalGet(i), QcILocalGet(cl), QcII32Add, QcICall(r_sub.idx), QcII64ExtendI32U, QcII64Store(8)
+      ]) in
+      let a6 = qc_rt_incr(a5, k) in
+      let a7 = qc_asm_all(a6, [
+        QcILocalGet(i), QcILocalGet(cl), QcII32Add, QcILocalSet(i), QcIBr(0), QcIEnd, QcIEnd,
+        QcILocalGet(xs)
+      ]) in
+      QcMbAsm { m: r_sub.m, a: a7 },
+    QcRtListNew =>
+      let lp = qc_asm_local(a0, QcVI32) in
+      let p = lp.l in
+      let ar = qc_mb_rt(m, QcRtAlloc) in
+      let a1 = qc_asm_all(lp.a, [
+        QcILocalGet(0), QcII64ExtendI32U, QcII64Const(3), QcII64Shl, QcII64Const(8), QcII64Add, QcICall(ar.idx), QcILocalTee(p),
+        QcILocalGet(0), QcII32Store(0), QcILocalGet(p)
+      ]) in
+      QcMbAsm { m: ar.m, a: a1 },
+    QcRtListGet =>
+      let vr = qc_mb_rt(m, QcRtVariant1) in
+      let a1 = qc_asm_all(a0, [
+        QcILocalGet(1), QcII64Const(0), QcII64LtS, QcILocalGet(1), QcILocalGet(0), QcII32Load(0), QcII64ExtendI32U, QcII64GeS, QcII32Or,
+        QcIIf(QcBtResult(QcVI32)), QcII32Const(qc_tag_addr(0)), QcIElse,
+        QcII32Const(1), QcILocalGet(0), QcILocalGet(1), QcII32WrapI64, QcII32Const(3), QcII32Shl, QcII32Add, QcII64Load(8),
+        QcICall(vr.idx), QcIEnd
+      ]) in
+      QcMbAsm { m: vr.m, a: a1 },
+    QcRtListPush =>
+      let l1 = qc_asm_local(a0, QcVI32) in
+      let l2 = qc_asm_local(l1.a, QcVI32) in
+      let n = l1.l in
+      let p = l2.l in
+      let r_ln = qc_mb_rt(m, QcRtListNew) in
+      let a1 = qc_asm_all(l2.a, [
+        QcILocalGet(0), QcII32Load(0), QcILocalTee(n), QcII32Const(1), QcII32Add, QcICall(r_ln.idx), QcILocalSet(p),
+        QcILocalGet(p), QcII32Const(8), QcII32Add, QcILocalGet(0), QcII32Const(8), QcII32Add, QcILocalGet(n), QcII32Const(3), QcII32Shl, QcIMemoryCopy
+      ]) in
+      let a2 = qc_rt_slot_addr(a1, p, n) in
+      let a3 = qc_asm_all(a2, [QcILocalGet(1), QcII64Store(8), QcILocalGet(p)]) in
+      QcMbAsm { m: r_ln.m, a: a3 },
+    QcRtListConcat =>
+      let l1 = qc_asm_local(a0, QcVI32) in
+      let l2 = qc_asm_local(l1.a, QcVI32) in
+      let l3 = qc_asm_local(l2.a, QcVI32) in
+      let na = l1.l in
+      let nb = l2.l in
+      let p = l3.l in
+      let r_ln = qc_mb_rt(m, QcRtListNew) in
+      let a1 = qc_asm_all(l3.a, [
+        QcILocalGet(0), QcII32Load(0), QcILocalSet(na), QcILocalGet(1), QcII32Load(0), QcILocalSet(nb),
+        QcILocalGet(na), QcILocalGet(nb), QcII32Add, QcICall(r_ln.idx), QcILocalSet(p),
+        QcILocalGet(p), QcII32Const(8), QcII32Add, QcILocalGet(0), QcII32Const(8), QcII32Add, QcILocalGet(na), QcII32Const(3), QcII32Shl, QcIMemoryCopy
+      ]) in
+      let a2 = qc_rt_slot_addr(a1, p, na) in
+      let a3 = qc_asm_all(a2, [
+        QcII32Const(8), QcII32Add, QcILocalGet(1), QcII32Const(8), QcII32Add, QcILocalGet(nb), QcII32Const(3), QcII32Shl, QcIMemoryCopy, QcILocalGet(p)
+      ]) in
+      QcMbAsm { m: r_ln.m, a: a3 },
+    QcRtListReverse =>
+      let l1 = qc_asm_local(a0, QcVI32) in
+      let l2 = qc_asm_local(l1.a, QcVI32) in
+      let l3 = qc_asm_local(l2.a, QcVI32) in
+      let n = l1.l in
+      let p = l2.l in
+      let k = l3.l in
+      let r_ln = qc_mb_rt(m, QcRtListNew) in
+      let a1 = qc_asm_all(l3.a, [QcILocalGet(0), QcII32Load(0), QcILocalTee(n), QcICall(r_ln.idx), QcILocalSet(p)]) in
+      let a2 = qc_rt_loop_until(a1, k, n) in
+      let a3 = qc_rt_slot_addr(a2, p, k) in
+      let a4 = qc_asm_all(a3, [
+        QcILocalGet(0), QcILocalGet(n), QcILocalGet(k), QcII32Sub, QcII32Const(3), QcII32Shl, QcII32Add, QcII64Load(0), QcII64Store(8)
+      ]) in
+      let a5 = qc_rt_loop_next(a4, k) in
+      QcMbAsm { m: r_ln.m, a: qc_asm_i(a5, QcILocalGet(p)) },
+    QcRtListRange =>
+      let l1 = qc_asm_local(a0, QcVI64) in
+      let l2 = qc_asm_local(l1.a, QcVI32) in
+      let l3 = qc_asm_local(l2.a, QcVI32) in
+      let count = l1.l in
+      let p = l2.l in
+      let k = l3.l in
+      let r_ln = qc_mb_rt(m, QcRtListNew) in
+      let r_al = qc_mb_rt(r_ln.m, QcRtAlloc) in
+      let a1 = qc_asm_all(l3.a, [
+        QcILocalGet(1), QcILocalGet(0), QcII64LeS, QcIIf(QcBtEmpty), QcII32Const(0), QcICall(r_ln.idx), QcIReturn, QcIEnd,
+        QcILocalGet(1), QcILocalGet(0), QcII64Sub, QcILocalSet(count),
+        QcII64Const(shl(1, 40)), QcILocalGet(count), QcII64Const(3), QcII64Shl, QcII64Const(8), QcII64Add, QcILocalGet(count), QcII64Const(shl(1, 32)), QcII64GtU, QcISelect,
+        QcICall(r_al.idx), QcILocalTee(p), QcILocalGet(count), QcII32WrapI64, QcII32Store(0)
+      ]) in
+      let ln = qc_asm_local(a1, QcVI32) in
+      let n = ln.l in
+      let a2 = qc_asm_all(ln.a, [QcILocalGet(count), QcII32WrapI64, QcILocalSet(n)]) in
+      let a3 = qc_rt_loop_until(a2, k, n) in
+      let a4 = qc_rt_slot_addr(a3, p, k) in
+      let a5 = qc_asm_all(a4, [QcILocalGet(0), QcILocalGet(k), QcII64ExtendI32U, QcII64Add, QcII64Store(8)]) in
+      let a6 = qc_rt_loop_next(a5, k) in
+      QcMbAsm { m: r_al.m, a: qc_asm_i(a6, QcILocalGet(p)) },
+    QcRtListSort(strs) => qc_rt_sort(m, a0, strs),
+    QcRtSift(strs) => qc_rt_sift(m, a0, strs),
+    QcRtStrCmp => qc_rt_str_cmp(m, a0),
+    QcRtStrCase(upper) =>
+      let l1 = qc_asm_local(a0, QcVI32) in
+      let l2 = qc_asm_local(l1.a, QcVI32) in
+      let l3 = qc_asm_local(l2.a, QcVI32) in
+      let l4 = qc_asm_local(l3.a, QcVI32) in
+      let n = l1.l in
+      let p = l2.l in
+      let i = l3.l in
+      let c = l4.l in
+      let first = if upper then 97 else 65 in
+      let r_sn = qc_mb_rt(m, QcRtStrNew) in
+      let a1 = qc_asm_all(l4.a, [
+        QcILocalGet(0), QcII32Load(0), QcILocalTee(n), QcICall(r_sn.idx), QcILocalTee(p), QcII32Const(4), QcII32Add,
+        QcILocalGet(0), QcII32Const(4), QcII32Add, QcILocalGet(n), QcIMemoryCopy
+      ]) in
+      let a2 = qc_rt_loop_until(a1, i, n) in
+      let a3 = qc_asm_all(a2, [
+        QcILocalGet(p), QcILocalGet(i), QcII32Add, QcII32Load8U(4), QcILocalTee(c), QcII32Const(first), QcII32Sub, QcII32Const(26), QcII32LtU,
+        QcIIf(QcBtEmpty), QcILocalGet(p), QcILocalGet(i), QcII32Add, QcILocalGet(c), QcII32Const(32), QcII32Xor, QcII32Store8(4), QcIEnd
+      ]) in
+      let a4 = qc_rt_loop_next(a3, i) in
+      QcMbAsm { m: r_sn.m, a: qc_asm_i(a4, QcILocalGet(p)) },
+    QcRtStrReplace => qc_rt_replace(m, a0),
+    QcRtStrIndexOf =>
+      let l1 = qc_asm_local(a0, QcVI32) in
+      let l2 = qc_asm_local(l1.a, QcVI32) in
+      let l3 = qc_asm_local(l2.a, QcVI64) in
+      let f = l1.l in
+      let i = l2.l in
+      let c = l3.l in
+      let r_sf = qc_mb_rt(m, QcRtStrFind) in
+      let a1 = qc_asm_all(l3.a, [
+        QcILocalGet(0), QcILocalGet(1), QcII32Const(0), QcICall(r_sf.idx), QcILocalTee(f), QcII32Const(0), QcII32LtS,
+        QcIIf(QcBtEmpty), QcII32Const(qc_tag_addr(0)), QcIReturn, QcIEnd
+      ]) in
+      let a2 = qc_rt_loop_until(a1, i, f) in
+      let a3 = qc_asm_all(a2, [
+        QcILocalGet(0), QcILocalGet(i), QcII32Add, QcII32Load8U(4), QcII32Const(192), QcII32And, QcII32Const(128), QcII32Ne,
+        QcII64ExtendI32U, QcILocalGet(c), QcII64Add, QcILocalSet(c)
+      ]) in
+      let a4 = qc_rt_loop_next(a3, i) in
+      let r_v1 = qc_mb_rt(r_sf.m, QcRtVariant1) in
+      let a5 = qc_asm_all(a4, [QcII32Const(1), QcILocalGet(c), QcICall(r_v1.idx)]) in
+      QcMbAsm { m: r_v1.m, a: a5 },
+    QcRtCharCode => qc_rt_char_code(m, a0),
+    QcRtFromCharCode => qc_rt_from_char_code(m, a0),
+    QcRtFloatToInt =>
+      # 9223372036854775808.0 = 0x43E0000000000000 = shl(1086, 52)
+      # -9223372036854775808.0 = 0xC3E0000000000000 = bit_or(shl(1, 63), shl(1086, 52))
+      let pos_lim = float_of_bits(shl(1086, 52)) in
+      let neg_lim = float_of_bits(bit_or(shl(1, 63), shl(1086, 52))) in
+      let vr = qc_mb_rt(m, QcRtVariant1) in
+      let a1 = qc_asm_all(a0, [
+        QcILocalGet(0), QcILocalGet(0), QcIF64Ne, QcILocalGet(0), QcIF64Const(pos_lim), QcIF64Ge, QcII32Or,
+        QcILocalGet(0), QcIF64Const(neg_lim), QcIF64Lt, QcII32Or,
+        QcIIf(QcBtResult(QcVI32)), QcII32Const(qc_tag_addr(0)), QcIElse,
+        QcII32Const(1), QcILocalGet(0), QcII64TruncF64S, QcICall(vr.idx), QcIEnd
+      ]) in
+      QcMbAsm { m: vr.m, a: a1 },
+    QcRtRandChecked =>
+      let a1 = qc_asm_all(a0, [QcILocalGet(0), QcILocalGet(1), QcII64GtS, QcIIf(QcBtEmpty)]) in
+      let ma1 = qc_mb_emit_fail(m, a1, 6, QcArgLocal(2), QcArgLocal(3), [
+        QcFailVal { local: 0, repr: QcRI64 }, QcFailVal { local: 1, repr: QcRI64 }
+      ]) in
+      let ir = qc_mb_import(ma1.m, "rand.rand_int") in
+      let a2 = qc_asm_all(ma1.a, [QcIEnd, QcILocalGet(0), QcILocalGet(1), QcICall(ir.idx)]) in
+      QcMbAsm { m: ir.m, a: a2 },
+    QcRtMap(from, to) =>
+      let l1 = qc_asm_local(a0, QcVI32) in
+      let l2 = qc_asm_local(l1.a, QcVI32) in
+      let l3 = qc_asm_local(l2.a, QcVI32) in
+      let n = l1.l in
+      let p = l2.l in
+      let k = l3.l in
+      let tr = qc_mb_ty(m, [QcVI32, qc_repr_val(from)], [qc_repr_val(to)]) in
+      let r_ln = qc_mb_rt(tr.m, QcRtListNew) in
+      let a1 = qc_asm_all(l3.a, [QcILocalGet(0), QcII32Load(0), QcILocalTee(n), QcICall(r_ln.idx), QcILocalSet(p)]) in
+      let a2 = qc_rt_loop_until(a1, k, n) in
+      let a3 = qc_asm_i(qc_rt_slot_addr(a2, p, k), QcILocalGet(1)) in
+      let a4 = qc_asm_opt(qc_asm_i(qc_rt_slot_addr(a3, 0, k), QcII64Load(8)), qc_from_slot(from)) in
+      let a5 = qc_asm_opt(qc_asm_all(a4, [QcILocalGet(1), QcII32Load(0), QcICallIndirect(tr.idx)]), qc_to_slot(to)) in
+      let a6 = qc_rt_loop_next(qc_asm_i(a5, QcII64Store(8)), k) in
+      QcMbAsm { m: r_ln.m, a: qc_asm_i(a6, QcILocalGet(p)) },
+    QcRtFilter(elem) =>
+      let l1 = qc_asm_local(a0, QcVI32) in
+      let l2 = qc_asm_local(l1.a, QcVI32) in
+      let l3 = qc_asm_local(l2.a, QcVI32) in
+      let l4 = qc_asm_local(l3.a, QcVI32) in
+      let l5 = qc_asm_local(l4.a, QcVI64) in
+      let n = l1.l in
+      let p = l2.l in
+      let k = l3.l in
+      let kept = l4.l in
+      let v = l5.l in
+      let tr = qc_mb_ty(m, [QcVI32, qc_repr_val(elem)], [QcVI32]) in
+      let r_ln = qc_mb_rt(tr.m, QcRtListNew) in
+      let a1 = qc_asm_all(l5.a, [QcILocalGet(0), QcII32Load(0), QcILocalTee(n), QcICall(r_ln.idx), QcILocalSet(p)]) in
+      let a2 = qc_rt_loop_until(a1, k, n) in
+      let a3 = qc_rt_slot_addr(qc_asm_i(a2, QcILocalGet(1)), 0, k) in
+      let a4 = qc_asm_opt(qc_asm_all(a3, [QcII64Load(8), QcILocalTee(v)]), qc_from_slot(elem)) in
+      let a5 = qc_asm_all(a4, [QcILocalGet(1), QcII32Load(0), QcICallIndirect(tr.idx), QcIIf(QcBtEmpty)]) in
+      let a6 = qc_asm_all(qc_rt_slot_addr(a5, p, kept), [QcILocalGet(v), QcII64Store(8)]) in
+      let a7 = qc_asm_i(qc_rt_incr(a6, kept), QcIEnd) in
+      let a8 = qc_rt_loop_next(a7, k) in
+      let a9 = qc_asm_all(a8, [QcILocalGet(p), QcILocalGet(kept), QcII32Store(0), QcILocalGet(p)]) in
+      QcMbAsm { m: r_ln.m, a: a9 },
+    QcRtFold(acc, elem) =>
+      let l1 = qc_asm_local(a0, QcVI32) in
+      let l2 = qc_asm_local(l1.a, QcVI32) in
+      let n = l1.l in
+      let k = l2.l in
+      let tr = qc_mb_ty(m, [QcVI32, qc_repr_val(acc), qc_repr_val(elem)], [qc_repr_val(acc)]) in
+      let a1 = qc_asm_all(l2.a, [QcILocalGet(0), QcII32Load(0), QcILocalSet(n)]) in
+      let a2 = qc_rt_loop_until(a1, k, n) in
+      let a3 = qc_rt_slot_addr(qc_asm_all(a2, [QcILocalGet(2), QcILocalGet(1)]), 0, k) in
+      let a4 = qc_asm_opt(qc_asm_i(a3, QcII64Load(8)), qc_from_slot(elem)) in
+      let a5 = qc_asm_all(a4, [QcILocalGet(2), QcII32Load(0), QcICallIndirect(tr.idx), QcILocalSet(1)]) in
+      let a6 = qc_rt_loop_next(a5, k) in
+      QcMbAsm { m: tr.m, a: qc_asm_i(a6, QcILocalGet(1)) },
+    QcRtMapNode =>
+      let l1 = qc_asm_local(a0, QcVI32) in
+      let l2 = qc_asm_local(l1.a, QcVI32) in
+      let l3 = qc_asm_local(l2.a, QcVI32) in
+      let p = l1.l in
+      let hl = l2.l in
+      let hr = l3.l in
+      let ar = qc_mb_rt(m, QcRtAlloc) in
+      let a1 = qc_asm_all(l3.a, [QcII64Const(32), QcICall(ar.idx), QcILocalSet(p), QcILocalGet(p)]) in
+      let a2 = qc_rt_node_field(qc_rt_node_field(a1, 0, 0), 3, 0) in
+      let a3 = qc_asm_all(a2, [QcII32Add, QcII32Const(1), QcII32Add, QcII32Store(0)]) in
+      let a4 = qc_asm_i(qc_rt_node_field(a3, 0, 4), QcILocalSet(hl)) in
+      let a5 = qc_asm_i(qc_rt_node_field(a4, 3, 4), QcILocalSet(hr)) in
+      let a6 = qc_asm_all(a5, [
+        QcILocalGet(p), QcILocalGet(hl), QcILocalGet(hr), QcILocalGet(hl), QcILocalGet(hr), QcII32GtS, QcISelect, QcII32Const(1), QcII32Add, QcII32Store(4),
+        QcILocalGet(p), QcILocalGet(1), QcII64Store(8), QcILocalGet(p), QcILocalGet(2), QcII64Store(16),
+        QcILocalGet(p), QcILocalGet(0), QcII32Store(24), QcILocalGet(p), QcILocalGet(3), QcII32Store(28), QcILocalGet(p)
+      ]) in
+      QcMbAsm { m: ar.m, a: a6 },
+    QcRtMapBal =>
+      let nr = qc_mb_rt(m, QcRtMapNode) in
+      let node = nr.idx in
+      let l1 = qc_asm_local(a0, QcVI32) in
+      let l2 = qc_asm_local(l1.a, QcVI32) in
+      let l3 = qc_asm_local(l2.a, QcVI32) in
+      let x = l1.l in
+      let y = l2.l in
+      let z = l3.l in
+      let a1 = qc_rt_node_field(qc_rt_node_field(l3.a, 0, 4), 3, 4) in
+      let a2 = qc_asm_all(a1, [
+        QcII32Const(1), QcII32Add, QcII32GtS, QcIIf(QcBtEmpty),
+        QcILocalGet(0), QcII32Load(24), QcILocalSet(x), QcILocalGet(0), QcII32Load(28), QcILocalSet(y)
+      ]) in
+      let a3 = qc_rt_node_field(qc_rt_node_field(a2, x, 4), y, 4) in
+      let a4 = qc_asm_all(a3, [
+        QcII32GeS, QcIIf(QcBtEmpty),
+        QcILocalGet(x), QcILocalGet(0), QcII64Load(8), QcILocalGet(0), QcII64Load(16),
+        QcILocalGet(y), QcILocalGet(1), QcILocalGet(2), QcILocalGet(3), QcICall(node), QcICall(node), QcIReturn, QcIEnd,
+        QcILocalGet(x), QcILocalGet(0), QcII64Load(8), QcILocalGet(0), QcII64Load(16), QcILocalGet(y), QcII32Load(24), QcICall(node),
+        QcILocalGet(y), QcII64Load(8), QcILocalGet(y), QcII64Load(16),
+        QcILocalGet(y), QcII32Load(28), QcILocalGet(1), QcILocalGet(2), QcILocalGet(3), QcICall(node), QcICall(node), QcIReturn, QcIEnd
+      ]) in
+      let a5 = qc_rt_node_field(qc_rt_node_field(a4, 3, 4), 0, 4) in
+      let a6 = qc_asm_all(a5, [
+        QcII32Const(1), QcII32Add, QcII32GtS, QcIIf(QcBtEmpty),
+        QcILocalGet(3), QcII32Load(24), QcILocalSet(y), QcILocalGet(3), QcII32Load(28), QcILocalSet(z)
+      ]) in
+      let a7 = qc_rt_node_field(qc_rt_node_field(a6, z, 4), y, 4) in
+      let a8 = qc_asm_all(a7, [
+        QcII32GeS, QcIIf(QcBtEmpty),
+        QcILocalGet(0), QcILocalGet(1), QcILocalGet(2), QcILocalGet(y), QcICall(node),
+        QcILocalGet(3), QcII64Load(8), QcILocalGet(3), QcII64Load(16), QcILocalGet(z), QcICall(node), QcIReturn, QcIEnd,
+        QcILocalGet(0), QcILocalGet(1), QcILocalGet(2), QcILocalGet(y), QcII32Load(24), QcICall(node),
+        QcILocalGet(y), QcII64Load(8), QcILocalGet(y), QcII64Load(16),
+        QcILocalGet(y), QcII32Load(28), QcILocalGet(3), QcII64Load(8), QcILocalGet(3), QcII64Load(16), QcILocalGet(z), QcICall(node), QcICall(node), QcIReturn, QcIEnd,
+        QcILocalGet(0), QcILocalGet(1), QcILocalGet(2), QcILocalGet(3), QcICall(node)
+      ]) in
+      QcMbAsm { m: nr.m, a: a8 },
+    QcRtMapFind(cmp) =>
+      let lc = qc_asm_local(a0, QcVI32) in
+      let c = lc.l in
+      let a1 = qc_asm_all(lc.a, [
+        QcIBlock(QcBtEmpty), QcILoop(QcBtEmpty), QcILocalGet(0), QcII32Eqz, QcIBrIf(1),
+        QcILocalGet(1), QcILocalGet(0), QcII64Load(8), QcICall(cmp), QcILocalTee(c), QcII32Eqz, QcIIf(QcBtEmpty), QcILocalGet(0), QcIReturn, QcIEnd,
+        QcILocalGet(0), QcII32Load(24), QcILocalGet(0), QcII32Load(28), QcILocalGet(c), QcII32Const(0), QcII32LtS, QcISelect, QcILocalSet(0),
+        QcIBr(0), QcIEnd, QcIEnd, QcII32Const(0)
+      ]) in
+      QcMbAsm { m: m, a: a1 },
+    QcRtMapGet(cmp) =>
+      let ln = qc_asm_local(a0, QcVI32) in
+      let n = ln.l in
+      let r_mf = qc_mb_rt(m, QcRtMapFind(cmp)) in
+      let r_v1 = qc_mb_rt(r_mf.m, QcRtVariant1) in
+      let a1 = qc_asm_all(ln.a, [
+        QcILocalGet(0), QcILocalGet(1), QcICall(r_mf.idx), QcILocalTee(n), QcII32Eqz,
+        QcIIf(QcBtResult(QcVI32)), QcII32Const(qc_tag_addr(0)), QcIElse,
+        QcII32Const(1), QcILocalGet(n), QcII64Load(16), QcICall(r_v1.idx), QcIEnd
+      ]) in
+      QcMbAsm { m: r_v1.m, a: a1 },
+    QcRtMapPut(cmp) =>
+      let r_node = qc_mb_rt(m, QcRtMapNode) in
+      let r_bal = qc_mb_rt(r_node.m, QcRtMapBal) in
+      let r_put = qc_mb_rt(r_bal.m, QcRtMapPut(cmp)) in
+      let node = r_node.idx in
+      let bal = r_bal.idx in
+      let put = r_put.idx in
+      let lc = qc_asm_local(a0, QcVI32) in
+      let c = lc.l in
+      let a1 = qc_asm_all(lc.a, [
+        QcILocalGet(0), QcII32Eqz, QcIIf(QcBtEmpty), QcII32Const(0), QcILocalGet(1), QcILocalGet(2), QcII32Const(0), QcICall(node), QcIReturn, QcIEnd,
+        QcILocalGet(1), QcILocalGet(0), QcII64Load(8), QcICall(cmp), QcILocalTee(c), QcII32Eqz, QcIIf(QcBtEmpty),
+        QcILocalGet(0), QcII32Load(24), QcILocalGet(1), QcILocalGet(2), QcILocalGet(0), QcII32Load(28), QcICall(node), QcIReturn, QcIEnd,
+        QcILocalGet(c), QcII32Const(0), QcII32LtS, QcIIf(QcBtEmpty),
+        QcILocalGet(0), QcII32Load(24), QcILocalGet(1), QcILocalGet(2), QcICall(put),
+        QcILocalGet(0), QcII64Load(8), QcILocalGet(0), QcII64Load(16), QcILocalGet(0), QcII32Load(28), QcICall(bal), QcIReturn, QcIEnd,
+        QcILocalGet(0), QcII32Load(24), QcILocalGet(0), QcII64Load(8), QcILocalGet(0), QcII64Load(16),
+        QcILocalGet(0), QcII32Load(28), QcILocalGet(1), QcILocalGet(2), QcICall(put), QcICall(bal)
+      ]) in
+      QcMbAsm { m: r_put.m, a: a1 },
+    QcRtMapDelMin =>
+      let r_bal = qc_mb_rt(m, QcRtMapBal) in
+      let r_dm = qc_mb_rt(r_bal.m, QcRtMapDelMin) in
+      let a1 = qc_asm_all(a0, [
+        QcILocalGet(0), QcII32Load(24), QcII32Eqz, QcIIf(QcBtEmpty), QcILocalGet(0), QcII32Load(28), QcIReturn, QcIEnd,
+        QcILocalGet(0), QcII32Load(24), QcICall(r_dm.idx), QcILocalGet(0), QcII64Load(8), QcILocalGet(0), QcII64Load(16),
+        QcILocalGet(0), QcII32Load(28), QcICall(r_bal.idx)
+      ]) in
+      QcMbAsm { m: r_dm.m, a: a1 },
+    QcRtMapDel(cmp) =>
+      let r_bal = qc_mb_rt(m, QcRtMapBal) in
+      let r_del = qc_mb_rt(r_bal.m, QcRtMapDel(cmp)) in
+      let r_dm = qc_mb_rt(r_del.m, QcRtMapDelMin) in
+      let bal = r_bal.idx in
+      let del = r_del.idx in
+      let del_min = r_dm.idx in
+      let l1 = qc_asm_local(a0, QcVI32) in
+      let l2 = qc_asm_local(l1.a, QcVI32) in
+      let c = l1.l in
+      let mn = l2.l in
+      let a1 = qc_asm_all(l2.a, [
+        QcILocalGet(0), QcII32Eqz, QcIIf(QcBtEmpty), QcII32Const(0), QcIReturn, QcIEnd,
+        QcILocalGet(1), QcILocalGet(0), QcII64Load(8), QcICall(cmp), QcILocalTee(c), QcII32Const(0), QcII32LtS, QcIIf(QcBtEmpty),
+        QcILocalGet(0), QcII32Load(24), QcILocalGet(1), QcICall(del), QcILocalGet(0), QcII64Load(8), QcILocalGet(0), QcII64Load(16),
+        QcILocalGet(0), QcII32Load(28), QcICall(bal), QcIReturn, QcIEnd,
+        QcILocalGet(c), QcII32Const(0), QcII32GtS, QcIIf(QcBtEmpty),
+        QcILocalGet(0), QcII32Load(24), QcILocalGet(0), QcII64Load(8), QcILocalGet(0), QcII64Load(16),
+        QcILocalGet(0), QcII32Load(28), QcILocalGet(1), QcICall(del), QcICall(bal), QcIReturn, QcIEnd,
+        QcILocalGet(0), QcII32Load(24), QcII32Eqz, QcIIf(QcBtEmpty), QcILocalGet(0), QcII32Load(28), QcIReturn, QcIEnd,
+        QcILocalGet(0), QcII32Load(28), QcII32Eqz, QcIIf(QcBtEmpty), QcILocalGet(0), QcII32Load(24), QcIReturn, QcIEnd,
+        QcILocalGet(0), QcII32Load(28), QcILocalSet(mn), QcIBlock(QcBtEmpty), QcILoop(QcBtEmpty),
+        QcILocalGet(mn), QcII32Load(24), QcII32Eqz, QcIBrIf(1), QcILocalGet(mn), QcII32Load(24), QcILocalSet(mn), QcIBr(0), QcIEnd, QcIEnd,
+        QcILocalGet(0), QcII32Load(24), QcILocalGet(mn), QcII64Load(8), QcILocalGet(mn), QcII64Load(16),
+        QcILocalGet(0), QcII32Load(28), QcICall(del_min), QcICall(bal)
+      ]) in
+      QcMbAsm { m: r_dm.m, a: a1 },
+    QcRtMapSize =>
+      let a1 = qc_asm_i(qc_rt_node_field(a0, 0, 0), QcII64ExtendI32U) in
+      QcMbAsm { m: m, a: a1 },
+    QcRtMapFill =>
+      let r_fill = qc_mb_rt(m, QcRtMapFill) in
+      let fill = r_fill.idx in
+      let li = qc_asm_local(a0, QcVI32) in
+      let i = li.l in
+      let a1 = qc_asm_all(li.a, [
+        QcILocalGet(0), QcII32Eqz, QcIIf(QcBtEmpty), QcILocalGet(2), QcIReturn, QcIEnd,
+        QcILocalGet(0), QcII32Load(24), QcILocalGet(1), QcILocalGet(2), QcICall(fill), QcILocalSet(i),
+        QcILocalGet(1), QcILocalGet(i), QcII32Const(4), QcII32Shl, QcII32Add, QcILocalGet(0), QcII64Load(8), QcII64Store(8),
+        QcILocalGet(1), QcILocalGet(i), QcII32Const(4), QcII32Shl, QcII32Add, QcILocalGet(0), QcII64Load(16), QcII64Store(16),
+        QcILocalGet(0), QcII32Load(28), QcILocalGet(1), QcILocalGet(i), QcII32Const(1), QcII32Add, QcICall(fill)
+      ]) in
+      QcMbAsm { m: r_fill.m, a: a1 },
+    QcRtMapEntries =>
+      let l1 = qc_asm_local(a0, QcVI32) in
+      let l2 = qc_asm_local(l1.a, QcVI32) in
+      let n = l1.l in
+      let p = l2.l in
+      let a1 = qc_rt_node_field(l2.a, 0, 0) in
+      let r_al = qc_mb_rt(m, QcRtAlloc) in
+      let r_mf = qc_mb_rt(r_al.m, QcRtMapFill) in
+      let a2 = qc_asm_all(a1, [
+        QcILocalTee(n), QcII64ExtendI32U, QcII64Const(4), QcII64Shl, QcII64Const(8), QcII64Add, QcICall(r_al.idx), QcILocalTee(p),
+        QcILocalGet(n), QcII32Store(0), QcILocalGet(0), QcILocalGet(p), QcII32Const(0), QcICall(r_mf.idx), QcIDrop, QcILocalGet(p)
+      ]) in
+      QcMbAsm { m: r_mf.m, a: a2 },
+    QcRtMapKeys =>
+      let l1 = qc_asm_local(a0, QcVI32) in
+      let l2 = qc_asm_local(l1.a, QcVI32) in
+      let l3 = qc_asm_local(l2.a, QcVI32) in
+      let n = l1.l in
+      let xs = l2.l in
+      let k = l3.l in
+      let r_me = qc_mb_rt(m, QcRtMapEntries) in
+      let r_ln = qc_mb_rt(r_me.m, QcRtListNew) in
+      let a1 = qc_asm_all(l3.a, [
+        QcILocalGet(0), QcICall(r_me.idx), QcILocalSet(0),
+        QcILocalGet(0), QcII32Load(0), QcILocalTee(n), QcICall(r_ln.idx), QcILocalSet(xs)
+      ]) in
+      let a2 = qc_rt_slot_addr(qc_rt_loop_until(a1, k, n), xs, k) in
+      let a3 = qc_asm_all(a2, [QcILocalGet(0), QcILocalGet(k), QcII32Const(4), QcII32Shl, QcII32Add, QcII64Load(8), QcII64Store(8)]) in
+      let a4 = qc_rt_loop_next(a3, k) in
+      QcMbAsm { m: r_ln.m, a: qc_asm_i(a4, QcILocalGet(xs)) },
+    QcRtMapValues =>
+      let l1 = qc_asm_local(a0, QcVI32) in
+      let l2 = qc_asm_local(l1.a, QcVI32) in
+      let l3 = qc_asm_local(l2.a, QcVI32) in
+      let n = l1.l in
+      let xs = l2.l in
+      let k = l3.l in
+      let r_me = qc_mb_rt(m, QcRtMapEntries) in
+      let r_ln = qc_mb_rt(r_me.m, QcRtListNew) in
+      let a1 = qc_asm_all(l3.a, [
+        QcILocalGet(0), QcICall(r_me.idx), QcILocalSet(0),
+        QcILocalGet(0), QcII32Load(0), QcILocalTee(n), QcICall(r_ln.idx), QcILocalSet(xs)
+      ]) in
+      let a2 = qc_rt_slot_addr(qc_rt_loop_until(a1, k, n), xs, k) in
+      let a3 = qc_asm_all(a2, [QcILocalGet(0), QcILocalGet(k), QcII32Const(4), QcII32Shl, QcII32Add, QcII64Load(16), QcII64Store(8)]) in
+      let a4 = qc_rt_loop_next(a3, k) in
+      QcMbAsm { m: r_ln.m, a: qc_asm_i(a4, QcILocalGet(xs)) },
+    QcRtBytesGet =>
+      let vr = qc_mb_rt(m, QcRtVariant1) in
+      let a1 = qc_asm_all(a0, [
+        QcILocalGet(1), QcII64Const(0), QcII64LtS, QcILocalGet(1), QcILocalGet(0), QcII32Load(0), QcII64ExtendI32U, QcII64GeS, QcII32Or,
+        QcIIf(QcBtResult(QcVI32)), QcII32Const(qc_tag_addr(0)), QcIElse,
+        QcII32Const(1), QcILocalGet(0), QcILocalGet(1), QcII32WrapI64, QcII32Add, QcII32Load8U(4), QcII64ExtendI32U,
+        QcICall(vr.idx), QcIEnd
+      ]) in
+      QcMbAsm { m: vr.m, a: a1 },
+    QcRtBytesSlice =>
+      let ln = qc_asm_local(a0, QcVI64) in
+      let n = ln.l in
+      let a1 = qc_asm_all(ln.a, [
+        QcILocalGet(0), QcII32Load(0), QcII64ExtendI32U, QcILocalSet(n),
+        QcILocalGet(1), QcII64Const(0), QcII64LtS, QcILocalGet(2), QcILocalGet(1), QcII64LtS, QcII32Or, QcILocalGet(2), QcILocalGet(n), QcII64GtS, QcII32Or,
+        QcIIf(QcBtEmpty)
+      ]) in
+      let ma1 = qc_mb_emit_fail(m, a1, 5, QcArgLocal(3), QcArgLocal(4), [
+        QcFailVal { local: 1, repr: QcRI64 }, QcFailVal { local: 2, repr: QcRI64 }, QcFailVal { local: n, repr: QcRI64 }
+      ]) in
+      let r_sub = qc_mb_rt(ma1.m, QcRtStrSub) in
+      let a2 = qc_asm_all(ma1.a, [
+        QcIEnd,
+        QcILocalGet(0), QcILocalGet(1), QcII32WrapI64, QcILocalGet(2), QcII32WrapI64, QcICall(r_sub.idx)
+      ]) in
+      QcMbAsm { m: r_sub.m, a: a2 },
+    QcRtBytesFrom =>
+      let l1 = qc_asm_local(a0, QcVI32) in
+      let l2 = qc_asm_local(l1.a, QcVI32) in
+      let l3 = qc_asm_local(l2.a, QcVI32) in
+      let l4 = qc_asm_local(l3.a, QcVI64) in
+      let n = l1.l in
+      let p = l2.l in
+      let k = l3.l in
+      let x = l4.l in
+      let r_sn = qc_mb_rt(m, QcRtStrNew) in
+      let a1 = qc_asm_all(l4.a, [QcILocalGet(0), QcII32Load(0), QcILocalTee(n), QcICall(r_sn.idx), QcILocalSet(p)]) in
+      let a2 = qc_rt_slot_addr(qc_rt_loop_until(a1, k, n), 0, k) in
+      let a3 = qc_asm_all(a2, [
+        QcII64Load(8), QcILocalTee(x), QcII64Const(0), QcII64LtS, QcILocalGet(x), QcII64Const(255), QcII64GtS, QcII32Or, QcIIf(QcBtEmpty)
+      ]) in
+      let ma1 = qc_mb_emit_fail(r_sn.m, a3, 6, QcArgLocal(1), QcArgLocal(2), [QcFailVal { local: x, repr: QcRI64 }]) in
+      let a4 = qc_asm_all(ma1.a, [QcIEnd, QcILocalGet(p), QcILocalGet(k), QcII32Add, QcILocalGet(x), QcII64Store8(4)]) in
+      let a5 = qc_rt_loop_next(a4, k) in
+      QcMbAsm { m: ma1.m, a: qc_asm_i(a5, QcILocalGet(p)) },
+    QcRtShift(kind) =>
+      let a1 = qc_asm_all(a0, [QcILocalGet(1), QcII64Const(64), QcII64GeU, QcIIf(QcBtEmpty)]) in
+      let ma1 = qc_mb_emit_fail(m, a1, 6, QcArgLocal(2), QcArgLocal(3), [
+        QcFailVal { local: 0, repr: QcRI64 }, QcFailVal { local: 1, repr: QcRI64 }
+      ]) in
+      let sh_ins = match kind { QcShiftShl => QcII64Shl, QcShiftShrS => QcII64ShrS, QcShiftShrU => QcII64ShrU } in
+      let a2 = qc_asm_all(ma1.a, [QcIEnd, QcILocalGet(0), QcILocalGet(1), sh_ins]) in
+      QcMbAsm { m: ma1.m, a: a2 },
+    QcRtListAt =>
+      let ln = qc_asm_local(a0, QcVI64) in
+      let n = ln.l in
+      let a1 = qc_asm_all(ln.a, [
+        QcILocalGet(0), QcII32Load(0), QcII64ExtendI32U, QcILocalSet(n),
+        QcILocalGet(1), QcILocalGet(n), QcII64GeU, QcIIf(QcBtEmpty)
+      ]) in
+      let ma1 = qc_mb_emit_fail(m, a1, 5, QcArgLocal(2), QcArgLocal(3), [
+        QcFailVal { local: 1, repr: QcRI64 }, QcFailVal { local: n, repr: QcRI64 }
+      ]) in
+      let a2 = qc_asm_all(ma1.a, [
+        QcIEnd,
+        QcILocalGet(0), QcILocalGet(1), QcII32WrapI64, QcII32Const(3), QcII32Shl, QcII32Add, QcII64Load(8)
+      ]) in
+      QcMbAsm { m: ma1.m, a: a2 },
+    QcRtBytesAt =>
+      let ln = qc_asm_local(a0, QcVI64) in
+      let n = ln.l in
+      let a1 = qc_asm_all(ln.a, [
+        QcILocalGet(0), QcII32Load(0), QcII64ExtendI32U, QcILocalSet(n),
+        QcILocalGet(1), QcILocalGet(n), QcII64GeU, QcIIf(QcBtEmpty)
+      ]) in
+      let ma1 = qc_mb_emit_fail(m, a1, 5, QcArgLocal(2), QcArgLocal(3), [
+        QcFailVal { local: 1, repr: QcRI64 }, QcFailVal { local: n, repr: QcRI64 }
+      ]) in
+      let a2 = qc_asm_all(ma1.a, [
+        QcIEnd,
+        QcILocalGet(0), QcILocalGet(1), QcII32WrapI64, QcII32Add, QcII32Load8U(4), QcII64ExtendI32U
+      ]) in
+      QcMbAsm { m: ma1.m, a: a2 },
+    QcRtAccList =>
+      let l1 = qc_asm_local(a0, QcVI32) in
+      let l2 = qc_asm_local(l1.a, QcVI32) in
+      let l3 = qc_asm_local(l2.a, QcVI32) in
+      let l4 = qc_asm_local(l3.a, QcVI32) in
+      let n = l1.l in
+      let p = l2.l in
+      let k = l3.l in
+      let xs = l4.l in
+      let a1 = qc_rt_acc_walk(l4.a, p, [QcILocalGet(n), QcII32Const(1), QcII32Add, QcILocalSet(n)]) in
+      let r_ln = qc_mb_rt(m, QcRtListNew) in
+      let a2 = qc_asm_all(a1, [QcILocalGet(n), QcICall(r_ln.idx), QcILocalSet(xs), QcILocalGet(n), QcILocalSet(k)]) in
+      let a3 = qc_rt_acc_walk(a2, p, [
+        QcILocalGet(k), QcII32Const(1), QcII32Sub, QcILocalTee(k), QcII32Const(3), QcII32Shl,
+        QcILocalGet(xs), QcII32Add, QcILocalGet(p), QcII64Load(16), QcII64Store(8)
+      ]) in
+      QcMbAsm { m: r_ln.m, a: qc_asm_i(a3, QcILocalGet(xs)) },
+    QcRtBytesJoin =>
+      let l1 = qc_asm_local(a0, QcVI32) in
+      let l2 = qc_asm_local(l1.a, QcVI32) in
+      let l3 = qc_asm_local(l2.a, QcVI64) in
+      let l4 = qc_asm_local(l3.a, QcVI32) in
+      let l5 = qc_asm_local(l4.a, QcVI32) in
+      let l6 = qc_asm_local(l5.a, QcVI32) in
+      let n = l1.l in
+      let k = l2.l in
+      let total = l3.l in
+      let p = l4.l in
+      let at = l5.l in
+      let b = l6.l in
+      let a1 = qc_asm_all(l6.a, [QcILocalGet(0), QcII32Load(0), QcILocalSet(n)]) in
+      let a2 = qc_rt_slot_addr(qc_rt_loop_until(a1, k, n), 0, k) in
+      let a3 = qc_asm_all(a2, [QcII64Load(8), QcII32WrapI64, QcII32Load(0), QcII64ExtendI32U, QcILocalGet(total), QcII64Add, QcILocalSet(total)]) in
+      let a4 = qc_rt_loop_next(a3, k) in
+      let r_al = qc_mb_rt(m, QcRtAlloc) in
+      let a5 = qc_asm_all(a4, [
+        QcILocalGet(total), QcII64Const(4), QcII64Add, QcICall(r_al.idx), QcILocalTee(p), QcILocalGet(total), QcII32WrapI64, QcII32Store(0),
+        QcILocalGet(p), QcII32Const(4), QcII32Add, QcILocalSet(at), QcII32Const(0), QcILocalSet(k)
+      ]) in
+      let a6 = qc_rt_slot_addr(qc_rt_loop_until(a5, k, n), 0, k) in
+      let a7 = qc_asm_all(a6, [
+        QcII64Load(8), QcII32WrapI64, QcILocalSet(b),
+        QcILocalGet(at), QcILocalGet(b), QcII32Const(4), QcII32Add, QcILocalGet(b), QcII32Load(0), QcIMemoryCopy,
+        QcILocalGet(at), QcILocalGet(b), QcII32Load(0), QcII32Add, QcILocalSet(at)
+      ]) in
+      let a8 = qc_rt_loop_next(a7, k) in
+      QcMbAsm { m: r_al.m, a: qc_asm_i(a8, QcILocalGet(p)) },
+    QcRtBytesToList =>
+      let l1 = qc_asm_local(a0, QcVI32) in
+      let l2 = qc_asm_local(l1.a, QcVI32) in
+      let l3 = qc_asm_local(l2.a, QcVI32) in
+      let n = l1.l in
+      let xs = l2.l in
+      let k = l3.l in
+      let r_ln = qc_mb_rt(m, QcRtListNew) in
+      let a1 = qc_asm_all(l3.a, [QcILocalGet(0), QcII32Load(0), QcILocalTee(n), QcICall(r_ln.idx), QcILocalSet(xs)]) in
+      let a2 = qc_rt_slot_addr(qc_rt_loop_until(a1, k, n), xs, k) in
+      let a3 = qc_asm_all(a2, [QcILocalGet(0), QcILocalGet(k), QcII32Add, QcII32Load8U(4), QcII64ExtendI32U, QcII64Store(8)]) in
+      let a4 = qc_rt_loop_next(a3, k) in
+      QcMbAsm { m: r_ln.m, a: qc_asm_i(a4, QcILocalGet(xs)) }
+  }

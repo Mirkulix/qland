@@ -1,0 +1,5 @@
+fn helper() -> Int = 1
+
+type std.evil.T = Foo | Bar
+
+fn std.evil.x() -> Int = 2

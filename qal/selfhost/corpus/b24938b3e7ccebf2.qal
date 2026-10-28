@@ -1,0 +1,2 @@
+fn h(k: fn(Int) -> Str) -> Str = k(0)
+fn f(x: Int) -> Int ens let s = h(fn(y) => from_int(10 / y)) in true = 0

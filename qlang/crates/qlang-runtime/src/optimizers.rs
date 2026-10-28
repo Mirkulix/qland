@@ -169,18 +169,11 @@ pub enum LearningRateSchedule {
     /// Constant learning rate.
     Constant,
     /// Multiply by `gamma` every `step_size` steps.
-    StepDecay {
-        step_size: u64,
-        gamma: f32,
-    },
+    StepDecay { step_size: u64, gamma: f32 },
     /// Cosine annealing from `base_lr` to `min_lr`.
-    CosineAnnealing {
-        min_lr: f32,
-    },
+    CosineAnnealing { min_lr: f32 },
     /// Linear warmup from 0 to `base_lr` over `warmup_steps`, then constant.
-    LinearWarmup {
-        warmup_steps: u64,
-    },
+    LinearWarmup { warmup_steps: u64 },
 }
 
 /// Compute the learning rate for a given `schedule` at `step`.

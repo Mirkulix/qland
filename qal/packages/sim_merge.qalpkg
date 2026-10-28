@@ -1,0 +1,27 @@
+# qal-pkg 1
+# package qal_sim_merge acf9b2b68f50183e3b83a4d54f631e99ac4041f7cb0ab6b8792d9fbe4fdb0c53
+# def Entry 827e76bad5d1df1cf84661d9534456d00c5ae3a403becb8d836cec28daafff31 cli
+# def apply 272b9afb4d777c12d437e3ca6cda2a6728f770d37a4c80da63acb766c9507956 cli
+# def has 59f3910b5e57cd8bcb48fff02416a9da6fb16a2cb99039446479ef7f11bbb0e5 cli
+# def merge 266f6670957f6d08f82936cf3015084cc0eee3ad1a95b9b707134125caf43abe cli
+# def merge_dedup 81513c81923226fd523717db6796c32f8ddf1fa9bbb1ed9c56588f5df2a4153f cli
+# def merge_idempotent 6e32a69cf7a2c8fe9441476d669a3aea9b7e0ce36c23f37d32842aeee903f6d3 cli
+# def merge_keeps_both 889a51e9f8d7f02743bed703b2fd1b95acb36eaf50174a4a19dece46390c0274 cli
+
+type Entry = { id: Int, kind: Str, amount: Int }
+
+fn has(log: List[Entry], id: Int) -> Bool
+= len(filter(log, fn(e) => e.id == id)) > 0
+
+fn apply(log: List[Entry], e: Entry) -> List[Entry]
+= if has(log, e.id) then log else push(log, e)
+
+fn merge(a: List[Entry], b: List[Entry]) -> List[Entry]
+  ens len(r) >= len(a) && len(r) <= len(a) + len(b)
+= fold(b, a, fn(acc, e) => apply(acc, e))
+
+test merge_dedup = len(merge([Entry { id: 1, kind: "debit", amount: 5 }], [Entry { id: 1, kind: "debit", amount: 5 }, Entry { id: 2, kind: "credit", amount: 7 }])) == 2
+
+test merge_idempotent = merge(merge([], [Entry { id: 1, kind: "x", amount: 1 }]), [Entry { id: 1, kind: "x", amount: 1 }]) == [Entry { id: 1, kind: "x", amount: 1 }]
+
+test merge_keeps_both = has(merge([Entry { id: 1, kind: "a", amount: 1 }], [Entry { id: 2, kind: "b", amount: 2 }]), 2)

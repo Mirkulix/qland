@@ -106,9 +106,7 @@ pub fn empirical_fisher(
         for k in 0..output.len() {
             let p = output[k].max(1e-10) as f64;
             // grad_log_p_k[i] = (1/p_k) * ∂p_k/∂θ_i
-            let grad_log_p_k: Vec<f64> = (0..n)
-                .map(|i| (grads[i][k] as f64) / p)
-                .collect();
+            let grad_log_p_k: Vec<f64> = (0..n).map(|i| (grads[i][k] as f64) / p).collect();
 
             // Accumulate outer product: G += grad_log_p_k * grad_log_p_k^T
             for i in 0..n {
@@ -170,14 +168,15 @@ fn fisher_inverse_with_damping(fisher: &[f64], n: usize, damping: f64) -> Vec<f6
         // Swap rows if needed
         if max_row != col {
             for k in 0..(2 * n) {
-                let tmp = aug[col * 2 * n + k];
-                aug[col * 2 * n + k] = aug[max_row * 2 * n + k];
-                aug[max_row * 2 * n + k] = tmp;
+                aug.swap(col * 2 * n + k, max_row * 2 * n + k);
             }
         }
 
         let pivot = aug[col * 2 * n + col];
-        assert!(pivot.abs() > 1e-15, "Fisher matrix is singular even with damping");
+        assert!(
+            pivot.abs() > 1e-15,
+            "Fisher matrix is singular even with damping"
+        );
 
         // Scale pivot row
         let inv_pivot = 1.0 / pivot;
@@ -278,7 +277,10 @@ mod tests {
                 assert!(
                     diff < 1e-10,
                     "Fisher not symmetric at ({},{}): {} vs {}",
-                    i, j, fisher[i * n + j], fisher[j * n + i]
+                    i,
+                    j,
+                    fisher[i * n + j],
+                    fisher[j * n + i]
                 );
             }
         }
@@ -295,7 +297,8 @@ mod tests {
             assert!(
                 fisher[i * n + i] >= 0.0,
                 "Diagonal element {} is negative: {}",
-                i, fisher[i * n + i]
+                i,
+                fisher[i * n + i]
             );
         }
     }
@@ -311,7 +314,11 @@ mod tests {
         }
 
         let ng = natural_gradient(&gradient, &fisher_inv, n);
-        assert_eq!(ng.len(), n, "Natural gradient must have same dimension as gradient");
+        assert_eq!(
+            ng.len(),
+            n,
+            "Natural gradient must have same dimension as gradient"
+        );
     }
 
     #[test]
@@ -327,12 +334,13 @@ mod tests {
         for i in 0..n {
             for j in 0..n {
                 if i != j {
-                    let ratio = fisher[i * n + j].abs()
-                        / (fisher[i * n + i].abs().max(1e-15));
+                    let ratio = fisher[i * n + j].abs() / (fisher[i * n + i].abs().max(1e-15));
                     assert!(
                         ratio < 0.1,
                         "Off-diagonal ({},{}) ratio {} too large",
-                        i, j, ratio
+                        i,
+                        j,
+                        ratio
                     );
                 }
             }
@@ -343,11 +351,7 @@ mod tests {
     fn test_inverse_times_original_is_identity() {
         let n = 3;
         // Build a known positive-definite matrix
-        let mat = vec![
-            4.0, 1.0, 0.5,
-            1.0, 3.0, 0.2,
-            0.5, 0.2, 2.0,
-        ];
+        let mat = vec![4.0, 1.0, 0.5, 1.0, 3.0, 0.2, 0.5, 0.2, 2.0];
 
         let inv = fisher_inverse_with_damping(&mat, n, 0.0);
 
@@ -362,7 +366,10 @@ mod tests {
                 assert!(
                     (val - expected).abs() < 1e-10,
                     "Product[{},{}] = {}, expected {}",
-                    i, j, val, expected
+                    i,
+                    j,
+                    val,
+                    expected
                 );
             }
         }
@@ -372,14 +379,11 @@ mod tests {
     fn test_damping_prevents_singular() {
         let n = 2;
         // Singular matrix (rank 1)
-        let mat = vec![
-            1.0, 2.0,
-            2.0, 4.0,
-        ];
+        let mat = vec![1.0, 2.0, 2.0, 4.0];
 
         // Without damping this would fail; with damping it should succeed
         let inv = fisher_inverse(&mat, n); // uses default damping 1e-6
-        // Just verify we got a result of the right size
+                                           // Just verify we got a result of the right size
         assert_eq!(inv.len(), n * n);
 
         // Verify (G + λI) * inv ≈ I
@@ -398,7 +402,10 @@ mod tests {
                 assert!(
                     (val - expected).abs() < 1e-6,
                     "Damped product[{},{}] = {}, expected {}",
-                    i, j, val, expected
+                    i,
+                    j,
+                    val,
+                    expected
                 );
             }
         }
@@ -413,10 +420,7 @@ mod tests {
         let gradient = vec![1.0, 1.0];
 
         // Fisher metric is diagonal with different scales
-        let fisher = vec![
-            4.0, 0.0,
-            0.0, 1.0,
-        ];
+        let fisher = vec![4.0, 0.0, 0.0, 1.0];
         let fisher_inv = fisher_inverse_with_damping(&fisher, n, 0.0);
         let ng = natural_gradient(&gradient, &fisher_inv, n);
 
@@ -424,11 +428,13 @@ mod tests {
         // ng[0] ≈ 1/4 = 0.25, ng[1] ≈ 1/1 = 1.0
         assert!(
             (ng[0] - 0.25).abs() < 1e-10,
-            "ng[0] = {}, expected 0.25", ng[0]
+            "ng[0] = {}, expected 0.25",
+            ng[0]
         );
         assert!(
             (ng[1] - 1.0).abs() < 1e-10,
-            "ng[1] = {}, expected 1.0", ng[1]
+            "ng[1] = {}, expected 1.0",
+            ng[1]
         );
 
         // The natural gradient should differ from the raw gradient
@@ -463,7 +469,15 @@ mod tests {
         let grads = compute_gradients(&weights, linear, &input, 1e-4);
 
         assert_eq!(grads.len(), 2);
-        assert!((grads[0][0] - 3.0).abs() < 0.05, "dF/dw0 should be x0=3.0, got {}", grads[0][0]);
-        assert!((grads[1][0] - 4.0).abs() < 0.05, "dF/dw1 should be x1=4.0, got {}", grads[1][0]);
+        assert!(
+            (grads[0][0] - 3.0).abs() < 0.05,
+            "dF/dw0 should be x0=3.0, got {}",
+            grads[0][0]
+        );
+        assert!(
+            (grads[1][0] - 4.0).abs() < 0.05,
+            "dF/dw1 should be x1=4.0, got {}",
+            grads[1][0]
+        );
     }
 }

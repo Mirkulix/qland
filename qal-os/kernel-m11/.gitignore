@@ -1,0 +1,4 @@
+boot.o
+sha256.o
+kernel.elf
+serial.log

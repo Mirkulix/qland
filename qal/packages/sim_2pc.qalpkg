@@ -1,0 +1,59 @@
+# qal-pkg 1
+# package qal_sim_2pc 09bd18ff1451236d24ce0a29bac86bdaed0dac0d44a624b6243c910c5334ebeb
+# def Agent 9158543700f0201c37dd1e1e1bdf48a08796e644a52a4c71c6c6df429e7027c5 cli
+# def Coord 60dcdd94f68adf17db3ce9ee45f79738c4f3ec1395e75b299befbe52622a03a8 cli
+# def Pair 95aec6a22b96376a5b53bdb6347ef8af1c6aa22069e7934e74c7ab71d611e613 cli
+# def Sim 1f9ee963b95b240936870d6c309da70aa550e6f8981e7dfc483a83277c98206c cli
+# def abort 82b7f202fda27ce8e069cd19c86a0818e38d7a48f7ea4ed04d7326fa20a2eafd cli
+# def abort_noop 26b6b1a0097cf6a1f5d07cf6c81a4d4f9e070679cbce557f3024fa2ac0b4a53d cli
+# def add_agent 1bc02f942d5876cfbb64841151bb282975c455066b2c102d562cfaddc123c4f9 cli
+# def add_cash 31c6855750e0302ea61b04a324c078672672a44fb0f1f5074fc0b85d0192f9af cli
+# def commit 9f740f61c5c20241b34733c5b27d3c20602462c0b0710d499c04d7df1b6e23cf cli
+# def commit_once ffe91dcc346a4fca3a2de5714f3255921aad0103c6833ec33d6341bdd00052ed cli
+# def init a69ac9c7cd5dc3bbcb6f74eb1c57216c24949caa3d15ac0ed9bd1faf4106bff5 cli
+# def prepare 24174fecd7ff0163fbd1e878fa0352c748f5b349283329aa97c36cca28daab88 cli
+# def total 6139c8e991584e7f7955a8b93c7829b4ad101f1b40cc040b9cf4cb53136f8362 cli
+# def transfer_between 6c86e8854e2638b6d7678be1abe1d546a0ebdb3044abc336c2ecd5ce7a26a787 cli
+
+type Agent = { cash: Int }
+
+type Sim = { agents: Map[Int, Agent], tick: Int }
+
+fn add_agent(m: Map[Int, Agent], i: Int) -> Map[Int, Agent]
+= map_put(m, i, Agent { cash: 1000 })
+
+fn add_cash(acc: Int, a: Agent) -> Int
+= acc + a.cash
+
+type Pair = { a: Sim, b: Sim }
+
+fn init(n: Int) -> Sim
+= Sim { agents: fold(range(0, n), map_new(), add_agent), tick: 0 }
+
+fn total(sim: Sim) -> Int
+= fold(map_values(sim.agents), 0, add_cash)
+
+type Coord = { pair: Pair, state: Map[Int, Str] }
+
+fn transfer_between(x: Pair, from: Int, to: Int, amount: Int) -> Pair
+  req amount >= 0
+  ens total(r.a) + total(r.b) == total(x.a) + total(x.b)
+= match map_get(x.a.agents, from) { None => x, Some(src) => if src.cash < amount then x else match map_get(x.b.agents, to) { None => x, Some(dst) => Pair { a: Sim { agents: map_put(x.a.agents, from, Agent { cash: src.cash - amount }), tick: x.a.tick + 1 }, b: Sim { agents: map_put(x.b.agents, to, Agent { cash: dst.cash + amount }), tick: x.b.tick + 1 } } } }
+
+fn abort(c: Coord, id: Int) -> Coord
+  req id >= 0
+= match map_get(c.state, id) { None => c, Some("committed") => c, Some(_) => Coord { pair: c.pair, state: map_put(c.state, id, "aborted") } }
+
+fn commit(c: Coord, id: Int, from: Int, to: Int, amount: Int) -> Coord
+  req id >= 0 && amount >= 0
+  ens total(r.pair.a) + total(r.pair.b) == total(c.pair.a) + total(c.pair.b)
+= match map_get(c.state, id) { Some("prepared") => Coord { pair: transfer_between(c.pair, from, to, amount), state: map_put(c.state, id, "committed") }, _ => c }
+
+fn prepare(c: Coord, id: Int, from: Int, to: Int, amount: Int) -> Coord
+  req id >= 0 && amount >= 0
+  ens total(r.pair.a) + total(r.pair.b) == total(c.pair.a) + total(c.pair.b)
+= if map_has(c.state, id) then c else match map_get(c.pair.a.agents, from) { None => c, Some(src) => if src.cash < amount then c else Coord { pair: c.pair, state: map_put(c.state, id, "prepared") } }
+
+test abort_noop = let c0 = Coord { pair: Pair { a: init(1), b: init(1) }, state: map_new() } in let c1 = abort(prepare(c0, 2, 0, 0, 300), 2) in let c2 = commit(c1, 2, 0, 0, 300) in match map_get(c2.pair.a.agents, 0) { None => false, Some(a) => a.cash == 1000 }
+
+test commit_once = let c0 = Coord { pair: Pair { a: init(1), b: init(1) }, state: map_new() } in let c1 = prepare(c0, 1, 0, 0, 300) in let c2 = commit(c1, 1, 0, 0, 300) in let c3 = commit(c2, 1, 0, 0, 300) in match map_get(c3.pair.a.agents, 0) { None => false, Some(a) => a.cash == 700 && total(c3.pair.a) + total(c3.pair.b) == 2000 }

@@ -1,0 +1,52 @@
+fn parse_nums(s: Str) -> List[Int] =
+  let parts = filter(split(trim(s), " "), fn(p) => len(p) > 0) in
+  map(parts, fn(p) => match to_int(p) { Some(n) => n, None => 0 })
+
+fn lower_bound(xs: List[Int], v: Int, lo: Int, hi: Int) -> Int =
+  if lo >= hi then lo
+  else
+    let mid = lo + (hi - lo) / 2 in
+    match get(xs, mid) {
+      Some(m) => if m < v then lower_bound(xs, v, mid + 1, hi) else lower_bound(xs, v, lo, mid),
+      None => lo
+    }
+
+fn first_index(xs: List[Int], v: Int) -> Int =
+  let i = lower_bound(xs, v, 0, len(xs)) in
+  match get(xs, i) {
+    Some(m) => if m == v then i else -1,
+    None => -1
+  }
+
+fn answer(xs: List[Int], line: Str) -> Str =
+  match to_int(trim(line)) {
+    Some(v) => from_int(first_index(xs, v)),
+    None => "-1"
+  }
+
+fn loop(xs: List[Int], acc: List[Str]) -> List[Str] !io =
+  match read_line() {
+    Some(line) => loop(xs, push(acc, answer(xs, line))),
+    None => acc
+  }
+
+fn main(args: List[Str]) -> Int !io = {
+  let first = match read_line() { Some(l) => l, None => "" } in
+  let xs = parse_nums(first) in
+  let outs = loop(xs, []) in
+  let _ = fold(outs, 0, fn(a: Int, s: Str) => { print(s); a }) in
+  0
+}
+
+test lb_empty = lower_bound([], 5, 0, 0) == 0
+test lb_basic = lower_bound([1, 3, 3, 5, 8], 3, 0, 5) == 1
+test fi_dup = first_index([1, 3, 3, 5, 8], 3) == 1
+test fi_missing = first_index([1, 3, 3, 5, 8], 4) == -1
+test fi_last = first_index([1, 3, 3, 5, 8], 8) == 4
+test fi_first = first_index([1, 3, 3, 5, 8], 1) == 0
+test fi_empty = first_index([], 5) == -1
+test parse_ok = parse_nums("1 3 3 5 8") == [1, 3, 3, 5, 8]
+test parse_empty = parse_nums("") == []
+test parse_spaces = parse_nums("  2  4 ") == [2, 4]
+test ans_ok = answer([1, 3, 3, 5, 8], " 3 ") == "1"
+test ans_neg = answer([-5, -3], "-3") == "1"

@@ -1,0 +1,1 @@
+fn twice[!e](op: fn() -> Unit !e) -> Unit !e = { op(); op() }

@@ -1,0 +1,2 @@
+fn bad_str_len(s: Str) -> Int ens r > 0 = len(s)
+fn bad_list_len(xs: List[Int]) -> Int ens r > 0 = len(xs)

@@ -1,0 +1,70 @@
+{
+ "name": "h44_error_format",
+ "description": "exact error envelope",
+ "steps": [
+  {
+   "name": "404 envelope",
+   "request": {
+    "method": "GET",
+    "path": "/nope"
+   },
+   "expect": {
+    "status": 404,
+    "json": {
+     "error": {
+      "code": "not_found",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "400 envelope",
+   "request": {
+    "method": "GET",
+    "path": "/todos/x"
+   },
+   "expect": {
+    "status": 400,
+    "json": {
+     "error": {
+      "code": "invalid_id",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "content-type": "application/json"
+    }
+   }
+  },
+  {
+   "name": "405 envelope",
+   "request": {
+    "method": "PUT",
+    "path": "/health"
+   },
+   "expect": {
+    "status": 405,
+    "json": {
+     "error": {
+      "code": "method_not_allowed",
+      "message": {
+       "$type": "str"
+      }
+     }
+    },
+    "headers": {
+     "allow": "GET, HEAD",
+     "content-type": "application/json"
+    }
+   }
+  }
+ ]
+}

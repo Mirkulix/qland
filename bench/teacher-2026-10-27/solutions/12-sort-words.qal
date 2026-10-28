@@ -1,0 +1,102 @@
+# Sort unique words.
+#
+# Read the whole standard input, split it into maximal runs of ASCII letters
+# A-Z / a-z (every other character separates words), lowercase the words,
+# drop duplicates and print them in ascending order, one per line.
+#
+# Lists are built with Accum (O(1) append), never with repeated `push`,
+# because `push` copies and would be quadratic on 100 KB of input.
+
+# A word being accumulated plus the words already completed.
+# Both are Accums so appending is O(1).
+type WordAcc = { cur: Accum[Str], words: Accum[Str] }
+
+# True when c is a single ASCII letter A-Z or a-z.
+fn is_letter(c: Str) -> Bool =
+  if len(c) == 0 then false
+  else {
+    let n = char_code(c) in
+    (n >= 65 && n <= 90) || (n >= 97 && n <= 122)
+  }
+
+# True when the accumulated current word has no characters yet.
+fn cur_empty(a: Accum[Str]) -> Bool =
+  match a { AccEnd => true, AccPush(_, _) => false }
+
+# Fold step: extend the current word on a letter, otherwise flush it.
+fn step(a: WordAcc, c: Str) -> WordAcc =
+  if is_letter(c) then
+    WordAcc { cur: AccPush(a.cur, to_lower(c)), words: a.words }
+  else if cur_empty(a.cur) then
+    a
+  else
+    WordAcc { cur: AccEnd, words: AccPush(a.words, join(acc_list(a.cur), "")) }
+
+# All words of s, lowercased, in input order.
+fn split_words(s: Str) -> List[Str] = {
+  let acc = fold(chars(s), WordAcc { cur: AccEnd, words: AccEnd }, step) in
+  let done = acc_list(acc.words) in
+  if cur_empty(acc.cur) then done else push(done, join(acc_list(acc.cur), ""))
+}
+
+# State of the adjacent-duplicate scan.
+type Dedup = { last: Str, out: Accum[Str] }
+
+# Keep w only when it differs from the previous kept word.
+fn dedup_step(d: Dedup, w: Str) -> Dedup =
+  if w == d.last then d else Dedup { last: w, out: AccPush(d.out, w) }
+
+# The complete pure pipeline: sorted, deduplicated lowercase words.
+fn sorted_unique(s: Str) -> List[Str] = {
+  let ws = sort_str(split_words(s)) in
+  let d = fold(ws, Dedup { last: "", out: AccEnd }, dedup_step) in
+  acc_list(d.out)
+}
+
+# Print every word on its own line.
+fn emit(xs: List[Str]) -> Unit !io =
+  fold(xs, (), fn(u: Unit, w: Str) => { print(w); () })
+
+# Entry point: the result is the exit code.
+fn main(args: List[Str]) -> Int !io = {
+  let input = read_all() in
+  let words = sorted_unique(input) in
+  emit(words);
+  0
+}
+
+# --- tests -------------------------------------------------------------
+
+test split_basic =
+  split_words("The quick brown fox, the lazy dog.\nA fox!") ==
+    ["the", "quick", "brown", "fox", "the", "lazy", "dog", "a", "fox"]
+
+test split_empty = split_words("") == []
+
+test split_only_separators = split_words(" ,.;:-_ 123 \n\t") == []
+
+test split_runs = split_words("ab12cd!ef") == ["ab", "cd", "ef"]
+
+test split_single_letters = split_words("a b c") == ["a", "b", "c"]
+
+test split_long_run = split_words("abcdefghij") == ["abcdefghij"]
+
+test example =
+  sorted_unique("The quick brown fox, the lazy dog.\nA fox!") ==
+    ["a", "brown", "dog", "fox", "lazy", "quick", "the"]
+
+test dedup_case = sorted_unique("Fox fox FOX fOx") == ["fox"]
+
+test sorted_order =
+  sorted_unique("zebra apple Mango apple") == ["apple", "mango", "zebra"]
+
+test empty_input = sorted_unique("") == []
+
+test letters_only = sorted_unique("abc") == ["abc"]
+
+test digits_separate = sorted_unique("a1b2c3") == ["a", "b", "c"]
+
+test non_ascii_separates =
+  sorted_unique("café naïve ÜBER") == ["ber", "caf", "na", "ve"]
+
+test prefix_words = sorted_unique("a ab abc ab a") == ["a", "ab", "abc"]

@@ -1,0 +1,25 @@
+# Caesar cipher over ASCII letters, shift given as the argument.
+
+fn shift_in(c: Str, base: Int, k: Int) -> Str = from_char_code((char_code(c) - base + k) % 26 + base)
+
+fn shift(c: Str, k: Int) -> Str =
+  if c >= "a" && c <= "z" then shift_in(c, 97, k) else if c >= "A" && c <= "Z" then shift_in(c, 65, k) else c
+
+type Line = { k: Int, out: List[Str] }
+
+fn step(l: Line, c: Str) -> Line = Line { k: l.k, out: push(l.out, shift(c, l.k)) }
+
+fn encode(line: Str, k: Int) -> Str = join(fold(chars(line), Line { k: k, out: [] }, step).out, "")
+
+test example = encode("Hello, World!", 3) == "Khoor, Zruog!" && encode("xyz", 3) == "abc" && encode("A", 25) == "Z"
+
+fn each_line(k: Int) -> Int !io = match read_line() { None => 0, Some(l) => { print(encode(l, k)); each_line(k) } }
+
+fn main(args: List[Str]) -> Int !io =
+  match get(args, 0) {
+    Some(a) if len(args) == 1 => match to_int(a) {
+      Some(n) if n >= -1000000000 && n <= 1000000000 => each_line(((n % 26) + 26) % 26),
+      _ => { print("usage: caesar <shift>"); 2 },
+    },
+    _ => { print("usage: caesar <shift>"); 2 },
+  }

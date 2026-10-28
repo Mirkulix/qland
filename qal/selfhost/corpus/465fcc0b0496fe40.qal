@@ -1,0 +1,1 @@
+fn f(r: Int) -> Int ens r > 0 = r

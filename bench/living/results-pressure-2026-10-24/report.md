@@ -1,0 +1,271 @@
+# Living program, pressure run of 2026-10-24: result
+
+Protocol: `bench/living/README.md` plus pressure mode (commit 8df97e87). This is the same order system and the same 12 change requests with the same hidden tests as the run of 2026-10-23. The difference: each change request carries only the change and two examples, as a ticket would. There is no full specification and no word about tests or contracts. Each line starts from the normal run's stage 0 of the same line, which is code with contracts and tests. Both arms run on Haiku. There is no retry: every stage builds on what the previous one left.
+
+## Result
+
+| | QAL / Haiku | Rust / Haiku |
+|---|---|---|
+| stages with every hidden test green | **0 / 12** | **12 / 12** |
+| bugs that reached the hidden tests | 1, introduced at stage 1 and never noticed | 0 |
+| rounds / processed tokens | 108 / 8.81 M | 91 / 6.15 M |
+| verification the agents ran unasked | `qal_test` 4×, `qal_prove` 0×; `qal_define` ran the stored tests every time | `cargo test` 14× |
+| own verification that went red during a run | 1 (stage 7: stored tests broken by the backorder change, fixed) | 3 (stages 4, 5: `cargo test`, fixed) |
+
+## The bug
+
+Stage 1 (quantity discount) in QAL:
+
+```
+fn total(price: Int, qty: Int) -> Int
+  ens qty >= 10 && r == price * qty * 95 / 100 || qty < 10 && r == price * qty
+= if qty >= 10 then price * qty * 95 / 100 else price * qty
+```
+
+With price and quantity at their maximum of 999 999 999 each, `price * qty * 95` exceeds 64 bits. QAL traps on overflow, so the program stops with a runtime error instead of printing. The hidden test `s0_big_numbers` failed from stage 1 to stage 12. The Rust line has computed in `u128` since stage 0, so the same formula is correct there.
+
+**Why QAL's guarantees did not catch it:**
+- The **stored tests** that `qal_define` runs cover no large amounts.
+- The **prover** proves the `ens`. With trapping overflow the equation holds whenever the function returns, so the proof is correct and still says nothing about the trap.
+- The **property test** of `total` would have hit the overflow on random inputs, but only if someone runs `qal_test`. Even then, the reference says traps are counted (`traps`), not failures. The agent here ran `qal_test` 4 times in 12 stages, and the trap would not have turned it red.
+- No contract bounds the inputs, such as `req price <= 999999999 && qty <= 999999999`. With such a `req`, a trap in the property test would be a real finding.
+
+## What this means
+
+- **This is the first experiment in which a bug got through, and it got through in QAL, not in Rust.** The cause is a language property (64-bit Int with traps, against `u128` in the Rust code) together with guarantees that exist but have to be invoked. Without being asked, the agents did not invoke them. The Rust agents ran `cargo test` on their own 14 times; the QAL agents trusted the tests that `define` runs, and those had no case for the bug.
+- QAL's thesis was that machine-checked guarantees catch what other workflows let through. This experiment refutes it in this form. **A guarantee that has to be called does not protect an agent that does not call it.**
+
+## Consequences for the language
+
+1. **`qal_define` reports traps.** For every defined function with an `ens` or a `req`, `define` runs the generated property test too, as it already runs the stored tests. An overflow trap on inputs that satisfy `req` becomes a warning in the reply. The guarantee then works without being asked for.
+2. **Bounding inputs pays off and should be suggested.** The trap warning should suggest a `req` that bounds the inputs. Without one, every overflow counts as possible, and nothing distinguishes a real finding.
+3. **Integer width:** a 64-bit Int that traps is safer than one that wraps. It is still a pitfall for business arithmetic with products of large values. Options: a 128-bit intermediate result for `*` followed by `/`, or a `muldiv` built-in. To be decided.
+
+Files: `state-pressure` (git-ignored) is copied here as `results.jsonl`, `workdirs.json` and `schedule.json`.
+
+## Follow-up: `define` runs the property tests (commit b814522d)
+
+The QAL/Haiku line was rerun at stage 1 from the same stage 0 with the new binary. The agent wrote the same formula. Its first `define` came back with the warning E0804: `total` trapped on generated inputs, with the hint to bound the inputs with `req`. The agent's own words: "the only warnings are the existing overflow traps for huge negative inputs, which the old code also had". It did not change the code, and the hidden test failed again (19/20). The line was stopped after stage 1, because the outcome of the remaining stages was clear.
+
+**The agent was right about what it saw.** Without a `req`, the old `price * qty` also traps on extreme generated inputs. The warning reports the first trapping input the generator found, which has values far beyond any real amount. Nothing in it shows that the new formula already overflows at 311 588 000 × 311 588 000, inside the 9-digit domain of the task, where the old one did not. The language cannot know that domain. It is in the stage-0 specification, but not in the code (no `req`) and not in the ticket.
+
+**Consequence:** this cannot be closed by a better warning, only by the arithmetic or by required bounds:
+1. Wider integers for intermediate results (`a * b / c` in 128 bits, or a 128-bit `Int`), as the Rust code had with `u128`. This is a language decision with consequences for the compiler, the self-hosting bootstrap and the prover.
+2. Or a `req` that bounds every `Int` parameter of an arithmetic function becomes a rule (a warning on `define` without bounds). This makes the domain visible, but costs every agent a line per function.
+
+## Third run: warning on unbounded products, property tests at the bounds (commit 29ae7deb)
+
+The QAL/Haiku line was run again through all 12 stages, from the same stage 0, with the same tickets and the binary that warns on products of unbounded `Int` parameters (E0805) and draws the `req` literals as property-test inputs.
+
+| | QAL/Haiku run 1 | QAL/Haiku run 3 | Rust/Haiku |
+|---|---|---|---|
+| stages with every hidden test green | 0 / 12 | **12 / 12** | 12 / 12 |
+| bugs that reached the hidden tests | 1 (overflow, stages 1–12) | 0 | 0 |
+| rounds / processed tokens | 108 / 8.81 M | 113 / 9.07 M | 91 / 6.15 M |
+
+In stage 1 the agent wrote the discount as `x - (x + 19) / 20` and gave the reason before its first `define`: "this also avoids the intermediate × 95 overflow". The warnings came afterwards and were confirmed. So the effect is most likely the reference line about traps and bounds, which the agent reads at the start, rather than the warning in the reply. This is one run per arm, a single sample. It shows that the gap of run 1 can be closed, not that it always will be.
+
+Cost: QAL is at 1.47× Rust's processed tokens on this line, with the same result.
+
+## Fourth run (repeat of run 3, same binary)
+
+Stage 1 again: the agent wrote `price * qty * 95 / 100`, received both E0804 and E0805 in the `define` reply, did not mention them, and kept the formula. The hidden test failed (19/20); the line was stopped after stage 1. **With the warnings, stage 1 succeeded in 1 of 2 runs.** The warnings improve the odds, but they do not make the result reliable: an agent can always ignore a warning. Removing the bug class needs arithmetic that does not overflow in this range (wider intermediate results), not more advice.
+
+## Fifth run: exact multiply-divide (merge 1d0e4a3a)
+
+The QAL/Haiku line was run again through all 12 stages from the same stage 0 and with the same tickets. The binary now computes `(a * b * …) / c` exactly through a 128-bit product (`price * qty * 95 / 100` cannot overflow for 9-digit amounts any more).
+
+| | run 1 | run 3 | run 4 | **run 5** | Rust/Haiku |
+|---|---|---|---|---|---|
+| stage 1 (the overflow) | red | green | red | **green** | green |
+| stages with every hidden test green | 0 / 12 | 12 / 12 | stopped | **6 / 12** | 12 / 12 |
+| rounds / processed tokens | 108 / 8.81 M | 113 / 9.07 M | | 109 / 8.72 M | 91 / 6.15 M |
+
+**Stage 1:** the agent wrote `price * qty * 95 / 100` again, the formula of runs 1 and 4. With the new arithmetic it is correct (20/20). The overflow class is closed without the agent having to notice anything.
+
+**Stages 7 to 12:** a different bug, introduced at stage 7 (backorders) and never noticed. Cancelling a pending backorder removed the order instead of marking it cancelled. A second `cancel` or a `return` then answered `unknown_order` instead of `not_open`, and the id could be used again (`duplicate` expected). The stage-7 ticket's example covers a cancel of a filled backorder, not of a pending one. The agent's stored tests went red once during stage 7 and were fixed; none covered this case. Stages 8 to 12 inherited the bug (1 or 2 hidden tests red each).
+
+**What this means:** the arithmetic fix does what it should. The remaining gap to Rust in this setting is ordinary logic bugs under thin tickets, which no QAL mechanism covers today: no contract states "an order id, once used, stays known". A single sample per arm; the Rust line had no such bug in its one run.
+
+**Rust/Haiku, second run (same tickets, same stage 0):** 12 / 12 again, 86 rounds / 5.34 M processed tokens (QAL run 5: 109 / 8.72 M, 1.63×). At stage 7 the Rust agent kept a pending backorder in the order map with an explicit `Status::Pending`, set `Status::Cancelled` on cancel, and wrote its own test `cancelled_id_stays_taken`. The QAL agent removed the order from its map. Across two Rust runs the Rust line had no bug reach the hidden tests; across QAL runs 1, 3, 4 and 5, three of four let one through (overflow twice, this logic bug once).
+
+The difference at stage 7 is not a language guarantee but agent habit: the Rust agents write a test for each new rule unasked (`cargo test` is part of the routine), the QAL agents rely on the tests `define` runs and add few of their own.
+
+## Seventh run: a change without a test is named (merges 0b1eff64, c082135f)
+
+New: a `define` that replaces a stored function and defines no `test` gets the warning E0806 `untested_change`, and the reference says so in one line ("pin each new rule with a test in the same define"). Run 6 is void: its binary let the proof warnings of the same define replace E0806 (fixed in 68dcb653, with a test for that case); it is kept aside as `state-pressure-run6-invalid`, not counted.
+
+| | QAL run 5 | **QAL run 7** | Rust run 1 | Rust run 2 |
+|---|---|---|---|---|
+| stages with every hidden test green | 6 / 12 | **12 / 12** | 12 / 12 | 12 / 12 |
+| bugs that reached the hidden tests | 1 (stage 7) | **0** | 0 | 0 |
+| rounds / processed tokens | 109 / 8.72 M | 132 / 10.58 M | 91 / 6.15 M | 86 / 5.34 M |
+| `test` lines the agents wrote in defines | stage 7: 3 | stage 7: 28; all stages: 280 | | |
+
+Stage 7 (backorders) passed: the agent's own tests went red once during the run (call 8) and were fixed before delivery. The warning itself appeared once in 12 stages (stage 12); in every other stage the agent had already put tests into the define. **What changed the behaviour is the reference line the agents read at the start, not the warning in the reply**, as in run 3 with the overflow line.
+
+**Cost:** QAL at 1.72× to 1.98× Rust's processed tokens on this line (run 5: 1.63×). The tests cost rounds and context. The result is now the same as Rust's; the premium is larger.
+
+**State of the pressure line after seven runs:** the two bug classes found (64-bit overflow, untested rule changes) are closed, the first by the language (exact multiply-divide), the second by the instructions. One run each; the second fix rests on agent compliance and should be repeated before it counts as reliable.
+
+**Protocol note on run 7:** stage 10 is marked invalid by the driver (`valid: false`). The agent redirected a `qal_view` dump of the program to `/tmp/x`, a path outside its work dir (30 KB, no secrets; it reported the file as empty, which was wrong; removed afterwards). The stage's code and result (46/46) are unaffected; strictly by the protocol, run 7 counts 11 valid stages of 11 green plus one green stage with a path violation.
+
+## Run 8: the tool friction of run 7 removed (commit 0627f2b1)
+
+Run 7 spent its extra rounds on the tools, not on the language: E0401 `signature_change` 17 times (a changed type or signature refused although the stored dependents still checked), E0508 `permission_denied` 9 times (`io` not granted to `qal_run`), and 3 parse errors without a hint (a bracket left open, reported at the next definition). Built before run 8: dependents that still check are relinked, E0401 only lists the ones that break, followed by their errors; `io` (the call's own stdin and stdout) needs no `allow`; a parse error at the next definition names the open bracket; the outline leaves out empty lists and a test's own `uses` (26 → ~16 KB on the run-7 program); MCP define replies leave out the hashes (no agent used one in 295 view/history/query calls). Same tickets, same Haiku protocol, `results-run8.jsonl`.
+
+| | QAL run 7 | **QAL run 8** | Rust run 1 | Rust run 2 |
+|---|---|---|---|---|
+| stages with every hidden test green | 12 / 12 | **12 / 12** | 12 / 12 | 12 / 12 |
+| bugs that reached the hidden tests | 0 | **0** | 0 | 0 |
+| rounds / processed tokens | 132 / 10.58 M | **100 / 6.95 M** | 91 / 6.15 M | 86 / 5.34 M |
+| E0401 / E0508 in replies | 17 / 9 | **0 / 0** | | |
+| `define` / `view` rounds | 33 / 40 | 17 / 25 | | |
+| `test` lines the agents wrote in defines | 280 | 86 | | |
+
+**Cost:** QAL at **1.13× to 1.30×** Rust's processed tokens (run 7: 1.72–1.98×), 1.10–1.16× its rounds. The remaining per-round premium is mostly the prompt: TASK.md (reference plus tool descriptions, 26 KB against Rust's 4 KB) is about half of the carried tool context.
+
+**Caveat:** one run. The agents wrote fewer tests than in run 7 (86 lines, E0806 once); stage 7 (backorders, the logic bug of run 5) passed with them. Whether the result holds with fewer tests needs a repeat.
+
+**Protocol note on run 8:** stage 3 is marked invalid: the agent ran `cat > /tmp/x` with no input (an empty file outside its work dir, removed afterwards) before a `qal_view`. Its result (26/26) is unaffected. As in run 7, strictly 11 valid green stages plus one green stage with a path violation; both violations are the same Haiku habit.
+
+## Run 9: repeat of run 8
+
+Same binary, tickets and protocol (`results-run9.jsonl`). **12 / 12 stages green, all 12 valid** (no path violation), 0 bugs reached the hidden tests. 119 rounds / 9.41 M processed tokens; tool errors in replies: 3 in total (E0801, E0501, E0405), no E0401 or E0508. The agents wrote 113 `test` lines in 27 defines; E0806 fired 4 times.
+
+| | QAL run 8 | QAL run 9 | **QAL mean 8–9** | Rust mean (runs 1–2) |
+|---|---|---|---|---|
+| stages green | 12 / 12 | 12 / 12 | | 12 / 12 |
+| rounds | 100 | 119 | **109.5** | 88.5 |
+| processed tokens | 6.95 M | 9.41 M | **8.18 M** | 5.75 M |
+
+**Cost after the friction fixes: 1.42× Rust on the means** (run by run 1.13× to 1.76×; runs 5 and 7 before them: 1.63× and 1.72–1.98×). The spread between two runs of the same setup (6.95 vs 9.41 M) is as large as the effect of the fixes, so single runs do not resolve differences below ~30 %. The extra cost of run 9 sits in stages 7 and 12 (15 and 17 rounds, 3.4 M together): more defines with tests, not tool errors.
+
+**Reliability:** QAL/Haiku now has three consecutive pressure runs at 12/12 (7, 8, 9) against 0/12, 12/12, 1 failed stage 1 and 6/12 in runs 1–5. The two bug classes found are closed by the language (exact multiply-divide) and by the instructions plus E0806 (tests with every change).
+
+**Open finding:** from stage 3 on, every `qal_test` and define reported the property failure E0803 on `settle` (the generator gives `tier = -1`, which reaches `total`'s `req`; `settle` has no `req` of its own). Five agents reported it and left it alone, rightly for the task, since no real input reaches it; the warning stayed as noise for ten stages. A contract-level fix in the program (a `req` on `settle`) or a way to say "inputs come only from the parser" would remove it.
+
+## Run 10: the tools after the mutation study (2026-10-25)
+
+What changed since run 9:
+
+- define runs every test that reaches a changed function, not only its direct users;
+- inputs of property tests are repaired towards `req`, and the edges of a bounded domain are kept;
+- type invariants (`fn inv_T`) exist, with one line in the reference;
+- E0803 names the callee and the `req` it breaks;
+- the services reference moved behind `qal_query {"topic": "services"}`. TASK.md is 23.3 KB
+  (run 9: 26.7 KB).
+
+Same tickets and protocol (`results-run10.jsonl`). **12 / 12 stages green, all valid**, 0 bugs
+reached the hidden tests: four runs in a row (7–10).
+
+| | run 8 | run 9 | run 10 | **mean 8–10** | Rust mean (runs 1–2) |
+|---|---|---|---|---|---|
+| rounds | 100 | 119 | 101 | **107** | 88.5 |
+| processed tokens | 6.95 M | 9.41 M | 7.28 M | **7.88 M** | 5.75 M |
+
+- **Cost:** 1.37× Rust on the means of runs 8–10 (1.42× for runs 8–9). The shorter TASK.md
+  and the other changes are within the run-to-run spread; nothing here measures them one by one.
+- **Invariants:** the agents wrote 86 `test` lines and 19 `req`/`ens` lines, but **no
+  invariant**: `inv_` occurs only in the reference they were given.
+- **Own verification at work:** during the runs, failing tests in the define replies
+  (stages 4, 5, 7, 11) and one refuted contract (stage 1) showed the agents mistakes they then
+  fixed before delivering.
+
+So the mutation study's result (invariants catch 3 more bugs than Rust's asserts, A4) does not
+reach agent work by itself: a line in the reference does not make Haiku write invariants. The
+tool has to propose them, or the task has to ask for them.
+
+## Run 11: the 1-turn loop (2026-10-25)
+
+Binary of commit 034529ed:
+
+- every defined pure function gets a property test;
+- a define takes 0.64 s median on this program.
+
+Same protocol (`results-run11.jsonl`). **11 / 12 stages green, all valid; stage 12 failed (45/50)**:
+the first bug to reach the hidden tests since run 5.
+
+- **Cost:** 99 rounds / 6.97 M tokens, against run 10's 101 / 7.28 M. Mean of runs 8–11: 7.65 M,
+  1.33× Rust.
+- **Files:** none, again. As in run 10, every code change went to the store (heredoc defines), and
+  the agents read code only as nodes (`qal_view`, `qal_query`). The only files were example
+  inputs under `data/`.
+- **The bug** (details in `bench/loop/report.md`, point 6): the ticket says "tier discount and tax
+  apply to the whole order", and the agent applied the tier discount after the line discounts,
+  rounding twice. In the same define it rewrote the test that pinned the old rule, so its 67 tests
+  passed.
+- **The response:** this is what the behaviour memory (E0807, commit 104b40ee) is for. Replayed
+  on this run, it reports the regression in the round that made it.
+
+## Run 12: with the behaviour memory (2026-10-25)
+
+Binary of commit 104b40ee: the 1-turn loop plus E0807. Results in `results-run12.jsonl`.
+
+- **Result:** 12 / 12 stages green, all valid; 101 rounds / 7.31 M tokens. Mean of runs 8–12:
+  7.58 M = 1.32× Rust.
+- **Files:** no source files; one separate `qal_test` in 12 stages, so agents rely on the define
+  reply.
+- **E0807 was noise in this run.** Stage 4 adds a report field, so all 11 recorded runs changed,
+  as intended. Nobody ran the old inputs again, and the stale outputs were reported at every later
+  stage: "16 of 19", "13 of 48", "12 of 52". The stage-12 change brought no new mismatch and passed
+  the hidden tests.
+- **Fixed in commit after 104b40ee:** a changed output becomes the baseline once it is reported,
+  so the warning appears once, in the define that changed it. A run that now fails with a runtime
+  error keeps its old output and is reported until it is fixed.
+
+## Run 13: E0807 reported once (2026-10-25)
+
+Binary of commit e05015f0, results in `results-run13.jsonl`.
+
+- **Result:** 12 / 12 stages green; 11 valid. Stage 7 wrote `/tmp/x`, the Haiku habit of runs 7
+  and 8 (file removed); it passed the hidden tests.
+- **Cost:** 105 rounds / 7.51 M tokens. Mean of runs 8–13: 7.57 M = 1.32× Rust.
+- **Files:** no source files, as in runs 10–12. One stage made two separate `qal_test` calls; the
+  other 11 relied on the define reply.
+- **E0807 now marks exactly the intended behaviour changes, once each:**
+  - stage 4: "changed what `main` prints on 11 of 11 earlier runs: `c1 0 0` is now `c1 0 0 0`"
+    (the tax field);
+  - stage 5: 14 of 14 (the outstanding field);
+  - stage 7: 4 of 22, `REJECT o2 stock` is now `BACKORDER o2` (the backorder rule).
+
+  The other nine stages had no E0807 at all. The regression class of run 11 would be reported in
+  the define that makes it, against a baseline that holds only intended changes.
+
+**Runs 7–13 in total:** 83 of 84 stages green. The one failure (run 11, stage 12) is the case the
+behaviour memory now reports.
+
+## Run 14: the new world (2026-10-26)
+
+**Binary of merge 3c4d6ac7:**
+
+- the incremental define and `CHECK_DELTA` (define 0.28 s on this program);
+- the behaviour memory E0807;
+- Phase 7: the `model` effect (`std.model`), including tests that ask a model from recorded
+  answers.
+
+Same protocol (`results-run14.jsonl`).
+
+| | run 14 | runs 8–13 |
+|---|---|---|
+| stages green | **12 / 12** | 71 / 72 |
+| rounds | 101 | 99–119 |
+| processed tokens | 7.39 M | 6.95–9.41 M, mean 7.57 M |
+| agent wall time | 19.4 min | 18.7–22.5 min (runs 10–13) |
+
+**Cost:** 1.29× Rust on the mean of the Rust runs (5.73 M).
+
+**E0807:** fired at stages 4, 5 and 7 only, where the tickets change the output (a new report
+field, BACKORDER instead of REJECT), as in run 13. No false alarm. No agent wrote outside its
+directory.
+
+**What this shows and what it does not:**
+
+- **Correctness:** it holds; this is the 7th straight run at 12/12 or 11/12.
+- **Rounds, tokens, wall time:** none moved measurably. A define that is 0.2 s faster saves
+  little against an agent turn of several seconds, and tokens are set by the context an agent
+  carries, not by how fast the store answers.
+- **The new parts:** they pay off as safety (E0807 caught a real regression live, 9ab47ae8)
+  and at larger codebase sizes (0.43 s instead of 1.7 s at 1520 definitions). They do not pay
+  off as cost on a program of this size.
+- **`std.model`:** no stage asked for it, and no agent used it.

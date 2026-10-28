@@ -1,0 +1,1 @@
+fn boom(args: List[Str]) -> Int = 10 / len(args)

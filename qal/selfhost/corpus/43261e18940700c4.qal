@@ -1,0 +1,2 @@
+type E = A | B(Int)
+fn f() -> E = B(1, 2)

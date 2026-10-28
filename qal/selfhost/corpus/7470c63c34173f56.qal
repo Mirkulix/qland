@@ -1,0 +1,1 @@
+fn p() -> Int !io = { let x = x in print(from_int(x)); 0 }

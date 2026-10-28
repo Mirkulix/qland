@@ -110,11 +110,7 @@ impl PyGraph {
         // Compute output shape: [m, k] x [k, n] -> [m, n]
         let (m, _k, n) = match (&a_type.shape.0[..], &b_type.shape.0[..]) {
             ([Dim::Fixed(m), Dim::Fixed(_k)], [Dim::Fixed(_k2), Dim::Fixed(n)]) => (*m, *_k, *n),
-            _ => {
-                return Err(PyRuntimeError::new_err(
-                    "matmul requires two 2-D tensors",
-                ))
-            }
+            _ => return Err(PyRuntimeError::new_err("matmul requires two 2-D tensors")),
         };
         let out_type = TensorType::new(a_type.dtype, Shape::matrix(m, n));
 
@@ -161,11 +157,9 @@ impl PyGraph {
     ///     Node ID of the softmax result.
     fn add_softmax(&mut self, input: u32) -> PyResult<u32> {
         let tt = node_output_type(&self.inner, input)?;
-        let id = self.inner.add_node(
-            Op::Softmax { axis: 0 },
-            vec![tt.clone()],
-            vec![tt.clone()],
-        );
+        let id = self
+            .inner
+            .add_node(Op::Softmax { axis: 0 }, vec![tt.clone()], vec![tt.clone()]);
         self.inner.add_edge(input, 0, id, 0, tt);
         Ok(id)
     }
@@ -179,11 +173,9 @@ impl PyGraph {
     fn add_to_ternary(&mut self, input: u32) -> PyResult<u32> {
         let input_type = node_output_type(&self.inner, input)?;
         let output_type = TensorType::new(Dtype::Ternary, input_type.shape.clone());
-        let id = self.inner.add_node(
-            Op::ToTernary,
-            vec![input_type.clone()],
-            vec![output_type],
-        );
+        let id = self
+            .inner
+            .add_node(Op::ToTernary, vec![input_type.clone()], vec![output_type]);
         self.inner.add_edge(input, 0, id, 0, input_type);
         Ok(id)
     }
@@ -198,11 +190,9 @@ impl PyGraph {
     ///     Node ID of the output node.
     fn add_output(&mut self, name: &str, source: u32) -> PyResult<u32> {
         let tt = node_output_type(&self.inner, source)?;
-        let id = self.inner.add_node(
-            Op::Output { name: name.into() },
-            vec![tt.clone()],
-            vec![],
-        );
+        let id = self
+            .inner
+            .add_node(Op::Output { name: name.into() }, vec![tt.clone()], vec![]);
         self.inner.add_edge(source, 0, id, 0, tt);
         Ok(id)
     }
@@ -224,9 +214,7 @@ impl PyGraph {
                 .input_nodes()
                 .into_iter()
                 .find(|n| matches!(&n.op, Op::Input { name: n_name } if n_name == name))
-                .ok_or_else(|| {
-                    PyRuntimeError::new_err(format!("no input node named '{name}'"))
-                })?;
+                .ok_or_else(|| PyRuntimeError::new_err(format!("no input node named '{name}'")))?;
             let shape = input_node
                 .output_types
                 .first()
@@ -242,9 +230,7 @@ impl PyGraph {
         // Convert outputs back to Python
         let mut py_outputs: HashMap<String, Vec<f32>> = HashMap::new();
         for (name, data) in &result.outputs {
-            let values = data
-                .as_f32_slice()
-                .unwrap_or_default();
+            let values = data.as_f32_slice().unwrap_or_default();
             py_outputs.insert(name.clone(), values);
         }
         Ok(py_outputs)

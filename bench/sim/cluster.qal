@@ -1,0 +1,43 @@
+# Compose heartbeat, timeout and election into one cluster tick.
+
+type Heartbeat = { leader: Int, term: Int, at: Int }
+type NodeState = { id: Int, role: Str, term: Int, last_heartbeat: Int, leader: Int }
+type Ballot = { term: Int, candidate: Int, votes: List[Int], cluster: Int }
+type ClusterState = { node: NodeState, ballot: Ballot }
+
+fn on_heartbeat(s: NodeState, h: Heartbeat) -> NodeState
+  req h.term >= 0
+= if h.term < s.term then s
+  else NodeState { id: s.id, role: "follower", term: h.term, last_heartbeat: h.at, leader: h.leader }
+
+fn expired(s: NodeState, now: Int, timeout: Int) -> Bool
+  req now >= 0 && now <= 1000000000 && timeout > 0
+= now - s.last_heartbeat >= timeout
+
+fn on_timeout(s: NodeState, now: Int, timeout: Int) -> NodeState
+  req now >= 0 && now <= 1000000000 && timeout > 0
+= if expired(s, now, timeout) then NodeState { id: s.id, role: "candidate", term: s.term + 1, last_heartbeat: s.last_heartbeat, leader: -1 }
+  else s
+
+fn has_vote(votes: List[Int], node: Int) -> Bool = len(filter(votes, fn(v) => v == node)) > 0
+fn vote(b: Ballot, node: Int) -> Ballot = if has_vote(b.votes, node) then b else Ballot { term: b.term, candidate: b.candidate, votes: push(b.votes, node), cluster: b.cluster }
+fn won(b: Ballot) -> Bool = len(b.votes) * 2 > b.cluster
+fn leader(b: Ballot) -> Option[Int] = if won(b) then Some(b.candidate) else None
+
+fn tick(c: ClusterState, hb: Heartbeat, now: Int, timeout: Int) -> ClusterState
+  req now >= 0 && now <= 1000000000 && timeout > 0 && hb.term >= 0
+= let s = on_timeout(on_heartbeat(c.node, hb), now, timeout) in
+  if s.role == "candidate" then
+    let b = vote(Ballot { term: s.term, candidate: s.id, votes: [], cluster: 1 }, s.id) in
+    ClusterState { node: s, ballot: b }
+  else ClusterState { node: s, ballot: c.ballot }
+
+test heartbeat_keeps_follower = tick(ClusterState {
+  node: NodeState { id: 0, role: "follower", term: 1, last_heartbeat: 0, leader: 1 },
+  ballot: Ballot { term: 1, candidate: 1, votes: [], cluster: 1 },
+}, Heartbeat { leader: 1, term: 1, at: 20 }, 20, 50).node.role == "follower"
+
+test timeout_elects_single_node = match leader(tick(ClusterState {
+  node: NodeState { id: 0, role: "follower", term: 1, last_heartbeat: 0, leader: 1 },
+  ballot: Ballot { term: 1, candidate: 1, votes: [], cluster: 1 },
+}, Heartbeat { leader: 1, term: 1, at: 0 }, 100, 50).ballot) { Some(0) => true, _ => false }
