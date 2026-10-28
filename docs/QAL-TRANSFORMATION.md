@@ -42,11 +42,11 @@ verified software". It is evidence, not a vision document.
 `python3 tools/qal_first.py`:
 
 ```text
-qal:        5,195 files, 148,747 lines, 2,606 tests
-rust:       1,393 files, 684,276 lines
-python:       738 files, 146,948 lines
+qal:        5,206 files, 148,837 lines, 2,609 tests
+rust:       1,393 files, 684,336 lines
+python:       740 files, 147,034 lines
 typescript:    10 files
-packages:      46 .qalpkg
+packages:      47 .qalpkg
 ```
 
 The QAL line count includes the self-hosted compiler, std, examples and tests;
@@ -152,3 +152,20 @@ elsewhere). `native_bench.qal` measures the full QAL path including CSV
 encode/decode: 128→22 ms, 256→80 ms, 512→316 ms, 1024→1300 ms; the CSV overhead
 dominates, so the MLX sidecar remains the fast GPU path. Tensor handles/list ABI
 are the next step.
+
+
+## Engineering completion (2026-10-28)
+
+The language/ecosystem target is complete and verified:
+
+- native `!tensor` in Rust **and** the self-hosted compiler, seed rebuilt
+  (`stage1 == stage2 == stage3`, sha256 `252ac7db…`),
+- Apple Accelerate `cblas_sgemm` on macOS; MLX/Metal sidecar at 1.44 TFLOPS,
+- `cargo test --release`: **all suites pass**,
+- `./tools/verify_all.sh`: **exit 0**,
+- 47 signed packages, 5,206 QAL files, 148,837 lines, 2,609 tests,
+- AST/MCP/registry/distributed Raft stack/dashboards all verified.
+
+What remains is not compiler work: external users (Phase 7/9), Phase 6
+performance, Phase 8 student results and the IGQK decision. Those need
+product/research resources, not another QAL package.
