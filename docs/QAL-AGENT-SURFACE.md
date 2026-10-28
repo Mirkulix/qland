@@ -110,3 +110,20 @@ call, plus dialect/type normalisation, raised that to **94/100** (Python 90/100)
 (`ß` upper, strict `slice`), not parser crashes. The 100/100 helper pilot proves
 the surface; the 94/100 stdlib run proves the constrained schema is necessary
 but not sufficient for general composition.
+
+## MCP tool (2026-10-28)
+
+`qal_define_ast` is now an MCP tool next to `qal_define`: it takes the AST JSON
+as a string, lowers it with the same `ast::lower_main`, and defines it through
+the normal check/prove/test/store path. Verified over JSON-RPC:
+
+```text
+tools/call qal_define_ast {main: print(2+3), tests:[sum_ok]}
+  -> defined main, sum_ok; sum_ok passed
+tools/call qal_run {entry: main}
+  -> exit_code 0, stdout "5\n"
+tools/call qal_test {names:[sum_ok]}
+  -> 1 passed
+```
+
+This makes the JSON surface first-class for MCP agents, not only for the CLI.

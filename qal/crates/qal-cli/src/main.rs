@@ -74,7 +74,7 @@
 //! Exit codes: 0 success; for `run` the program's exit code (1 if outside 0..=255);
 //! 1 diagnostics / runtime error / failed tests; 2 usage or I/O error (also: no or unreadable store).
 
-mod ast;
+use qal_cli::ast;
 
 use qal_cli::ops::{self, CallArgs, Ctx, Reply, Source};
 use qal_cli::{is_file, permissions, split_args, Split};

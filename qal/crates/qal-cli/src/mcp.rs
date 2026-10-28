@@ -155,7 +155,7 @@ const POLL: Duration = Duration::from_millis(200);
 const TEAM_TOOLS: [&str; 7] = ["qal_whoami", "qal_verify", "qal_change", "qal_lease", "qal_review", "qal_merge", "qal_rebase"];
 
 /// The tools that work in a space (`change` argument, Phase 4 §10.2).
-const SPACE_TOOLS: [&str; 13] = ["qal_define", "qal_rename", "qal_delete", "qal_view", "qal_query", "qal_history", "qal_test", "qal_prove", "qal_run", "qal_call", "qal_request", "qal_build", "qal_recall"];
+const SPACE_TOOLS: [&str; 14] = ["qal_define", "qal_define_ast", "qal_rename", "qal_delete", "qal_view", "qal_query", "qal_history", "qal_test", "qal_prove", "qal_run", "qal_call", "qal_request", "qal_build", "qal_recall"];
 
 #[derive(Serialize)]
 struct Response<'a, R: Serialize> {
@@ -227,7 +227,7 @@ fn ensure_compiler() {
 }
 
 fn tool_needs_compiler(name: &str) -> bool {
-    matches!(name, "qal_define" | "qal_run" | "qal_test" | "qal_build" | "qal_prove" | "qal_request" | "qal_call" | "qal_merge" | "qal_rebase" | "qal_rename")
+    matches!(name, "qal_define" | "qal_define_ast" | "qal_run" | "qal_test" | "qal_build" | "qal_prove" | "qal_request" | "qal_call" | "qal_merge" | "qal_rebase" | "qal_rename")
 }
 
 impl Server {
@@ -683,6 +683,14 @@ impl Server {
                     }
                 }
                 reply
+            }
+            "qal_define_ast" => {
+                let raw = a.required("ast")?;
+                let v: serde_json::Value = serde_json::from_str(&raw)
+                    .map_err(|e| format!("`ast` is not valid JSON: {e}"))?;
+                let src = crate::ast::lower_main(&v)
+                    .map_err(|e| format!("invalid AST: {e}"))?;
+                ops::define(&ctx, &src, &agent(&a)?, false)
             }
             "qal_view" => {
                 let names = a.names("names")?;
@@ -1239,11 +1247,12 @@ fn tools_with_team() -> Vec<J> {
     all
 }
 
-const TOOL_NAMES: [&str; 13] = ["qal_define", "qal_test", "qal_prove", "qal_run", "qal_call", "qal_request", "qal_view", "qal_query", "qal_rename", "qal_delete", "qal_history", "qal_build", "qal_recall"];
+const TOOL_NAMES: [&str; 14] = ["qal_define", "qal_define_ast", "qal_test", "qal_prove", "qal_run", "qal_call", "qal_request", "qal_view", "qal_query", "qal_rename", "qal_delete", "qal_history", "qal_build", "qal_recall"];
 
 fn tool_params(tool: &str) -> &'static [&'static str] {
     match tool {
         "qal_define" => &["source", "agent", "entry", "cases", "allow", "change"],
+        "qal_define_ast" => &["ast", "agent", "change"],
         "qal_view" => &["names", "change"],
         "qal_query" => &["name", "type", "uses", "outline", "topic", "change"],
         "qal_test" => &["names", "seed", "change"],
@@ -1288,6 +1297,8 @@ pub fn tools() -> J {
              "cases": {"type": "array", "minItems": 1, "maxItems": ops::MAX_CASES, "description": "Optional: once the code is stored, run the entry point on these cases, as qal_run does (`results`).",
                        "items": {"type": "object", "properties": {"args": {"type": "array", "items": {"type": "string"}}, "stdin": {"type": "string"}}, "additionalProperties": false}},
              "entry": s("Entry point for `cases` (default main)."), "allow": list("Effects to grant for `cases`, as for qal_run.")}, "required": ["source"], "additionalProperties": false}},
+        {"name": "qal_define_ast", "title": "Define QAL from a JSON AST", "description": "Lower a JSON AST (ast_version 1, schema qal-ast/schema.json) to QAL and define it exactly like qal_define: check, prove, test and store. The AST can carry main, types, effects, returns, tests and allowed_calls. This is the agent-native surface; invalid AST returns diagnostics before lowering.", "annotations": writes,
+         "inputSchema": {"type": "object", "properties": {"ast": s("JSON AST document as a string."), "agent": agent}, "required": ["ast"], "additionalProperties": false}},
         {"name": "qal_test", "title": "Run QAL tests", "annotations": read_only,
          "description": "Run the stored tests and the generated property tests (all, or the named tests and functions; in a project, all means its own: `std.` tests run when named). A pure function with an `ens`, or that calls a function with `req`, gets a property test: 100 generated inputs that satisfy its `req`; any contract violation fails it, with a shrunk counterexample. Result: each test with passed true/false and the runtime error of a failing one, `properties` (passed, failed, gave_up, skipped), plus passed/failed counts.",
          "inputSchema": {"type": "object", "properties": {"names": list("Test or function names (default: all)."), "seed": {"type": "integer", "minimum": 0, "description": "Seed of the generated inputs (default 0)."}}, "additionalProperties": false}},

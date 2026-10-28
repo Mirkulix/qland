@@ -3,6 +3,7 @@
 
 #[cfg(feature = "reference")]
 pub mod bootstrap;
+pub mod ast;
 pub mod lsp;
 pub mod mcp;
 pub mod ops;
