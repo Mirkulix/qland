@@ -121,3 +121,27 @@ download /packages/<sha>.qalpkg -> cmp with qal/packages/event_queue.qalpkg -> i
 
 The server is read-only. Trust is still decided by `verify --trust`/`fetch
 --trust` on the client; the HTTP layer cannot bypass the Ed25519 check.
+
+## HTTP client
+
+```sh
+python3 qal-registry/client.py \
+  --url http://127.0.0.1:8899 \
+  --name qal_event_queue \
+  --root /path/to/project \
+  --trusted keys.json
+```
+
+It fetches `index.json`, resolves the dependency graph, downloads each
+`packages/<sha>.qalpkg`, re-hashes and verifies the Ed25519 signature, then runs
+`qal import` in dependency order.
+
+Verified against the local server:
+
+- signed install: `qal_event_queue`, then `qal query enqueue` and all three
+  queue tests pass;
+- no `--trusted`: `no trusted keys`, exit 1;
+- wrong trusted key: `untrusted package qal_event_queue`, exit 1.
+
+The server never decides trust; the client does, and `qal import` re-checks the
+package header and definition hashes after download.
