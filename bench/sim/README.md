@@ -520,3 +520,14 @@ snapshot: 3-entry prefix transferred to a fresh follower
 ```
 
 Both logs then equal `["1:1:a","2:1:b","3:1:c"]`.
+
+## Node metrics
+
+`GET /metrics` returns the node's state plus log length and commit:
+
+```json
+{"leader":0,"term":1,"at":100,"log_len":1,"commit":1}
+```
+
+This is the observability surface for the dashboard; QAL owns the values, the
+dashboard/UI only renders them.

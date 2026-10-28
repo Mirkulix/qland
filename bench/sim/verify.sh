@@ -58,6 +58,12 @@ run_case snapshot
 printf '[{"method":"POST","path":"/append","query":"term=1","body":"a"},{"method":"POST","path":"/append","query":"term=1","body":"b"},{"method":"GET","path":"/snapshot","query":"index=2"}]\n' > reqs.json
 "$QAL" request handle --init setup --allow fs:. reqs.json | grep -q '"entries":\["1:1:a","2:1:b"\]'
 
+# node metrics endpoint
+run_case metrics
+"$QAL" define "$REPO/bench/sim/node.qal" >/dev/null
+printf '[{"method":"POST","path":"/heartbeat","body":"hb:0:1:100"},{"method":"POST","path":"/append","query":"term=1","body":"a"},{"method":"POST","path":"/commit","query":"index=1"},{"method":"GET","path":"/metrics"}]\n' > reqs.json
+"$QAL" request handle --init setup --allow fs:. reqs.json | grep -q '"log_len":1'
+
 # snapshot transfer to a fresh follower
 "$REPO/bench/sim/snapshot_sync.py" >/dev/null
 
@@ -174,4 +180,4 @@ run_case dashboard
 printf '[{"method":"GET","path":"/metrics"}]\n' > reqs.json
 "$QAL" request handle reqs.json --allow io | grep -q '"total":100000'
 
-echo "simulation: queue 3, tensor 3, numerics 2, snap-sync 1, install-node 1, snap-node 1, watch 1, auto 1, loop10 1, leader1 1, repl3 1, cluster3 1, node 1, wire 3, cluster 2, heartbeat 4, install 3, snapshot 3, repl 3, raft 4, election 3, quorum 4, resolve 3, conflict 3, merge 3, journal 2, twopc 2, once 2, cross 2, sim_package 2, sim 100000, queue-sim 1000 events, shards 10, dashboard 200"
+echo "simulation: queue 3, tensor 3, numerics 2, metrics 1, snap-sync 1, install-node 1, snap-node 1, watch 1, auto 1, loop10 1, leader1 1, repl3 1, cluster3 1, node 1, wire 3, cluster 2, heartbeat 4, install 3, snapshot 3, repl 3, raft 4, election 3, quorum 4, resolve 3, conflict 3, merge 3, journal 2, twopc 2, once 2, cross 2, sim_package 2, sim 100000, queue-sim 1000 events, shards 10, dashboard 200"
