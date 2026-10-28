@@ -129,20 +129,24 @@ map-based conservation as `unknown` (checked at runtime), which is honest.
 
 ## Dashboard endpoint
 
-`dashboard.qal` is the QAL side of a dashboard: a pure JSON metrics endpoint.
+`dashboard.qal` serves both the dashboard shell and its metrics:
+
+- `GET /` → HTML page that fetches `/metrics` and renders the JSON;
+- `GET /metrics` → `{"agents":100,"total":100000,"tick":1000,
+  "invariant":"total == 100000","source":"qal"}`.
 
 ```sh
-qal init
 qal define bench/sim/dashboard.qal
 qal request handle reqs.json --allow io
 ```
 
-Verified response:
+Verified:
 
-```json
-{"agents":100,"total":100000,"tick":1000,
- "invariant":"total == 100000","source":"qal"}
+```text
+GET /        -> 200 text/html
+GET /metrics -> 200 application/json, total=100000
+qal test total_100 -> passed
 ```
 
-`qal test` after define: `total_100` passed. The UI/renderer is external; QAL
-owns the metric values, the invariant and the HTTP/JSON contract.
+The HTML/JS is a shell; QAL owns the metric values, the invariant and the JSON
+contract. Charts/updates remain a browser concern.
