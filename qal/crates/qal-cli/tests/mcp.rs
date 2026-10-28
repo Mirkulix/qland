@@ -186,7 +186,7 @@ fn handshake_lists_the_tools_with_the_language_reference() {
     assert_eq!(c.request("ping", json!({}))["result"], json!({}));
     let tools = c.request("tools/list", json!({}))["result"]["tools"].clone();
     let names: Vec<&str> = tools.as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap()).collect();
-    assert_eq!(names, ["qal_define", "qal_test", "qal_prove", "qal_run", "qal_call", "qal_request", "qal_view", "qal_query", "qal_rename", "qal_delete", "qal_history", "qal_build", "qal_recall"]);
+    assert_eq!(names, ["qal_define", "qal_define_ast", "qal_ast_schema", "qal_import", "qal_export", "qal_install", "qal_test", "qal_prove", "qal_run", "qal_call", "qal_request", "qal_view", "qal_query", "qal_rename", "qal_delete", "qal_history", "qal_build", "qal_recall"]);
     for t in tools.as_array().unwrap() {
         assert_eq!(t["inputSchema"]["type"], "object", "{t}");
         assert!(!t["description"].as_str().unwrap().is_empty());
