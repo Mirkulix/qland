@@ -1,0 +1,37 @@
+# qal-pkg 1
+# package qal_event_queue beadff7c4380a72b8b94d9da5f3b0c796a51bfffc2b4ccdbb612dc641fb2aa7c
+# def Event eb9e726ef2974e32bd5ecdb291dfade333eb3948f272038ccc1608dd8953cdbe cli
+# def Popped 297e91a216afbf4e80271a59032d1e72c61d048f1b670ee5e3b0947c47dbb744 cli
+# def Queue 1e733594b148e38b364c96b110e280d32848f46367c112750af2e28517cfbe72 cli
+# def empty 71bcb26f0fe685c14f3f928f2e9d7b8e04395f5d4a66eddc3e141dbb0aae552f cli
+# def enqueue 49dec0b789e888b6e318e34fbbb72c50324b92da0fc763528d5335ca32fa0e51 cli
+# def pop 4bf0be198b8f427bbc368175f719235932d30ec9cc99812ebc37f96a170d990c cli
+# def pop_empty 2d866e41dd67d506ed294f3fd30dde0aaf24f69e295bb867279454cb3d87dff9 cli
+# def pop_order d6d965eebb4885497b3947da6630f773879bb0c37f482da157c6f11ca759a0bd cli
+# def push_size 0dd84b02396680d7c2b23baf205a55ce9737e34f461235d3548b6dc742a1f6d7 cli
+# def size c9242f17f4b325cd58a00a0b3b60844a8f2e3872cfa921a2ff1a12e1c13cb768 cli
+
+type Event = { at: Int, kind: Str, payload: Str }
+
+type Queue = { events: Map[Int, Event], seq: Int }
+
+type Popped = { ev: Event, q: Queue }
+
+fn empty() -> Queue
+= Queue { events: map_new(), seq: 0 }
+
+fn enqueue(q: Queue, at: Int, kind: Str, payload: Str) -> Queue
+  req at >= 0 && at <= 1000000
+= Queue { events: map_put(q.events, at * 1000000 + q.seq, Event { at: at, kind: kind, payload: payload }), seq: q.seq + 1 }
+
+fn size(q: Queue) -> Int
+= map_size(q.events)
+
+fn pop(q: Queue) -> Option[Popped]
+= let keys = sort_int(map_keys(q.events)) in match get(keys, 0) { None => None, Some(k) => match map_get(q.events, k) { None => None, Some(ev) => Some(Popped { ev: ev, q: Queue { events: map_del(q.events, k), seq: q.seq } }) } }
+
+test push_size = size(enqueue(empty(), 5, "x", "")) == 1
+
+test pop_empty = pop(empty()) == None
+
+test pop_order = match pop(enqueue(enqueue(empty(), 2, "b", ""), 1, "a", "")) { None => false, Some(p) => p.ev.kind == "a" && size(p.q) == 1 }

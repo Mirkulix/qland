@@ -48,3 +48,22 @@ the run conserves 100,000 exactly.
 
 It is **not** a high-performance simulator: the interpreter, immutable maps and
 recursion are fine for 100 agents/1000 steps, not millions.
+
+## Event queue package
+
+`queue.qal` defines a deterministic event queue over `Map[Int, Event]`:
+
+- `enqueue(q, at, kind, payload)` keys by `at * 1_000_000 + seq`,
+- `pop(q)` sorts keys, removes the first event and returns `Option[Popped]`,
+- tests: `push_size`, `pop_order`, `pop_empty` all pass.
+
+It is exported as `qal/packages/event_queue.qalpkg` (`qal_event_queue`, 10
+definitions) and installs through the signed registry:
+
+```text
+installed qal_event_queue d8e8b761…
+qal query --name enqueue -> fn(Queue, Int, Str, Str) -> Queue
+qal test push_size pop_order pop_empty -> 3 passed
+```
+
+The queue is QAL-owned logic; time and worker execution stay in the host.

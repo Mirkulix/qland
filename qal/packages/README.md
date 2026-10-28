@@ -24,3 +24,9 @@ echo '2 3' | qal run main --allow io   # 5
 
 The package is signed and resolved through the same registry trust path; the AST
 definition only composes verified definitions.
+
+## `event_queue.qalpkg` (`qal_event_queue`)
+
+Deterministic event queue: `Event`, `Queue`, `Popped`, `enqueue`, `pop`, `size`,
+with three tests. Exported from `bench/sim/queue.qal`, 10 definitions, header
+hash `beadff7c…`, signed registry SHA-256 `d8e8b761…`.
