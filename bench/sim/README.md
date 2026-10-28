@@ -239,3 +239,11 @@ abort) pass. Signed install SHA-256 `8f050e15…`.
 entries, ignores duplicate ids, serializes/loads through `write_file`/
 `read_file` with `!fs`. Verified: `duplicate_is_noop`, `roundtrip_lines`, and a
 write/read run (`1:debit:5` on disk). Signed install SHA-256 `2d1fe93a…`.
+
+## Journal merge
+
+`merge.qal` (package `qal_sim_merge`, 7 defs) unions two journals by transaction
+id; a duplicate is a no-op. Tests `merge_dedup`, `merge_idempotent`,
+`merge_keeps_both` pass. Signed install SHA-256 `36d07639…`. This is the
+replication primitive for a distributed journal; conflict resolution/ordering
+stay with the host.

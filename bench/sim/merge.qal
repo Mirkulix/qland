@@ -1,0 +1,20 @@
+# Merge two durable journals: union by transaction id, duplicates are no-ops.
+
+type Entry = { id: Int, kind: Str, amount: Int }
+
+fn has(log: List[Entry], id: Int) -> Bool =
+  len(filter(log, fn(e) => e.id == id)) > 0
+
+fn apply(log: List[Entry], e: Entry) -> List[Entry] = if has(log, e.id) then log else push(log, e)
+
+fn merge(a: List[Entry], b: List[Entry]) -> List[Entry]
+  ens len(r) >= len(a) && len(r) <= len(a) + len(b)
+= fold(b, a, fn(acc, e) => apply(acc, e))
+
+test merge_dedup = len(merge([Entry { id: 1, kind: "debit", amount: 5 }],
+                             [Entry { id: 1, kind: "debit", amount: 5 },
+                              Entry { id: 2, kind: "credit", amount: 7 }])) == 2
+test merge_idempotent = merge(merge([], [Entry { id: 1, kind: "x", amount: 1 }]),
+                              [Entry { id: 1, kind: "x", amount: 1 }]) == [Entry { id: 1, kind: "x", amount: 1 }]
+test merge_keeps_both = has(merge([Entry { id: 1, kind: "a", amount: 1 }],
+                                  [Entry { id: 2, kind: "b", amount: 2 }]), 2)
