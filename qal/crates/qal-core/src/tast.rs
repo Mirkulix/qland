@@ -473,11 +473,12 @@ mod tests {
         assert_eq!(names, from_variants);
         // 57 up to Phase 4, plus the 14 self-hosting built-ins of Phase 5a and `todo` of Phase 4b (appended, so the
         // order of the earlier ones, which fixes import order in modules, is unchanged).
-        assert_eq!(Builtin::ALL.len(), 73);
+        assert_eq!(Builtin::ALL.len(), 74);
         assert_eq!(Builtin::ALL[57], Builtin::BitAnd);
         assert_eq!(Builtin::ALL[0], Builtin::StrLen);
         assert_eq!(Builtin::ReadAll.effect(), Some("io"));
         assert_eq!((Builtin::SortStr.effect(), Builtin::Replace.effect()), (None, None));
         assert_eq!((Builtin::Http.effect(), Builtin::DbExec.effect(), Builtin::DbQuery.effect(), Builtin::ModelAsk.effect()), (Some("net"), Some("db"), Some("db"), Some("model")));
+        assert_eq!(Builtin::TensorMatmul.effect(), Some("tensor"));
     }
 }
