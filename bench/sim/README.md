@@ -150,3 +150,24 @@ qal test total_100 -> passed
 
 The HTML/JS is a shell; QAL owns the metric values, the invariant and the JSON
 contract. Charts/updates remain a browser concern.
+
+## Scaling limit (measured)
+
+Same `sim.qal`, varying `init(agents)` and `run(..., steps)` on the release
+binary, 256 MiB Wasm memory limit:
+
+| agents | steps | result | wall | total |
+|---:|---:|---|---:|---:|
+| 100 | 1,000 | ok | 0.24 s | 100,000 |
+| 500 | 5,000 | ok | 0.50 s | 500,000 |
+| 1,000 | 5,000 | ok | 0.76 s | 1,000,000 |
+| 2,000 | 1,000 | ok | 0.43 s | 2,000,000 |
+| 5,000 | 1,000 | ok | 0.75 s | 5,000,000 |
+| 2,000 | 5,000 | **OOM** (256 MiB) | 0.80 s | – |
+| 1,000 | 10,000 | **OOM** (256 MiB) | 0.89 s | – |
+
+The wall-clock time is not the problem; the **persistent immutable map** grows
+until the execution's 256 MiB limit. So QAL's simulation package is good for
+thousands of agents/steps, not millions. A million-agent runtime needs native
+mutable state, sharding and a different memory model; QAL should define the
+rules/contracts, not interpret every agent.
