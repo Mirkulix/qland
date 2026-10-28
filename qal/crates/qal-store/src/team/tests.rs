@@ -178,9 +178,9 @@ fn the_policy_matrix() {
     assert_eq!(policy::allowed_roles("qal_lease", Some("break"), Space::Main), [Architect]);
     assert!(policy::rule("qal_lease", None, Architect).is_none(), "lease needs an action");
     // tools/list: only available tools; reviewers do not see writes.
-    assert_eq!(policy::tools_for(Reviewer), ["qal_view", "qal_query", "qal_history", "qal_recall", "qal_whoami", "qal_verify", "qal_test", "qal_prove", "qal_run", "qal_call", "qal_request", "qal_build", "qal_change", "qal_review", "qal_merge"]);
-    assert!(policy::tools_for(Implementer).contains(&"qal_define") && policy::tools_for(Implementer).contains(&"qal_define_ast") && !policy::tools_for(Implementer).contains(&"qal_rename"));
-    assert_eq!(policy::tools_for(Architect).len(), 21);
+    assert_eq!(policy::tools_for(Reviewer), ["qal_view", "qal_query", "qal_history", "qal_recall", "qal_whoami", "qal_verify", "qal_test", "qal_prove", "qal_run", "qal_call", "qal_request", "qal_build", "qal_ast_schema", "qal_change", "qal_review", "qal_merge"]);
+    assert!(policy::tools_for(Implementer).contains(&"qal_define") && policy::tools_for(Implementer).contains(&"qal_define_ast") && policy::tools_for(Implementer).contains(&"qal_ast_schema") && !policy::tools_for(Implementer).contains(&"qal_rename"));
+    assert_eq!(policy::tools_for(Architect).len(), 22);
     assert!(!policy::tools_for(Implementer).contains(&"qal_review") && policy::tools_for(Implementer).contains(&"qal_rebase"));
     // E0903 names the roles that may.
     let d = policy::forbidden("qal_define", None, Implementer, Space::Main);

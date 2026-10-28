@@ -135,3 +135,6 @@ contributor. Verified: MCP test-only define added `one_is_one` and it passed;
 
 `qal_ast_schema` returns the frozen v1 schema itself (15 ordinary-store tools);
 verified over MCP: `$id` `https://qal.dev/ast/v1`, `anyOf [main|tests]`.
+
+`qal_ast_schema` is read-only for all four team roles (architect, implementer,
+verifier, reviewer); `cargo test -p qal-cli --test team` 17/17.

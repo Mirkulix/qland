@@ -122,6 +122,7 @@ pub const POLICY: &[Row] = &[
     row("qal_build", None, [Yes, Yes, Yes, Yes], true),
     row("qal_define", None, [Own, Own, OwnOrContribution, No], true),
     row("qal_define_ast", None, [Own, Own, OwnOrContribution, No], true),
+    row("qal_ast_schema", None, [Yes, Yes, Yes, Yes], true),
     row("qal_rename", None, [Own, No, No, No], true),
     row("qal_delete", None, [Own, No, No, No], true),
     row("qal_lease", Some("acquire"), [Yes, Yes, Yes, No], true),
