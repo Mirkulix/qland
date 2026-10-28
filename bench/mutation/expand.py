@@ -6,7 +6,7 @@ Six source-level mutators (operators/booleans/constants) plus contract mutators
 tests fail; `escaped` if it compiles and all hidden tests pass; `invalid` if it
 does not compile.
 """
-import json, os, re, sys, tempfile
+import json, os, re, subprocess, sys, tempfile
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
@@ -14,6 +14,7 @@ sys.path.insert(0, str(REPO / "bench"))
 import check
 
 SOLUTIONS = REPO / "bench" / "teacher-2026-10-27" / "solutions"
+QAL = Path(os.environ.get("QAL_BIN", REPO / "qal" / "target" / "release" / "qal"))
 
 
 def spans(src):
@@ -84,7 +85,13 @@ def validate(task, source):
         f.write(source)
         path = f.name
     try:
-        return check.check_qal(task, source=path)
+        v = check.check_qal(task, source=path)
+        r = subprocess.run([str(QAL), "prove", path], capture_output=True, text=True, timeout=90)
+        try:
+            proof = json.loads(r.stdout)
+        except Exception:
+            proof = {"proven": 0, "refuted": 0, "unknown": 0, "error": (r.stdout or r.stderr)[-200:]}
+        return v, proof
     finally:
         os.unlink(path)
 
@@ -99,21 +106,26 @@ def main():
             if mutant == src:
                 continue
             try:
-                v = validate(task, mutant)
+                v, proof = validate(task, mutant)
             except Exception as e:
                 results.append({"task": task, "mutator": name, "status": "invalid", "error": str(e)[:120]})
                 continue
             total = v.get("total", 0)
             passed = v.get("passed", 0)
+            refuted = proof.get("refuted", 0)
             if not total:
                 status = "invalid"
             elif passed < total:
-                status = "caught"
+                status = "caught_tests"
+            elif refuted:
+                status = "caught_proof"
             else:
                 status = "escaped"
             results.append({"task": task, "mutator": name, "status": status,
-                            "passed": passed, "total": total})
-            print(f"{task:32} {name:16} {status:8} {passed}/{total}", flush=True)
+                            "passed": passed, "total": total,
+                            "proven": proof.get("proven", 0), "refuted": refuted,
+                            "unknown": proof.get("unknown", 0)})
+            print(f"{task:32} {name:16} {status:14} tests {passed}/{total} proof {proof.get('proven',0)}/{refuted}", flush=True)
     out = REPO / "bench" / "mutation" / "results-expanded.json"
     out.write_text(json.dumps({"results": results}, indent=2) + "\n", encoding="utf-8")
     counts = {}

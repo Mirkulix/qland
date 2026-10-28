@@ -1,4 +1,4 @@
-# Expanded mutation benchmark (134 mutants)
+# Mutation benchmark (134 + 13 contract mutants)
 
 `expand.py` applies nine source-level changes to the 23 teacher solutions,
 only outside comments and string literals:
@@ -7,43 +7,53 @@ only outside comments and string literals:
 |---|---|
 | operators | `+`→`-`, `-`→`+`, `*`→`+`, `==`→`!=` |
 | constants | `true`→`false`, `0`→`1` |
-| contracts | drop first `req`, drop first `ens`, weaken `>=`→`>` |
+| contracts (loose) | drop first `req`, drop first `ens`, weaken first `>=` |
 
-A mutant counts only if it **compiles**; `caught` means the hidden tests fail on
-it, `escaped` means every hidden test still passes.
+A mutant counts only if it **compiles**; `caught_tests` means hidden tests fail,
+`caught_proof` means `qal prove` refutes an obligation, `escaped` means neither.
 
-## Result
+## 134-mutant result
 
 ```
-caught  112 / 134
-escaped  22 / 134
-invalid   0
+caught_tests  112 / 134
+caught_proof    0 / 134
+escaped        22 / 134
 ```
 
-**112/134 (83.6%)** compiled mutants are caught by the hidden tests.
+**112/134 (83.6%)** are caught by hidden tests. The prove arm adds no catch on
+this broad set. The 22 escapes are equivalent/uncovered paths and contract
+deletions.
 
-The 22 escapes split into two groups:
+## Contract-only study (`contracts.py`)
 
-1. **contract mutants** (`drop_req`, `drop_ens`, `weaken_ge`) in
-   `09-rle`, `22-expense-approval-contracts`, `23-expense-approval-change`,
-   `01-word-count`, `20-ini-query`, `02-roman`. The hidden tests do not fail
-   because removing a contract removes an obligation, not a behavior. Tests
-   alone cannot catch this; the diff/policy must require that contracts are not
-   silently deleted.
-2. **constant/operator mutants** where the changed token is on an equivalent
-   path or a value that the hidden cases do not exercise (`zero_to_one`,
-   `true_to_false`, a `+`/`-` in an unused branch).
+Targets only `req`/`ens` lines: drop `req`, drop `ens`, weaken `>=`→`>`.
 
-## What this measures
+```
+caught_tests   6 / 13
+caught_proof   0 / 13
+escaped        7 / 13
+```
 
-- QAL's hidden-test suite catches **83.6%** of compiled mechanical mutations;
-- contract deletion is a real blind spot for test-only validation;
-- it is **not** yet a Python/TypeScript comparison; that arm is still missing.
+- **`drop_req`/`drop_ens` escape**: removing a contract removes an obligation,
+  not a behavior. Tests stay green; `qal prove` has nothing to refute.
+- **`weaken_contract_ge` is caught by tests** in 6/6 cases (and produces
+  refutations/unknowns in some), because it changes a checked obligation.
+- `02-roman`, `09-rle`, `22-expense-approval-contracts`, `23-expense-approval-change`
+  have contract deletions that escape both tests and proof.
 
-## Next
+## Consequence
 
-- run `qal prove` on every mutant and count contract mutants caught by proof
-  obligations;
-- add a "contract diff" rule: deleting/weakening `req`/`ens` requires explicit
-  review and a new test;
-- add Python/TypeScript agents on a 100-task suite for the language comparison.
+Test-only or proof-only validation cannot catch **contract deletion**. The
+policy in `docs/QAL-FIRST.md` requires:
+
+1. a failing test,
+2. a `qal prove` result,
+3. an explicit review note
+
+for any removal or weakening of `req`/`ens`. A diff rule must flag deleted
+contract lines; otherwise a real safety obligation can disappear silently.
+
+## Not yet
+
+This is not a Python/TypeScript comparison. It measures QAL's own verification
+strength and finds a concrete blind spot.
