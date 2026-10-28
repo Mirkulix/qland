@@ -64,3 +64,10 @@ and dependencies to another `.qalpkg`, then import that elsewhere. Verified with
 `qal_install` over MCP installs from a signed HTTP registry: SHA-256 + Ed25519
 against a trusted-keys JSON, dependency order, then `ops::import`. Verified with
 the local `qal_event_queue` store (3 tests pass); no trust file is refused.
+
+## `sim_node.qalpkg` (`qal_sim_node`)
+
+File-backed Raft follower endpoint: `POST /heartbeat` (wire `hb:...`) persists
+`node_state.txt`, `GET /state` returns JSON, `setup` initializes. 7 definitions,
+signed registry SHA-256 `686c4f8f…`; verified with `qal request handle --init
+setup --allow fs:.`.

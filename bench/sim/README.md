@@ -389,3 +389,22 @@ and `timeout_elects_single_node` pass. Signed install SHA-256 `934e87b8…`.
 Tests `heartbeat_roundtrip`, `heartbeat_bad`, `vote_roundtrip` pass. Signed
 install SHA-256 `9744e680…`. The host owns sockets/TLS; QAL owns the payload
 contract.
+
+## File-backed node endpoint
+
+`node.qal` turns a QAL HTTP handler into a Raft follower endpoint:
+
+- `POST /heartbeat` with `hb:<leader>:<term>:<at>` decodes and persists the
+  state to `node_state.txt`,
+- `GET /state` returns the persisted state as JSON,
+- `setup` initializes the file.
+
+Verified with `qal request handle --init setup --allow fs:.`:
+
+```text
+POST /heartbeat hb:1:2:100 -> {"leader":1,"term":2,"at":100}
+GET  /state                -> {"leader":1,"term":2,"at":100}
+```
+
+The host owns TCP/TLS and retries; QAL owns the message contract and durable
+state transition.

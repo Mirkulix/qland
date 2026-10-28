@@ -1,0 +1,72 @@
+# A file-backed Raft node endpoint: heartbeats arrive over HTTP, state persists.
+
+type Heartbeat = { leader: Int, term: Int, at: Int }
+
+fn decode(s: Str) -> Option[Heartbeat] =
+  let p = split(s, ":") in
+  if len(p) != 4 then None
+  else match get(p, 0) {
+    Some("hb") => match get(p, 1) {
+      None => None,
+      Some(a) => match to_int(a) {
+        None => None,
+        Some(leader) => match get(p, 2) {
+          None => None,
+          Some(b) => match to_int(b) {
+            None => None,
+            Some(term) => match get(p, 3) {
+              None => None,
+              Some(c) => match to_int(c) { None => None, Some(at) => Some(Heartbeat { leader: leader, term: term, at: at }) },
+            },
+          },
+        },
+      },
+    },
+    _ => None,
+  }
+
+fn save(h: Heartbeat) -> Bool !fs =
+  match write_file("node_state.txt", from_int(h.leader) ++ ":" ++ from_int(h.term) ++ ":" ++ from_int(h.at)) {
+    Ok(_) => true,
+    Err(_) => false,
+  }
+
+fn load() -> Heartbeat !fs =
+  match read_file("node_state.txt") {
+    Err(_) => Heartbeat { leader: 0, term: 0, at: 0 },
+    Ok(s) => let p = split(trim(s), ":") in
+      match get(p, 0) {
+        None => Heartbeat { leader: 0, term: 0, at: 0 },
+        Some(a) => match to_int(a) {
+          None => Heartbeat { leader: 0, term: 0, at: 0 },
+          Some(leader) => match get(p, 1) {
+            None => Heartbeat { leader: 0, term: 0, at: 0 },
+            Some(b) => match to_int(b) {
+              None => Heartbeat { leader: 0, term: 0, at: 0 },
+              Some(term) => match get(p, 2) {
+                None => Heartbeat { leader: leader, term: term, at: 0 },
+                Some(c) => match to_int(c) { None => Heartbeat { leader: leader, term: term, at: 0 }, Some(at) => Heartbeat { leader: leader, term: term, at: at } },
+              },
+            },
+          },
+        },
+      },
+  }
+
+fn setup() -> Result[Unit, Str] !fs =
+  if save(Heartbeat { leader: 0, term: 0, at: 0 }) then Ok(()) else Err("cannot write node_state.txt")
+
+fn state_json(h: Heartbeat) -> HttpResponse = std.http.json(200, std.json.obj([
+  std.json.field("leader", std.json.int(h.leader)),
+  std.json.field("term", std.json.int(h.term)),
+  std.json.field("at", std.json.int(h.at)),
+]))
+
+fn handle(rq: HttpRequest) -> HttpResponse !fs =
+  if rq.path == "/heartbeat" then
+    match decode(rq.body) {
+      None => std.http.bad_request("bad heartbeat wire format"),
+      Some(h) => if save(h) then state_json(h) else std.http.error(500, "io", "save failed"),
+    }
+  else if rq.path == "/state" then state_json(load())
+  else std.http.not_found()
