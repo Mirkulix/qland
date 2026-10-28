@@ -1,0 +1,25 @@
+# qal-pkg 1
+# package qal_numerics aa70d3978bff8adc07b2f50b51d29e4d74aec5f7457ab5bfed2314a746c482b2
+# def absf f2890082cee14acdd03c740afd90d8a98147bd45592126b2278c0b9a2a8699ce cli
+# def integrate a3b8ebb603f7a59228a324df25feaf9cb3dd76717d8c3062e2a54d538b0bd757 cli
+# def linear 76a41307776d1f0a1b4428ec82f0e5b68cc520df05e3bf587c986b8e0d17d1c5 cli
+# def linear_integral fe8f7ba9be316c1853dc0916815634b34ff14f3b91cf605a7eb4ce28c479be0e cli
+# def square 3a50703acbcbbbb6609614739d4d0d2558f5b1af0c01314650cad236a9ebee0f cli
+# def square_integral 7053fadc846e51c23b2b680a1185a22845912372df113b678048402e19a8b2e4 cli
+
+fn absf(x: Float) -> Float
+= if x < 0.0 then 0.0 - x else x
+
+fn integrate(f: fn(Float) -> Float, a: Float, b: Float, n: Int) -> Float
+  req n > 0 && n <= 1000000 && a <= b
+= let h = (b - a) / int_to_float(n) in fold(range(0, n), 0.0, fn(acc, i) => acc + f(a + int_to_float(i) * h) * h)
+
+fn linear(x: Float) -> Float
+= x
+
+fn square(x: Float) -> Float
+= x * x
+
+test linear_integral = absf(integrate(linear, 0.0, 2.0, 1000) - 2.0) < 0.01
+
+test square_integral = absf(integrate(square, 0.0, 1.0, 1000) - 0.3333335) < 0.01

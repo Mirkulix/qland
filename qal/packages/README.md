@@ -35,3 +35,8 @@ hash `beadff7c…`, signed registry SHA-256 `d8e8b761…`.
 
 Row-major tensor with `at`, `dot`, `matmul`, `identity`, shape postcondition and
 three tests. 11 definitions, signed registry SHA-256 `09cc3dcf…`.
+
+## `numerics.qalpkg` (`qal_numerics`)
+
+`integrate(f, a, b, n)` with range contracts, plus `square`, `linear`, `absf`;
+two integral tests. 6 definitions, signed registry SHA-256 `550726e1…`.

@@ -1,0 +1,14 @@
+# Small numerical integration package; the host can replace the inner loop later.
+
+fn square(x: Float) -> Float = x * x
+fn linear(x: Float) -> Float = x
+
+fn absf(x: Float) -> Float = if x < 0.0 then 0.0 - x else x
+
+fn integrate(f: fn(Float) -> Float, a: Float, b: Float, n: Int) -> Float
+  req n > 0 && n <= 1000000 && a <= b
+= let h = (b - a) / int_to_float(n) in
+  fold(range(0, n), 0.0, fn(acc, i) => acc + f(a + int_to_float(i) * h) * h)
+
+test square_integral = absf(integrate(square, 0.0, 1.0, 1000) - 0.3333335) < 0.01
+test linear_integral = absf(integrate(linear, 0.0, 2.0, 1000) - 2.0) < 0.01

@@ -86,3 +86,21 @@ qal test identity_shape identity_matmul matmul_2x2 -> 3 passed
 
 This is the QAL-owned shape/contract layer; a GPU/NumPy host would implement the
 inner multiplication later.
+
+## Numerics package
+
+`numerics.qal` adds `integrate(f, a, b, n)` (left Riemann sum) with
+`req n > 0 && n <= 1_000_000 && a <= b`, plus `square`, `linear` and `absf`.
+Tests: integral of x^2 on [0,1] and x on [0,2], both within 0.01.
+
+Exported as `qal/packages/numerics.qalpkg` (`qal_numerics`, 6 definitions),
+signed and installable:
+
+```text
+qal query --name integrate
+  -> fn(fn(Float) -> Float, Float, Float, Int) -> Float
+qal test square_integral linear_integral -> 2 passed
+```
+
+QAL owns the contract and the loop shape; a host GPU/NumPy implementation can
+replace the inner numerical work later.
