@@ -100,7 +100,7 @@ fn state_json(h: Heartbeat) -> HttpResponse = std.http.json(200, std.json.obj([
 
 fn page() -> Str =
   "<!doctype html><html><body><h1>QAL Raft node</h1><pre id='m'>loading</pre>" ++
-  "<script>fetch('/metrics').then(r=>r.json()).then(j=>document.getElementById('m').textContent=JSON.stringify(j,null,2))</script>" ++
+  "<script>fetch('/api/metrics').then(r=>r.json()).then(j=>document.getElementById('m').textContent=JSON.stringify(j,null,2))</script>" ++
   "</body></html>"
 
 fn handle(rq: HttpRequest) -> HttpResponse !fs =
@@ -224,6 +224,6 @@ fn handle(rq: HttpRequest) -> HttpResponse !fs =
         },
       },
     }
-  else if rq.path == "/metrics" then metrics_json()
+  else if rq.path == "/api/metrics" then metrics_json()
   else if rq.path == "/state" then state_json(load())
   else std.http.not_found()

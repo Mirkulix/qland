@@ -64,10 +64,13 @@ run_case node_page
 printf '[{"method":"GET","path":"/"}]\n' > reqs.json
 "$QAL" request handle --init setup --allow fs:. reqs.json | grep -q 'text/html'
 
+# cluster dashboard
+"$REPO/bench/sim/cluster_dashboard_run.py" >/dev/null
+
 # node metrics endpoint
 run_case metrics
 "$QAL" define "$REPO/bench/sim/node.qal" >/dev/null
-printf '[{"method":"POST","path":"/heartbeat","body":"hb:0:1:100"},{"method":"POST","path":"/append","query":"term=1","body":"a"},{"method":"POST","path":"/commit","query":"index=1"},{"method":"GET","path":"/metrics"}]\n' > reqs.json
+printf '[{"method":"POST","path":"/heartbeat","body":"hb:0:1:100"},{"method":"POST","path":"/append","query":"term=1","body":"a"},{"method":"POST","path":"/commit","query":"index=1"},{"method":"GET","path":"/api/metrics"}]\n' > reqs.json
 "$QAL" request handle --init setup --allow fs:. reqs.json | grep -q '"log_len":1'
 
 # snapshot transfer to a fresh follower
@@ -183,7 +186,7 @@ echo "$OUT" | grep -q 'total=100000.*events=1000'
 run_case dashboard
 "$QAL" define "$REPO/bench/sim/dashboard.qal" >/dev/null
 "$QAL" test total_100 >/dev/null
-printf '[{"method":"GET","path":"/metrics"}]\n' > reqs.json
+printf '[{"method":"GET","path":"/api/metrics"}]\n' > reqs.json
 "$QAL" request handle reqs.json --allow io | grep -q '"total":100000'
 
-echo "simulation: queue 3, tensor 3, numerics 2, node-page 1, metrics 1, snap-sync 1, install-node 1, snap-node 1, watch 1, auto 1, loop10 1, leader1 1, repl3 1, cluster3 1, node 1, wire 3, cluster 2, heartbeat 4, install 3, snapshot 3, repl 3, raft 4, election 3, quorum 4, resolve 3, conflict 3, merge 3, journal 2, twopc 2, once 2, cross 2, sim_package 2, sim 100000, queue-sim 1000 events, shards 10, dashboard 200"
+echo "simulation: queue 3, tensor 3, numerics 2, cluster-dash 1, node-page 1, metrics 1, snap-sync 1, install-node 1, snap-node 1, watch 1, auto 1, loop10 1, leader1 1, repl3 1, cluster3 1, node 1, wire 3, cluster 2, heartbeat 4, install 3, snapshot 3, repl 3, raft 4, election 3, quorum 4, resolve 3, conflict 3, merge 3, journal 2, twopc 2, once 2, cross 2, sim_package 2, sim 100000, queue-sim 1000 events, shards 10, dashboard 200"

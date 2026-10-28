@@ -69,5 +69,12 @@ the local `qal_event_queue` store (3 tests pass); no trust file is refused.
 
 File-backed Raft follower endpoint: `POST /heartbeat` (wire `hb:...`) persists
 `node_state.txt`, `GET /state` returns JSON, `setup` initializes. 7 definitions,
-signed registry SHA-256 `f79c0c50…`; verified with `qal request handle --init
+signed registry SHA-256 `c596c935…`; verified with `qal request handle --init
 setup --allow fs:.`.
+
+## `sim_dashboard.qalpkg` (`qal_sim_dashboard`)
+
+Cluster dashboard: fetches `/api/metrics` from three nodes and returns JSON;
+`/` is an HTML shell. 4 definitions, signed registry SHA-256 `bc84e55d…`.
+Routes use `/api/metrics` because `/metrics` is reserved for `qal serve`'s own
+Prometheus metrics.

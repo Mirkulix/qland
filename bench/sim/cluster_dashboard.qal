@@ -1,0 +1,23 @@
+# Cluster dashboard: fetch three node /metrics endpoints and aggregate them.
+
+fn fetch_node(url: Str) -> Str !net =
+  match http(HttpCall { method: "GET", url: url, headers: [], body: "" }) {
+    Err(_) => "{}",
+    Ok(r) => r.body,
+  }
+
+fn metrics_json() -> HttpResponse !net =
+  std.http.json(200, std.json.obj([
+    std.json.field("n0", std.json.str(fetch_node("http://127.0.0.1:8990/api/metrics"))),
+    std.json.field("n1", std.json.str(fetch_node("http://127.0.0.1:8991/api/metrics"))),
+    std.json.field("n2", std.json.str(fetch_node("http://127.0.0.1:8992/api/metrics"))),
+  ]))
+
+fn page() -> Str =
+  "<!doctype html><html><body><h1>QAL cluster</h1><pre id='m'>loading</pre>" ++
+  "<script>fetch('/api/metrics').then(r=>r.json()).then(j=>{document.getElementById('m').textContent=JSON.stringify(j,null,2)})</script>" ++
+  "</body></html>"
+
+fn handle(rq: HttpRequest) -> HttpResponse !net =
+  if rq.path == "/api/metrics" then metrics_json()
+  else std.http.response(200, "text/html; charset=utf-8", page())

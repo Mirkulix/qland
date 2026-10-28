@@ -523,7 +523,7 @@ Both logs then equal `["1:1:a","2:1:b","3:1:c"]`.
 
 ## Node metrics
 
-`GET /metrics` returns the node's state plus log length and commit:
+`GET /api/metrics` returns the node's state plus log length and commit:
 
 ```json
 {"leader":0,"term":1,"at":100,"log_len":1,"commit":1}
@@ -534,6 +534,19 @@ dashboard/UI only renders them.
 
 ## Node HTML page
 
-`GET /` serves a small HTML page that fetches `/metrics` and shows the JSON. This
+`GET /` serves a small HTML page that fetches `/api/metrics` and shows the JSON. This
 is the self-contained node dashboard; the browser renders it, QAL supplies the
 values.
+
+## Cluster dashboard
+
+`cluster_dashboard.qal` fetches `/api/metrics` from the three nodes and returns
+them as JSON; `/` serves an HTML shell. `cluster_dashboard_run.py` starts three
+nodes and the dashboard:
+
+```text
+dashboard: 3 node metrics aggregated by QAL, HTML page served
+```
+
+`/metrics` on a `qal serve` process is reserved for the server's own Prometheus
+metrics, so the QAL routes use `/api/metrics`.
