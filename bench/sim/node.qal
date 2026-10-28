@@ -98,8 +98,14 @@ fn state_json(h: Heartbeat) -> HttpResponse = std.http.json(200, std.json.obj([
   std.json.field("role", std.json.str(role_of(h))),
 ]))
 
+fn page() -> Str =
+  "<!doctype html><html><body><h1>QAL Raft node</h1><pre id='m'>loading</pre>" ++
+  "<script>fetch('/metrics').then(r=>r.json()).then(j=>document.getElementById('m').textContent=JSON.stringify(j,null,2))</script>" ++
+  "</body></html>"
+
 fn handle(rq: HttpRequest) -> HttpResponse !fs =
-  if rq.path == "/heartbeat" then
+  if rq.path == "/" then std.http.response(200, "text/html; charset=utf-8", page())
+  else if rq.path == "/heartbeat" then
     match decode(rq.body) {
       None => std.http.bad_request("bad heartbeat wire format"),
       Some(h) => if save(h) then state_json(h) else std.http.error(500, "io", "save failed"),

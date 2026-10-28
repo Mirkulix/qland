@@ -531,3 +531,9 @@ Both logs then equal `["1:1:a","2:1:b","3:1:c"]`.
 
 This is the observability surface for the dashboard; QAL owns the values, the
 dashboard/UI only renders them.
+
+## Node HTML page
+
+`GET /` serves a small HTML page that fetches `/metrics` and shows the JSON. This
+is the self-contained node dashboard; the browser renders it, QAL supplies the
+values.
