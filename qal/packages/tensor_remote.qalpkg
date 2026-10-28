@@ -1,0 +1,15 @@
+# qal-pkg 1
+# package qal_tensor_remote dd5b0ab5f379e8c0e4fdb8a6bf1a6a99bb96b55bdcbba876848708d34dea3e86
+# def local_shape 338b288bf4f3d65799822beb4b9ba00f3e021c45e5ab205f0668e7bba22ba349 cli
+# def matmul_remote 9db501462cef7e511c39dd42b63ddbe769cdc12cd58d1f252df095c8c9f68366 cli
+# def parse_floats dca8f175addf9eb3947b920423fdade3eb741658cdd1796eaffde18ce3e69316 cli
+
+fn parse_floats(s: Str) -> List[Float]
+= map(split(s, ","), fn(x) => match to_float(x) { None => 0.0, Some(f) => f })
+
+test local_shape = len(parse_floats("1.0,2.0,3.0")) == 3
+
+fn matmul_remote(a: List[Float], b: List[Float], n: Int) -> List[Float] !net
+  req n > 0 && len(a) == n * n && len(b) == n * n
+  ens len(r) == n * n
+= let body = from_int(n) ++ ";" ++ join(map(a, fn(x) => from_float(x)), ",") ++ ";" ++ join(map(b, fn(x) => from_float(x)), ",") in match http(HttpCall { method: "POST", url: "http://127.0.0.1:8901/matmul", headers: [], body: body }) { Err(_) => [], Ok(resp) => if resp.status == 200 then parse_floats(resp.body) else [] }

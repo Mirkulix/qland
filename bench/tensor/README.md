@@ -16,3 +16,7 @@ This uses the existing `!net` capability and a host process, not a new
 `!tensor` effect: QAL owns the shape contract, the sidecar owns the numeric
 kernel. A native `!tensor` capability can replace `!net` later without changing
 the contract.
+
+The helper is also a package: `qal/packages/tensor_remote.qalpkg`
+(`qal_tensor_remote`), 3 definitions, signed install verified. `matmul_remote`
+reports effect `!net`; the caller must grant `net:127.0.0.1:8901`.

@@ -40,3 +40,9 @@ three tests. 11 definitions, signed registry SHA-256 `09cc3dcf…`.
 
 `integrate(f, a, b, n)` with range contracts, plus `square`, `linear`, `absf`;
 two integral tests. 6 definitions, signed registry SHA-256 `550726e1…`.
+
+## `tensor_remote.qalpkg` (`qal_tensor_remote`)
+
+`matmul_remote(a, b, n) !net` with shape `req`/`ens`, backed by the NumPy
+sidecar in `bench/tensor/server.py`. 3 definitions, signed registry SHA-256
+`51c31794…`; `qal query matmul_remote` shows `!net`, `local_shape` passes.
