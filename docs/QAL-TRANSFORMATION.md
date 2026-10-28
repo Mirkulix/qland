@@ -42,11 +42,11 @@ verified software". It is evidence, not a vision document.
 `python3 tools/qal_first.py`:
 
 ```text
-qal:        5,176 files, 147,823 lines, 2,560 tests
-rust:       1,393 files, 684,112 lines
-python:       727 files, 146,277 lines
+qal:        5,195 files, 148,747 lines, 2,606 tests
+rust:       1,393 files, 684,276 lines
+python:       738 files, 146,948 lines
 typescript:    10 files
-packages:      28 .qalpkg
+packages:      46 .qalpkg
 ```
 
 The QAL line count includes the self-hosted compiler, std, examples and tests;
@@ -96,3 +96,29 @@ contracts, invariants, audit and composition.
 ./bench/sim/verify.sh
 QAL_BIN=$PWD/qal/target/release/qal python3 bench/compare/scale_stdlib.py
 ```
+
+
+## Distributed stack (2026-10-28, later)
+
+The simulation packages now include a working Raft-style stack:
+
+- heartbeat/timeout (`qal_sim_heartbeat`, `qal_sim_cluster`),
+- election/quorum (`qal_sim_election`, `qal_sim_quorum`, `qal_sim_raft`),
+- replication and commit (`qal_sim_repl`, `qal_sim_snapshot`, `qal_sim_install`),
+- wire format (`qal_sim_wire`),
+- durable transactions (`qal_sim_journal`, `qal_sim_merge`, `qal_sim_conflict`,
+  `qal_sim_resolve`, `qal_sim_2pc`, `qal_sim_once`),
+- a file-backed HTTP node (`qal_sim_node`),
+- an aggregating cluster dashboard (`qal_sim_dashboard`).
+
+Verified end-to-end on real processes:
+
+- 3 QAL nodes, `hb:1:2:100..102`,
+- timeout -> candidate term 3, 3/3 votes,
+- leader 0, logs `alpha`, `beta`, commit 2,
+- kill follower 2, restart and catch up,
+- kill leader 0, monitor elects node 1 term 2, old leader catches up,
+- snapshot prefix transfer to a fresh follower,
+- `/api/metrics` per node and a QAL cluster dashboard over three nodes.
+
+`/metrics` is reserved by `qal serve`; QAL routes use `/api/metrics`.
