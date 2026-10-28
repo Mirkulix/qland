@@ -25,7 +25,8 @@ verified software". It is evidence, not a vision document.
 - `.qalpkg` text format, SHA-256, Ed25519 signatures, trust list.
 - Dependency graph resolver, install in dependency order.
 - HTTP server + HTTP client with signature/hash verification.
-- Packages: `qal_prelude`, `qal_event_queue`, `qal_tensor`, `qal_numerics`.
+- Packages: `qal_prelude`, `qal_event_queue`, `qal_tensor`, `qal_numerics`,
+  `qal_sim`, `qal_tensor_remote` (28 `.qalpkg` in the tree).
 - Registry self-test: **13 cases**.
 
 ### 4. Simulation stack
@@ -41,11 +42,11 @@ verified software". It is evidence, not a vision document.
 `python3 tools/qal_first.py`:
 
 ```text
-qal:        5,175 files, 147,784 lines, 2,558 tests
+qal:        5,176 files, 147,823 lines, 2,560 tests
 rust:       1,393 files, 684,112 lines
-python:       727 files, 146,250 lines
+python:       727 files, 146,277 lines
 typescript:    10 files
-packages:      27 .qalpkg
+packages:      28 .qalpkg
 ```
 
 The QAL line count includes the self-hosted compiler, std, examples and tests;
