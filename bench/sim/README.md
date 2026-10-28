@@ -459,3 +459,15 @@ loop: 10 ticks replicated to 3 nodes, heartbeat at 110
 ```
 
 All logs are `1:1:cmd1 … 10:1:cmd10` and all nodes report leader 0, at 110.
+
+## Automatic failover and catch-up
+
+`cluster_auto.py` kills leader 0, times out/votes on the remaining two nodes
+(node 1 becomes leader at term 2), continues `cmd2`, then restarts the old leader
+and catches it up:
+
+```text
+auto: leader 0 died -> node 1 term 2 -> old leader caught up
+```
+
+All three logs are `["1:1:cmd1","2:2:cmd2"]`; all report leader 1, term 2.
