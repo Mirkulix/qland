@@ -8,7 +8,7 @@ use qal_core::tform;
 /// Programs of part (1): examples, fixtures, 20 benchmark solutions, the std, todo and shop packages, and qalc.
 const FILES: usize = 29;
 /// Programs of part (2), extracted by `selfhost/tools/extract_corpus.py`.
-const EXTRACTED: usize = 910;
+const EXTRACTED: usize = 919;
 
 #[test]
 fn the_corpus_size_is_fixed() {
