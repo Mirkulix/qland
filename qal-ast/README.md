@@ -23,5 +23,13 @@ only JSON; the lowering, compiler and hidden tests stay deterministic.
 
 The measured failure of QAL text was surface syntax (`let` without `in`, Python
 idioms, missing `fn main`). The AST removes that class while keeping the same
-semantics. Next: generalise the schema (lists, polymorphism, effects) and move
-the lowering into the compiler as `qal define --ast`.
+semantics. The lowering is now also available in the compiler:
+
+```sh
+qal ast qal-ast/example.json > main.qal
+cat bench/compare/prelude.qal main.qal > full.qal
+qal check full.qal
+```
+
+`qal ast` is the first native agent surface; Python `lower.py` remains the
+reference for the pilot. Next: lists, polymorphism, effects and `qal define --ast`.

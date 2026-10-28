@@ -74,6 +74,8 @@
 //! Exit codes: 0 success; for `run` the program's exit code (1 if outside 0..=255);
 //! 1 diagnostics / runtime error / failed tests; 2 usage or I/O error (also: no or unreadable store).
 
+mod ast;
+
 use qal_cli::ops::{self, CallArgs, Ctx, Reply, Source};
 use qal_cli::{is_file, permissions, split_args, Split};
 use qal_store::{Query, RecallQuery};
@@ -193,6 +195,7 @@ fn main() -> ExitCode {
     let rest = &args[1..];
     match cmd.as_str() {
         "check" | "fmt" => file_command(cmd, rest),
+        "ast" => ast_command(rest),
         "init" | "define" | "view" | "query" | "recall" | "rename" | "delete" | "history" | "build" | "export" | "import" | "install" => store_command(cmd, rest),
         "call" | "test" | "run" => run_command(cmd, rest),
         "prove" => prove_command(rest),
@@ -222,6 +225,19 @@ fn all(_: &[String]) -> usize {
 
 fn ctx() -> Result<Ctx, ExitCode> {
     Ctx::cli().map_err(|d| emit(Reply::diagnostics(d)))
+}
+
+fn ast_command(args: &[String]) -> ExitCode {
+    let Some(file) = args.first() else { return bad_usage("usage: qal ast <file.json>"); };
+    let text = match read(file) { Ok(t) => t, Err(e) => return e };
+    let v: serde_json::Value = match serde_json::from_str(&text) {
+        Ok(v) => v,
+        Err(e) => return bad_usage(&format!("invalid JSON: {e}")),
+    };
+    match ast::lower_main(&v) {
+        Ok(src) => { let _ = write!(std::io::stdout(), "{src}"); ExitCode::SUCCESS }
+        Err(e) => bad_usage(&format!("invalid AST: {e}")),
+    }
 }
 
 fn file_command(cmd: &str, args: &[String]) -> ExitCode {
