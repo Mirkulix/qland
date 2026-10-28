@@ -301,3 +301,17 @@ A leader needs a strict majority of the cluster; duplicate votes count once.
 Tests `majority_elects`, `duplicate_vote_counts_once`,
 `minority_does_not_elect` pass. Signed install SHA-256 `8308521d…`. The host
 sends heartbeats/retries; QAL decides when a candidate has won.
+
+## Raft log
+
+`raft.qal` (package `qal_sim_raft`, 9 defs) implements log matching and commit
+index:
+
+```qal
+fn append(log, prev_index, prev_term, e) -> RaftLog
+fn advance(log, index) -> RaftLog
+```
+
+Tests `append_after_zero`, `reject_term_mismatch`, `advance_commits`,
+`advance_cannot_skip` pass. Signed install SHA-256 `2b72f5de…`. The host owns
+transport, timeouts and voting; QAL owns the log/commit rules.
