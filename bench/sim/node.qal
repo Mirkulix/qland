@@ -142,6 +142,22 @@ fn handle(rq: HttpRequest) -> HttpResponse !fs =
           if save_log(push(xs, entry)) then log_json() else std.http.error(500, "io", "save failed"),
       },
     }
+  else if rq.path == "/restore" then
+    let ps = std.url.parse_query(rq.query) in
+    match std.url.param(ps, "index") {
+      None => std.http.bad_request("missing index"),
+      Some(is) => match to_int(is) {
+        None => std.http.bad_request("bad index"),
+        Some(index) => let xs = filter(split(trim(rq.body), "\n"), fn(l) => l != "") in
+          if save_log(xs) then match write_file("node_commit.txt", from_int(index)) {
+            Ok(_) => std.http.json(200, std.json.obj([
+              std.json.field("last_index", std.json.int(index)),
+              std.json.field("entries", std.json.arr(map(xs, fn(l) => std.json.str(l)))),
+            ])),
+            Err(_) => std.http.error(500, "io", "save failed"),
+          } else std.http.error(500, "io", "save failed"),
+      },
+    }
   else if rq.path == "/install" then
     let ps = std.url.parse_query(rq.query) in
     match std.url.param(ps, "index") {

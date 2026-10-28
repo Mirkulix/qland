@@ -508,3 +508,15 @@ returns the kept suffix. Verified on a fresh node with `a,b,c`:
 
 Then `GET /log` returns the same suffix. This is the HTTP side of
 `qal_sim_install`.
+
+## Snapshot transfer to a fresh follower
+
+`/restore?index=N` replaces a node's log with the posted prefix; `snapshot_sync.py`
+takes `/snapshot?index=3` from the leader (`a,b,c`) and restores a fresh follower
+with it:
+
+```text
+snapshot: 3-entry prefix transferred to a fresh follower
+```
+
+Both logs then equal `["1:1:a","2:1:b","3:1:c"]`.
