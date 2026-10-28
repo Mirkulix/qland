@@ -28,6 +28,11 @@ run_case numerics
 "$QAL" define "$REPO/bench/sim/numerics.qal" >/dev/null
 "$QAL" test square_integral linear_integral >/dev/null
 
+# cluster tick (heartbeat + timeout + election)
+run_case cluster
+"$QAL" define "$REPO/bench/sim/cluster.qal" >/dev/null
+"$QAL" test heartbeat_keeps_follower timeout_elects_single_node >/dev/null
+
 # heartbeat/timeout
 run_case heartbeat
 "$QAL" define "$REPO/bench/sim/heartbeat.qal" >/dev/null
@@ -125,4 +130,4 @@ run_case dashboard
 printf '[{"method":"GET","path":"/metrics"}]\n' > reqs.json
 "$QAL" request handle reqs.json --allow io | grep -q '"total":100000'
 
-echo "simulation: queue 3, tensor 3, numerics 2, heartbeat 4, install 3, snapshot 3, repl 3, raft 4, election 3, quorum 4, resolve 3, conflict 3, merge 3, journal 2, twopc 2, once 2, cross 2, sim_package 2, sim 100000, queue-sim 1000 events, shards 10, dashboard 200"
+echo "simulation: queue 3, tensor 3, numerics 2, cluster 2, heartbeat 4, install 3, snapshot 3, repl 3, raft 4, election 3, quorum 4, resolve 3, conflict 3, merge 3, journal 2, twopc 2, once 2, cross 2, sim_package 2, sim 100000, queue-sim 1000 events, shards 10, dashboard 200"

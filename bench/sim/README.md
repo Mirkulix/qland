@@ -365,3 +365,16 @@ Tests `install_keeps_newer`, `install_advances_commit`,
 
 Tests `heartbeat_resets`, `stale_term_ignored`, `timeout_promotes`,
 `fresh_heartbeat_stays` pass. Signed install SHA-256 `77e9fe7a…`.
+
+## Cluster tick
+
+`cluster.qal` (package `qal_sim_cluster`, 14 defs) composes heartbeat, timeout and
+election into one `tick`:
+
+```qal
+fn tick(c: ClusterState, hb: Heartbeat, now: Int, timeout: Int) -> ClusterState
+```
+
+A heartbeat keeps the follower; a timeout promotes to candidate, votes for
+itself, and a single-node cluster elects it. Tests `heartbeat_keeps_follower`
+and `timeout_elects_single_node` pass. Signed install SHA-256 `934e87b8…`.
