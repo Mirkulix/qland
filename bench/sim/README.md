@@ -378,3 +378,14 @@ fn tick(c: ClusterState, hb: Heartbeat, now: Int, timeout: Int) -> ClusterState
 A heartbeat keeps the follower; a timeout promotes to candidate, votes for
 itself, and a single-node cluster elects it. Tests `heartbeat_keeps_follower`
 and `timeout_elects_single_node` pass. Signed install SHA-256 `934e87b8…`.
+
+## Wire format
+
+`wire.qal` (package `qal_sim_wire`, 9 defs) encodes/decodes Raft messages:
+
+- `hb:<leader>:<term>:<at>`,
+- `rv:<term>:<candidate>:<last_index>:<last_term>`.
+
+Tests `heartbeat_roundtrip`, `heartbeat_bad`, `vote_roundtrip` pass. Signed
+install SHA-256 `9744e680…`. The host owns sockets/TLS; QAL owns the payload
+contract.
